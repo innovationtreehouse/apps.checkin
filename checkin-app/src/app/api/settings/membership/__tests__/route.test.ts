@@ -25,8 +25,9 @@ jest.mock('@/lib/prisma', () => ({
 function asUser(user: { isSysadmin: boolean; isBoardMember: boolean }) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 7, ...user } });
 }
-const put = (body: unknown) =>
+const send = (body: unknown) =>
     PUT(new Request('http://localhost:4000/api/settings/membership', { method: 'PUT', body: JSON.stringify(body) }));
+const put = (body: object) => send({ ...body, perYearVariantClient: true });
 
 describe('PUT /api/settings/membership releaseLibrary', () => {
     beforeEach(() => {
@@ -103,5 +104,23 @@ describe('PUT /api/settings/membership membershipYearVariants', () => {
     it('answers 409 when another year holds the variant', async () => {
         tx.membershipYearVariant.upsert.mockRejectedValue({ code: 'P2002' });
         expect((await put({ membershipYearVariants: [row()] })).status).toBe(409);
+    });
+});
+
+describe('PUT /api/settings/membership client marker', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        asUser({ isSysadmin: false, isBoardMember: true });
+    });
+
+    it.each([
+        ['absent', { standardMembershipFeeCents: 0, orgMembershipYearBoundary: null }],
+        ['not true', { perYearVariantClient: 'yes', standardMembershipFeeCents: 0 }],
+    ])('refuses a body with the marker %s and changes nothing', async (_name, body) => {
+        const res = await send(body);
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/reload/i);
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(tx.boardSettings.upsert).not.toHaveBeenCalled();
     });
 });

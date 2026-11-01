@@ -55,7 +55,7 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
     afterAll(async () => {
         await api(board, "/api/settings/membership", {
             method: "PUT",
-            body: JSON.stringify({ orgMembershipYearBoundary: originalBoundary }),
+            body: JSON.stringify({ perYearVariantClient: true, orgMembershipYearBoundary: originalBoundary }),
         });
     });
 
@@ -76,7 +76,7 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         const boundary = isoDay(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
         const put = await api(board, "/api/settings/membership", {
             method: "PUT",
-            body: JSON.stringify({ orgMembershipYearBoundary: boundary }),
+            body: JSON.stringify({ perYearVariantClient: true, orgMembershipYearBoundary: boundary }),
         });
         expect(put.status).toBe(200);
 

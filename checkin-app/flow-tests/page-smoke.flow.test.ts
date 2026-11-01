@@ -221,7 +221,7 @@ const send = (s: Session, method: string, path: string, body?: unknown) =>
   api(s, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
 const release = (board: Session, library: LibraryKey, released: boolean) =>
-  send(board, "PUT", "/api/settings/membership", { releaseLibrary: { library, released } });
+  send(board, "PUT", "/api/settings/membership", { perYearVariantClient: true, releaseLibrary: { library, released } });
 
 beforeAll(async () => {
   sections = navSections();

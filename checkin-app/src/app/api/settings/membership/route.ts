@@ -48,6 +48,7 @@ function parseYearVariants(raw: unknown, boundary: Date | null | undefined): Yea
  * Body may include: standardMembershipFeeCents, volunteerMembershipFeeCents, orgMembershipYearBoundary (ISO|null),
  * orgMembershipVariantId (string|null),
  * orgMembershipProductUrl (string|null), volunteerFamilyDiscountCode (string|null),
+ * perYearVariantClient (true — required; any other body is refused with nothing changed),
  * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — upserted by year; 409 when
  * another year already holds the variant, and nothing in the save is kept),
  * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
@@ -75,12 +76,15 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         releasedLibraries?: unknown;
         releaseLibrary?: { library?: unknown; released?: unknown } | null;
         membershipYearVariants?: unknown;
+        perYearVariantClient?: unknown;
     };
     try {
         body = await req.json();
     } catch {
         return apiError("Invalid JSON", 400);
     }
+    // A page without this marker cannot read the GET response, so its form holds defaults, not the stored settings.
+    if (body.perYearVariantClient !== true) return apiError("This page is out of date. Reload the page and try again.", 400);
 
     const data: Record<string, unknown> = {};
     const invalidFee = (v: number) => !Number.isFinite(v) || v < 0;

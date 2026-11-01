@@ -169,6 +169,7 @@ export default function MembershipSettingsPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          perYearVariantClient: true,
           standardMembershipFeeCents: Math.round(parseFloat(standardFee || "0") * 100),
           volunteerMembershipFeeCents: Math.round(parseFloat(volunteerFee || "0") * 100),
           orgMembershipVariantId: variantId.trim() || null,

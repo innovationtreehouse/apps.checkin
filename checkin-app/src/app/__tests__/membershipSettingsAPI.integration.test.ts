@@ -77,7 +77,7 @@ describe('Membership settings + volunteer designations API', () => {
         const getRes = await SETTINGS_GET(jsonReq('GET'));
         expect(getRes.status).toBe(200);
 
-        const putRes = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: 12000, volunteerMembershipFeeCents: 3000 }));
+        const putRes = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, standardMembershipFeeCents: 12000, volunteerMembershipFeeCents: 3000 }));
         expect(putRes.status).toBe(200);
         const { settings } = await putRes.json();
         expect(settings.standardMembershipFeeCents).toBe(12000);
@@ -87,11 +87,11 @@ describe('Membership settings + volunteer designations API', () => {
     it('saves and clears the membership product URL', async () => {
         asBoard(boardId);
         const url = 'https://test-store.myshopify.com/products/annual-membership';
-        const putRes = await SETTINGS_PUT(jsonReq('PUT', { orgMembershipProductUrl: `  ${url}  ` }));
+        const putRes = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, orgMembershipProductUrl: `  ${url}  ` }));
         expect(putRes.status).toBe(200);
         expect((await putRes.json()).settings.orgMembershipProductUrl).toBe(url); // trimmed
 
-        const cleared = await SETTINGS_PUT(jsonReq('PUT', { orgMembershipProductUrl: null }));
+        const cleared = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, orgMembershipProductUrl: null }));
         expect(cleared.status).toBe(200);
         expect((await cleared.json()).settings.orgMembershipProductUrl).toBeNull();
     });
@@ -100,11 +100,11 @@ describe('Membership settings + volunteer designations API', () => {
     it('rejects a negative membership fee and keeps the previous value', async () => {
         asBoard(boardId);
         // Establish a known good value.
-        const seed = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: 12000 }));
+        const seed = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, standardMembershipFeeCents: 12000 }));
         expect(seed.status).toBe(200);
 
         // Negative input must be rejected, not clamped to zero.
-        const res = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: -50 }));
+        const res = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, standardMembershipFeeCents: -50 }));
         expect(res.status).toBe(400);
 
         // Old value survives untouched.
@@ -113,13 +113,23 @@ describe('Membership settings + volunteer designations API', () => {
         expect(settings.BoardSettings.standardMembershipFeeCents).toBe(12000);
     });
 
+    it('refuses a save with no client marker and changes nothing', async () => {
+        asBoard(boardId);
+        await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, standardMembershipFeeCents: 12000 }));
+        const res = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: 0, orgMembershipYearBoundary: null, orgMembershipVariantId: null }));
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/reload/i);
+        const stored = await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
+        expect(stored.standardMembershipFeeCents).toBe(12000);
+    });
+
     it('upserts a year variant by year, returns it to the board, and refuses a variant another year holds', async () => {
         asBoard(boardId);
         await prisma.membershipYearVariant.deleteMany({});
-        await SETTINGS_PUT(jsonReq('PUT', { orgMembershipYearBoundary: '2000-09-01' }));
+        await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, orgMembershipYearBoundary: '2000-09-01' }));
         const [inProgress, coming] = variantSlotYears(new Date('2000-09-01'), new Date());
         const save = (membershipYear: number, shopifyVariantId: string) =>
-            SETTINGS_PUT(jsonReq('PUT', { membershipYearVariants: [{ membershipYear, shopifyVariantId, productUrl: null }] }));
+            SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, membershipYearVariants: [{ membershipYear, shopifyVariantId, productUrl: null }] }));
 
         expect((await save(inProgress, '1001')).status).toBe(200);
         expect((await save(inProgress, '1002')).status).toBe(200);
@@ -134,11 +144,11 @@ describe('Membership settings + volunteer designations API', () => {
 
     it('accepts a positive scholarshipDenialGraceDays and clears it back to null', async () => {
         asBoard(boardId);
-        const res = await SETTINGS_PUT(jsonReq('PUT', { scholarshipDenialGraceDays: 14 }));
+        const res = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, scholarshipDenialGraceDays: 14 }));
         expect(res.status).toBe(200);
         expect((await res.json()).settings.scholarshipDenialGraceDays).toBe(14);
 
-        const cleared = await SETTINGS_PUT(jsonReq('PUT', { scholarshipDenialGraceDays: null }));
+        const cleared = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, scholarshipDenialGraceDays: null }));
         expect(cleared.status).toBe(200);
         expect((await cleared.json()).settings.scholarshipDenialGraceDays).toBeNull();
     });
@@ -146,7 +156,7 @@ describe('Membership settings + volunteer designations API', () => {
     it('rejects a non-positive or fractional scholarshipDenialGraceDays', async () => {
         asBoard(boardId);
         for (const bad of [0, -1, 1.5]) {
-            const res = await SETTINGS_PUT(jsonReq('PUT', { scholarshipDenialGraceDays: bad }));
+            const res = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, scholarshipDenialGraceDays: bad }));
             expect(res.status).toBe(400);
         }
     });
@@ -154,7 +164,7 @@ describe('Membership settings + volunteer designations API', () => {
     it('board releases a library, audit-logs the delta, and clears it again', async () => {
         asBoard(boardId);
         const release = (library: string, released: boolean) =>
-            SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library, released } }));
+            SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, releaseLibrary: { library, released } }));
         await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, releasedLibraries: [] }, update: { releasedLibraries: [] } });
 
         expect((await release('catalog', true)).status).toBe(200);
@@ -171,11 +181,11 @@ describe('Membership settings + volunteer designations API', () => {
 
     it('rejects a full-list write, unknown library keys, and non-board release attempts', async () => {
         asBoard(boardId);
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog'] }))).status).toBe(400);
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library: 'nope', released: true } }))).status).toBe(400);
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library: 'catalog', released: 'yes' } }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, releasedLibraries: ['catalog'] }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, releaseLibrary: { library: 'nope', released: true } }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, releaseLibrary: { library: 'catalog', released: 'yes' } }))).status).toBe(400);
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: true, isBoardMember: false } });
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library: 'catalog', released: true } }))).status).toBe(403);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, releaseLibrary: { library: 'catalog', released: true } }))).status).toBe(403);
     });
 
     it('adds, lists, and removes a volunteer designation', async () => {
