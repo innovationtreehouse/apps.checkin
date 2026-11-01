@@ -30,6 +30,8 @@ cp config.example.json config.json
 
 ## Autostart (Raspberry Pi with LightDM + Openbox)
 
+This section covers the source checkout. For the containerized client, see [host/README.md](host/README.md).
+
 The Pi uses LightDM (graphical display manager) with an Openbox session. The boot flow is:
 
 ```
