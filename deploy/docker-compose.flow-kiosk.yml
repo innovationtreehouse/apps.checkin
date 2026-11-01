@@ -1,0 +1,18 @@
+# Added to docker-compose.flow.yml for the kiosk flow tier only (deploy/kiosk-flow.sh).
+# A configured key turns off CHECKIN_ENV=local's keyless kiosk, so every kiosk
+# request here must carry a real signature. The other flow tests never run on this stack.
+services:
+  app:
+    environment:
+      KIOSK_PUBLIC_KEY: ${KIOSK_PUBLIC_KEY:?set by deploy/kiosk-flow.sh}
+      KIOSK_SIGNING_SEED: ${KIOSK_SIGNING_SEED:?set by deploy/kiosk-flow.sh}
+      # Names this checkout's kiosk container and images.
+      KIOSK_FLOW_NAME: ${COMPOSE_PROJECT_NAME:?set by deploy/kiosk-flow.sh}
+    volumes:
+      # The tests start, kill and swap the kiosk container through the Docker API.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Becomes the kiosk's /data.
+      - kiosk-data:/kiosk-data
+
+volumes:
+  kiosk-data:
