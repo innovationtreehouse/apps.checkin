@@ -229,17 +229,18 @@ async function writeAccess(row: ReceiptRow, access: Access, actor: ReceiptPrinci
 const CLAIM_FIELDS: ReadonlySet<string> = new Set(["receiptDate", "currency", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"]);
 
 /**
- * Clears the submitter's confirmation of a reimbursement when finance changes what they claimed
- * or are paid, so the pipeline sends it back to their review. Audited naming the fields.
+ * Clears the submitter's confirmation of a reimbursement when anyone but the person whose
+ * confirmation it is changes what was claimed or is paid, so the pipeline sends it back to their
+ * review. That person is the reimbursee, or the uploader while no reimbursee is known. Audited
+ * naming the fields.
  */
 async function voidConfirmation(
   tx: Prisma.TransactionClient,
   row: ReceiptRow,
-  asSubmitter: boolean,
   actor: ReceiptPrincipal,
   fields: string[],
 ): Promise<void> {
-  if (asSubmitter || !row.needsReimbursement || !row.reviewedAt || fields.length === 0) return;
+  if (actor.id === (row.reimburseePersonId ?? row.uploadedByUserId) || !row.needsReimbursement || !row.reviewedAt || fields.length === 0) return;
   await tx.receiptDetail.update({ where: { id: row.id }, data: { reviewedAt: null, reviewedByUserId: null, reviewedOnBehalfReason: null } });
   await audit(tx, row.id, actor, {
     action: "submitter_confirmation_voided",
@@ -743,7 +744,7 @@ export const receiptService = {
       const reopensReview = asSubmitter && changed.some(([field]) => SUBMITTER_CORRECTION_FIELDS.includes(field));
       await tx.receiptDetail.update({ where: { id }, data: reopensReview ? { ...next, approvedAt: null } : next });
       if (reopensReview) await tx.receiptFinanceReview.deleteMany({ where: { receiptId: id } });
-      await voidConfirmation(tx, locked, asSubmitter, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
+      await voidConfirmation(tx, locked, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
       for (const [field, after] of changed) {
         await audit(tx, id, actor, {
           action: "field_edit",
@@ -762,7 +763,7 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     const stateMessage = "Can only add lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
-    const asSubmitter = (await writeAccess(row, access, actor, "add line")) === "submitter";
+    await writeAccess(row, access, actor, "add line");
     return db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const count = await tx.receiptLineItem.count({ where: { receiptId: id } });
@@ -771,7 +772,7 @@ export const receiptService = {
       const [data] = toLineRows([{ ...toLine(line), lineNumber: (last._max.lineNumber ?? 0) + 1 }]);
       const created = await tx.receiptLineItem.create({ data: { ...data, receiptId: id } });
       await audit(tx, id, actor, { action: "line_added", lineItemId: created.id });
-      await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
+      await voidConfirmation(tx, locked, actor, ["lineItems"]);
       return created;
     });
   },
@@ -782,7 +783,7 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     const stateMessage = "Line items can only be edited in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
-    const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
+    await writeAccess(row, access, actor, "edit line");
 
     return db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
@@ -822,7 +823,7 @@ export const receiptService = {
           lineItemId,
         });
       }
-      if (edited.length > 0) await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
+      if (edited.length > 0) await voidConfirmation(tx, locked, actor, ["lineItems"]);
       return updated;
     });
   },
@@ -832,14 +833,14 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     const stateMessage = "Can only delete lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
-    const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
+    await writeAccess(row, access, actor, "delete line");
     await db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const li = await tx.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
       if (!li) throw new ServiceError(404, "Line item not found");
       await audit(tx, id, actor, { action: "line_deleted", lineItemId });
       await tx.receiptLineItem.delete({ where: { id: lineItemId } });
-      await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
+      await voidConfirmation(tx, locked, actor, ["lineItems"]);
     });
   },
 
