@@ -1,6 +1,6 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { CURRENCY_CODE, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { CURRENCY_CODE, DEFAULT_CURRENCY, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
 
 export { CURRENCY_CODE };
@@ -170,7 +170,7 @@ export const ImportReceiptSchema = z
     receiptNumber: z.string().max(200).nullable().optional(),
     orderNumber: z.string().max(200).nullable().optional(),
     receiptDate: isoDate,
-    currency: currencyCode.default("USD"),
+    currency: currencyCode.default(DEFAULT_CURRENCY),
     shippingCents: cents,
     taxCents: cents,
     discountCents: cents,

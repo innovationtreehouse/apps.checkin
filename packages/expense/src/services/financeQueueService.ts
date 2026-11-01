@@ -1,6 +1,7 @@
 // The finance queue's expense tabs: every reason is read from the record's own state when
 // the queue is read, so doing the thing a reason asks for is what takes it out of the queue. The
 // reasons are the expense page's (reasonService), so the queue and the page always agree.
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import type { Expense } from "../generated/prisma/client";
@@ -65,10 +66,10 @@ function payloadFacts(payloadJson: string) {
       vendorName: typeof p.vendorName === "string" ? p.vendorName : null,
       date: typeof p.receiptDate === "string" ? p.receiptDate : null,
       amountCents: typeof p.receiptTotalCents === "number" ? p.receiptTotalCents : 0,
-      currency: typeof p.currency === "string" ? p.currency : "USD",
+      currency: typeof p.currency === "string" ? p.currency : DEFAULT_CURRENCY,
     };
   } catch {
-    return { vendorName: null, date: null, amountCents: 0, currency: "USD" };
+    return { vendorName: null, date: null, amountCents: 0, currency: DEFAULT_CURRENCY };
   }
 }
 

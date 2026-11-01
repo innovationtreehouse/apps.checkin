@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { CompletedReceiptSchema } from "@checkin/receipt-types";
 import { db } from "../../db";
+import { pushReceipt } from "../../lib/receipt-flow";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import {
@@ -42,6 +43,27 @@ describeDb("manual upload", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     expect(r.state).toBe("receipt_finalized");
     expect(r.pushedAt).toBeNull();
+    expect(await actions(r.id)).toContain("push_failed");
+  });
+
+  it.each(["", "usd", " usd "])("a finalized receipt with a stored currency of %j pushes as USD", async (code) => {
+    ports.fail.push = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await db.receiptDetail.update({ where: { id: r.id }, data: { currency: code } });
+    ports.fail.push = false;
+    ports.calls.pushes.length = 0;
+    expect(await pushReceipt(r.id, null)).toBe(true);
+    expect(ports.calls.pushes[0]).toMatchObject({ receiptId: r.id, currency: "USD" });
+  });
+
+  it.each(["$", "US$", "XX"])("a finalized receipt with a stored currency of %j stays unpushed, audited", async (code) => {
+    ports.fail.push = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await db.receiptDetail.update({ where: { id: r.id }, data: { currency: code } });
+    ports.fail.push = false;
+    ports.calls.pushes.length = 0;
+    expect(await pushReceipt(r.id, null)).toBe(false);
+    expect(ports.calls.pushes).toHaveLength(0);
     expect(await actions(r.id)).toContain("push_failed");
   });
 

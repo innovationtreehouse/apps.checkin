@@ -6,6 +6,8 @@ export const MAX_LINE_QUANTITY = 100_000;
 
 /** An ISO 4217 code; money formatting throws on anything else. */
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
+/** The currency of a receipt that names none. */
+export const DEFAULT_CURRENCY = "USD";
 
 const cents = z.number().int().nonnegative();
 
@@ -68,7 +70,11 @@ export const CompletedReceiptSchema = z.object({
   vendorName: z.string().nullable(),
   receiptNumber: z.string().nullable(),
   orderNumber: z.string().nullable(),
-  currency: z.string().regex(CURRENCY_CODE).default("USD"),
+  currency: z
+    .string()
+    .transform((code) => code.trim().toUpperCase() || DEFAULT_CURRENCY)
+    .pipe(z.string().regex(CURRENCY_CODE))
+    .default(DEFAULT_CURRENCY),
   taxCents: cents,
   shippingCents: cents,
   discountCents: cents,

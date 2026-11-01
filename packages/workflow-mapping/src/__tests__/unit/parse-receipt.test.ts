@@ -29,6 +29,15 @@ describe("parseStoredReceipt", () => {
     expect(formatCents(row?.receiptTotalCents ?? null, row?.currency ?? "USD")).toBe("—");
   });
 
+  it("shows a stored blank currency as a normal USD receipt", () => {
+    const result = parseStoredReceipt(JSON.stringify({ ...buildReceiptPayload(), currency: "" }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.receipt.currency).toBe("USD");
+      expect(formatCents(result.receipt.receiptTotalCents, result.receipt.currency)).toMatch(/^\$/);
+    }
+  });
+
   // ── Negative: malformed JSON ─────────────────────────────────────────────
   it("returns ok:false for a non-JSON string", () => {
     const result = parseStoredReceipt("{ not json at all");
