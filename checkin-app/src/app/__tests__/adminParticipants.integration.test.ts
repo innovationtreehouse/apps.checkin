@@ -221,7 +221,7 @@ describe('Admin Participants API Integration Tests', () => {
             expect(household).toBeDefined();
             expect(household?.name).toBe('Adult Household');
 
-            // D4.5: admin-created participants default to visitors (no membership)
+            // Admin-created participants default to visitors (no membership)
             const membership = await prisma.orgMembership.findUnique({
                 where: { householdId: updatedParticipant!.householdId! }
             });

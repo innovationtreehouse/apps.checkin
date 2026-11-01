@@ -81,7 +81,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
 
         // Stale-lead-BG case: PENDING_PAYMENT + bgClearedAt set, but the lead's own
         // check is stale. Grant comps payment and BG (already cleared on the process)
-        // gates ACTIVE — lead freshness no longer gates the button (behavior (a)), so
+        // gates ACTIVE — lead freshness does not gate the button, so
         // this IS grantable.
         const staleBg = await prisma.person.create({
             data: { email: `stalebg-${TAG}@example.com`, name: 'Stale Lead', isHouseholdLead: true, lastBackgroundCheck: new Date(Date.UTC(2015, 0, 1)), household: { create: { name: `Stale HH ${TAG}` } } },
@@ -211,9 +211,8 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
 
         const now = new Date();
 
-        // Stray INITIAL activation stamped in-window: the pre-fix bug counted this as
-        // "settled" (any-kind ACTIVE) and flipped validUntil a year forward. Fix #4's
-        // kind=RENEWAL filter must now EXCLUDE it.
+        // INITIAL activation stamped in-window: a family joining in-window buys the coming
+        // year, so this is settled and validUntil moves a year forward.
         const a = await prisma.person.create({
             data: { email: `initial-${TAG4}@example.com`, name: 'Initial Active', isHouseholdLead: true, household: { create: { name: `Initial HH ${TAG4}` } } },
         });
@@ -221,8 +220,8 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         const am = await prisma.orgMembership.create({ data: { householdId: initialActiveHouseholdId, status: 'ACTIVE' } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: am.id, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: now } });
 
-        // Board-archived RENEWAL in-window: the pre-fix route missed ARCHIVED; fix #4
-        // now counts it as settled.
+        // Board-archived RENEWAL in-window: archive never completed payment, so this is
+        // not settled and the money horizon stays put.
         const b = await prisma.person.create({
             data: { email: `archived-${TAG4}@example.com`, name: 'Archived Renewal', isHouseholdLead: true, household: { create: { name: `Archived HH ${TAG4}` } } },
         });
@@ -230,7 +229,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         const bm = await prisma.orgMembership.create({ data: { householdId: archivedRenewalHouseholdId, status: 'ACTIVE' } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: bm.id, kind: 'RENEWAL', status: 'ARCHIVED', stageEnteredAt: now } });
 
-        // Control: a finished RENEWAL (ACTIVE) in-window is settled, as before.
+        // Control: a finished RENEWAL (ACTIVE) in-window is settled.
         const c = await prisma.person.create({
             data: { email: `renewalactive-${TAG4}@example.com`, name: 'Active Renewal', isHouseholdLead: true, household: { create: { name: `ActiveRenewal HH ${TAG4}` } } },
         });

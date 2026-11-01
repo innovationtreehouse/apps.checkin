@@ -3,7 +3,8 @@
  *
  * Admission and file-only coverage for the bulk-donation registry (#1280,
  * registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
- * except the in-kind decision, which admits FINANCE or BOARD. Ops (OPERATIONS,
+ * except the in-kind decision and the settings PATCH, which admit FINANCE or
+ * BOARD. Ops (OPERATIONS,
  * INVENTORY_MANAGER) reaches only the no-receipt in-kind entry routes, and never
  * sees a donor. A bucket approver (its owner or a treasurer) reaches only the
  * by-bucket read, and never sees a donor. Sysadmin, a plain session, an id-less
@@ -55,7 +56,9 @@ const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
 const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
 const QB_RESOLVES = endpoints.filter(e => e.endsWith('/qb-resolve'));
 const DETAILS = ['GET /api/donations/in-kind/receipt/[id]', 'GET /api/donations/in-kind/manual/[id]'];
-const financeWrites = writes.filter(e => !DECISIONS.includes(e));
+const SETTINGS_PATCH = 'PATCH /api/donations/settings';
+const SETTINGS = ['GET /api/donations/settings', SETTINGS_PATCH];
+const financeWrites = writes.filter(e => !DECISIONS.includes(e) && e !== SETTINGS_PATCH);
 const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e) && !QB_RESOLVES.includes(e));
 const OPS = [{ isOperations: true }, { isInventoryManager: true }];
 
@@ -80,10 +83,10 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 30 JSON routes (14 reads, 16 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(30);
-        expect(reads).toHaveLength(14);
-        expect(writes).toHaveLength(16);
+    it('registers 32 JSON routes (15 reads, 17 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(32);
+        expect(reads).toHaveLength(15);
+        expect(writes).toHaveLength(17);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
@@ -114,7 +117,7 @@ describe('donation registry — admission', () => {
         }
     });
 
-    it.each(DECISIONS)('%s admits FINANCE and BOARD', async endpoint => {
+    it.each([...DECISIONS, SETTINGS_PATCH])('%s admits FINANCE and BOARD', async endpoint => {
         for (const flags of [{ isFinance: true }, { isBoardMember: true }]) {
             signIn(7, flags);
             expect((await callJson(endpoint)).status).toBe(200);
@@ -269,8 +272,8 @@ describe('UploadedFile.fileBlob is file-only', () => {
     });
 });
 
-describe('in-kind decision, settle, qb-resolve and by-bucket routes never grant pii', () => {
-    it.each([...DECISIONS, SETTLE, ...QB_RESOLVES, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
+describe('in-kind decision, settle, qb-resolve, by-bucket and settings routes never grant pii', () => {
+    it.each([...DECISIONS, SETTLE, ...QB_RESOLVES, BY_BUCKET, ...SETTINGS])('%s: no view holds a pii token', endpoint => {
         const tokens = (getRoute(endpoint)?.orderedView ?? []).flatMap(([, t]) => [...t]);
         expect(tokens.length).toBeGreaterThan(0);
         expect(tokens.some(t => t.endsWith(':pii'))).toBe(false);

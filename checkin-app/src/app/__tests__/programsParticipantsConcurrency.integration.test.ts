@@ -2,14 +2,13 @@
  * @jest-environment node
  */
 /**
- * Concurrency regression test for POST /api/programs/[id]/participants.
+ * Concurrency test for POST /api/programs/[id]/participants.
  *
- * Capacity used to be checked against a `_count` read when the program was
- * loaded, then the enrollment was created with no lock between. N concurrent
- * enrolls for the last seat all read count==max-1, all passed, all inserted —
- * overfilling the program past maxParticipants.
+ * Checking capacity against a `_count` read at program load, with no lock before
+ * the create, lets N concurrent enrolls for the last seat all read count==max-1, all
+ * pass, all insert — overfilling the program past maxParticipants.
  *
- * The fix re-checks capacity under a Program-row FOR UPDATE lock INSIDE a
+ * The route re-checks capacity under a Program-row FOR UPDATE lock INSIDE a
  * transaction immediately before the create. This test has one household lead
  * enroll two household members concurrently into a 1-seat program and asserts
  * exactly one succeeds and the program is not overfilled.

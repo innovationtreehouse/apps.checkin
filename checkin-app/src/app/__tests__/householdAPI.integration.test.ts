@@ -203,7 +203,7 @@ describe('Household API Integration Tests', () => {
             expect(data.member).toBeDefined();
             expect(data.member.name).toBe('New Child');
 
-            // householdId is deliberately not on the wire (HOUSEHOLD_PEER_SELECT, M2
+            // householdId is deliberately not on the wire (HOUSEHOLD_PEER_SELECT,
             // PII minimization) — verify the attachment directly against the DB instead.
             const created = await prisma.person.findUnique({ where: { id: data.member.id } });
             expect(created?.householdId).toBe(householdId);

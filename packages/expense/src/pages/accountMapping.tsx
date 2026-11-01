@@ -29,7 +29,7 @@ const EMPTY = { category: "*", subcategory: "*", partNumber: "*", isDelayed: "an
 export default function AccountMappingPage() {
   const { isFinance } = useRoles();
   const [page, setPage] = useState(1);
-  const mappings = useLoad<Mapping[]>(paged("/account-mapping", page));
+  const mappings = useLoad<Mapping[]>(paged("/account-mapping", page), { keepPrevious: true });
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
   const [form, setForm] = useState(EMPTY);
 

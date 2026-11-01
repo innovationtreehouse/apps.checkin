@@ -172,8 +172,8 @@ order status transitions (cancellation/refund), and watermark advancement.
   knob to lean on.
 - **Stale-run reaper (built in).** On startup the handler relabels `sync_run` rows
   stuck in `RUNNING` past a staleness threshold to `ABANDONED` (a process killed by
-  timeout/OOM). This is cosmetic — it touches no watermark or data; the next scheduled
-  run self-heals via the watermark. Nothing is auto-reprojected.
+  timeout/OOM) and pushes a failure heartbeat for it. It touches no watermark or data;
+  the next scheduled run self-heals via the watermark. Nothing is auto-reprojected.
 - **Primary health signal: a freshness heartbeat,** not watermark lag. Alarm on
   `now − (latest COMPLETED sync_run.finishedAt)` exceeding a couple of cron intervals.
   This advances on every successful run, including empty ones, so it does **not**

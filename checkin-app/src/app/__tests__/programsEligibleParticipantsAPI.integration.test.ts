@@ -29,7 +29,7 @@ describe('Eligible Participants API Integration Tests', () => {
 
     const ENV_BEFORE = process.env.CHECKIN_ENV;
     beforeAll(async () => {
-        // The route now authenticates via authenticateRequest, whose local-kiosk
+        // The route authenticates via authenticateRequest, whose local-kiosk
         // fallback (CHECKIN_ENV=local) treats a cookieless request as kiosk. Pin to
         // 'dev' so unauthenticated stays unauthenticated (401), like registryAuthz.
         process.env.CHECKIN_ENV = 'dev';
@@ -47,7 +47,7 @@ describe('Eligible Participants API Integration Tests', () => {
             where: { personId: { in: existingUserIds } }
         });
 
-        // Memberships live on the household now; scope cleanup to this test's households.
+        // Memberships live on the household; scope cleanup to this test's households.
         await prisma.orgMembership.deleteMany({
              where: { householdId: { in: existingHouseholdIds } }
         });
@@ -82,7 +82,7 @@ describe('Eligible Participants API Integration Tests', () => {
         });
         commonId = commonUser.id;
 
-        // Create Active Member — membership now lives on the household (status ACTIVE).
+        // Create Active Member — membership lives on the household (status ACTIVE).
         const activeMember = await prisma.person.create({
             data: {
                 email: 'active-member-elig-api-test@example.com',
@@ -214,7 +214,7 @@ describe('Eligible Participants API Integration Tests', () => {
 
     // Helper function to mock Next.js App Router params
     const createParams = (id: number) => ({ params: Promise.resolve({ id: id.toString() }) });
-    // A REAL Request: the route now runs through the security handler(), which
+    // A REAL Request: the route runs through the security handler(), which
     // calls authenticateRequest(req) and reads req.headers — a bare {nextUrl}
     // mock crashes there. The route reads the query via new URL(req.url).
     const createReq = (id: number, search: string = '') => {

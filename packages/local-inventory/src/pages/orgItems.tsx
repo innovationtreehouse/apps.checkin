@@ -69,8 +69,8 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const [q] = useDebouncedValue(search.trim(), 300);
   const filter = new URLSearchParams({ ...(q ? { q } : {}), ...(unlocated ? { unlocated: "true" } : {}) });
   const order = new URLSearchParams({ sortBy, sortDir });
-  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`);
-  const count = useLoad<{ total: number }>(`/org-items/count?${filter}`);
+  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const count = useLoad<{ total: number }>(`/org-items/count?${filter}`, { keepPrevious: true });
   const locations = useLoad<LocationRef[]>("/locations");
   const names = useCatalogNames((rows.data ?? []).map((r) => r.gtin13));
 

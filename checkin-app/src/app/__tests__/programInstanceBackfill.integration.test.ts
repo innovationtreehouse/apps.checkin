@@ -3,7 +3,7 @@ import path from 'path';
 import prisma from '@/lib/prisma';
 
 /**
- * Phase-1 backfill (MB) of PROGRAM_INSTANCE_RESTRUCTURE.md against a populated
+ * ProgramInstance backfill against a populated
  * schema. The migration itself no-ops at global setup (empty DB), so this test
  * seeds real Program/Event rows, then runs the migration's OWN backfill SQL
  * (extracted verbatim between its markers — not a reimplementation) and asserts:

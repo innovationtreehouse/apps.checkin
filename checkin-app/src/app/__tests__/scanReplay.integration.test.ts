@@ -7,7 +7,7 @@
  * true`, and
  * replay must dedup, toggle with the original scan time, and park instead of
  * toggling when stale or out-of-order. The live attempt carries the same
- * clientEventId (D4 try-first) but no flag, so none of those guards apply to it.
+ * clientEventId but no flag, so none of those guards apply to it.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
@@ -120,7 +120,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     it('a fresh replay whose scannedAt is older than a later departure parks (out-of-order guard)', async () => {
         // Live check-in/check-out first, well past the 3s debounce -- each
         // RawBadgeLog row is backdated after being written since the debounce
-        // pre-read runs against real "now", not scannedAt (§2 D3). This
+        // pre-read runs against real "now", not scannedAt. This
         // isolates the out-of-order guard without tripping the debounce.
         await POST(scanReq({ participantId: member.id }));
         await prisma.rawBadgeLog.updateMany({ where: { personId: member.id }, data: { timestamp: new Date(Date.now() - 5000) } });
@@ -138,9 +138,9 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         expect(log?.reviewReason).toBe('out_of_order');
     });
 
-    // F7: a naive "most-recently-arrived visit" pick can miss a departedAt
+    // A naive "most-recently-arrived visit" pick can miss a departedAt
     // that belongs to an OLDER-arrived visit -- e.g. a same-day resolution
-    // (D7) writes a departedAt at resolution time on a visit that arrived
+    // writes a departedAt at resolution time on a visit that arrived
     // earlier than another visit's own arrival. The guard must compare the
     // true max across all of the participant's visit activity.
     it('parks on an older-arrived visit\'s newer departedAt, not just the latest-arrived visit (F7)', async () => {
@@ -204,10 +204,9 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         expect(after?.reviewedBy).toBe(keyholder.id);
     });
 
-    // #1347 PR-2 / Q10 — server-side DLQ ingest. A dead-lettered outbox row
-    // parks with a client_dead:<status> reviewReason and must surface in the
-    // unsynced-scans list PR-1 defines (reviewReason != null), without this
-    // test depending on PR-1's own route/query code.
+    // Server-side DLQ ingest. A dead-lettered outbox row parks with a
+    // client_dead:<status> reviewReason and must surface in the unsynced-scans list
+    // (reviewReason != null), without this test depending on that list's route code.
     it('a dead-lettered event parks with client_dead:<status> and surfaces in the unsynced-scans query shape', async () => {
         const scannedAt = new Date(Date.now() - 5 * 60_000);
         const res = await POST(scanReq({
@@ -222,7 +221,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         expect(log?.reviewReason).toBe('client_dead:404');
         expect(log?.timestamp.getTime()).toBe(scannedAt.getTime());
 
-        // PR-1's planned unsynced-scans query shape.
+        // The unsynced-scans query shape.
         const unsynced = await prisma.rawBadgeLog.findMany({
             where: { personId: member.id, reviewReason: { not: null } },
         });

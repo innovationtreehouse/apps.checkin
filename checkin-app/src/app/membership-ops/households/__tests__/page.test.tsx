@@ -305,7 +305,7 @@ describe("membership-ops/households page", () => {
       renderWithProviders(<AdminHouseholdsPage />);
       await screen.findByText("The Joneses");
 
-      // The gate is now visibility-only: only the Smiths' button renders — the
+      // The gate is visibility-only: only the Smiths' button renders — the
       // Joneses' (own household) is hidden entirely, not just disabled.
       expect(screen.getAllByRole("button", { name: "Grant for coming year" })).toHaveLength(1);
     });

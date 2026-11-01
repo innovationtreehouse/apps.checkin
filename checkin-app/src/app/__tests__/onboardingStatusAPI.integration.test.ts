@@ -4,7 +4,7 @@
 /**
  * Integration Tests for Onboarding Status API
  * Tests GET /api/profile/onboarding-status — in particular that youth
- * are never asked for a phone number (issue #169)
+ * are never asked for a phone number
  */
 
 import { GET } from '@/app/api/profile/onboarding-status/route';

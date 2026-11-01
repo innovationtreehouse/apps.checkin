@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -158,7 +159,7 @@ describe("correcting a receipt whose totals don't add up", () => {
 
   it("keeps a failed resubmit on screen, naming what was saved", async () => {
     mockApi.mockImplementation(async (path) => {
-      if (String(path).endsWith("/resubmit")) throw new Error("Receipt is not in validation_failed");
+      if (String(path).endsWith("/resubmit")) throw new HttpError("Receipt is not in validation_failed", 409);
       return {};
     });
     wrap();
@@ -185,7 +186,7 @@ describe("correcting a receipt whose totals don't add up", () => {
   });
 
   it("does not resubmit when a save fails", async () => {
-    mockApi.mockRejectedValue(new Error("Receipt total must be a number"));
+    mockApi.mockRejectedValue(new HttpError("Receipt total must be a number", 409));
     wrap();
     type("Receipt total", "26.50");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));

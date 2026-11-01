@@ -263,7 +263,7 @@ describe('Manual Attendance API closed entry into an empty building', () => {
     });
 });
 
-// AT3 §3: a household lead records a visit FOR a household member — the only
+// A household lead records a visit FOR a household member — the only
 // path by which a minor (who cannot self-serve) gets one entered at all. The
 // scope is the lead's own household, resolved server-side.
 describe('Manual Attendance API — household-lead insert for a member', () => {
