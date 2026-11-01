@@ -53,9 +53,9 @@ kiosk update** in GitHub Actions.
 
 The run summary records who forced what and where both tags were before.
 
-- A digest already on `kiosk-urgent` does not force again, and the run warns of
-  this. Going back to the image forced last time therefore waits for the nightly
-  check, unless `kioskctl deploy` is run over SSH.
+- Each run publishes the image under a digest of its own, so forcing the same image
+  twice swaps both times. Re-running a run does not force again, and a forced image
+  that failed is retried only by a new run.
 - The next release moves `kiosk-release` forward as usual. Re-running a withdrawn
   release's deploy publishes it again.
 
