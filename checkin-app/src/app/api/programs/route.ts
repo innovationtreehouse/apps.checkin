@@ -171,7 +171,8 @@ export async function GET(req: Request) {
     }
 }
 
-export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req, auth) => {
+// Creating a program names its lead, and only the Board assigns one.
+export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
 
     // Hoisted so the catch can name an orphaned Shopify product (created, but DB write failed) for manual cleanup.

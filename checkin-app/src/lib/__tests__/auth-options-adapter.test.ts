@@ -54,6 +54,7 @@ jest.mock('@/lib/prisma', () => ({
 }));
 
 jest.mock('@/lib/household/leads', () => ({ addHouseholdLead: jest.fn() }));
+jest.mock('@/lib/household/joinQuestion', () => ({ asksHouseholdQuestion: jest.fn().mockResolvedValue(false) }));
 
 // jest.setup.js globally mocks @/lib/auth-options to `{}`; unmock to get the real adapter.
 jest.unmock('@/lib/auth-options');

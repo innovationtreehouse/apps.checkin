@@ -1043,11 +1043,11 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
             expect(res.status).toBe(403);
             const data = await res.json();
-            expect(data.error).toBe('Forbidden: Only administrators can reassign Program Leaders');
+            expect(data.error).toBe('Forbidden: Only the Board can reassign Program Leaders');
         });
 
-        it('allows admins to reassign leadMentorId', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        it('allows the Board to reassign leadMentorId', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const req = new Request(`http://localhost:4000/api/programs/${validPublishProgramId}`, {
                 method: 'PATCH',
