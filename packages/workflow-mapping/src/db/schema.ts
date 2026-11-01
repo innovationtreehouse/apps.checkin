@@ -2,7 +2,6 @@ export type {
   ReceivedReceipt,
   ReceivedReceiptLineStatus as ReceivedReceiptLineStatusRow,
   WorkflowAuditLog as WorkflowAuditLogRow,
-  WorkflowSystemData,
 } from "../generated/prisma/client";
 
 // ── Enum arrays (runtime values used for validation) ──────────────────────────

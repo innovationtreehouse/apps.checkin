@@ -17,16 +17,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// Unused: nothing reads or writes it. Kept until no running release reads it.
-model WorkflowSystemData {
-  /// @sensitivity:public
-  id             Int @id
-  /// @sensitivity:internal
-  orgEventCursor Int @default(0) @map("org_event_cursor")
-
-  @@map("system_data")
-}
-
 // A catalog OrgEvent this library has applied (id = the catalog event id). Catch-up consumes any
 // event in neither this table nor WorkflowFailedOrgEvent.
 model WorkflowAppliedOrgEvent {
