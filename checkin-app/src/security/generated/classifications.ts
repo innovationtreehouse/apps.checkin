@@ -492,6 +492,7 @@ export const classifications = {
         resolvedAt: 'internal',
         resolutionNote: 'personal',
         detectedAt: 'internal',
+        evidence: 'internal',
     },
     BulkSend: {
         id: 'internal',

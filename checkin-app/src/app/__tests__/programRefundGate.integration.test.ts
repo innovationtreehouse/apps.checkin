@@ -113,8 +113,8 @@ describe('a refunded order never activates a program place', () => {
         expect(res.reversed).toBe(true);
         expect(res.activatedCount).toBe(0);
         expect(await statusOf(child)).toBe('PENDING');
-        const reopened = await prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId: oid, kind: 'REVERSED_BEFORE_ACTIVATION' } });
-        expect(reopened.status).toBe('OPEN');
+        const flag = await prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId: oid, kind: 'REVERSED_BEFORE_ACTIVATION' } });
+        expect(flag.status).toBe('RESOLVED');
     });
 
     it('an unrefunded order still activates', async () => {

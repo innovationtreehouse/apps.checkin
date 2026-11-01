@@ -31,14 +31,18 @@ interface ExceptionRef {
     programId?: number | null;
     personId?: number | null;
     severity?: Severity;
+    /** What the raiser sees on the order now; a resolved row reopens when it differs from what was stored. */
+    evidence?: string;
 }
 
 /** The board escalation a recorded exception owes, sent once its row has committed. */
 export type PaymentExceptionNotice = { kind: PaymentExceptionKind; severity: Severity; exceptionId: number };
 
 /**
- * Upsert a PaymentException, idempotent across daily runs. One open row per
- * (kind, order, person); a resolved row that re-detects reopens (the problem came back).
+ * Upsert a PaymentException, idempotent across daily runs. One row per (kind, order,
+ * person). A resolved row on an order reopens only when its stored evidence changes,
+ * so seeing the same condition again leaves the Board's resolution alone. A raise with
+ * no order is itself a new event (a denial, a Board click) and always reopens.
  * Returns the notice owed by a newly-opened, reopened or newly-critical row. Inside a
  * transaction, pass an orderless ref: a unique violation would abort the transaction.
  */
@@ -55,18 +59,26 @@ export async function recordPaymentException(db: DbClient, kind: PaymentExceptio
           });
 
     if (existing) {
-        if (existing.status !== "RESOLVED" && severity === "CRITICAL" && existing.severity !== "CRITICAL") {
-            await db.paymentException.update({ where: { id: existing.id }, data: { severity } });
-            return { kind, severity, exceptionId: existing.id };
-        }
+        const evidence = ref.evidence ?? existing.evidence;
         if (existing.status === "RESOLVED") {
+            const changed = !!ref.evidence && !!existing.evidence && ref.evidence !== existing.evidence;
+            if (orderId && !changed) {
+                // ponytail: a row with no stored evidence adopts the first it sees, so a further
+                // refund between its resolution and the next daily pass does not reopen it.
+                if (evidence !== existing.evidence) await db.paymentException.update({ where: { id: existing.id }, data: { evidence } });
+                return null;
+            }
             await db.paymentException.update({
                 where: { id: existing.id },
-                data: { status: "OPEN", severity, resolvedAt: null, resolvedById: null, resolutionNote: null, detectedAt: new Date() },
+                data: { status: "OPEN", severity, evidence, resolvedAt: null, resolvedById: null, resolutionNote: null, detectedAt: new Date() },
             });
             return { kind, severity, exceptionId: existing.id };
         }
-        return null; // already tracked and still open/acknowledged — nothing to do.
+        const escalated = severity === "CRITICAL" && existing.severity !== "CRITICAL";
+        if (escalated || evidence !== existing.evidence) {
+            await db.paymentException.update({ where: { id: existing.id }, data: { evidence, ...(escalated ? { severity } : {}) } });
+        }
+        return escalated ? { kind, severity, exceptionId: existing.id } : null;
     }
 
     try {
@@ -78,6 +90,7 @@ export async function recordPaymentException(db: DbClient, kind: PaymentExceptio
                 processId: ref.processId ?? null,
                 programId: ref.programId ?? null,
                 personId: ref.personId ?? null,
+                evidence: ref.evidence ?? null,
             },
         });
         return { kind, severity, exceptionId: created.id };
