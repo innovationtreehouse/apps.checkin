@@ -77,7 +77,12 @@ describe("mapServiceErrors", () => {
     const schema = z.object({ amount: z.number({ error: "amount must be a number" }) });
     const err = await mapServiceErrors(async () => schema.parse({ amount: "x" })).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ComponentHttpError);
-    expect(err).toMatchObject({ status: 400, message: "amount must be a number" });
+    expect(err).toMatchObject({ status: 400, message: "amount must be a number", fields: ["amount"] });
+  });
+
+  it("keeps a thrown ComponentHttpError's fields, and sets none on a ServiceError", () => {
+    expect(toHttpError(httpError(400, "bad", undefined, ["email"]))?.fields).toEqual(["email"]);
+    expect(toHttpError(new ServiceError(409, "taken"))?.fields).toBeUndefined();
   });
 });
 
@@ -103,6 +108,26 @@ describe("parseBody", () => {
 
   it("is a 400 with the first issue's message on a schema failure", async () => {
     await expect(parseBody(jsonRequest("{}"), schema)).rejects.toMatchObject({ status: 400, message: "name is required" });
+  });
+
+  it("names each refused top-level input once, and never a submitted value", async () => {
+    const nested = z.object({
+      name: z.string().min(3),
+      lines: z.array(z.object({ note: z.string() })),
+      extras: z.object({}).catchall(z.number()),
+    });
+    const secret = "secret-value";
+    const body = JSON.stringify({ name: "x", lines: [{ note: 1 }, { note: 2 }], extras: { [secret]: secret } });
+    const err = await parseBody(jsonRequest(body), nested).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 400, fields: ["name", "lines", "extras"] });
+    expect(JSON.stringify((err as ComponentHttpError).fields)).not.toContain(secret);
+  });
+
+  it("names nothing for an issue with an empty path or a numeric first segment", async () => {
+    const strict = await parseBody(jsonRequest('{"typo":1}'), z.object({}).strict()).catch((e: unknown) => e);
+    expect(strict).toMatchObject({ status: 400, fields: [] });
+    const list = await parseBody(jsonRequest('["a"]'), z.array(z.number())).catch((e: unknown) => e);
+    expect(list).toMatchObject({ status: 400, fields: [] });
   });
 
   it("is a 400 on a body that is not JSON", async () => {

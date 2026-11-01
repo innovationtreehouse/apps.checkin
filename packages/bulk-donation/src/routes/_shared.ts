@@ -1,6 +1,6 @@
 /** Audit, paging and capped-body helpers for the route factories. */
 import type { AuditContext } from "../workflows/disbursement.actor";
-import { httpError, isComponentHttpError, zodMessage } from "@checkin/component-kit";
+import { httpError, isComponentHttpError, zodHttpError } from "@checkin/component-kit";
 import type { ZodType } from "zod";
 import { getPrincipal } from "../runtime";
 
@@ -44,7 +44,7 @@ export async function parseBodyCapped<T>(req: Request, schema: ZodType<T>): Prom
     throw httpError(400, "Invalid JSON body");
   }
   const result = schema.safeParse(raw);
-  if (!result.success) throw httpError(400, zodMessage(result.error));
+  if (!result.success) throw zodHttpError(result.error);
   return result.data;
 }
 

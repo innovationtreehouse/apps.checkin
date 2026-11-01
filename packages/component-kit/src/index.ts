@@ -39,14 +39,16 @@ export class ComponentHttpError extends Error {
     public readonly status: number,
     message: string,
     public readonly code?: string,
+    /** Names of the refused inputs, never their submitted values. */
+    public readonly fields?: readonly string[],
   ) {
     super(message);
     this.name = "ComponentHttpError";
   }
 }
 
-export function httpError(status: number, message: string, code?: string): ComponentHttpError {
-  return new ComponentHttpError(status, message, code);
+export function httpError(status: number, message: string, code?: string, fields?: readonly string[]): ComponentHttpError {
+  return new ComponentHttpError(status, message, code, fields);
 }
 
 export function isServiceError(err: unknown): err is ServiceError {
@@ -59,6 +61,7 @@ export function isComponentHttpError(err: unknown): err is ComponentHttpError {
 
 interface ZodIssueLike {
   message: string;
+  path: readonly PropertyKey[];
 }
 
 function isZodError(err: unknown): err is Error & { issues: ZodIssueLike[] } {
@@ -71,13 +74,23 @@ export function zodMessage(error: { issues: readonly ZodIssueLike[] }, fallback 
 }
 
 /**
+ * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named: a
+ * deeper segment can be a submitted `z.record` key, so a schema whose top level is a
+ * `z.record` must not reach this with request input.
+ */
+export function zodHttpError(error: { issues: readonly ZodIssueLike[] }, fallback?: string): ComponentHttpError {
+  const names = error.issues.map((issue) => issue.path[0]).filter((name): name is string => typeof name === "string");
+  return httpError(400, zodMessage(error, fallback), undefined, [...new Set(names)]);
+}
+
+/**
  * The HTTP error an expected failure renders as: a ServiceError or ComponentHttpError keeps
  * its status and code, a ZodError is a 400. Anything else is null and stays an opaque 500.
  */
 export function toHttpError(err: unknown): ComponentHttpError | null {
   if (isComponentHttpError(err)) return err;
   if (isServiceError(err)) return httpError(err.status, err.message, err.code);
-  if (isZodError(err)) return httpError(400, zodMessage(err, "Invalid request"));
+  if (isZodError(err)) return zodHttpError(err, "Invalid request");
   return null;
 }
 
@@ -107,7 +120,7 @@ export async function readJson(req: Request): Promise<unknown> {
 
 export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   const result = schema.safeParse(await readJson(req));
-  if (!result.success) throw httpError(400, zodMessage(result.error));
+  if (!result.success) throw zodHttpError(result.error);
   return result.data;
 }
 

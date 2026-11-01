@@ -11,7 +11,7 @@ import { ApiResponseError } from "@/security/handler";
 /** The library failure as checkin's API error, or the error untouched for an opaque 500. */
 export function toApiResponseError(err: unknown): unknown {
   const http = toHttpError(err);
-  return http ? new ApiResponseError(http.status, http.message, http.code) : err;
+  return http ? new ApiResponseError(http.status, http.message, http.code, http.fields) : err;
 }
 
 export function componentRoute<C, R>(factory: (ctx: C) => Promise<R>): (ctx: C) => Promise<R> {
