@@ -30,7 +30,7 @@ the endpoint behind it answers anyone who asks.
 
 - **Any address the app generates uses a domain the organisation controls, or a
   reserved non-routable one.** This holds for addresses nobody will ever read —
-  a tombstone on a merged record still resolves somewhere, and somewhere is
+  an address left on a merged record still resolves somewhere, and somewhere is
   someone else's mail server.
 
 A domain choice is invisible in review. A plausible-looking name is registrable
