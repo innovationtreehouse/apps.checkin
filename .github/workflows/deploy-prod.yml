@@ -382,3 +382,80 @@ jobs:
               echo "- The app rolls out before s-read: if the app step passed, prod runs the new image and only s-read needs a rerun; otherwise prod still runs the previous image."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # Runs only after a successful rollout, so kiosks never move ahead of the server.
+  # A failure here leaves the app live and kiosks on their current image; re-run
+  # this job to retry.
+  publish-kiosk:
+    name: Publish kiosk image
+    needs: [deploy]
+    runs-on: ubuntu-24.04-arm  # native ARM64 — evdev compiles during the build
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # ECR Public login for the base image pull
+    concurrency:
+      group: kiosk-tags
+      cancel-in-progress: false
+    env:
+      KIOSK_IMAGE: ghcr.io/innovationtreehouse/kiosk
+      KIOSK_RELEASE_TAG: kiosk-release  # matches client/host/host.conf.example
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        run: |
+          set -euo pipefail
+          # Provenance makes the image an index, whose digest survives a tag move
+          # with imagetools. Attestations need a builder other than the default.
+          docker buildx create --use
+          docker buildx build client/ \
+            --platform linux/arm64 \
+            --provenance=mode=min \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.version=$TAG" \
+            --tag "$KIOSK_IMAGE:$TAG" \
+            --metadata-file "$RUNNER_TEMP/kiosk-build.json" \
+            --push
+          DIGEST=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/kiosk-build.json")
+          if [[ ! $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Build reported no image digest"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Move the release tag
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" "$KIOSK_IMAGE@$DIGEST"
+          MOVED=$(docker buildx imagetools inspect "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" --format '{{.Manifest.Digest}}')
+          if [ "$MOVED" != "$DIGEST" ]; then
+            echo "::error::$KIOSK_RELEASE_TAG is at $MOVED, expected $DIGEST"
+            exit 1
+          fi
+          {
+            echo "### Kiosk image published"
+            echo "- \`$KIOSK_IMAGE:$TAG\`"
+            echo "- Digest: \`$DIGEST\`"
+            echo "- \`$KIOSK_RELEASE_TAG\` moved; kiosks update overnight."
+          } >> "$GITHUB_STEP_SUMMARY"
