@@ -13,6 +13,7 @@ import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { specTrace } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
+import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
 
 // docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
@@ -199,7 +200,9 @@ export const POST = withKiosk(
         // A dead-lettered read that names no person can never project. It still
         // lands in the review queue -- the scan is never discarded -- keyed by
         // the raw value read, so the kiosk can stop retrying it.
-        const wire = { signedRequest: true };
+        // Read after the scan's transaction, so it never waits on a second connection while holding one.
+        const respond = async (result: ScanResult, closeRefused = false): Promise<Response> =>
+            toResponse(result, { signedRequest: true, closeRefused, lastNightlyCloseAt: await lastNightlyCloseAt() });
         const parkUnresolvable = async (): Promise<Response> => {
             const raw = body.participantId;
             const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
@@ -217,10 +220,10 @@ export const POST = withKiosk(
             } catch (err) {
                 if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
                 specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "duplicate" });
-                return toResponse({ kind: "duplicate" }, wire);
+                return respond({ kind: "duplicate" });
             }
             specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "parked", reason: "unresolvable" });
-            return toResponse({ kind: "parked", reason: "review" }, wire);
+            return respond({ kind: "parked", reason: "review" });
         };
         if (participantId === null) {
             return await parkUnresolvable();
@@ -546,7 +549,7 @@ export const POST = withKiosk(
             if (clientEventId && uniqueViolationFields(err)?.includes("clientEventId")) {
                 specTrace("ScanCommit", { slot, p: participant.id, cid: clientEventId, kind: "duplicate" });
                 await executePendingCloses();
-                return toResponse({ kind: "duplicate" }, wire);
+                return respond({ kind: "duplicate" });
             }
             throw err;
         }
@@ -569,7 +572,7 @@ export const POST = withKiosk(
 
         // A live close from a badge that is not a keyholder went through as an
         // ordinary scan; the kiosk is told why the building did not close.
-        return await toResponse(result, { ...wire, closeRefused });
+        return await respond(result, closeRefused);
     } finally {
         // Errors propagate to withKiosk's top-level catch/500; this finally only
         // records the metric. Times the handler body (post-auth), not rate-limit.

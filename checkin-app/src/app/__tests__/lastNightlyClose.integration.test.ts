@@ -86,6 +86,19 @@ describe('lastNightlyCloseAt (real DB)', () => {
         expect(await lastNightlyCloseAt()).not.toBe(lastNight.toISOString());
     });
 
+    it('an overlapping run keeps its close held back after the earlier run ends', async () => {
+        const lastNight = new Date(Date.now() - 24 * HOUR);
+        await nightly(lastNight);
+        let endFirst = () => {};
+        const first = duringNightlyRun(() => new Promise<void>((resolve) => { endFirst = resolve; }));
+        await duringNightlyRun(async () => {
+            await nightly(new Date());
+            endFirst();
+            await first;
+            expect(await lastNightlyCloseAt()).toBe(lastNight.toISOString());
+        });
+    });
+
     it('a run that throws stops holding the close back', async () => {
         const recorded = new Date();
         await expect(duringNightlyRun(async () => {
