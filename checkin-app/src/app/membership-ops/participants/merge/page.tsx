@@ -178,50 +178,61 @@ export default function MergeParticipants() {
     }
   }
 
-  // Picking (or un-picking) either side re-runs the analysis for the pair.
+  // Picking (or un-picking) either side drops the analysis; the effect below re-runs it.
   const pick = (a: ParticipantMergeView | null, b: ParticipantMergeView | null) => {
     setPA(a);
     setPB(b);
-    if (a && b) {
-      setLoading(true);
-      fetch(`/api/membership-ops/participants/merge/analyze?a=${a.id}&b=${b.id}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.participants) {
-            setAnalyzedA(d.participants[0]);
-            setAnalyzedB(d.participants[1]);
-            setMembershipBlock(d.membershipBlock ?? null);
-            setBgNotices(d.bgNotice ?? null);
-
-            // Recommend keeping the one with more activity or better data
-            const score = (p: ParticipantMergeView) => {
-              let s = 0;
-              s += p._count.visits * 2;
-              s += p._count.rawBadgeLogs;
-              s += p._count.programParticipants * 5;
-              s += p._count.programVolunteers * 5;
-              if (p.email) s += 10;
-              if (p.phone) s += 10;
-              if (p.googleId) s += 20; // real account
-              return s;
-            };
-            const sA = score(d.participants[0]);
-            const sB = score(d.participants[1]);
-
-            setKeepId(sA >= sB ? a.id : b.id);
-          }
-        })
-        .catch(() => setError("Failed to analyze participants"))
-        .finally(() => setLoading(false));
-    } else {
-      setAnalyzedA(null);
-      setAnalyzedB(null);
-      setKeepId(null);
-      setPreviewMode(false);
-      setMembershipBlock(null);
-      setBgNotices(null);
-    }
+    setAnalyzedA(null);
+    setAnalyzedB(null);
+    setKeepId(null);
+    setPreviewMode(false);
+    setMembershipBlock(null);
+    setBgNotices(null);
+    setLoading(!!(a && b));
   };
+
+  // Only the selected pair's response lands, so what is on screen is always the
+  // current selection, and a merge deletes the record the operator was shown.
+  const aId = pA?.id;
+  const bId = pB?.id;
+  useEffect(() => {
+    if (aId === undefined || bId === undefined) return;
+    let selected = true;
+    fetch(`/api/membership-ops/participants/merge/analyze?a=${aId}&b=${bId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (selected && d.participants) {
+          setAnalyzedA(d.participants[0]);
+          setAnalyzedB(d.participants[1]);
+          setMembershipBlock(d.membershipBlock ?? null);
+          setBgNotices(d.bgNotice ?? null);
+
+          // Recommend keeping the one with more activity or better data
+          const score = (p: ParticipantMergeView) => {
+            let s = 0;
+            s += p._count.visits * 2;
+            s += p._count.rawBadgeLogs;
+            s += p._count.programParticipants * 5;
+            s += p._count.programVolunteers * 5;
+            if (p.email) s += 10;
+            if (p.phone) s += 10;
+            if (p.googleId) s += 20; // real account
+            return s;
+          };
+          const sA = score(d.participants[0]);
+          const sB = score(d.participants[1]);
+
+          setKeepId(sA >= sB ? aId : bId);
+        }
+      })
+      .catch(() => {
+        if (selected) setError("Failed to analyze participants");
+      })
+      .finally(() => {
+        if (selected) setLoading(false);
+      });
+    return () => { selected = false; };
+  }, [aId, bId]);
 
   if (authLoading) {
     return <PageLoader />;
@@ -239,8 +250,8 @@ export default function MergeParticipants() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keepId,
-          mergeId: keepId === pA?.id ? pB?.id : pA?.id,
+          keepId: keepParticipant?.id,
+          mergeId: mergeParticipant?.id,
           fieldChoices,
           ...(emailChangeReason.trim() && { emailChangeReason }),
         })
