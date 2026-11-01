@@ -27,7 +27,7 @@ const BUCKETS: OwnerInfo[] = [
   { id: 2, name: "Shop", archivedAt: null, quickBooksClassId: "C2" },
 ];
 const ACTOR = { actorUserId: FINANCE, actorUsername: "finance", correlationId: null };
-const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true };
+const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true, confirmGoodsReceived: true };
 
 interface PostedJournal {
   TxnDate: string;
