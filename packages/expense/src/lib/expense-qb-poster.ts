@@ -291,7 +291,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     const held = await postingHold(tx, current);
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
-      // A closed expense takes no further sign-off or decision, so only finance can clear its hold.
+      // A closed expense takes no further sign-off or decision, so finance has to be told.
       if (current.state === "qb_complete") await flagHeld(tx, expenseId, `closed but not posted: ${held}`);
       return "waiting";
     }

@@ -438,6 +438,12 @@ Things the app takes as true because they are handled outside it.
   household or role does not undo it.
   [Decision]
 
+- Whether an expense needs a Board seat or the Board's approval is settled when
+  it closes, using the facts of that moment. If the person reimbursed later
+  loses their membership, or the Board-review total is later lowered, the expense
+  still reaches the books and needs no new signature or approval.
+  [Decision — owner ruling 2026-10-31]
+
 - Someone who has already signed an expense and then joins the household of the
   submitter or the person reimbursed keeps their signature, and the expense
   still reaches the books; the app does not check the signers again at booking.
