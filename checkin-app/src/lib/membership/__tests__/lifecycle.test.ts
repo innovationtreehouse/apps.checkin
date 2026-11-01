@@ -109,22 +109,28 @@ describe('grantableApplicationWhere / settledThisCycleWhere', () => {
         // year exactly as a renewer does, so no kind clause. Paid and waiting on the
         // board's clearance is settled money too. ARCHIVED (closed) is unpaid by rule
         // and must not extend a horizon.
-        const settledSince = new Date('2026-06-01T00:00:00.000Z');
-        expect(settledThisCycleWhere(settledSince)).toEqual({
+        expect(settledThisCycleWhere(2026)).toEqual({
             OR: [
                 { status: 'ACTIVE' },
                 { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } },
             ],
-            stageEnteredAt: { gte: settledSince },
+            appliesToYear: 2026,
         });
     });
 
     test('handledThisCycleWhere (sweep) additionally counts ARCHIVED — board already closed this cycle', () => {
         const windowStart = new Date('2026-06-01T00:00:00.000Z');
-        expect(handledThisCycleWhere(windowStart)).toEqual({
-            status: { in: ['ACTIVE', 'ARCHIVED'] },
-            stageEnteredAt: { gte: windowStart },
+        expect(handledThisCycleWhere(2026, windowStart)).toEqual({
+            OR: [
+                { status: 'ACTIVE', appliesToYear: 2026 },
+                { status: 'ARCHIVED', stageEnteredAt: { gte: windowStart } },
+            ],
         });
+    });
+
+    test('no live year matches no row, never the rows with no year', () => {
+        expect(settledThisCycleWhere(null).appliesToYear).toEqual({ in: [] });
+        expect(handledThisCycleWhere(null, new Date(0)).OR).toContainEqual({ status: 'ACTIVE', appliesToYear: { in: [] } });
     });
 });
 

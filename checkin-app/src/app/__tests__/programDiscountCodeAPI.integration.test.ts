@@ -115,7 +115,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         settledHouseholdId = settled.householdId;
         const settledMembership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: settledHouseholdId } });
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: settledMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date() },
+            data: { orgMembershipId: settledMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(), appliesToYear: boundary.getUTCFullYear() },
         });
 
         // A youth in the settled household — not its lead.

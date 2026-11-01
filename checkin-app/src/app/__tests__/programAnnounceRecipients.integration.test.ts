@@ -15,7 +15,7 @@ jest.mock('@/lib/email', () => ({
 }));
 
 import { notifyNewProgramAnnounced } from '@/lib/notifications';
-import { membershipYearCycle } from '@/lib/membership/renewal';
+import { membershipYearCycle, liveMembershipYear } from '@/lib/membership/renewal';
 import { sendEmail } from '@/lib/email';
 import prisma from '@/lib/prisma';
 
@@ -143,12 +143,11 @@ describe('notifyNewProgramAnnounced recipient set (covered-member audience)', ()
                 create: { id: 1, orgMembershipYearBoundary: AUG1 },
                 update: { orgMembershipYearBoundary: AUG1 },
             });
-            // Settle the covered household for the live year (paid now ⇒ on or after
-            // settledSince in either season); without a paid process it has bought
+            // Settle the covered household for the live year; without a paid process it has bought
             // nothing and reads as lapsed once the boundary passes.
             await prisma.orgMembershipProcess.create({
                 data: {
-                    kind: 'INITIAL', status: 'ACTIVE', paidAt: new Date(), stageEnteredAt: new Date(),
+                    kind: 'INITIAL', status: 'ACTIVE', paidAt: new Date(), stageEnteredAt: new Date(), appliesToYear: liveMembershipYear(AUG1, new Date()),
                     orgMembership: { connect: { householdId: (await prisma.household.findFirstOrThrow({ where: { name: `Covered HH ${TAG}` }, select: { id: true } })).id } },
                 },
             });

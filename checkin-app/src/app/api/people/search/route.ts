@@ -8,7 +8,7 @@ import { rolesToFlags } from "@/lib/roles";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { leaderAgeCutoff } from "@/lib/programAge";
-import { membershipYearCycle, membershipYearCycleForLabel, MAX_DATE } from "@/lib/membership/renewal";
+import { membershipYearCycle, membershipYearCycleForLabel } from "@/lib/membership/renewal";
 
 export const dynamic = 'force-dynamic';
 
@@ -35,20 +35,14 @@ export const GET = withAuth(
                 if (!settings?.orgMembershipYearBoundary) {
                     return NextResponse.json({ years: [], current: null });
                 }
-                const boundary = settings.orgMembershipYearBoundary;
-                const current = membershipYearCycle(boundary, new Date());
+                const current = membershipYearCycle(settings.orgMembershipYearBoundary, new Date());
                 // Look back 5 years from the current cycle.
                 const currentEndYear = parseInt(current.label.split('-')[1], 10);
                 const years: string[] = [];
                 for (let end = currentEndYear; end >= currentEndYear - 5; end--) {
                     const label = `${end - 1}-${end}`;
-                    const cycle = membershipYearCycleForLabel(boundary, label);
-                    if (!cycle) continue;
                     const count = await prisma.orgMembershipProcess.count({
-                        where: {
-                            status: 'ACTIVE',
-                            stageEnteredAt: { gte: cycle.settledSince, lt: cycle.settledBefore },
-                        },
+                        where: { status: 'ACTIVE', appliesToYear: end - 1 },
                     });
                     if (count > 0) years.push(label);
                 }
@@ -72,14 +66,12 @@ export const GET = withAuth(
                         ? membershipYearCycleForLabel(settings.orgMembershipYearBoundary, requestedYear)
                         : membershipYearCycle(settings.orgMembershipYearBoundary, new Date()))
                     : null;
-                // A household earns `year` by settling THIS cycle, not by being ACTIVE —
+                // A household earns `year` by buying that year, not by being ACTIVE —
                 // nothing revokes a membership at the boundary, so ACTIVE outlives the
-                // year it paid for. No `kind` filter (an INITIAL settled this cycle has
-                // paid for it too) and no ARCHIVED, matching lib/outreach/recipients.
-                // No boundary ⇒ the sentinel matches nothing, so nobody gets a year.
-                const settledBefore = cycle && 'settledBefore' in cycle ? cycle.settledBefore as Date : undefined;
-                const stageFilter: { gte: Date; lt?: Date } = { gte: cycle?.settledSince ?? MAX_DATE };
-                if (settledBefore) stageFilter.lt = settledBefore;
+                // year it paid for. No `kind` filter (an INITIAL has paid for it too) and
+                // no ARCHIVED, matching lib/outreach/recipients. With no year to compare,
+                // the empty list matches nothing, so nobody gets a year.
+                const openingYear = cycle ? Number(cycle.label.split('-')[0]) : null;
                 const members = await prisma.person.findMany({
                     // No sysadmin logins: those exist for remote system management and
                     // never wear a badge, so they neither print by default nor count
@@ -97,7 +89,7 @@ export const GET = withAuth(
                                         processes: {
                                             where: {
                                                 status: 'ACTIVE',
-                                                stageEnteredAt: stageFilter,
+                                                appliesToYear: openingYear ?? { in: [] },
                                             },
                                             select: { id: true },
                                             take: 1,
@@ -109,8 +101,8 @@ export const GET = withAuth(
                     },
                 });
                 // Ops sees `year`: Operations prints badges, so it has to see which
-                // households renewed. It derives from OrgMembershipProcess.status and
-                // stageEnteredAt (both @sensitivity:internal) but exposes only the printed
+                // households renewed. It derives from OrgMembershipProcess.status
+                // (@sensitivity:internal) and appliesToYear but exposes only the printed
                 // year string — no process row, no dates, no payment detail.
                 return NextResponse.json({
                     people: members.map(m => ({

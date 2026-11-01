@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
@@ -36,8 +36,7 @@ export async function computeRecipientSnapshot(audience: Audience, now = new Dat
     // membershipValidThrough and households-ops use), so a renewed household is left
     // alone after the boundary too. No boundary ⇒ nobody is settled.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const cycle = settings?.orgMembershipYearBoundary ? membershipYearCycle(settings.orgMembershipYearBoundary, now) : null;
-    const settledSince = cycle?.settledSince ?? MAX_DATE;
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, now);
 
     const [leadsWithoutEmail, leads] = await Promise.all([
         prisma.person.count({ where: { isHouseholdLead: true, email: null, ...LIVE_PERSON, ...NOT_DENIED } }),
@@ -57,7 +56,7 @@ export async function computeRecipientSnapshot(audience: Audience, now = new Dat
                                 processes: {
                                     where: {
                                         OR: [
-                                            settledThisCycleWhere(settledSince),
+                                            settledThisCycleWhere(liveYear),
                                             { status: { in: [...IN_FLIGHT_STATUSES] } },
                                         ],
                                     },
