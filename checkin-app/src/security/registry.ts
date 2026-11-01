@@ -928,12 +928,12 @@ defineRoute({
 });
 
 // Membership settings singleton (dues, year boundary, Shopify variant ids —
-// internal tier) — admin surface, full row.
+// internal tier) and the per-year variant rows — admin surface, full rows.
 defineRoute({
     endpoint: 'GET /api/settings/membership',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'settings',
-    returns: ['BoardSettings'],
+    returns: ['BoardSettings', 'MembershipYearVariant'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
