@@ -3,11 +3,11 @@
  */
 /**
  * Unit tests for the membership lifecycle definition (lib/membership/lifecycle).
- * Pure — no DB. Proves the anti-drift guarantees the four fixes rely on:
+ * Pure — no DB. Proves the anti-drift guarantees:
  *   - awaitingBgReview.has (client predicate) ≡ awaitingBgReview.where (server
- *     Prisma fragment) across the full status × flags matrix (fix #1);
+ *     Prisma fragment) across the full status × flags matrix;
  *   - grantableRenewalWhere / settledThisCycleWhere emit the exact fragments the
- *     route + guard + sweep consume (fix #3/#4);
+ *     route + guard + sweep consume;
  *   - isLegalTransition covers the machine’s edges; reachability flags the legacy
  *     RENEWAL_PENDING_BG as unreachable;
  *   - the local ProcessStatus/ProcessKind unions stay in lockstep with the Prisma
@@ -39,7 +39,7 @@ import {
 } from '@/lib/membership/lifecycle';
 import { assertEnumParity, reachability } from '@/lib/lifecycle';
 
-// ── fix #1: awaitingBgReview — has ≡ where on the full matrix ───────────────────
+// ── awaitingBgReview — has ≡ where on the full matrix ───────────────────
 
 /**
  * Interpret awaitingBgReview.where against a row — the server-side semantics — so
@@ -97,7 +97,7 @@ describe('awaitingBgReview', () => {
     });
 });
 
-// ── fix #3 / #4: renewal where builders ────────────────────────────────────────
+// ── renewal where builders ────────────────────────────────────────
 
 describe('grantableRenewalWhere / settledThisCycleWhere', () => {
     test('grantableRenewalWhere = payable renewal, NOT bg-gated (fix #3, behavior (a))', () => {
@@ -130,7 +130,7 @@ describe('grantableRenewalWhere / settledThisCycleWhere', () => {
     });
 });
 
-// ── fix #2: in-flight lists ────────────────────────────────────────────────────
+// ── in-flight lists ────────────────────────────────────────────────────
 
 describe('IN_FLIGHT lists', () => {
     test('INITIAL is the 5 open INITIAL statuses', () => {
@@ -251,7 +251,7 @@ describe('isLegalTransition covers §5', () => {
     });
 
     // GUARD: the restore set and the transition table differ by one status on purpose.
-    // RENEWAL_PENDING_BG is restorable (rows closed under the older rule may hold it,
+    // RENEWAL_PENDING_BG is restorable (closed rows may hold it,
     // migration 20260806160000 backfills it) but declaring the edge would make an
     // unreachable status reachable and hide machineSpecs.ts's unreachable report.
     test('GUARD: the restore set is the closable set plus the legacy closed-from steps and status, and nothing else', () => {
@@ -263,7 +263,7 @@ describe('isLegalTransition covers §5', () => {
     });
 
     test('rejects undeclared edges', () => {
-        // The external advance always opens payment — an intake note no longer holds it.
+        // The external advance always opens payment — an intake note does not hold it.
         expect(isLegalTransition('PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW')).toBe(false);
         expect(isLegalTransition('INTAKE', 'ACTIVE')).toBe(false);
         expect(isLegalTransition('ACTIVE', 'PENDING_PAYMENT')).toBe(false);

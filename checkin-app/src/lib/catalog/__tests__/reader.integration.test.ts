@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X3/X8/X10 bindings: the host's catalog reader, bound by each consumer's configureRuntime(),
+ * The host's catalog reader, bound by each consumer's configureRuntime(),
  * reading a real global-catalog database migrated from its committed migrations, and
  * workflow-mapping's catalog submissions writing to it. The
  * last tests point the catalog at a missing database to show the display reads fall

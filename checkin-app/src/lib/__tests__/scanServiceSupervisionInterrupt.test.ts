@@ -1,5 +1,5 @@
 /**
- * The departure interrupt ladder (#1436). Drives the REAL supervising-adult test
+ * The departure interrupt ladder. Drives the REAL supervising-adult test
  * through processCheckout, so the two stay wired together:
  *
  *   third supervising adult leaves (two remain) → warning, checkout proceeds
@@ -116,9 +116,7 @@ describe("rung 2 — the next supervising adult leaves", () => {
     });
 
     it("confirms and departs on a second badge just 1s after the warning (#1347 PR-0)", async () => {
-        // The route's debounce used to swallow exactly this scan; the ladder
-        // itself was never the problem -- it accepts any stamp inside the
-        // window, however close to the warning.
+        // The ladder accepts any stamp inside the window, however close to the warning.
         const { res, body } = await checkout([10, 20], new Date(Date.now() - 1_000));
 
         expect(res.status).toBe(200);

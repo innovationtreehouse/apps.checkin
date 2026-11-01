@@ -2,11 +2,11 @@
  * @jest-environment node
  */
 /**
- * Unit test for the H2 fix in activate() (prisma mocked, no DB): a Shopify
+ * Unit test for the variant check in activate() (prisma mocked, no DB): a Shopify
  * payment (opts.via === "payment") must actually contain the membership
  * product (its Shopify variant) before a PENDING_PAYMENT process activates.
  *   - no membership variant in the order -> NOT activated, no paidAt, outcome no_item (raised by the caller).
- *   - membership variant present         -> activates as before (status ACTIVE, membership ACTIVE).
+ *   - membership variant present         -> activates (status ACTIVE, membership ACTIVE).
  *   - a "manual" (board) activation never had an order to check, so it's exempt regardless.
  *
  * Also covers the activation email's INITIAL/RENEWAL split: a renewing household

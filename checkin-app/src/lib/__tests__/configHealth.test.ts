@@ -2,7 +2,7 @@ import { getConfigHealth, openConfigIssues, type ConfigCheck } from "@/lib/confi
 
 // config.ts reads process.env live through getters, so these tests just set/clear
 // env vars — no module mocking needed. CHECKIN_ENV is the single fuse for the
-// mocks (NODE_ENV was eliminated as a fuse, #951); CHECKIN_ENV drives prod.
+// mocks and drives prod.
 
 const ZOHO_KEYS = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN"];
 // The mirror check reads a RESOLVED url, so BOTH of its inputs have to be cleared:
