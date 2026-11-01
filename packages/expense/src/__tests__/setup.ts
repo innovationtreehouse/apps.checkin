@@ -13,6 +13,7 @@ afterEach(async () => {
   await db.expenseAuditLog.deleteMany();
   await db.expenseHold.deleteMany();
   await db.expenseEvent.deleteMany();
+  await db.expenseOutcomeNotice.deleteMany();
   await db.expense.deleteMany();
   await db.accountMapping.deleteMany();
   await db.expenseOrgSettings.deleteMany();

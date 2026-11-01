@@ -111,6 +111,21 @@ Things the app takes as true because they are handled outside it.
   reimbursed sees the same for a receipt someone else uploaded for them.
   [Decision — owner]
 
+- When an expense closes with a rejected line, or a reimbursement is signed off
+  and sent to the books, the receipt's uploader and the person reimbursed each
+  get one email naming the retailer and date and linking to the receipt. A card
+  charge's sign-off, a backfill, and an approver's exception send none. Neither
+  email names the other person, and neither carries a line's note or the total.
+  [Decision — owner ruling 2026-10-31]
+
+- A person may turn the receipt and reimbursement emails off; turning off all
+  email also stops them. They are on until turned off. Only a live person with
+  a verified sign-in email is emailed.
+  [Decision — owner ruling 2026-10-31; *Principle: fail closed*]
+
+- An outcome email carries only what its recipient's own receipt pages show.
+  [Decision — *Principle: least privilege*]
+
 - Nobody takes a step on a receipt they are conflicted on if they could use it
   to their own benefit or to hide or clear their own spending. A person is
   conflicted when they, or someone in their household, uploaded the receipt or

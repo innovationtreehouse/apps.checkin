@@ -35,7 +35,7 @@ describe('GET /api/cron/qbo-posting', () => {
         create = jest.fn().mockResolvedValue({});
         prisma.cronRunLog.create = create;
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
-        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound' });
+        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound', outcomeNotices: { sent: 0, failed: 0 } });
         jest.mocked(runDonationDepositHandOver).mockResolvedValue('unbound');
         jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
         jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: 'unbound' });

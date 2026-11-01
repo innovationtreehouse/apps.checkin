@@ -7,7 +7,8 @@ import { runDonationDepositHandOver, runInKindQbPosting } from "@checkin/bulk-do
 import { drainIncomeOutbox, runIncomeOrphanSweep } from "@checkin/income";
 
 /**
- * Daily QuickBooks posting: expense's step (stranded recovery, the outbox drain, the drift check),
+ * Daily QuickBooks posting: expense's step (stranded recovery, the outbox drain, the drift check, the
+ * retry of outcome emails still owed),
  * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the

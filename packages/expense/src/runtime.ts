@@ -13,6 +13,7 @@ import {
   type CatalogReader,
   type ExpenseAlerts,
   type OrgIdentity,
+  type OutcomeMail,
   type Outbound,
   type OwnerDirectory,
   type PeopleDirectory,
@@ -45,6 +46,8 @@ export interface ExpenseConfig {
   quickbooks?: Partial<QuickBooksPorts>;
   /** The host's outbound gateway; unbound, every outbound send throws. */
   outbound?: Outbound;
+  /** Unset means outcome emails wait unsent. */
+  outcomeMail?: OutcomeMail;
 }
 
 export interface ExpenseRuntime {
@@ -57,6 +60,7 @@ export interface ExpenseRuntime {
   people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
   outbound: Outbound;
+  outcomeMail?: OutcomeMail;
 }
 
 export const expenseRuntime = defineRuntime<ExpenseRuntime, { id: number }>("expense");
@@ -78,6 +82,7 @@ export function configureExpense(config: ExpenseConfig): void {
       posting: config.quickbooks?.posting ?? (async () => null),
     },
     outbound: config.outbound ?? inertOutbound,
+    outcomeMail: config.outcomeMail,
   });
 }
 
