@@ -220,7 +220,9 @@ before being auto-withdrawn. The cron sweep (`GET /api/cron/scholarship-grace-ex
 the past, then auto-withdraws each one (reusing release path (a) — semantically, expiry
 *is* auto-withdrawal + seat restore) and audit-logs with a distinct
 `reason: "scholarship_grace_expired"` context so it reads differently from a manual
-withdrawal in the audit trail. Each row is processed independently (a per-row failure
+withdrawal in the audit trail. The delete repeats the sweep's query as its own condition,
+so a row that was paid, approved, re-applied for or removed after the select is skipped:
+it stays as it is, with no +1 and no audit entry. Each row is processed independently (a per-row failure
 doesn't block the rest of the sweep), and the sweep never touches non-`PENDING` rows —
 an approved (`ACTIVE`) participant's hold was already consumed, not left outstanding, so
 it can never match this query regardless of how old `paymentPlanDeniedAt` is.
