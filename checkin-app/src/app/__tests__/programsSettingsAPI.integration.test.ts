@@ -282,7 +282,7 @@ describe('Program Settings API Integration Tests', () => {
              expect(after?.maxParticipants).toBe(before?.maxParticipants);
         });
 
-        it('should allow editing maxAge after creation (regression: was non-updatable)', async () => {
+        it('should allow editing maxAge after creation', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}`, {

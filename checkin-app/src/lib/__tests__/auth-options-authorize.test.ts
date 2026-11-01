@@ -218,7 +218,7 @@ describe('persona-mint authorize() glue', () => {
         expect(detail).toBe('jane@example.com'); // persona is the detail, not the actor
     });
 
-    it('impersonate mode only resolves @example.com personas, even for a caller that passes evaluateMint (L2)', async () => {
+    it('impersonate mode only resolves @example.com personas, even for a caller that passes evaluateMint', async () => {
         mockGetToken.mockResolvedValue(ORG_CALLER);
 
         // Success: an @example.com persona is found via the id+email-suffix filter.

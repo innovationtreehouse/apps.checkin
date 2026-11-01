@@ -126,7 +126,7 @@ describe('isYouth', () => {
     expect(isYouth('', { unknownIs: 'adult' })).toBe(false);
   });
 
-  it('unknown DOB fails closed when the caller opts in (#300)', () => {
+  it('unknown DOB fails closed when the caller opts in', () => {
     expect(isYouth(null, { unknownIs: 'youth' })).toBe(true);
     expect(isYouth(undefined, { unknownIs: 'youth' })).toBe(true);
     // known DOB is never overridden by the option

@@ -167,7 +167,7 @@ describe('POST /api/membership-ops/contacts', () => {
         expect(log.actorId).toBe(boardId);
     });
 
-    it('catches a case-variant duplicate with the owner-named 409 — the normalizeEmail regression', async () => {
+    it('catches a case-variant duplicate with the owner-named 409 (normalizeEmail)', async () => {
         asSession({ id: boardId, isBoardMember: true });
         const variant = ownerEmail.toUpperCase();
         expect(variant).not.toBe(ownerEmail); // sanity: this really is a differently-cased address
@@ -242,7 +242,7 @@ describe('POST /api/membership-ops/contacts', () => {
         expect(log.actorId).toBe(opsId);
     });
 
-    it('403s a sysadmin-only actor — intentional, sysadmin is excluded from board-create (Jeff / #1083-style board-only carve-out), not a bug', async () => {
+    it('403s a sysadmin-only actor — intentional, sysadmin is excluded from board-create (a board-only carve-out), not a bug', async () => {
         asSession({ id: sysadminId, isSysadmin: true });
         const res = await POST(nreq('http://localhost/api/membership-ops/contacts', 'POST', { name: 'Should Not Create', email: `blocked-${CREATED_TAG}@example.com` }));
         expect(res.status).toBe(403);

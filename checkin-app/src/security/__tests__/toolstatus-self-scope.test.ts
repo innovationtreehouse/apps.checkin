@@ -21,7 +21,7 @@ const ctx: CallerContext = {
     ledHouseholdMemberIds: new Set(),
 };
 
-describe('ToolStatus self-scoping after participantId -> personId rename', () => {
+describe('ToolStatus self-scoping on personId', () => {
     it("grants their_own on a ToolStatus row whose personId is the caller", () => {
         expect(scopesHeld('ToolStatus', { personId: 7, toolId: 1 }, ctx).has('their_own')).toBe(true);
     });
@@ -30,12 +30,12 @@ describe('ToolStatus self-scoping after participantId -> personId rename', () =>
         expect(scopesHeld('ToolStatus', { personId: 99, toolId: 1 }, ctx).has('their_own')).toBe(false);
     });
 
-    it('reads personId, not the stale participantId, for ToolStatus', () => {
+    it('reads personId, not participantId, for ToolStatus', () => {
         // A row carrying only participantId does not self-scope.
         expect(scopesHeld('ToolStatus', { participantId: 7, toolId: 1 }, ctx).has('their_own')).toBe(false);
     });
 
-    it('Account/Session still self-scope on userId (NextAuth, unchanged)', () => {
+    it('Account/Session self-scope on userId (NextAuth)', () => {
         expect(scopesHeld('Account', { userId: 7 }, ctx).has('their_own')).toBe(true);
         expect(scopesHeld('Session', { userId: 7 }, ctx).has('their_own')).toBe(true);
         expect(scopesHeld('Account', { userId: 99 }, ctx).has('their_own')).toBe(false);

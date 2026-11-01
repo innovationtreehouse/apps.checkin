@@ -133,12 +133,12 @@ describe("GET /api/system-status/unsynced-scans", () => {
         expect((await GET(listReq())).status).toBe(200);
     });
 
-    it("admits a keyholder (Q15)", async () => {
+    it("admits a keyholder", async () => {
         mockSession.mockResolvedValue(KEYHOLDER);
         expect((await GET(listReq())).status).toBe(200);
     });
 
-    it("403s operations — aggregate attendance only (#1633)", async () => {
+    it("403s operations — aggregate attendance only", async () => {
         mockSession.mockResolvedValue(OPERATIONS);
         expect((await GET(listReq())).status).toBe(403);
         expect(db.rawBadgeLog.findMany).not.toHaveBeenCalled();

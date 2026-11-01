@@ -35,7 +35,7 @@ describe.each([
     fetchSpy.mockRestore();
   });
 
-  it("refuses a sysadmin (board-only, #1083)", async () => {
+  it("refuses a sysadmin (board-only)", async () => {
     setSession({ id: 3, isSysadmin: true });
     renderWithProviders(<Page />);
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));

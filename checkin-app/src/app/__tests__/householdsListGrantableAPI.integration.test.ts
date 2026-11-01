@@ -177,7 +177,7 @@ describe('GET /api/membership-ops/households — awaitingPayment + dates', () =>
  * `now` inside the renewal window so the probe is live (out of season it matches
  * nothing, and settledForComingYear is trivially false — see the describe above).
  */
-describe('GET /api/membership-ops/households — settledForComingYear (fix #4)', () => {
+describe('GET /api/membership-ops/households — settledForComingYear', () => {
     const TAG4 = 'households-settled-fix4-test';
     let adminId: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};

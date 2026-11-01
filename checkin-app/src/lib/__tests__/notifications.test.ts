@@ -53,7 +53,7 @@ describe('sendNotification return contract', () => {
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
 
-    it('PROGRAM_ASSIGNMENT sends the welcome email with a manage link, not the generic "System Action" copy (#1220)', async () => {
+    it('PROGRAM_ASSIGNMENT sends the welcome email with a manage link, not the generic "System Action" copy', async () => {
         mockFindUnique.mockResolvedValue({ email: 'lead@b.com', name: 'Lead', notificationSettings: {} });
         mockSendEmail.mockResolvedValue(true);
 
@@ -102,7 +102,7 @@ describe('notifyNewProgramAnnounced opt-in filtering', () => {
         expect(recipients).toEqual(['in@b.com', 'def@b.com', 'null@b.com']);
     });
 
-    it('excludes a prefs-passing person whose coverage does not extend through the program (the #1061 gate)', async () => {
+    it('excludes a prefs-passing person whose coverage does not extend through the program', async () => {
         mockFindMany.mockResolvedValue([
             { id: 1, email: 'covered@b.com', name: 'Covered', notificationSettings: {} },
             { id: 2, email: 'uncovered@b.com', name: 'Uncovered', notificationSettings: {} },

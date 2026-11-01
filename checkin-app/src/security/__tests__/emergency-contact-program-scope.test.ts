@@ -111,7 +111,7 @@ describe('EmergencyContact field-stripping on GET /api/programs/[id]', () => {
         expect(out.relationship).toBeUndefined();
     });
 
-    it('regression: a lead viewing a row that dropped householdId sees nothing personal', () => {
+    it('a lead viewing a row that dropped householdId sees nothing personal', () => {
         // Fail-closed strips even for an authorized lead.
         const tokens = tokensFor(ENDPOINT, 'programLeadMentor');
         const noKey = { id: 7, name: 'Jane Doe', phone: '5551234567', relationship: 'Aunt' };

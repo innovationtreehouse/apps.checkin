@@ -262,7 +262,7 @@ describe('background check is non-blocking', () => {
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
 
-    it('pre-designated volunteer family is flagged at PENDING_PAYMENT, before the check clears (#874)', async () => {
+    it('pre-designated volunteer family is flagged at PENDING_PAYMENT, before the check clears', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         const lead = await prisma.person.findUnique({ where: { id: leadId } });
         await linkSignIn(leadId);
@@ -277,7 +277,7 @@ describe('background check is non-blocking', () => {
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
-    it('fresh-check intake shortcut still matches the designation allowlist (#874)', async () => {
+    it('fresh-check intake shortcut matches the designation allowlist', async () => {
         await setBgPolicy();
         const { processId, orgMembershipId, householdId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION', { lastBackgroundCheck: new Date() });
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { status: 'INTAKE' } });
@@ -294,7 +294,7 @@ describe('background check is non-blocking', () => {
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
-    it('renewal with a still-valid background check matches a designation added since the last cycle (#874)', async () => {
+    it('renewal with a still-valid background check matches a designation added since the last cycle', async () => {
         await setBgPolicy();
         const { orgMembershipId, processId, leadId, leadEmail } = await makeFreshRenewal();
         await linkSignIn(leadId);

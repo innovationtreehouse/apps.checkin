@@ -55,8 +55,8 @@ describe('validateBindings — coverage (forgotten-model catcher)', () => {
     });
 });
 
-describe('validateBindings — RSVP eventId re-add', () => {
-    it('no longer flags RSVP.programId (RSVP is eventId-bound)', () => {
+describe('validateBindings — RSVP binding on eventId', () => {
+    it('does not flag RSVP.programId (RSVP is eventId-bound)', () => {
         // RSVP has no programId column; the program-lead grant resolves through
         // eventId. No field-existence error should appear and RSVP must be clean.
         const errs = validateBindings(SCOPE_BINDINGS, CLS, OPT_OUT_PENDING_ROUTE);

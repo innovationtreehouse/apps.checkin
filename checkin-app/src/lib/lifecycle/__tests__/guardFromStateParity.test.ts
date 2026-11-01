@@ -124,7 +124,7 @@ function expectedStatusWhere(g: GuardSite) {
     return statuses.length === 1 ? { status: statuses[0] } : { status: { in: [...statuses] } };
 }
 
-describe('CAS guard ↔ TRANSITIONS from-state parity (#1080)', () => {
+describe('CAS guard ↔ TRANSITIONS from-state parity', () => {
     it('fromWhere emits exactly the from-state identifying status clause', () => {
         for (const g of GUARDS) {
             expect(fromWhereOf(g)).toEqual(expectedStatusWhere(g));

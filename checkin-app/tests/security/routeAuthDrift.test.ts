@@ -674,7 +674,7 @@ describe('route auth drift-guard — detectors catch violations', () => {
     // must be caught even though `participants` is a shared key. A flat key match
     // that excluded the ambiguous key would MISS this — the whole reason for the
     // parent-aware walk.
-    it('flags Program.participants include in a GET handler (the #575 leak class)', () => {
+    it('flags Program.participants include in a GET handler (a roster leak)', () => {
         const synthetic = `export const GET = handler('x', async () => prisma.program.findUnique({ include: { participants: { include: { participant: true } } } }));`;
         expect(findEdgeReadsInReads(stripComments(synthetic))).toContain('ProgramParticipant');
     });

@@ -109,7 +109,7 @@ describe("SystemStatusLayout role gate", () => {
     expect(push).toHaveBeenCalledWith("/");
   });
 
-  it("does not admit operations on unsynced-scans (#1633)", () => {
+  it("does not admit operations on unsynced-scans", () => {
     renderLayout("/system-status/unsynced-scans", {
       data: { user: { id: 5, isOperations: true } },
       status: "authenticated",
