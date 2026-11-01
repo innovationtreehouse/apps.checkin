@@ -57,7 +57,6 @@ export async function clearAll(): Promise<void> {
   await db.workflowAuditLog.deleteMany({});
   await db.receivedReceiptLineStatus.deleteMany({});
   await db.receivedReceipt.deleteMany({});
-  await db.workflowSystemData.deleteMany({});
   await db.workflowFailedOrgEvent.deleteMany({});
   await db.workflowAppliedOrgEvent.deleteMany({});
 }
