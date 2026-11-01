@@ -38,15 +38,28 @@ Two side findings from reading these:
 
 `checkin-app/src/lib/finance/financeViewKinds.ts` decides the kind label, the
 sentence and which ids link to a page. It is app code, not a boundary file.
-Whatever mechanism lands, it needs these entries:
+
+The tab and its search both read `recordIds` only, never `params`:
+
+- The tab renders one entry per id in `row.recordIds`
+  (`RecordIds` in `checkin-app/src/app/system-status/finance-views/page.tsx`),
+  and `financeViewRecordHref` links only an id it is given. A row with empty
+  `recordIds` shows no record at all.
+- The record search on `GET /api/system-status/finance-views` filters with
+  `recordIds: { has: record }`. A path id held only in `params` is not found.
+
+So a path `id` names the record in the stored row, but the Board can neither see
+it on the tab nor find it by searching for the expense or receipt. Whatever
+mechanism lands, it needs these entries:
 
 - `GET /api/expense/finance-queue` → a `LIST_PAGES` entry to `/expense/expenses`,
   once its rows carry expense ids.
 - `GET /api/expense/expenses/[id]/signoffs` → a `DETAIL_PAGES` entry to
-  `/expense/expenses`. The path `id` links already, with no handler change.
+  `/expense/expenses`, once the expense id is in `recordIds` (or the tab and the
+  search read it from `params`; see option D).
 - `GET /api/receipts/[id]/duplicate-group` → a `DETAIL_PAGES` entry for the path
-  `id`. Member ids are receipts too, so they could link to `/receipts/<id>` as
-  a list does.
+  `id`, on the same condition. Member ids are receipts too, so they could link
+  to `/receipts/<id>` as a list does.
 - `GET /api/income/items` → falls under the `payouts` kind by its `/api/income`
   prefix, so the tab reads "viewed 40 payout records". A variant has no page of
   its own.
@@ -110,25 +123,43 @@ from the **unstripped** data, so the log can name a record the caller never
 received, or miss one they did; and every route must remember to do it.
 **Boundary change** (`handler.ts`) and **app code** per route.
 
-### D. No mechanism for the detail routes
+### D. The path `id` as the record, for the detail routes
 
 For signoffs and the duplicate group, the path `id` already names the record the
-screen is about. A `DETAIL_PAGES` entry in `financeViewKinds.ts` links it, with no
-handler change. **App code only.** It does not record the line ids, or the other
-receipts in the duplicate group.
+screen is about, and it is stored in `params`. A `DETAIL_PAGES` entry alone does
+nothing: the tab and the search read `recordIds` only. Two ways to use it:
+
+1. **The handler records the path `id`.** A registry flag (for example
+   `auditedPathId: 'id'`) makes the handler add `params.id` to `recordIds`. The
+   file handler already does this for file routes (`result.row.id ?? params.id`
+   in `fileHandler.ts`), so there is a precedent. The tab links it through a
+   `DETAIL_PAGES` entry, and the search finds it with the existing index.
+   **Boundary change**, then **app code** for `financeViewKinds.ts`.
+2. **The tab and the search read `params.id`.** `RecordIds` renders the detail
+   record from `params` when `recordIds` lacks it, and the search also matches
+   `params.id` for detail endpoints. **App code only.** The `params` match is a
+   JSON-path filter that the `recordIds` GIN index does not serve, and the search
+   needs to know which endpoints are detail endpoints.
+
+Either way, D records neither the line ids nor the other receipts in the
+duplicate group. Those need A.3 or C.
 
 ## Recommendation
 
-D for signoffs now (app code only), and A.1 (one field name) for finance-queue
-and income items, retiring `payoutGid` into its registry entry. That closes the
-finance-queue gap, the most-used screen, with the smallest grammar. Payment plans
-and duplicate-group members wait on questions 2 and 3 below.
+A.1 (one field name) for the finance queue and income items, with `payoutGid`
+moved into its registry entry. That closes the gap on the finance queue, the
+most-used screen, with the smallest grammar. Signoffs and the duplicate group
+wait on question 1a (D.1 or D.2). Payment plans and the duplicate group's
+members wait on questions 2 and 3.
 
 ## Open questions for @thpr
 
 1. **Which mechanism?** A (registry field), B (routes return `id`), C (route
    hands over ids), or D only for the detail routes. If A, which shape: one
    field name, joined fields, or paths.
+   1a. **The detail routes' path `id`.** D.1 (the handler records it in
+   `recordIds`, a boundary change) or D.2 (the tab and the search read it from
+   `params`, app code only, unindexed)?
 2. **Payment plans.** Should its record ids be the composite
    `programId:personId`, the `personId` alone, or nothing beyond the count? And
    should `BoardSettings` stop counting as a row and being recorded as id `"1"`?
