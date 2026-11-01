@@ -38,7 +38,7 @@ type TState = HouseholdStatus | OriginState;
 const ROUTE = "membership-ops/households/route.ts";
 
 export const TRANSITIONS: readonly Transition<TState>[] = [
-    { from: "∅", to: "NONE", event: "ensureHouseholdMembership", actor: "applicant/board/system", guardSite: "householdStatus.ts upsert by householdId (create only, never sets status)" },
+    { from: "∅", to: "NONE", event: "ensureHouseholdMembership", actor: "applicant/board/system", guardSite: "householdStatus.ts insert by householdId skipping duplicates (create only, never sets status)" },
     { from: "NONE", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
     { from: "REVOKED", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
     { from: "ACTIVE", to: "REVOKED", event: "revoke", actor: "board", guardSite: `${ROUTE} setHouseholdStatus from [ACTIVE] + COI` },
@@ -59,12 +59,10 @@ export function fromWhere(from: HouseholdStatus | readonly HouseholdStatus[]): W
 
 /** ∅→NONE: the household's membership row, created at NONE if missing. Never changes an existing row. */
 export async function ensureHouseholdMembership(db: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
-    return db.orgMembership.upsert({
-        where: { householdId },
-        create: { householdId },
-        update: {},
-        select: { id: true, status: true },
-    });
+    // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
+    // violation would abort a caller's transaction, leaving it unable to read the winner.
+    await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
+    return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
 }
 
 /**

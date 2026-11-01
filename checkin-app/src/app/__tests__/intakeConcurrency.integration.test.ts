@@ -19,6 +19,7 @@
  * what's exercised.
  */
 
+import { ensureHouseholdMembership } from '@/lib/membership/householdStatus';
 import { startIntake } from '@/lib/membership/intake';
 import { IN_FLIGHT_INITIAL_STATUSES } from '@/lib/membership/phases';
 import prisma from '@/lib/prisma';
@@ -68,5 +69,40 @@ describe('intake start concurrency', () => {
             where: { tableName: 'OrgMembershipProcess', action: 'CREATE', affectedEntityId: results[0].id },
         });
         expect(created).toBe(1);
+    });
+
+    it('a transaction that loses the race to create the membership row reads the winner and stays usable', async () => {
+        const hh = await prisma.household.create({ data: { name: `Race ${TAG}` } });
+        let release = () => {};
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let inserted = () => {};
+        const winnerInserted = new Promise<void>((resolve) => { inserted = resolve; });
+
+        const winner = prisma.$transaction(async (tx) => {
+            const row = await ensureHouseholdMembership(tx, hh.id);
+            inserted();
+            await held;
+            return row;
+        });
+        await winnerInserted;
+        const loser = prisma.$transaction(async (tx) => {
+            const row = await ensureHouseholdMembership(tx, hh.id);
+            return { row, stillUsable: await tx.orgMembership.count({ where: { householdId: hh.id } }) };
+        });
+        // Long enough for the loser's insert to reach the winner's uncommitted row.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        release();
+
+        const [won, lost] = await Promise.all([winner, loser]);
+        expect(lost.row.id).toBe(won.id);
+        expect(lost.stillUsable).toBe(1);
+    });
+
+    it('returns an existing row unchanged', async () => {
+        const hh = await prisma.household.create({ data: { name: `Existing ${TAG}` } });
+        const existing = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'DENIED' } });
+
+        await expect(ensureHouseholdMembership(prisma, hh.id)).resolves.toEqual({ id: existing.id, status: 'DENIED' });
+        await expect(prisma.orgMembership.findUniqueOrThrow({ where: { id: existing.id } })).resolves.toEqual(existing);
     });
 });
