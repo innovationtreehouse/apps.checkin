@@ -15,6 +15,12 @@ import { readExpenseSettings } from "./settingsService";
 import { recordSubmitterSeats } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
+/** A stored payload as the contract reads it now, so a code it normalizes does not count as a difference. */
+function asParsed(payloadJson: string): string {
+  const stored = CompletedReceiptSchema.safeParse(JSON.parse(payloadJson));
+  return stored.success ? JSON.stringify(stored.data) : payloadJson;
+}
+
 export async function receiveCompletedReceipt(
   raw: unknown,
 ): Promise<{ receiptId: string; status: "created" | "already_applied" }> {
@@ -27,7 +33,7 @@ export async function receiveCompletedReceipt(
 
   // Once the expense exists it was built from the stored payload, so a replay must match it.
   const payloadJson = JSON.stringify(receipt);
-  if (existingPayload && existingPayload.payloadJson !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
+  if (existingPayload && asParsed(existingPayload.payloadJson) !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
     throw new ServiceError(409, `Receipt ${receiptId} was already received with a different payload`);
   }
 

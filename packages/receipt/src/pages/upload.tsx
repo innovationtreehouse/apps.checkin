@@ -18,6 +18,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { api, errorMessage, upload } from "../components/api";
 import { CURRENCY_CODE } from "../lib/schemas";
 import { listWords, missingDetails } from "../lib/missingDetails";
@@ -74,7 +75,7 @@ export default function UploadPage() {
   const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [retailer, setRetailer] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
   const [total, setTotal] = useState<number | "">("");
   const [tax, setTax] = useState<number | "">("");
   const [shipping, setShipping] = useState<number | "">("");
@@ -92,7 +93,7 @@ export default function UploadPage() {
 
   const reimbursing = isAdult && !isInKind && needsReimbursement;
   const newPersonIncomplete = reimbursing && newPerson !== null && (!newPerson.name.trim() || !newPerson.isAdult);
-  const currencyCode = currency.trim().toUpperCase() || "USD";
+  const currencyCode = currency.trim().toUpperCase() || DEFAULT_CURRENCY;
   const currencyError = mode === "manual" && !CURRENCY_CODE.test(currencyCode) ? "Use a 3-letter currency code, like USD" : null;
 
   const setLine = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));

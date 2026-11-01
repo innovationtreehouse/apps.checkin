@@ -1,5 +1,5 @@
 import { isServiceError, ServiceError } from "@checkin/component-kit";
-import type { ReceiptState } from "@checkin/receipt-types";
+import { DEFAULT_CURRENCY, type ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
@@ -694,7 +694,7 @@ export const receiptService = {
         ? {
             retailer: d.retailer,
             receiptDate: d.receiptDate,
-            currency: d.currency || "USD",
+            currency: d.currency || DEFAULT_CURRENCY,
             shippingCents: toCents(d.shipping),
             taxCents: toCents(d.tax),
             discountCents: toCents(d.discount),
