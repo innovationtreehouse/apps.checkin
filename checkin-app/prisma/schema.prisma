@@ -1838,9 +1838,6 @@ enum PaymentExceptionKind {
   // A paid program order names children from more than one household. One order
   // pays for one household, so nobody is activated; the board decides.
   MIXED_HOUSEHOLDS
-  // A paid program order without a valid checkout signature from the named
-  // children's own household. Nobody is activated; the board decides.
-  UNVERIFIED_CHECKOUT
 }
 
 enum PaymentExceptionSeverity {

@@ -4,7 +4,7 @@
 /**
  * The daily reconciler activates a program order's children only when the order
  * carries a checkout signature their own household's checkout made; any other
- * order is raised as UNVERIFIED_CHECKOUT and activates nobody.
+ * order is raised as UNMATCHED_ORDER and activates nobody.
  */
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -90,12 +90,12 @@ describe("runReconcile — program checkout ownership", () => {
     it("raises and activates nobody when the child belongs to another household", async () => {
         await reconcile(order(signCheckout(PROGRAM, [CHILD], OWN_HOUSEHOLD)), OTHER_HOUSEHOLD);
         expect(activate).not.toHaveBeenCalled();
-        expect(raisedKinds()).toEqual(["UNVERIFIED_CHECKOUT"]);
+        expect(raisedKinds()).toEqual(["UNMATCHED_ORDER"]);
     });
 
     it("raises and activates nobody when the order carries no signature", async () => {
         await reconcile(order(null), OWN_HOUSEHOLD);
         expect(activate).not.toHaveBeenCalled();
-        expect(raisedKinds()).toEqual(["UNVERIFIED_CHECKOUT"]);
+        expect(raisedKinds()).toEqual(["UNMATCHED_ORDER"]);
     });
 });

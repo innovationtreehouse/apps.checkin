@@ -36,7 +36,7 @@ export type Entitlement =
  * Does this order pay for activating these people in this program? Paid and not
  * reversed, names people from one household only (else MIXED_HOUSEHOLDS), carries
  * one of the program's variants (public or claimant), has a checkout signature that
- * household's own checkout made for exactly these people (else UNVERIFIED_CHECKOUT),
+ * household's own checkout made for exactly these people (else UNMATCHED_ORDER),
  * and has at least one unspent seat per person still awaiting payment. A seat the order already activated
  * someone with is spent, whether that person is still enrolled or has since left.
  * An order with every seat spent is a replay: it activates nobody and raises
@@ -68,7 +68,7 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
     if (unspent === 0) return { ok: false, kind: null, spent: true };
     if (households.length === 0 || !verifyCheckout(programId, personIds, households[0], order.checkoutSig)) {
-        return { ok: false, kind: "UNVERIFIED_CHECKOUT" };
+        return { ok: false, kind: "UNMATCHED_ORDER" };
     }
     if (unspent < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
     return { ok: true, surplus: await surplusSeats(order, programId, personIds, unspent - awaiting) };

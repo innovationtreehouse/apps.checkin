@@ -19,8 +19,7 @@ export type PaymentExceptionKind =
     | "DENIED_HOUSEHOLD_ACTIVITY"
     | "DUPLICATE_PAYMENT"
     | "UNCLAIMED_SEATS"
-    | "MIXED_HOUSEHOLDS"
-    | "UNVERIFIED_CHECKOUT";
+    | "MIXED_HOUSEHOLDS";
 
 type Severity = "WARN" | "CRITICAL";
 

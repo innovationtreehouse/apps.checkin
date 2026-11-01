@@ -1144,7 +1144,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual([]);
     });
 
-    it("email fallback raises UNVERIFIED_CHECKOUT and activates nobody: an unsigned order can't show which household paid", async () => {
+    it("email fallback raises UNMATCHED_ORDER and activates nobody: an unsigned order can't show which household paid", async () => {
         const oid = `${TAG}-606`;
         const email = `ent-fallback-${TAG}@ex.com`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
@@ -1153,10 +1153,10 @@ describe("program order entitlement (same check as the webhook)", () => {
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
-        expect(await kinds(oid)).toEqual(["UNVERIFIED_CHECKOUT"]);
+        expect(await kinds(oid)).toEqual(["UNMATCHED_ORDER"]);
     });
 
-    it("raises UNVERIFIED_CHECKOUT and activates nobody when the signature was made for another household", async () => {
+    it("raises UNMATCHED_ORDER and activates nobody when the signature was made for another household", async () => {
         const oid = `${TAG}-699`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-foreign-${TAG}@ex.com`, status: "PENDING" });
         const foreignHh = await prisma.household.create({ data: { name: `HH ${TAG} foreign` } });
@@ -1168,7 +1168,7 @@ describe("program order entitlement (same check as the webhook)", () => {
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
-        expect(await kinds(oid)).toEqual(["UNVERIFIED_CHECKOUT"]);
+        expect(await kinds(oid)).toEqual(["UNMATCHED_ORDER"]);
     });
 });
 

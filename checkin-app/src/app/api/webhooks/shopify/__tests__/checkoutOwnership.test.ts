@@ -4,7 +4,7 @@
 /**
  * POST /api/webhooks/shopify, program branch: a paid order activates its children
  * only when it carries a checkout signature their own household's checkout made;
- * any other order is raised as UNVERIFIED_CHECKOUT and activates nobody.
+ * any other order is raised as UNMATCHED_ORDER and activates nobody.
  */
 import crypto from 'crypto';
 import { POST } from '../route';
@@ -106,12 +106,12 @@ describe('POST /api/webhooks/shopify — program checkout ownership', () => {
     it('raises and activates nobody when the child belongs to another household', async () => {
         await deliver(signCheckout(PROGRAM, [CHILD], OWN_HOUSEHOLD), OTHER_HOUSEHOLD);
         expect(activate).not.toHaveBeenCalled();
-        expect(raisedKinds()).toEqual(['UNVERIFIED_CHECKOUT']);
+        expect(raisedKinds()).toEqual(['UNMATCHED_ORDER']);
     });
 
     it('raises and activates nobody when the order carries no signature', async () => {
         await deliver(null, OWN_HOUSEHOLD);
         expect(activate).not.toHaveBeenCalled();
-        expect(raisedKinds()).toEqual(['UNVERIFIED_CHECKOUT']);
+        expect(raisedKinds()).toEqual(['UNMATCHED_ORDER']);
     });
 });
