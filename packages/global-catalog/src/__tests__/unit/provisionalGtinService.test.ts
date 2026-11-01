@@ -113,6 +113,11 @@ describeDb("createProvisionalItem GTIN guard", () => {
       .rejects.toMatchObject({ status: 400 });
   });
 
+  it("refuses a provisional-shaped GTIN whose sequence field holds a minus sign", async () => {
+    await expect(createProvisionalItem({ ...base, provisionalGtin13: "0200-12712340" }))
+      .rejects.toMatchObject({ status: 400 });
+  });
+
   it("refuses an allocated sequence with a wrong check digit", async () => {
     const { gtin13 } = await allocateNextProvisionalGtin();
     const bad = gtin13.slice(0, 12) + String((Number(gtin13[12]) + 1) % 10);

@@ -8,13 +8,13 @@ import { isYouth, orgCalendarDay } from "@/lib/time";
 
 /**
  * SUPERVISING ADULT — the single test behind both the departure interrupt
- * (#1436) and the two-deep compliance banner (#1550). Policy's "two deep" is two
+ * and the two-deep compliance banner. Policy's "two deep" is two
  * *unrelated cleared volunteers*, not two bodies over 18, so counting bare adults
  * reports a room compliant when it is not (Definitions Policy, Art. III).
  *
  * A supervising adult is:
  *   - an adult (declared, or 18+ by date of birth; unknown age fails closed as
- *     youth, #300),
+ *     youth),
  *   - with a still-valid background clearance — the household's org membership is
  *     ACTIVE (ACTIVE is what encodes "background check cleared", see
  *     lib/orgMembership) AND their own `lastBackgroundCheck` has not expired under
@@ -27,7 +27,7 @@ import { isYouth, orgCalendarDay } from "@/lib/time";
  * household, not the person.
  *
  * NOT part of the test: the volunteer-family fee flag, and school enrollment —
- * "student" here means program participant. Capturing school enrollment is #1442.
+ * "student" here means program participant.
  */
 
 /** Policy's two-deep floor. Below this the room is short of supervision. */
@@ -122,7 +122,7 @@ export async function supervisingAdultVisits(
 /**
  * Is a youth in the building? The adult prong inverted, over the same open
  * visits: not declared adult, and not 18+ by date of birth — unknown age fails
- * closed as youth (#300). Only the `isDeclaredAdult` half is a query filter; the
+ * closed as youth. Only the `isDeclaredAdult` half is a query filter; the
  * age half stays with {@link isYouth} so the rule keeps one expression.
  */
 export async function youthIsPresent(db: DbClient = prisma): Promise<boolean> {

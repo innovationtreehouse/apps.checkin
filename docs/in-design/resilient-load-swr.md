@@ -23,15 +23,14 @@ actually said. A new page gets all of this by calling one hook.
 - **Libraries change least.** All 73 library `useLoad` calls go through one
   function, so one PR gives them retry and caching with no page edits. Only
   `global-catalog` needs a real migration.
-- **The app changes most.** 96 UI files call `fetch` directly and 60 of them are
+- **The app changes most.** 93 UI files call `fetch` directly and 60 of them are
   pages. They move in batches by area.
 - **People will see** automatic retries, a redirect to sign-in when a session
   ends, and last-seen data for a moment on returning to a page.
 - **Unchanged:** route responses, server gates, `useRequireRole`, `useViewer`,
   and the shape of `api()`.
-- **How a failed load appears** depends on question M1 of the on-screen message
-  convention. This design supplies the facts a page needs and decides nothing
-  about placement.
+- **A failed load stays inline.** The owner ruled this: the page shows `LoadError`
+  in place of its content, as `docs/conventions.md` requires.
 
 Standing text this relies on, in `docs/conventions.md`: "A library's pages share
 one client kit", "A library names its failures; the host renders them", and "A
@@ -42,7 +41,7 @@ check that costs money is not a health check".
 | Export | Today | After |
 |---|---|---|
 | `createClient(base)` | `{ api, useLoad }` | Same |
-| `useLoad(path, options?)` | `useEffect` with a sequence guard | SWR. Second argument becomes `{ retry?: boolean }` |
+| `useLoad(path, options?)` | `useEffect` with a sequence guard | SWR. Second argument becomes `{ retry?: boolean; keepPrevious?: boolean }` |
 | `Loaded<T>` | `data`, `error`, `reload` | Adds `loading`, `retrying`, `status` |
 | `request`, `api` | Throw `Error(message)` | Throw `HttpError(message, status)`, still an `Error` with the same text |
 | `ViewerProvider` | `viewer` | Adds `onSessionExpired`; clears the cache when the person changes |
@@ -78,7 +77,7 @@ goes there as a prop. The kit never imports `next-auth` or the router.
 
 | Server says | Behaviour |
 |---|---|
-| Network failure or 5xx | Retry at 2s, 4s, 8s, 16s (5 attempts, 30s cap), `retrying` true and `error` null. Recover without a message. After the last attempt, `error` is set |
+| Network failure or 5xx | Retry at 2s, 4s, 8s, 16s (5 attempts, 30s cap), `retrying` true and `error` null, including in a hidden or offline tab. Recover without a message. After the last attempt, `error` is set |
 | 401 | No retry. Call `onSessionExpired`; the host does a full page load of `/` unless already there |
 | 403 | No retry. `status` 403, so the page can show access denied in place of its content |
 | 404, 400, other 4xx | No retry. `error` carries the route's own words |
@@ -103,13 +102,17 @@ is the silent recovery path; `dedupingInterval: 5000`; no `suspense`.
    The expense finance queue's All tab has an empty path, and skipping it left
    that tab blank during #2682. Resolving to the URL first fixes this too, since
    `/api/expense` is not empty. Only `null` skips.
-3. **Keep the old rows when the path changes.** Today's hook leaves `data` in
-   place until the new answer arrives, and pagers and search boxes rely on it.
-   SWR clears unless `keepPreviousData` is set. `undefined` also maps to `null`.
+3. **A new path starts at null, and a pager or search box opts into keeping rows.**
+   Old rows under a new parent would pair one parent's values with another's
+   buttons. `useLoad(path, { keepPrevious: true })` keeps the last rows while the
+   next page or search loads, for lists whose rows act on their own id. It never
+   keeps an empty list, which would read as an empty answer, and kept rows end when
+   the cache is emptied. `undefined` also maps to `null`.
 4. **A person's data does not outlive them.** The cache is in memory for the life
    of the tab. When the viewer's id changes from one person to another or to
-   nobody, `ViewerProvider` empties it. The first move from "session loading" to
-   a person does not count, or every page load would fetch twice.
+   nobody, `ViewerProvider` empties it before paint. The viewer is also null while
+   the session loads, so a move from null to a person does not count, or every
+   page load would fetch twice.
 5. **Tests share a cache.** A test that renders a page twice with different
    `fetch` mocks would get the first answer. The kit PR empties the cache after
    each test in `jest.setup.js` and in `component-ui`'s own setup.
@@ -122,10 +125,18 @@ per-library `send` helpers and `reload()`.
 **Any successful non-GET through `request` revalidates every cached key**, with
 one call to SWR's global `mutate` inside `request`. Nobody has to remember which
 lists a write affects, which is the arrangement the conventions doc warns about.
-The cost is one extra GET per loader on screen after each write. Existing
-`reload()` calls become redundant but harmless. I have not run this: the kit PR
-must pin in a test that a key with no mounted page refetches when next opened
-even inside the five-second dedupe window.
+The cost is one extra GET per loader on screen after each write, and two for a
+loader whose page also calls `reload()`, which is redundant but harmless. A key
+with no mounted page refetches when next opened, even inside the five-second
+dedupe window; a test pins this.
+
+A loop of writes passes `invalidate: false` on each and calls `invalidateLoads`
+once when it ends, however it ends. The mail page's Release All is the one use,
+because each re-read of its held list writes an audit row per item.
+
+Reads that write an audit row (`auditedRead` routes and the held mail list) log
+each re-read, so those logs grow with invalidation. The owner accepted this, since
+each re-read is shown to the person.
 
 A write made with a raw `fetch` does not invalidate. That is one more reason the
 app's writes move too, and until they do, a library list opened within five
@@ -142,10 +153,11 @@ conventions doc already requires. Each app batch checks this for its pages.
 `SystemHealthPanels`, `MatchAuditPanel`, `finance-ops/payments` and `programs` all
 mention the database wake or the store mirror, so read those first.
 
-**To verify in the kit PR:** retries assume GET routes do not write. The earlier
-design verified that once, and it needs doing again: 19 app route files contain
-both a GET and a Prisma write. I have not read them, and many will be a POST in
-the same file. Library route factories need the same check.
+Retries assume GET routes do not write, and reading them bears this out: no GET
+that a page loads changes business state. Four settings routes upsert their
+singleton with no update and `system-status/links` purges old rows, which are safe
+to repeat. `attendance`, `programs` and `shop/tools` log a row on a 500, so a
+retried failure logs up to five; their app batch should know this.
 
 ## The seven libraries
 
@@ -157,17 +169,17 @@ hooks. The one-line difference between expense and receipt was `if (!path)` agai
 | Difference | Where | Outcome |
 |---|---|---|
 | No `useLoad`: 39 `api()` calls, 7 `useEffect`s, a local `latestGate` | `global-catalog` | Real migration; delete `latestGate` |
-| Second loader `catalogApi` | `workflow-mapping` | Delete. Callers pass `/api/catalog/...`, which `api()` accepts. This is the only use of `useLoad`'s second argument, and its key would collide |
+| Second loader `catalogApi` | `workflow-mapping` | Delete. Its three callers pass `/api/catalog/...`, which `api()` accepts. This is the only use of `useLoad`'s old second argument |
 | `send(path, method, body, success)` | `expense` | Keep; failure moves to `showError` with the message convention |
 | `send(..., success, failed)`, titled failure | `receipt` | Same |
 | `act(call, ok, reload)`, multi-line failure styling, no nav refresh | `bulk-donation` | Same. Its long message is the case the convention says to check in a browser |
 | `useCatalogNames`: one read per GTIN, failures ignored on purpose | `local-inventory` | Keep. It has no single key, and a missing name is not a failure |
-| Raw `fetch` write `releaseOne` | `receipt/pages/mail` | Change to `api()`, or the write does not invalidate |
+| Raw `fetch` write `releaseOne` | `receipt/pages/mail` | Change to `api()` with `invalidate: false`; `releaseAll` invalidates once at its end |
 | Raw `fetch` for a text file | `receipt/ReceiptFile` | Keep. The body is not JSON |
 | `upload` with a form body | `receipt` | Keep; `request` already handles forms |
 | `goTo`, a full page load | `expense` | Keep |
-| Hand-written load failure, no `LoadError` | `receipt`, `workflow-mapping` | Waits on M1 |
-| Floating load failure, `useLoadFailedChip` | `expense/financeQueue` | Waits on M1 |
+| Hand-written load failure, no `LoadError` | `receipt`, `workflow-mapping` | Moves to `LoadError`, in its own PR |
+| Floating load failure, `useLoadFailedChip` | `expense/financeQueue` | Moves to `LoadError`, in its own PR |
 | Role hooks: `useRoles` ×2, `useCanManage` ×3, `useIsFinance`, `useCanWrite` | Various | Keep. Each mirrors its own routes' gate in one line |
 
 ## PR sequence
@@ -184,18 +196,22 @@ Each is its own PR, based on `main`.
 3. **App binding, then app batches by area**, lowest risk first: simple loaders,
    `useRequireRole` pages, admin panels, `merge` and other heavy pages. Each batch
    replaces its `fetch`, `res.json().catch(...)` and `data.error ||` handling, and
-   its failure display follows M1. Kiosk pages come last with their own short
+   its failure display moves to `LoadError`. Kiosk pages come last with their own short
    design, since their signed headers change per request.
 4. **Page splits**, one page per PR and never inside a loader PR, so a reviewer
    can tell a behaviour change from a move. Pick by size once the loaders are out,
    since that removes much of the bulk.
-5. **Lint rule and convention.** Ban `fetch` in UI files outside the kit, with the
-   text-file exception, and extend "A library's pages share one client kit" in
+5. **Library load failures onto `LoadError`:** `receipt`, `workflow-mapping` and
+   `expense/financeQueue`.
+6. **Lint rule and convention.** Ban `fetch` in UI files outside the kit, with the
+   text-file exception and excluding the three server-side files that call it
+   (`lib/membership/contract/zohoClient.ts`, `lib/shopify/client.ts`,
+   `lib/shopify/products.ts`), and extend "A library's pages share one client kit" in
    `docs/conventions.md` to the app. Then delete this doc and the `PL9` line in
    `docs/backlog/INDEX.md`.
 
 The message convention's helpers can land before or after step 1; neither needs
-the other. Any `LoadError` work in step 3 waits on M1.
+the other.
 
 ## Decisions
 
@@ -211,14 +227,9 @@ The owner ruled on these.
   show an "Unauthorized" failure today, so this is new for them. Text typed into
   a form is lost if a background load triggers the redirect, though saving that
   form would have failed too.
-- **The app migration covers all 96 files, loads and writes.** Invalidation and
+- **A failed page load stays inline,** using `LoadError` in place of the content.
+- **The app migration covers all 93 files, loads and writes.** Invalidation and
   the lint rule both need every write to go through the kit.
-
-## Still open
-
-**How a failed load appears** depends on question M1 of the on-screen message
-convention, which is not yet ruled on. Everything marked "Waits on M1" holds until
-then.
 
 ## Alternatives rejected
 
@@ -231,7 +242,7 @@ then.
 ## Appendix: counts
 
 Grep on `main`, excluding tests and `app/api`. Counts drift, so re-grep before
-scoping a batch. App UI files: 98 with `useEffect`, 96 with `fetch`; 97 lines with
+scoping a batch. App UI files: 98 with `useEffect`, 93 with `fetch`; 97 lines with
 `.json().catch((`, 78 with `data.error ||`.
 
 | Library | `useLoad` | `api()` in UI | `useEffect` | `LoadError` |

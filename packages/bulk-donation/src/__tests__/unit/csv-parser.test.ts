@@ -300,6 +300,13 @@ describe('Donations Report layout', () => {
       .toThrow('Could not import the CSV (1 problem):\nline 15, Totals, "Total Donation to be Acknowledged": report says $1,700.01, gifts add up to $1,700.00');
   });
 
+  it('still names the column and amounts of a mismatch when the Currency cell is not a code', () => {
+    const offByOne = 'Totals,,,,,,,,,,,,,,,,,,"1,700.01","3,200.00",0.00,0.00';
+    const csv = report({ totals: offByOne }).toString().replace(/,USD,/g, ',US Dollar,').replace('Currency,USD', 'Currency,US Dollar');
+    expect(() => parseBenevityCsv(Buffer.from(csv)))
+      .toThrow('line 15, Totals, "Total Donation to be Acknowledged": report says $1,700.01, gifts add up to $1,700.00 (shown in USD; the file\'s Currency "US Dollar" is not a currency code)');
+  });
+
   it('reads the gifts unchecked when there is no Totals row', () => {
     expect(parseBenevityCsv(report({ totals: null })).map((r) => r.transactionId)).toEqual(['TXNAAAA001', 'TXNAAAA002']);
   });

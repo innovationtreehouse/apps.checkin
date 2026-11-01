@@ -64,6 +64,7 @@ export const classifications = {
         state: 'internal',
         postalCode: 'internal',
         intakeNotes: 'pii',
+        archivedAt: 'public',
     },
     EmergencyContact: {
         id: 'public',

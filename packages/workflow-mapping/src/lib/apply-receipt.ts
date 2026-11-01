@@ -6,7 +6,7 @@ import {
 } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
-import { getOrg, ports } from "../runtime";
+import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
 
@@ -122,7 +122,7 @@ export async function sweepStuckApplying(): Promise<{
 }> {
   const rows = await db.receivedReceipt.findMany({
     where: {
-      orgId: (await getOrg()).id,
+      orgId: await getOrgId(),
       state: "applying",
       ...unclaimedSince(Date.now()),
     },

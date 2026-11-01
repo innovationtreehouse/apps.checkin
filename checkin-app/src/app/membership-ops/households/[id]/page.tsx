@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatDateOnly } from "@/lib/time";
 import { isMembershipLapsed } from "@/lib/membership/lapsed";
@@ -38,7 +39,7 @@ const fmtDate = (s?: string | null) =>
 // enrollments in one focused screen, off the noisy households list.
 export default function HouseholdDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const router = useRouter();
 
   const [household, setHousehold] = useState<Household | null>(null);

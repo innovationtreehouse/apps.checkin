@@ -24,6 +24,11 @@ export interface ExternalStatus {
   deepLinkUrl: string | null;
 }
 
+export interface OwnBackgroundCheck {
+  consented: boolean;
+  deepLinkUrl: string | null;
+}
+
 export interface MembershipProcess {
   id: number;
   kind: string;
@@ -39,6 +44,8 @@ export interface IntakeState {
   external: ExternalStatus | null;
   /** The caller's own unsigned individual agreement, independent of the household's. */
   personAgreement: { id: number; started: boolean } | null;
+  /** The caller's own background check awaiting their consent, outside any household application. */
+  ownBackgroundCheck?: OwnBackgroundCheck | null;
   prefill: IntakePrefill;
 }
 
@@ -84,7 +91,7 @@ export function useMembershipPage() {
   const [planRequested, setPlanRequested] = useState(false);
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
-  // Self-report gate for the background-check task (#875): the confirm checkbox
+  // Self-report gate for the background-check task: the confirm checkbox
   // unlocks only after the applicant has opened the Averity consent link this
   // visit, so they can't confirm a form they never saw.
   const [bgLinkOpened, setBgLinkOpened] = useState(false);
@@ -103,9 +110,9 @@ export function useMembershipPage() {
   const hydrate = useCallback((s: IntakeState) => {
     setState(s);
     // Restore an in-flight payment holdoff after a tab refresh mid-Shopify-checkout.
-    // Once the process has moved out of PENDING_PAYMENT — the orders/paid webhook
-    // settled it, or (possibly, in the future) an s-read reconciliation did — drop
-    // the holdoff and its sessionStorage record. Deliberately no background
+    // Once the process has moved out of PENDING_PAYMENT, normally because the
+    // orders/paid webhook settled it, drop the holdoff and its sessionStorage
+    // record. Deliberately no background
     // polling: the dev instance scales to zero, and an idle tab must not keep it
     // (and the database) awake. The one exception is below — a visibility refetch
     // while a payment holdoff is active — which is user-driven (a hidden tab fires
@@ -251,7 +258,10 @@ export function useMembershipPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        hydrate(data.state);
+        // A null state means saved but unread; refetch so new people get their ids
+        // and a second save updates them rather than creating them again.
+        if (data.state) hydrate(data.state);
+        else await fetchState();
         flash("Progress saved.");
         setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
       } else flash(apiError(data, "Could not save."), true);

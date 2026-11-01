@@ -12,7 +12,7 @@ import {
   type DonationSink,
   type ExpenseSink,
   type InventorySink,
-  type OrgIdentity,
+  type WorkflowAlerts,
   type WorkflowPrincipal,
   type WorkflowRuntimeConfig,
 } from "./contract";
@@ -31,9 +31,7 @@ const requireRuntime = workflowRuntime.require;
 
 export const configureWorkflowMapping = workflowRuntime.configure;
 
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
+export const getOrgId = workflowRuntime.getOrgId;
 
 export function ports(): WorkflowPorts {
   const r = requireRuntime();
@@ -45,6 +43,11 @@ export function ports(): WorkflowPorts {
     inventorySink: r.inventorySink ?? inertInventorySink,
     catalogEventSource: r.catalogEventSource ?? inertCatalogEventSource,
   };
+}
+
+/** The alerts the host bound, if any. */
+export function getAlerts(): WorkflowAlerts | undefined {
+  return requireRuntime().alerts;
 }
 
 export { callerId };

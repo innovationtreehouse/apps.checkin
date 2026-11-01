@@ -3,7 +3,7 @@
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
@@ -12,7 +12,7 @@ import { TEST_BUCKETS, bindPorts, catalogResolving, principal, seedApproval, see
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { expenseReasons } from "../../services/reasonService";
 import {
-  MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
+  drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
 } from "../../lib/expense-qb-poster";
 import { matchExpenseToQb, skipExpenseQb } from "../../services/qbMatchService";
 import { POSTED_CHECK_OFF, SKIPPED_CHECK_OFF } from "../../services/flagService";
@@ -57,9 +57,9 @@ class FakeQbo {
       if (url.searchParams.get("query") === "SELECT * FROM Preferences") {
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       }
-      const since = /FROM (Purchase|Bill) WHERE MetaData.CreateTime >= '([^']+)'/.exec(url.searchParams.get("query") ?? "");
+      const since = /FROM (Purchase|Bill) WHERE MetaData.CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
-        const list = (since[1] === "Purchase" ? this.purchases : this.bills).filter((t) => (this.createdAt.get(t.Id)?.getTime() ?? 0) >= new Date(since[2]).getTime());
+        const list = (since[1] === "Purchase" ? this.purchases : this.bills).filter((t) => (this.createdAt.get(t.Id)?.getTime() ?? 0) >= new Date(since[2]).getTime()).slice(Number(since[3]) - 1, Number(since[3]) - 1 + Number(since[4]));
         return json({ QueryResponse: list.length ? { [since[1]]: list } : {} });
       }
       const m = /FROM (Purchase|Bill) WHERE TxnDate >= '([\d-]+)' AND TxnDate <= '([\d-]+)'/.exec(url.searchParams.get("query") ?? "");
@@ -966,15 +966,6 @@ describeDb("QB closed books — book it", () => {
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_book_requested", userId: 500 } })).toBe(1);
   });
 
-  it("a BEFORE_LINE expense is booked exactly as UNBOOKED", async () => {
-    const { id } = await outboxed("2026-09-10");
-    await db.expense.update({ where: { id }, data: { qbMatchState: "BEFORE_LINE" } });
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0 });
-
-    await resubmitHeldExpense(finance, id);
-    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
-  });
-
   it("refuses to book into closed books, and the expense stays UNBOOKED", async () => {
     const { id } = await outboxed("2026-09-10");
     await db.expense.update({ where: { id }, data: { qbMatchState: "UNBOOKED" } });
@@ -1126,7 +1117,7 @@ describeDb("QB closed books — a create that may have landed", () => {
       return id;
     };
 
-    it.each(["UNBOOKED", "BEFORE_LINE", "AMBIGUOUS", "NEEDS_FINANCE"])("skips a %s expense, audited with who and why, and the drain never takes it", async (state) => {
+    it.each(["UNBOOKED", "AMBIGUOUS", "NEEDS_FINANCE"])("skips a %s expense, audited with who and why, and the drain never takes it", async (state) => {
       const id = await unbooked(state);
 
       await skipExpenseQb(finance, id, "  booked by hand in 2025  ");
@@ -1198,8 +1189,10 @@ describeDb("QB closed books — a create that may have landed", () => {
       qbo.purchases = [];
       let release = () => {};
       qbo.gate = new Promise((resolve) => { release = resolve; });
+      // The attempt above already called fetch; only a call after this clear is the skip's lookup.
+      vi.mocked(fetch).mockClear();
       const skipping = skipExpenseQb(finance, id, "why");
-      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+      while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
 
       await db.expense.update({ where: { id }, data: { qbPostAttempts: { increment: 1 } } });
       release();
@@ -1303,11 +1296,11 @@ describeDb("QB closed books — daily orphan sweep", () => {
     expect(flag.detail).toContain("Purchase 7001 ");
   });
 
-  it("alerts finance once when a read fills a page, and a failed alert does not stop the sweep", async () => {
+  it("alerts finance once when a read reaches its cap, and a failed alert does not stop the sweep", async () => {
     const { id } = await outboxed("2026-09-10");
     await postExpenseToQb(ORG, id);
     const attempted = (await expenseRow(id)).qbCreateAttemptedAt;
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 10_000; i++) {
       qbo.purchases.push({ Id: `h${i}`, TxnDate: "2026-10-01", TotalAmt: 1, AccountRef: { value: PAYMENT_ACCOUNT } });
       qbo.createdAt.set(`h${i}`, new Date());
     }

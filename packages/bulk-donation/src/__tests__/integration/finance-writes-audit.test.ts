@@ -18,7 +18,6 @@ const req = (method: string, body?: unknown) =>
 
 beforeEach(async () => {
   await db.workflowEvent.deleteMany({});
-  await db.donationQbMatchExclusion.deleteMany({});
   await db.transactionCommentRule.deleteMany({});
   await db.transaction.deleteMany({});
   await db.uploadedFile.deleteMany({});

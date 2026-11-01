@@ -7,8 +7,6 @@ export const QB_MATCH_STATE = {
   AMBIGUOUS: "AMBIGUOUS",
   /** Not in QuickBooks and the drain may not create it (closed books, or before switch-on): finance books or skips it. */
   UNBOOKED: "UNBOOKED",
-  /** Held exactly as UNBOOKED; this code never writes it. */
-  BEFORE_LINE: "BEFORE_LINE",
   WAITING: "WAITING",
   POST_FAILED: "POST_FAILED",
   /** Claimed by a post whose QuickBooks call is in flight. */

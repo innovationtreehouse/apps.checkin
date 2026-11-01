@@ -83,7 +83,7 @@ legitimately need archived rows opt in explicitly, per transaction.
 | **The fix** | A Postgres RLS policy on `Household` filters `archivedAt IS NULL` by default. It applies to every access path the database sees: direct reads, relation joins from other models, and raw SQL. Queries that need archived rows opt in with a transaction-scoped `SET LOCAL`. |
 | **Why not a client extension** | A Prisma extension reaches only the 14 direct `household.*` reads. The other ~99 sites are relation traversals and raw SQL the extension is architecturally blind to — the exact shape `LIVE_PERSON` failed on. See [Why the earlier draft's answer was insufficient](#why-the-earlier-drafts-answer-was-insufficient). |
 | **Why not per-query filters** | `LIVE_PERSON` proved the convention does not hold: 13 defects from one sweep, and the drift guard that existed missed all three bugs that shipped. |
-| **What board members see** | A new "Archive" action on a household, available to the Board only and refused while the household has an active member. Archived households and their members disappear from every active surface, search and pickers included. Historical reports and audit trails still show them. |
+| **What board members see** | A new "Archive" action on a household, available to the Board only and refused while the household has a current Treehouse membership or a current program enrollment. Archived households and their members disappear from every active surface, search and pickers included. Historical reports and audit trails still show them. |
 | **What developers stop doing** | Nothing — they never start. No filter to remember on any of the 116 sites, no drift guard to maintain. New code that joins to Household inherits the exclusion for free. |
 | **The cost** | RLS must bind every role that reads the table. The app's DML role owns no tables, so RLS binds it already; `FORCE` binds a non-superuser owner. The roles that migrate and run integration tests are superusers, which RLS never binds, so the archive's RLS tests connect as a dedicated non-superuser test role. Opt-in reads must run inside a transaction, and the test DB must carry the policy or the tests pass vacuously. See [Costs and how they are handled](#costs-and-how-they-are-handled). |
 | **Done when** | Archived households are invisible on every active surface including relation traversals (#1232), enforced structurally by the database, not by convention. |
@@ -109,10 +109,12 @@ left. Only the Board may archive or unarchive; a sysadmin who is not on the Boar
 may not, and neither may a household lead. This is a deliberate human act, not
 an automatic consequence of any other state transition.
 
-**When it is refused:** a household with any active member cannot be archived.
-The archive action checks this and refuses with a reason, the same shape as the
-existing refusal to deny a household that contains a board member. A departing
-family has its membership ended first, and is archived after that.
+**When it is refused:** a household with a current Treehouse membership, or with
+a member in a current program enrollment, cannot be archived (HA-7). Either one
+blocks it. The archive action checks this and refuses with a reason, the same
+shape as the existing refusal to deny a household that contains a board member.
+A departing family has its membership and enrollments ended first, and is
+archived after that.
 
 **Reversibility:** yes. Unarchiving restores the household to whatever state it
 held before. The `archivedAt` timestamp is nulled. This follows the principle
@@ -267,13 +269,18 @@ CREATE POLICY household_hide_archived ON "Household"
     );
 ```
 
-- **`FOR SELECT` only.** Writes (`INSERT`/`UPDATE`/`DELETE`) are unrestricted, so
-  archiving, unarchiving, and administrative writes to an archived row all work
-  without an opt-in. Only reads are filtered — which is the whole requirement.
-  (An RLS table with no permissive policy for a command denies that command;
-  scoping the policy to `SELECT` and leaving the others unpoliced would deny all
-  writes, so writes get their own always-true policy — see the migration
-  section.)
+- **Writes get their own policies, one per command, never `FOR ALL`.** An RLS
+  table with no permissive policy for a command denies that command, so
+  `INSERT`, `UPDATE` and `DELETE` each get an always-true policy (see the
+  migration section). A `FOR ALL` policy also covers `SELECT`, and permissive
+  policies combine with OR, so `FOR ALL USING (true)` would leave every archived
+  row visible.
+- **A write that reads the row still needs the opt-in.** Postgres applies the
+  `SELECT` policy to an `UPDATE` or `DELETE` whose `WHERE` or `RETURNING` reads
+  the table's columns, which covers Prisma's updates. The existing row and an
+  updated row must both pass it. So writing `archivedAt` raises a row-security
+  error without the opt-in, and any write to an already-archived row matches
+  nothing. Archive and unarchive both run inside `withArchivedHouseholds`.
 - **`current_setting('app.include_archived', true)`** returns `NULL` when the
   setting is unset (the `true` second argument is `missing_ok`). `NULL <> 'on'`,
   so an ordinary read with no opt-in sees only non-archived rows. Safe by
@@ -328,7 +335,7 @@ been bitten by before. Each is a required step, not an afterthought.
    (`.github/workflows/ci.yml`). Neither reads Household in production, so
    neither is a production leak, but a test that connects as either sees every
    row whatever the policy says. The one production way to fail open is an app
-   role with `BYPASSRLS` or superuser; Decision #6 names that check.
+   role with `BYPASSRLS` or superuser; Decision #6 records that neither stack has one.
 2. **Opt-in reads must be transactional.** The ~5 opt-in surfaces (admin detail,
    unarchive, historical/audit reports) must run through
    `withArchivedHouseholds`. Non-transactional opt-in via session `SET` is
@@ -413,8 +420,9 @@ design safe — see [Test plan](#test-plan) for the full list):
 3. **No leak.** An opt-in transaction, then a plain query on the same pool,
    confirms archived rows are not visible afterward — catches any session-`SET`
    misuse.
-4. **Meta-assert.** RLS is enabled *and* forced on `Household` (catches a future
-   migration that drops or weakens the policy).
+4. **Meta-assert.** RLS is enabled *and* forced on `Household`, and no permissive
+   policy on it applies to `SELECT` except `household_hide_archived` (catches a
+   future migration that drops or weakens the policy).
 
 **Fragility controls:**
 
@@ -428,9 +436,8 @@ design safe — see [Test plan](#test-plan) for the full list):
   index `db push` cannot express).
 - **Role hygiene is the one real cliff.** RLS is binary: enforced → robust; role
   bypasses it → useless and silently fail-open with no in-app remedy. The app
-  connects as a non-owner DML role in both stacks, and the compose stack creates
-  its role without `BYPASSRLS`. Confirming the same for the AWS role is the one
-  check left before implementation (Decision #6).
+  connects as a non-owner DML role in both stacks, and neither stack's role has
+  `BYPASSRLS` (Decision #6).
 
 **Two residual fragilities RLS itself introduces — both non-silent:**
 
@@ -471,6 +478,12 @@ questions that are genuinely ambiguous, and #1232 is where those get answered:
   with no per-site change. #1232's audit becomes a *verification* pass
   ("confirm each of the 72 now excludes as intended") rather than a *fix-each*
   pass.
+- **Person queries with no household join** are not filtered at all, because the
+  policy fires only when a query touches `Household`. The badge scan
+  (`scan/route.ts`) is one: it resolves the person without reaching `Household`,
+  so an archived household's badge would still check in. The scan and people
+  search get an explicit exclusion, and the build audits every person query with
+  no household join (PR 3 in [Build order](#build-order)).
 
 The distinction from `LIVE_PERSON`: there, the sweep was the mechanism and
 missing a site meant a defect. Here, the sweep is confirmation that a mechanism
@@ -480,7 +493,8 @@ require (null-tolerance on 24 includes) is type-checked.
 ## What archival blocks
 
 An archived household is excluded from every active surface, enforced by the
-policy regardless of how the query reaches `Household`:
+policy wherever a query reaches `Household`, and by an explicit exclusion on
+the person queries that do not:
 
 | Surface | Blocked | Why |
 |---|---|---|
@@ -494,7 +508,7 @@ policy regardless of how the query reaches `Household`:
 | Nav todo counts | yes | Should not inflate board counts |
 | Unclaimed-households list | yes | Not a household to chase |
 | Missing-contact list | yes | Not a household to chase |
-| People search / person dropdowns (via `where: { household: {…} }`) | yes | Members of a departed family are not active candidates (Decision #2) |
+| People search / person dropdowns | yes | Members of a departed family are not active candidates (Decision #2) |
 
 ## What archival allows (must still show archived rows)
 
@@ -543,12 +557,14 @@ CREATE POLICY household_hide_archived ON "Household"
         OR current_setting('app.include_archived', true) = 'on'
     );
 
--- Writes are unrestricted: archiving, unarchiving, and admin writes to an
--- archived row must all work without opt-in. A FORCE'd table with RLS enabled
--- denies any command lacking a permissive policy, so writes get an always-true
--- one.
-CREATE POLICY household_writes_unrestricted ON "Household"
-    FOR ALL USING (true) WITH CHECK (true);
+-- A FORCE'd table with RLS enabled denies any command lacking a permissive
+-- policy. One per command: FOR ALL would also cover SELECT and undo the filter.
+CREATE POLICY household_insert ON "Household"
+    FOR INSERT WITH CHECK (true);
+CREATE POLICY household_update ON "Household"
+    FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY household_delete ON "Household"
+    FOR DELETE USING (true);
 ```
 
 **Deploy ordering.** This is a migration whose new behaviour (rows vanish from
@@ -557,17 +573,37 @@ the rolling-deploy drain window. It is: the migration only *adds* a filter that
 matches nothing at deploy time (no household is archived yet), so old and new
 code see identical result sets until a board member archives the first
 household — which cannot happen until the new archive route is live. Follow
-`DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`; the archive *action* ships in or after
-the deploy that carries this migration, never before.
+`DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`; the archive *action* ships after the
+deploy that carries this migration, never before.
+
+The policy is safe to ship before the reader changes for the same reason: no row
+can be archived until the archive route exists, so nothing the policy hides, and
+nothing a reader has yet to tolerate, exists until then.
+
+### Build order
+
+Five PRs, in this order. Each deploys safely on its own.
+
+1. **Expand.** The nullable column and the test DML role. No policy, no reader
+   changes.
+2. **Policy.** The policy migration, `withArchivedHouseholds`, the enforcement
+   contract tests and the opt-in guard.
+3. **Readers.** The opt-in sites, null tolerance on the 24 includes, the explicit
+   scan and people-search exclusion, and the audit of person queries with no
+   household join.
+4. **Registry.** The archive route's registry entry, as its own boundary PR, based
+   on `main`.
+5. **Archive action.** The route and the screen, based on `main`.
 
 ### Route for archival
 
 A new mutation on the existing household admin route
 (`/api/membership-ops/households/[id]`) — a PATCH setting `archivedAt`. Board
-only, and refused while the household has an active member (Decision #4).
-Unarchive is the same route nulling `archivedAt`, and because it
-writes an *already-archived* (hence invisible) row, its own lookup-before-write
-runs through `withArchivedHouseholds`.
+only, and refused while the household has a current Treehouse membership or a
+current program enrollment (Decision #4). Unarchive is the same route nulling
+`archivedAt`. Both writes run through `withArchivedHouseholds`: Prisma's update
+reads the row, an archived row is invisible without the opt-in, and setting
+`archivedAt` produces a row the `SELECT` policy would otherwise reject.
 
 No new route file, no new page. The action sits on the existing household detail
 view.
@@ -589,8 +625,7 @@ of scope here, noted so the precedent is deliberate.
 
 ## Decisions
 
-IDs are kept so earlier references still resolve. Only #6 leaves a check before
-implementation.
+IDs are kept so earlier references still resolve. All are settled.
 
 1. **Who can archive?** Decided: the Board only, for archive and unarchive alike.
    Not a sysadmin who is not on the Board, and not household leads.
@@ -599,19 +634,19 @@ implementation.
    They are hidden from people search and person pickers, which RLS delivers for
    every `where: { household: { … } }` traversal (the joined Household row is
    invisible, so the relation filter excludes the person). They stay visible in
-   history and audit, through `withArchivedHouseholds`.
+   history and audit, through `withArchivedHouseholds`. A person query with no
+   household join is not filtered by RLS, so people search gets an explicit
+   exclusion.
 
 3. **Check-in behaviour.** Decided: a badge scan for a person in an archived
    household fails exactly as if the person did not exist. There is no
-   archived-specific message, so the scan's transaction stays at the default
-   and never opts in: the household resolves to nothing and the scan takes the
-   unknown-badge path.
+   archived-specific message. The scan does not reach `Household` today, so RLS
+   alone does not deliver this: the scan gets an explicit check that sends an
+   archived household's badge down the unknown-badge path.
 
-4. **Membership status interaction.** Decided: a household with any active
-   member cannot be archived; the archive action refuses it. Residual, for the
-   implementing session to confirm with the owner: whether "active" means only
-   the household's org membership being ACTIVE, or also covers a member with an
-   ACTIVE program enrollment. Proposed: either one refuses.
+4. **Membership status interaction (HA-7).** Decided: a current Treehouse
+   membership or a current program enrollment blocks archiving. Either one is
+   enough, and the archive action refuses with a reason.
 
 5. **Opt-in ergonomics.** Proposed: a single `withArchivedHouseholds(tx => …)`
    transaction helper that issues `SET LOCAL app.include_archived = 'on'`.
@@ -620,11 +655,10 @@ implementation.
 6. **The DB role RLS is enforced against.** Decided: the app connects as a
    rows-only DML role in both stacks, never as the table owner, so row security
    applies to it (`deploy/docker-compose.prod.yml`;
-   `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` §9). The compose stack creates its
-   role as a plain login role, without `BYPASSRLS`. **Remaining check before
-   implementation:** confirm the infra repo's cluster bootstrap does not grant
-   `checkin_<env>_dml` `BYPASSRLS` or superuser. If it does, removing that
-   grant is the fix; the design does not change.
+   `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` §9). Both stacks create it as a plain
+   login role with no bypass flag: the compose stack in
+   `deploy/prod-initdb/05-checkin-roles.sh`, AWS in the infra repo's cluster
+   bootstrap.
 
    **The roles that migrate and test are superusers, and RLS does not bind
    them.** The compose migrate role `prisma` and CI's integration role
@@ -655,8 +689,9 @@ non-negotiable; the functional tests below assume them.
    the same pool, and assert archived rows are not visible afterward — catches a
    session-`SET` misuse that would bleed the opt-in onto later requests.
 4. **Meta-assert enabled + forced.** Query `pg_class`/`pg_policies` to confirm
-   RLS is both enabled and forced on `Household`, so a future migration that
-   drops or weakens the policy fails the suite.
+   RLS is both enabled and forced on `Household`, and that no permissive policy
+   except `household_hide_archived` applies to `SELECT`, so a future migration
+   that drops or weakens the policy fails the suite.
 
 **Test-DB integrity (the precondition for the four above):** the DB under test is
 built with `migrate deploy`, not `db push`, so the raw policy SQL and `FORCE` are
@@ -704,12 +739,12 @@ race the other runs that share the cluster.
   archived household's relation and the caller tolerates it.
 - **Raw SQL:** a raw `SELECT` against `Household` as the test DML role honours the
   policy (proves coverage the client extension could never give).
-- **Archive action:** PATCH sets `archivedAt`, household disappears from the
+- **Archive action:** PATCH sets `archivedAt` through the opt-in, household disappears from the
   standard list; PATCH nulling it (through the opt-in lookup) restores it.
 - **Permission:** only the Board can archive or unarchive; a sysadmin who is not
   on the Board and a household lead both get 403.
-- **Refusal:** archiving a household with an active member is refused, and the
-  household stays visible.
+- **Refusal:** archiving a household with a current Treehouse membership, or with
+  a current program enrollment, is refused, and the household stays visible.
 - **Check-in:** a badge scan for an archived household's member returns the
   same response as a badge that matches nobody (Decision #3).
 - **Opt-in-path guard:** a source-level test asserts `app.include_archived`

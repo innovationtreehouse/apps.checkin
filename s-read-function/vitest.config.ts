@@ -1,27 +1,8 @@
 import { defineConfig } from "vitest/config";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolveJsToTs } from "@checkin/pg-test-harness/vitest-plugin";
 
-/**
- * Source uses NodeNext-style `.js` import specifiers (correct for Node/Lambda),
- * but on disk the files are `.ts`. This pre-resolver rewrites a relative `.js`
- * import to its `.ts` sibling when one exists. Generated files that are genuinely
- * `.js` (e.g. the Prisma client) have no `.ts` sibling and fall through untouched.
- */
 export default defineConfig({
-  plugins: [
-    {
-      name: "resolve-js-to-ts",
-      enforce: "pre",
-      resolveId(source, importer) {
-        if (importer && source.startsWith(".") && source.endsWith(".js")) {
-          const tsPath = resolve(dirname(importer), source.replace(/\.js$/, ".ts"));
-          if (existsSync(tsPath)) return tsPath;
-        }
-        return null;
-      },
-    },
-  ],
+  plugins: [resolveJsToTs()],
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",

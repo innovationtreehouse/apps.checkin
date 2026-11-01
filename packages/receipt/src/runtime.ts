@@ -1,7 +1,7 @@
 import type {
   DonorSink,
   OcrProvider,
-  OrgIdentity,
+  OutcomeMail,
   ReceiptConfig,
   ReceiptFileStore,
   MailboxReader,
@@ -53,6 +53,7 @@ export const inertSubmitterConfirmations: SubmitterConfirmations = {
   confirm: async () => {
     throw new NotWiredError("SubmitterConfirmations.confirm");
   },
+  confirmable: async () => [],
 };
 
 /** Knows no households: only the uploader and the reimbursee themselves are refused. */
@@ -109,15 +110,13 @@ const requireRuntime = receiptRuntime.require;
 
 export const configureReceipt = receiptRuntime.configure;
 
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
+export const getOrgId = receiptRuntime.getOrgId;
 
 export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -149,6 +148,11 @@ export function mailbox(): MailboxReader | null {
 /** The host's mail out for acknowledgements, or null when unbound. */
 export function replies(): ReceiptReplies | null {
   return requireRuntime().replies ?? null;
+}
+
+/** The host's mail out for purchase outcomes, or null when unbound. */
+export function outcomeMail(): OutcomeMail | null {
+  return requireRuntime().outcomeMail ?? null;
 }
 
 export { callerId };

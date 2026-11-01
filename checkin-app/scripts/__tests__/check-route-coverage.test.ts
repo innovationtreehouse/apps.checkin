@@ -237,6 +237,12 @@ describe("findPackageEgressLines", () => {
         expect(findPackageEgressLines(`const HOSTS = ["storage.googleapis.com"];`)).toEqual([]);
     });
 
+    it("flags the Google OAuth hosts but not the scope identifier's host", () => {
+        expect(findPackageEgressLines(`const A = "accounts.google.com/o/oauth2/v2/auth";\nconst T = "oauth2.googleapis.com/token";`))
+            .toEqual([1, 2]);
+        expect(findPackageEgressLines(`const SCOPE = "https://" + "www.googleapis.com/auth/gmail.readonly";`)).toEqual([]);
+    });
+
     it("flags an import of the resend SDK", () => {
         expect(findPackageEgressLines(`import { Resend } from "resend";`)).toEqual([1]);
     });

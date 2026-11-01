@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import type { Visit } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
+import { OPEN_VISIT_REFUSAL, parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -12,8 +12,8 @@ import { correctCloseTime } from "@/lib/attendance/close";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
-// covered by the admin everyones band, and now stripped for any role a
-// future view adds. Same query, same take-50 shape, same tombstone filter.
+// covered by the admin everyones band, and stripped for any role a future
+// view adds.
 export const GET = handler('GET /api/facility/visits', async () => {
     const visits = await prisma.visit.findMany({
         take: 50,
@@ -68,16 +68,13 @@ export const PATCH = withAuth(
 
                 const current = await tx.visit.findUnique({ where: { id: visitId } });
                 if (!current || current.deletedAt) return { error: "Visit not found.", status: 404 as const };
+                if (!current.departedAt) return { error: OPEN_VISIT_REFUSAL, status: 409 as const };
 
                 const editedArrived = parsedArrived && !isUnchangedTime(parsedArrived, current.arrivedAt) ? parsedArrived : null;
                 const editedDeparted = parsedDeparted && !isUnchangedTime(parsedDeparted, current.departedAt) ? parsedDeparted : null;
                 const nextArrived = editedArrived ?? current.arrivedAt;
                 const nextDeparted = editedDeparted ?? current.departedAt;
 
-                // Result must be closed: can close an open visit, never reopen a closed one.
-                if (nextDeparted === null) {
-                    return { error: "Departure time is required to close this visit.", status: 400 as const };
-                }
                 if (!departureAfterArrival(nextArrived, nextDeparted)) {
                     return { error: "Departure time must be after arrival time", status: 400 as const };
                 }
@@ -102,7 +99,7 @@ export const PATCH = withAuth(
                     },
                 });
                 // The board correcting a closer's departure corrects the close they made.
-                if (editedDeparted && current.departedAt && auth.type === 'session' && auth.user.isBoardMember) {
+                if (editedDeparted && auth.type === 'session' && auth.user.isBoardMember) {
                     const close = await tx.facilityClose.findFirst({
                         where: { closerVisitId: visitId },
                         select: { id: true, closedAt: true, closedById: true },
@@ -171,6 +168,7 @@ export const DELETE = withAuth(
 
                 const current = await tx.visit.findUnique({ where: { id: visitId } });
                 if (!current || current.deletedAt) return null;
+                if (!current.departedAt) return "open" as const;
 
                 // Tombstone, matching the member's own self-delete: a deleted visit
                 // keeps its row so the deletion stays reviewable and reversible.
@@ -182,6 +180,7 @@ export const DELETE = withAuth(
             }, { maxWait: 5000, timeout: 15000 });
 
             if (!removed) return apiError("Visit not found.", 404);
+            if (removed === "open") return apiError(OPEN_VISIT_REFUSAL, 409);
             invalidateAttendanceCache();
 
             // Log the manual deletion in the audit trail — oldData carries the

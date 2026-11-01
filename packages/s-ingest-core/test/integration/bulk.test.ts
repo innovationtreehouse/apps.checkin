@@ -2,10 +2,11 @@
  * Integration test for the bulk-export capture + recovery path (F16). Skipped unless
  * SHOPIFY_READ_DATABASE_URL is set (and `prisma migrate deploy` has been run against it).
  */
-import { it, expect, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
 import { ingestBulkOrders, reingestBulkExports } from "../../src/ingest/bulkOrders.js";
 import { ingestNode } from "../../src/ingest/ingestNode.js";
+import { projectNode } from "../../src/loader/index.js";
 import { EventSource, ObjectType } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
 
@@ -94,6 +95,49 @@ describeDb("bulk-export capture + recovery", () => {
     expect(row?.financialStatus).toBe("REFUNDED");
     expect(row?.totalRefundedCents).toBe(10000);
     expect(row?.cancelledAt).not.toBeNull();
+  });
+
+  describe("a re-export that lost a record", () => {
+    const ORDER_GID = "gid://shopify/Order/7002";
+    const lineGid = (n: number) => `gid://shopify/LineItem/${9100 + n}`;
+    const orderRecord = JSON.stringify({ id: ORDER_GID, name: "#7002", updatedAt: "2026-02-01T10:00:00Z" });
+    const lineRecords = Array.from({ length: 10 }, (_, n) =>
+      JSON.stringify({ id: lineGid(n), __parentId: ORDER_GID, sku: `S-${n}`, quantity: 1 }),
+    );
+    const damaged = [orderRecord, lineRecords[0].slice(0, -5), ...lineRecords.slice(1)].join("\n");
+    const ingest = (jsonl: string, op: string) =>
+      ingestBulkOrders(prisma, { storeId: STORE, jsonl, bulkOperationId: op, source: EventSource.BACKFILL });
+    const removedLines = () =>
+      prisma.shopOrderLine.count({ where: { storeId: STORE, orderGid: ORDER_GID, removed: true } });
+
+    beforeEach(async () => {
+      await ingest([orderRecord, ...lineRecords].join("\n"), "gid://shopify/BulkOperation/2");
+    });
+
+    it("does not mark the unreadable line removed", async () => {
+      const res = await ingest(damaged, "gid://shopify/BulkOperation/3");
+      expect(res.badLineCount).toBe(1);
+      expect(await removedLines()).toBe(0);
+    });
+
+    it("does not mark it removed when the stored export is re-ingested", async () => {
+      await prisma.shopifyBulkExport.deleteMany({ where: { storeId: STORE } });
+      await prisma.shopifyBulkExport.create({
+        data: { storeId: STORE, objectType: ObjectType.ORDER, bulkOperationId: "gid://shopify/BulkOperation/3", source: EventSource.BACKFILL, recordCount: 11, jsonl: damaged },
+      });
+      await reingestBulkExports(prisma, { storeId: STORE });
+      expect(await removedLines()).toBe(0);
+    });
+
+    it("does not mark it removed when the raw log is replayed", async () => {
+      await ingest(damaged, "gid://shopify/BulkOperation/3");
+      const latest = await prisma.shopifyRawEvent.findFirstOrThrow({
+        where: { storeId: STORE, shopifyGid: ORDER_GID },
+        orderBy: { id: "desc" },
+      });
+      await prisma.$transaction((tx) => projectNode(tx, STORE, ObjectType.ORDER, latest.payload, EventSource.BACKFILL, latest.id));
+      expect(await removedLines()).toBe(0);
+    });
   });
 
   it("recovers live tables from the stored export with NO Shopify calls", async () => {

@@ -1,5 +1,5 @@
 /**
- * Wire the global-catalog library into checkin (#1286 §3/§6), called once at
+ * Wire the global-catalog library into checkin, called once at
  * server boot from instrumentation.ts. Binding stays boot-clean: see the host kit.
  */
 import { configureCatalog } from "@checkin/global-catalog";
@@ -7,7 +7,7 @@ import type { OrgEventConsumer } from "@checkin/global-catalog";
 import { getOrg, getPrincipal } from "@/lib/components/host";
 
 /**
- * The S5 consumers the catalog calls after each commit that wrote events. Each library parses
+ * The org-event consumers the catalog calls after each commit that wrote events. Each library parses
  * the events, applies them and keeps its own cursor; loaded on first event, never at boot.
  */
 const orgEventConsumers: Record<string, OrgEventConsumer> = {

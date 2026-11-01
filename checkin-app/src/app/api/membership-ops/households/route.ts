@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
 import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
@@ -19,7 +20,7 @@ import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 
 export const dynamic = 'force-dynamic';
 
-// Emergency contacts are their own entity now; the admin editor still works in
+// Emergency contacts are their own entity; the admin editor works in
 // terms of a single primary contact, so map the household's primary valid contact
 // back onto the flat emergencyContactName/Phone shape the client expects. Include
 // it inline (below) with this where/order so Prisma infers the result type.
@@ -341,8 +342,7 @@ export const POST = withAuth(
                     });
                 } catch (e) {
                     if (e instanceof PaymentError) {
-                        const status = e.code === "forbidden" ? 403 : e.code === "not_found" ? 404 : 409;
-                        return apiError(e.message, status);
+                        return apiError(e.message, PAYMENT_ERROR_STATUS[e.code]);
                     }
                     throw e; // unexpected → outer catch → 500
                 }

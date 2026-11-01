@@ -122,6 +122,8 @@ export interface SubmitterConfirmations {
    * `signer`: the reimbursee, or a Board member on their behalf giving `reason`. False when none waits.
    */
   confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
+  /** The given receipts whose expense waits for a confirmation `signerUserId` may sign, by the same rules `confirm` refuses with. */
+  confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
 }
 
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */
@@ -280,6 +282,22 @@ export interface ReceiptReplies {
   send(ack: MailAcknowledgement): Promise<boolean>;
 }
 
+/** A receipt outcome its uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "receipt_rejected";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
+}
+
 /** Finance alerts the host binds. */
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
@@ -314,6 +332,8 @@ export interface ReceiptConfig {
   mailbox?: MailboxReader;
   /** Unset means acknowledgements wait unsent. */
   replies?: ReceiptReplies;
+  /** Unset means outcome emails wait unsent. */
+  outcomeMail?: OutcomeMail;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
   /** Unset means no row may have a key: reading or writing one throws. */
@@ -321,3 +341,29 @@ export interface ReceiptConfig {
   /** New files go to the store instead of the database. */
   storeNewFilesInBucket?: boolean;
 }
+
+// ── Route factories (mounted by the host under its handler()) ──────────────────
+
+/** The slice of a route context a factory consumes. */
+export interface ReceiptRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+  /** Which rows the view handler() picked may act on. */
+  access: "finance" | "submitter";
+  /** The caller's Person.id under FINANCE's own view; null under any other view, BOARD's included. */
+  financeActorId: number | null;
+  /** The caller's Person.id under the submitter view; null under the finance view or with no session person. */
+  submitterActorId: number | null;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type ReceiptBag = Record<string, unknown>;
+export type ReceiptRouteHandler = (ctx: ReceiptRouteCtx) => Promise<ReceiptBag>;
+
+/** A stored file a file-route factory serves; the host refuses a type it cannot deliver and emits `row.fileBlob`. */
+export interface ReceiptFile {
+  row: Record<string, unknown>;
+  contentType: string;
+  filename?: string;
+}
+export type ReceiptFileRouteHandler = (ctx: ReceiptRouteCtx) => Promise<ReceiptFile>;

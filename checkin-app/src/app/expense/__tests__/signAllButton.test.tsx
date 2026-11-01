@@ -4,10 +4,11 @@ import SignAllButton, { treasurerLines } from "@checkin/expense/components/SignA
 
 let mockLines: unknown = null;
 let mockError: string | null = null;
+const mockReload = jest.fn();
 const mockSend = jest.fn<Promise<boolean>, [string, string, unknown, string]>();
 
 jest.mock("@checkin/expense/components/api", () => ({
-  useLoad: () => ({ data: mockLines, error: mockError, reload: () => {} }),
+  useLoad: () => ({ data: mockLines, error: mockError, reload: () => mockReload() }),
   send: (...args: [string, string, unknown, string]) => mockSend(...args),
 }));
 
@@ -15,6 +16,7 @@ beforeEach(() => {
   mockSend.mockReset().mockResolvedValue(true);
   mockLines = null;
   mockError = null;
+  mockReload.mockClear();
 });
 
 const line = (lineItemId: number, actions: Array<{ act: string; seat?: string; primary?: boolean }>) => ({ lineItemId, actions: actions.map((a) => ({ primary: false, ...a })) });
@@ -34,12 +36,13 @@ describe("Sign all N as Treasurer", () => {
     expect(onSigned).toHaveBeenCalled();
   });
 
-  it("leaves the list as it is when the server refuses", async () => {
+  it("reads the lines again when the server refuses", async () => {
     mockLines = [line(1, [TREASURER])];
     mockSend.mockResolvedValue(false);
     const onSigned = draw();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Sign all 1 as Treasurer" })); });
     expect(onSigned).not.toHaveBeenCalled();
+    expect(mockReload).toHaveBeenCalled();
   });
 
   it("draws no button while nothing is left to sign, or before the lines load", () => {

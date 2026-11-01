@@ -24,7 +24,12 @@ const createSchema = z.object({
 });
 const updateSchema = createSchema
   .omit({ gtin13: true })
-  .extend({ expectedQuantity: quantity.optional() })
+  .extend({
+    expectedQuantity: quantity.optional(),
+    expectedDesiredQuantity: quantity.optional(),
+    expectedLocationId: locationRef.optional(),
+    expectedBackstockLocationId: locationRef.optional(),
+  })
   .strict();
 
 /** The filter shared by the list and its count, so page totals match rows. */

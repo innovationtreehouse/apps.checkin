@@ -4,16 +4,16 @@ import { RESIDUE_COUNT_KEYS } from "@/lib/person/tombstoneResidue";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/membership-ops/participants/tombstones — the #1456 §2a census.
+// GET /api/membership-ops/participants/tombstones — the tombstone census.
 //
 // Lists every tombstone (a merged-away Person, hence the deliberate
 // `mergedIntoId: { not: null }` — the one place that inverts LIVE_PERSON) with its
 // survivor and a _count of the residue still parked on it. The stripper drops any
 // non-model bag key, so the page derives the residue report (disposition per
 // relation, no-pathway totals) client-side from the counts; PersonMerge.fromId
-// rides along so it can flag a legacy tombstone that has no archive row and would
+// rides along so it can flag a tombstone that has no archive row and would
 // strand a badge scan on delete. Field visibility (email is pii, the rest public)
-// is governed by the registry. Deleted with LIVE_PERSON in the final teardown.
+// is governed by the registry.
 
 const COUNT_SELECT = Object.fromEntries(
   RESIDUE_COUNT_KEYS.map((k) => [k, true]),

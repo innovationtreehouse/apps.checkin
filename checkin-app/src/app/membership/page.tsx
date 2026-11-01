@@ -11,6 +11,7 @@ import IntakePanel from "./IntakePanel";
 import ExternalActionPanel from "./ExternalActionPanel";
 import PaymentPanel from "./PaymentPanel";
 import KeyVolunteerAgreementPanel from "./KeyVolunteerAgreementPanel";
+import OwnBackgroundCheckPanel from "./OwnBackgroundCheckPanel";
 
 export default function MembershipPage() {
   const {
@@ -82,6 +83,8 @@ export default function MembershipPage() {
           </Button>
         </Card>
       )}
+
+      {state?.ownBackgroundCheck && <OwnBackgroundCheckPanel check={state.ownBackgroundCheck} />}
 
       {!state?.process ? (
         isActive ? (

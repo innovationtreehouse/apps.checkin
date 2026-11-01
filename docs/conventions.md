@@ -195,6 +195,20 @@ missed a row stored at a different time of day.
 
 ---
 
+## A shared helper has one home
+
+- **Before writing a small helper, look in the package that owns its kind, and
+  add a new one there rather than copying it.**
+  - `@checkin/component-kit`: a library's errors, route parsing (`parseId`,
+    `readJson`, `parseBody`) and runtime (`defineRuntime`, which gives `getOrgId`).
+  - `@checkin/pg-kit`: the advisory lock, unique-race retries and the lazy Prisma
+    client. `monitoring-db` and `s-ingest-core` wrap the lock only to bind their
+    own database.
+  - `@checkin/quickbooks`: moving a day for a books window (`shiftDate`).
+  - `@checkin/money` and `@checkin/component-ui`: as the section above says.
+
+---
+
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never
@@ -205,6 +219,10 @@ missed a row stored at a different time of day.
   issue's message. The host's `componentRoute()` (`lib/components/route.ts`)
   renders all three as checkin's API error; anything else is rethrown and the host
   answers an opaque 500. The kit's tests and the host wrapper's test pin this.
+  A `ServiceError` may also carry a `code`, for a UI that branches on it; the host
+  sends it as `{ error, code }`. `ReviewError`, `PaymentError`, `ExternalError`,
+  `RenewalError` and `TrustedAdultError` extend `ServiceError` and read their
+  status from `lib/domainErrorResponse.ts`.
 
 - **A library's runtime fails closed.** Each library
   builds its runtime with the kit's `defineRuntime`. Until the host configures
@@ -239,6 +257,49 @@ missed a row stored at a different time of day.
 The failure shows only in a built app. In unit tests every module is loaded once,
 so `instanceof` holds; in the server, the same 409 arrives as an error from
 another copy of the class and the caller sees a 500.
+
+---
+
+## A person is told what happened in one way
+
+This is the rule for new code, in the host and in every library. Existing pages
+move to it in later changes.
+
+- **An action that worked says so in a floating message that goes away by
+  itself.**
+
+- **An action that failed says so in a message that stays in the lower right
+  until the person dismisses it, or until a retry replaces it or a later success
+  clears it.** It survives moving to another page, because a person who clicked
+  away may not have read it. This holds while a modal is open; the modal stays
+  open. A display nobody attends is the exception, under its own rule below.
+
+- **A page that could not load says so in place of its content, with a retry.**
+  An empty space must never read as an empty list.
+
+- **A broken input is highlighted on the input.** A refusal from the server that
+  concerns one field names that field in its words, or sends the field name so
+  the form can highlight it. Sending the field name is the long-term aim.
+
+- **A condition that is true now is shown inline for as long as it is true.** A
+  failing supervision check, a missing emergency contact and a broken checkout
+  are conditions, so a dismissal must not be able to clear them. If the app can
+  still show it after a reload, it is a condition. Anything else a save leaves
+  the person to read stays in the lower right in yellow until dismissed.
+
+- **A display nobody attends raises no message that waits to be dismissed.** A
+  kiosk screen shows its state inline, because nobody is there to clear it. This
+  overrides the rule above for an action that failed.
+
+- **A message that stays on screen carries the server's chosen words or fixed
+  text, never exception text.** It holds no personal detail the current page
+  would not show, because anyone walking past can read it.
+
+The failure is a message nobody sees: a red line above the fold while the person
+is looking at the Save button at the bottom, or a blank list that looks like an
+all-clear.
+
+---
 
 ## The dictionary's word is the code's word
 

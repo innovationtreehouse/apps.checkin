@@ -1,5 +1,17 @@
-import { calculateAge, parseDateOnly } from "@/lib/time";
+import { calculateAge, isYouth, parseDateOnly } from "@/lib/time";
 import { MAX_PROGRAM_AGE } from "@/lib/programAge";
+
+export const UNDER_18_DECLARATION_REFUSAL =
+  "This person's date of birth on file shows they are under 18, so they can't be declared over 25. If the date is wrong, enter the correct one.";
+
+/** Whether one request would blank a stored under-18 date and declare the person over 25. */
+export function replacesUnder18Date(
+  dob: Date | string | null | undefined,
+  over25: boolean | undefined,
+  dobOnFile: Date | null | undefined,
+): boolean {
+  return !!over25 && (dob === null || dob === "") && isYouth(dobOnFile);
+}
 
 /**
  * The Person fields to write for a submitted date of birth and over-25 declaration,
@@ -15,7 +27,8 @@ import { MAX_PROGRAM_AGE } from "@/lib/programAge";
  *   - DoB implies age <= 25  -> keep the date, set isDeclaredAdult = false
  *                               (a real sub-26 DoB is authoritative, supersedes over25)
  *   - empty / null DoB       -> clear the date; over25, if submitted, sets the flag
- *   - undefined DoB          -> keep the date; over25, if submitted, sets the flag
+ *   - undefined DoB          -> keep the date; over25, if submitted, sets the flag,
+ *                               unless `dobOnFile` holds a date, which displaces it
  *
  * A form with no over-25 box omits over25, so saving someone's blank date there
  * keeps their declaration.
@@ -32,9 +45,10 @@ import { MAX_PROGRAM_AGE } from "@/lib/programAge";
 export function normalizeAdultDob(
   dob: Date | string | null | undefined,
   over25?: boolean,
+  dobOnFile?: Date | null,
 ): { dateOfBirth?: Date | null; isDeclaredAdult?: boolean } {
   const declaration = over25 === undefined ? {} : { isDeclaredAdult: !!over25 };
-  if (dob === undefined) return declaration;
+  if (dob === undefined) return over25 && dobOnFile ? { isDeclaredAdult: false } : declaration;
   if (dob === null || dob === "") return { dateOfBirth: null, ...declaration };
   const d = typeof dob === "string" ? parseDateOnly(dob)! : dob;
   if (calculateAge(d) > MAX_PROGRAM_AGE) return { dateOfBirth: null, isDeclaredAdult: true };

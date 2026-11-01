@@ -54,17 +54,19 @@ dismisses it (section 6).
 
 ## Where main stands
 
-No lane derives a takeover line any more. Expense, income, donation and in-kind each
-work out the books closing date and the lane's switch-on time, and pass
-`closedThrough` and `mayCreate` to the shared `findOrCreate`
-(`packages/quickbooks/src/write.ts`), which runs the match first and then
+No lane derives a takeover line any more. Expense, income and in-kind each work
+out the books closing date and the lane's switch-on time, and pass
+`closedThrough` and `mayCreate` to the shared gate
+(`packages/quickbooks/src/write.ts`: `findOrCreate`, or
+`findOrCreateInKindJournal` for in-kind), which runs the match first and then
 applies the gate in section 1. `BEFORE_LINE` survives only as a stored state
 on older expense and donation records, held exactly like `UNBOOKED`.
 
-Posting is bound in the host for every lane: expense through the books map's
-Organisation card account, income through the books map with the environment
-settings as fallback, in-kind through the books map's four gift-of-goods
-accounts, and donation while `QBO_DONATION_BANK_ACCOUNT_ID` is set.
+Posting is bound in the host for every lane that books: expense through the books
+map's Organisation card account, income through the books map, and in-kind through
+the books map's gift-of-goods accounts. Donation books no deposit itself. Where
+`QBO_REALM_ID` is set it hands each completed disbursement to income, which books
+it to the `BENEVITY_BANK` role.
 
 ---
 
@@ -282,10 +284,8 @@ retried or posted, and nothing would report it.
    rewrites every `BEFORE_LINE` row to `UNBOOKED`, then drops `BEFORE_LINE` from
    the code. By then no task running old code is left to write it.
 
-Donation needs this, since its posting is bound wherever
-`QBO_DONATION_BANK_ACCOUNT_ID` is set. Expense posting is unbound today, so old
-code cannot write `BEFORE_LINE` there, but expense follows the same two steps so
-the lanes stay alike and the safety does not depend on a deploy setting.
+Expense and donation both take these two steps, so the lanes stay alike and the
+safety does not depend on a deploy setting.
 
 No row is re-armed to `UNMATCHED` at any point, because an old drain could then
 create it against the old line.
@@ -341,12 +341,15 @@ below hold for income too.
 the lane's entity that QuickBooks created since the attempt:
 
 ```
-SELECT * FROM <Deposit | Purchase | Bill> WHERE MetaData.CreateTime >= <qbCreateAttemptedAt>
+SELECT * FROM <Deposit | Purchase | Bill> WHERE MetaData.CreateTime >= <qbCreateAttemptedAt minus one hour> ORDERBY MetaData.CreateTime
 ```
 
-It reads one page of 1,000 entries, QuickBooks' largest. The app then keeps the
-entries whose memo carries the record's `[checkin:<key>]` marker. This query is
-the narrowest that works:
+The attempt time comes from the app's clock and the creation time from
+QuickBooks', so the read starts one hour early. It reads up to 10 pages of 1,000
+entries, QuickBooks' largest page, oldest first, and keeps one copy of each entry.
+A read that fills all 10 pages has hit the cap, and more entries may exist. The
+app then keeps the entries whose memo carries the record's `[checkin:<key>]`
+marker. This query is the narrowest that works:
 
 - The memo (`PrivateNote`), where the key lives, cannot be filtered in a
   QuickBooks query.
@@ -363,7 +366,7 @@ The outcome of the lookup:
 | exactly one entry with the key, held by no other record | it is the app's own entry: link it as `CREATED`; a date or amount finance changed shows up as drift, like any edited entry |
 | exactly one entry with the key, already held by another record | finance's queue with the note "app entry X is held by record Y"; never linked, never created |
 | no entry with the key | the normal match and gate run, and may create |
-| more than one entry with the key, a full page (more may exist), or the read fails | finance's queue with a note that the app may already have booked this record; nothing is created |
+| more than one entry with the key, a read that hit the cap (more may exist), or the read fails | finance's queue with a note that the app may already have booked this record; nothing is created |
 
 The shared gate PR confirms this query in the sandbox, as it does the closing
 date field. If the query is not reliable there, the post path never creates an
@@ -393,7 +396,7 @@ attempted record, the route runs the lookup:
 - **The app's entry is held by another record.** The action is refused with
   "app entry X is held by record Y", and nothing changes.
 - **Nothing is found.** The action goes ahead.
-- **The lookup reads more than one keyed entry, fills a page, or fails.** The
+- **The lookup reads more than one keyed entry, hits the cap, or fails.** The
   action is refused, and nothing changes. A failed read answers 503.
 
 Skip and dismiss on a record that was never attempted need no lookup.
@@ -413,10 +416,10 @@ Once a day the `qbo-posting` cron runs a sweep for each lane:
 
 - **One read per lane.** It runs the section 6 created-since query from the
   oldest `qbCreateAttemptedAt` in the lane within the last 30 days. It reads at
-  most 1,000 entries, the same cap as the lookup; a full page alerts finance that
-  the sweep could not see every entry. The read also returns finance's own
-  entries, so once a lane is live a full page may alert every day; at this
-  organisation's volume that is acceptable.
+  most 10,000 entries, the same cap as the lookup; hitting the cap alerts finance
+  that the sweep could not see every entry. The read also returns finance's own
+  entries, so a lane with more than 10,000 entries in that window would alert
+  every day; at this organisation's volume that is acceptable.
 - **Match the keys.** It reads the `[checkin:<key>]` marker from each entry's
   memo and finds the lane's record with that key.
 - **Report what does not fit.** An app-keyed entry whose record does not link
@@ -521,8 +524,7 @@ have landed.
   `no_takeover_date` gate.
 - **#2210** (open)'s "finance's own bookings come first" bullet.
 - The takeover-line passages of `1272_EXPENSE_QB_INTEGRATION.md`
-  (around lines 1140-1149) and
-  `1283_INCOME_INTEGRATION.md` (160-170), which the lane PRs update.
+  (around lines 1140-1149), which the lane PRs update.
 
 ---
 

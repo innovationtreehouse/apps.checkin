@@ -8,6 +8,7 @@ import { RolesEditModal, type RolesEditTarget } from "@/components/roles/RolesEd
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useOrgTime } from "@/components/TimezoneProvider";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 
 type PersonRow = RolesEditTarget & { isYouth?: boolean };
 
@@ -18,7 +19,7 @@ type PersonRow = RolesEditTarget & { isYouth?: boolean };
  * no new endpoint, no new query.
  */
 export default function RolesPage() {
-  const { user: me, loading, ready } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { user: me, loading, ready } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const [people, setPeople] = useState<PersonRow[]>([]);
   const [fetching, setFetching] = useState(true);
   const [target, setTarget] = useState<PersonRow | null>(null);

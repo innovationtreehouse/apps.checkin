@@ -144,6 +144,14 @@ Things the app takes as true because they are handled outside it.
   both. The declaration stands in for a date nobody has, so a date on file
   displaces it. Neither present is a surfaced gap.  [Decision]
 
+- A lead may declare a non-lead adult in their household as over 25. A save that
+  blanks a date of birth showing someone is under 18 and declares them over 25 is
+  refused.  [Decision — owner]
+
+- Blanking that date in one save and declaring in a later one is accepted, as is
+  entering an older date in its place. The app does not check IDs and keeps no
+  history to catch this.  [Decision — deliberate limit]
+
 - Date of birth is not retained past 25; the declaration replaces it
   automatically as members age out. Twenty-five holds three things at once: we
   keep nothing we do not need, by then nobody's own age restricts what they may
@@ -230,9 +238,9 @@ Things the app takes as true because they are handled outside it.
   records never alters it as a side effect, with one exception: a merge that
   carries in a still-valid background check completes an application already paid
   for and waiting only on that check, which makes the household a member. It leaves
-  alone an application a reviewer has already acted on or the board has reset. A
+  alone an application with a standing rejection or one the board has reset. A
   merge that would move a person across a denied-or-revoked boundary, or abandon an
-  active membership, is refused until the household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
+  active membership, is refused until the household side is settled by hand.  [Decision — owner ruling 2026-10-30; *Principle: identity is not authorisation*]
 
 ### Roles
 

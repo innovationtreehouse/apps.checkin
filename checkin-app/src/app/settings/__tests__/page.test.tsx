@@ -15,7 +15,7 @@ describe("SettingsIndex", () => {
     });
 
     // Operations reach only Outreach; the board-only Membership Settings would
-    // bounce them, so the hub must not send them there (#1569).
+    // bounce them, so the hub must not send them there.
     it("lands an operations-only user on Outreach", () => {
         setSession({ id: 2, isOperations: true });
         renderWithProviders(<SettingsIndex />);

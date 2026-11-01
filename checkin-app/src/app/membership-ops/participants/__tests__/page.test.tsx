@@ -9,7 +9,7 @@ import AdminParticipantsIndex from "../page";
 
 beforeEach(() => {
     resetRtl();
-    // Default actor for the pre-existing tests below: a board member, who holds
+    // Default actor for the tests below: a board member, who holds
     // every affordance this suite exercises (Details/Household/Assign/Bulk
     // Import/+New Person/+ Add contact).
     setSession({ id: 999, isBoardMember: true });
@@ -389,7 +389,7 @@ describe("AdminParticipantsIndex", () => {
                 expect.objectContaining({ method: "POST" }),
             );
 
-            // The exact regression path (thpr #3): create -> prepend -> select ->
+            // The path under test: create -> prepend -> select ->
             // canSubmitAssign/canChangeHousehold. Those two are computed at component
             // top level off selectedParticipant.household.householdMembers, so opening
             // the Assign flow for the freshly-created row (via Details -> "Move to

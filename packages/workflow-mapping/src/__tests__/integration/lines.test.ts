@@ -259,12 +259,14 @@ describeDb("a catalog remap after the manager's decision", () => {
       await lines.update({ where: { id: ls.id }, data: { provisionalItemGtin13: P2 } });
       return found;
     };
-    const spy = vi.spyOn(lines, "findMany").mockImplementationOnce((args) =>
-      Object.assign(readThenRepropose(args), { [Symbol.toStringTag]: "PrismaPromise" as const }),
-    );
+    const spy = vi.spyOn(lines, "findMany").mockImplementationOnce((args) => {
+      const read = readThenRepropose(args);
+      return { then: read.then.bind(read), catch: read.catch.bind(read), finally: read.finally.bind(read), [Symbol.toStringTag]: "PrismaPromise" as const };
+    });
     await orgEventConsumer.onOrgEvents([approved]);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+    expect(await db.workflowFailedOrgEvent.count()).toBe(0);
     expect(await read(ls.id)).toMatchObject({ recognitionStatus: "provisional", provisionalItemGtin13: P2, assignedGtin13: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });

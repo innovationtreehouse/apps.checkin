@@ -1,6 +1,6 @@
 // What the caller may do on each expense line, and what the line waits on otherwise. Pure: the
 // page draws only these acts, so every eligibility rule an act depends on lives here.
-import { CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { APPROVABLE_STATUSES as APPROVABLE, CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import type { LineHold } from "./signoff-facts";
 
 export type LineAct = "approve" | "sign" | "raise-exception" | "reject-exception" | "assign-bucket" | "resolve-bucket";
@@ -48,9 +48,6 @@ export interface LineActions {
 
 const SEAT_NAME: Record<Seat, string> = { SUBMITTER: "Submitter", TREASURER: "Treasurer", BOARD: "Board" };
 
-/** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
-const APPROVABLE = new Set(["pending", "finance_assigned"]);
-
 /** Everyone who could take some part on the line. */
 function pool(facts: SignoffFacts): number[] {
   return [...new Set([facts.submitterId, ...facts.approvers, ...facts.finance, ...facts.board])];
@@ -80,13 +77,14 @@ function callerActs(input: LineActionsInput): LineAction[] {
   const add = (act: LineAct, extra: Partial<LineAction> = {}) => acts.push({ act, primary: false, noteRequired: false, ...extra });
 
   if (mayApprove(input, caller.id)) add("approve", { noteRequired: approvesAsStandIn(facts, caller.id) && !facts.orgLevel });
-  if (approval && !conflicted) {
+  if (approval) {
     const deciding = expense.state === "owner_approval";
     const approver = facts.approvers.includes(caller.id);
-    if (deciding && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
+    // Choosing a bucket is open to a conflicted FINANCE holder; raising or rejecting an exception is not.
+    if (!conflicted && deciding && !expense.reimburseeUnknown && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
     if (caller.isFinance && deciding && approval.status === "exception_raised") {
       add("assign-bucket");
-      add("reject-exception", { noteRequired: true });
+      if (!conflicted) add("reject-exception", { noteRequired: true });
     }
     if (caller.isFinance && approval.status === "unknown") add("resolve-bucket");
     else if (caller.isFinance && expense.state === "assign_ownership" && approval.ownerId === null) add("assign-bucket");
@@ -104,11 +102,11 @@ function callerActs(input: LineActionsInput): LineAction[] {
 }
 
 /**
- * The main act. On a line with an exception raised it is Assign bucket. Otherwise it is the part
- * (approve or a seat) with the fewest other people able to take it; a bucket fix stands alone when
- * the caller has no part to take. A Board stand-in's approval is the main act only when no bucket
- * approver can approve the line. Parts never tie: the approval, the Treasurer seat and the Board
- * seat open one after another (`orderRefusal`), so the caller has at most one part on a line.
+ * The main act. On a line with an exception raised it is Assign bucket. Otherwise it is the
+ * caller's part on the line (the approval or a seat); a bucket fix stands alone when the caller has
+ * no part to take. A Board stand-in's approval is the main act only when no bucket approver can
+ * approve the line. The caller has at most one part: the approval, the Treasurer seat and the
+ * Board seat open one after another (`orderRefusal`).
  */
 function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   const assign = acts.find((a) => a.act === "assign-bucket" || a.act === "resolve-bucket");
@@ -117,17 +115,9 @@ function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
     return;
   }
   const others = pool(input.facts).filter((id) => id !== input.caller.id);
-  const rivals = (a: LineAction): number =>
-    a.act === "approve"
-      ? others.filter((id) => approvesAsApprover(input, id)).length
-      : others.filter((id) => maySign(input, a.seat!, id)).length;
   const standingIn = approvesAsStandIn(input.facts, input.caller.id) && others.some((id) => approvesAsApprover(input, id));
-  const parts = acts.filter((a) => a.act === "sign" || (a.act === "approve" && !standingIn));
-  const main = parts.reduce<{ act: LineAction; n: number } | null>((best, a) => {
-    const n = rivals(a);
-    return best === null || n < best.n ? { act: a, n } : best;
-  }, null);
-  if (main) main.act.primary = true;
+  const part = acts.find((a) => a.act === "sign" || (a.act === "approve" && !standingIn));
+  if (part) part.primary = true;
   else if (assign) assign.primary = true;
 }
 

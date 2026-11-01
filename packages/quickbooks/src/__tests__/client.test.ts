@@ -222,19 +222,98 @@ describe("bookCloseDate", () => {
 });
 
 describe("createdSince", () => {
-  it("reads one page of entries created at or after the time, flooring to the second", async () => {
+  const minute = (page: number) => `2026-10-02T00:${String(page).padStart(2, "0")}:00Z`;
+  const pageOf = (page: number, length = 1000) => Array.from({ length }, (_, i) => ({ Id: `${page}-${i}`, MetaData: { CreateTime: minute(page) } }));
+
+  /** Answers created-since queries from `rows` the way QuickBooks does, with ties in an order that can change between reads. */
+  const serve = (rows: { Id: string; MetaData: { CreateTime: string } }[], afterRead: (read: number) => void = () => {}) => {
+    let read = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      const m = /CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(new URL(url).searchParams.get("query")!)!;
+      const tieOrder = read % 2 ? -1 : 1;
+      const list = rows
+        .filter((r) => Date.parse(r.MetaData.CreateTime) >= Date.parse(m[1]))
+        .sort((a, b) => Date.parse(a.MetaData.CreateTime) - Date.parse(b.MetaData.CreateTime) || tieOrder * a.Id.localeCompare(b.Id))
+        .slice(Number(m[2]) - 1, Number(m[2]) - 1 + Number(m[3]));
+      afterRead(++read);
+      return new Response(JSON.stringify({ QueryResponse: { Bill: list } }));
+    });
+  };
+  const second = (i: number) => new Date(Date.UTC(2026, 9, 2) + i * 1000).toISOString().replace(".000", "");
+
+  it("reads oldest first from an hour before the time, flooring to the second", async () => {
     respond("Deposit", [{ Id: "1" }]);
     const got = await new QuickBooksClient(tokens, sandbox).createdSince("Deposit", new Date("2026-10-01T12:34:56.789Z"));
     expect(got).toEqual({ entries: [{ Id: "1" }], full: false });
-    expect(sql(0)).toBe("SELECT * FROM Deposit WHERE MetaData.CreateTime >= '2026-10-01T12:34:56Z' STARTPOSITION 1 MAXRESULTS 1000");
+    expect(sql(0)).toBe("SELECT * FROM Deposit WHERE MetaData.CreateTime >= '2026-10-01T11:34:56Z' ORDERBY MetaData.CreateTime STARTPOSITION 1 MAXRESULTS 1000");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("signals a full page, since more entries may exist", async () => {
-    respond("Bill", Array.from({ length: 1000 }, (_, i) => ({ Id: String(i) })));
+  it("reads past a full page to the last one", async () => {
+    respond("Bill", pageOf(1));
+    respond("Bill", pageOf(2, 1));
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(1001);
+    expect(got.full).toBe(false);
+    expect(sql(1)).toBe(`SELECT * FROM Bill WHERE MetaData.CreateTime >= '${minute(1)}' ORDERBY MetaData.CreateTime STARTPOSITION 1 MAXRESULTS 1000`);
+  });
+
+  it("starts the next page at the last row's CreateTime in UTC, whatever offset QuickBooks reports", async () => {
+    respond("Bill", Array.from({ length: 1000 }, (_, i) => ({ Id: `${i}`, MetaData: { CreateTime: "2026-10-02T05:00:00-07:00" } })));
+    respond("Bill", []);
+    await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(sql(1)).toContain(">= '2026-10-02T12:00:00Z'");
+  });
+
+  it("skips nothing when an earlier entry is deleted mid-read", async () => {
+    const rows = Array.from({ length: 1500 }, (_, i) => ({ Id: `${i}`, MetaData: { CreateTime: second(i) } }));
+    serve(rows, (read) => {
+      if (read === 1) rows.splice(0, 1);
+    });
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(new Set(got.entries.map((e) => e.Id)).size).toBe(1500);
+    expect(got.full).toBe(false);
+  });
+
+  it("skips nothing when a CreateTime tie spans a page edge, and returns the tied entries once", async () => {
+    const rows = Array.from({ length: 1500 }, (_, i) => ({ Id: String(i).padStart(4, "0"), MetaData: { CreateTime: second(i >= 990 && i < 1010 ? 990 : i) } }));
+    serve(rows);
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(1500);
+    expect(new Set(got.entries.map((e) => e.Id)).size).toBe(1500);
+    expect(got.full).toBe(false);
+  });
+
+  it("signals unsure, without looping, when a CreateTime tie is wider than a page", async () => {
+    serve(Array.from({ length: 1200 }, (_, i) => ({ Id: `${i}`, MetaData: { CreateTime: second(0) } })));
     const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
     expect(got.full).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("signals unsure when a full page's last row has no usable CreateTime", async () => {
+    for (const metaData of [undefined, { CreateTime: "nope" }]) {
+      fetchMock.mockClear();
+      respond("Bill", Array.from({ length: 1000 }, (_, i) => ({ Id: `${i}`, MetaData: metaData })));
+      const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+      expect(got.full).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("returns an entry once when two pages both carry it", async () => {
+    respond("Bill", pageOf(1));
+    respond("Bill", [{ Id: "1-999" }]);
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Bill", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(1000);
+  });
+
+  it("stops at the page cap and signals that more entries may exist", async () => {
+    for (let page = 1; page <= 10; page++) respond("Purchase", pageOf(page));
+    const got = await new QuickBooksClient(tokens, sandbox).createdSince("Purchase", new Date("2026-10-01T00:00:00Z"));
+    expect(got.entries).toHaveLength(10_000);
+    expect(got.full).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 
   it("rejects an invalid time before any request", async () => {

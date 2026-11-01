@@ -4,9 +4,9 @@
  */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat } from "../helpers/seed";
-import { recordBoardAuthorization, signLine } from "../../services/signoffService";
-import { approveLine, financeAssign } from "../../services/approvalService";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat, ORG } from "../helpers/seed";
+import { recordBoardAuthorization, setReimbursee, signLine } from "../../services/signoffService";
+import { approveLine, financeAssign, raiseException } from "../../services/approvalService";
 
 const refused = (pattern: RegExp) => ({ status: 403, message: expect.stringMatching(pattern) });
 
@@ -82,20 +82,46 @@ describeDb("one step per signer across an expense's lines", () => {
     await signLine(principal(9, { isFinance: true }), a, "TREASURER");
   });
 
-  it("whoever moved a line out of an exception signs at the Treasurer step: they do not approve it, and their household takes no Board seat", async () => {
-    // Reimbursee 1 holds no membership, so the line takes the Board seat. FINANCE 3 is also an
-    // approver of bucket 101; Board member 6 shares their household.
-    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [3, 7] }, finance: [3, 9], board: [5, 6], households: [[3, 6]], nonMembers: [1] }) });
+  it("whoever moved a line out of an exception signs no step: their household may still take the Board seat", async () => {
+    // Reimbursee 1 holds no membership, so the line takes the Board seat. Board member 6 shares
+    // FINANCE 3's household.
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [7] }, finance: [3, 9], board: [5, 6], households: [[3, 6]], nonMembers: [1] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: 100, status: "exception_raised" });
     await financeAssign(principal(3, { isFinance: true }), id, approvalId, 101);
     await seedSubmitterSeat(li, 1);
 
-    await expect(approveLine(principal(3, { isFinance: true }), id, approvalId)).rejects.toMatchObject(refused(/later step/));
     await approveLine(principal(7), id, approvalId);
-    await signLine(principal(3, { isFinance: true }), li, "TREASURER");
-    await expect(signLine(principal(6, { isBoard: true }), li, "BOARD")).rejects.toMatchObject(refused(/household/));
-    await signLine(principal(5, { isBoard: true }), li, "BOARD");
+    await signLine(principal(9, { isFinance: true }), li, "TREASURER");
+    await signLine(principal(6, { isBoard: true }), li, "BOARD");
+  });
+
+  it("a bucket approver with FINANCE may settle an exception into their own bucket, make it final, and approve the line", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [3] }, finance: [3, 9] }) });
+    const id = await seedExpense({ state: "owner_approval" });
+    const li = await seedLineItem(id);
+    const approvalId = await seedApproval(id, li, { ownerId: 100, status: "exception_raised" });
+
+    await financeAssign(principal(3, { isFinance: true }), id, approvalId, 101, true, "budget line 4");
+    await approveLine(principal(3, { isFinance: true }), id, approvalId);
+    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject(refused(/another (seat|step)|approved the line/));
+    await signLine(principal(9, { isFinance: true }), li, "TREASURER");
+  });
+});
+
+describeDb("no exception is raised while the reimbursee is unknown", () => {
+  it("refuses an approver and FINANCE until the reimbursee is named; then the conflict check sees them", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+    const approvalId = await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+    const unknown = { status: 409, message: expect.stringMatching(/reimbursee is unknown/) };
+
+    await expect(raiseException(principal(2), id, approvalId, "not ours")).rejects.toMatchObject(unknown);
+    await expect(raiseException(principal(3, { isFinance: true }), id, approvalId, "not ours")).rejects.toMatchObject(unknown);
+
+    await setReimbursee(ORG, id, { personId: 3 }, principal(4, { isFinance: true }));
+    await expect(raiseException(principal(3, { isFinance: true }), id, approvalId, "not ours")).rejects.toMatchObject({ status: 403 });
+    await raiseException(principal(2), id, approvalId, "not ours");
   });
 });

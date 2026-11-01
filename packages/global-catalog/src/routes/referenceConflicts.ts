@@ -1,4 +1,4 @@
-/** Reference-conflict route factories (#1286). */
+/** Reference-conflict route factories. */
 import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { createItemReferenceRepository } from "../repositories/itemReference";

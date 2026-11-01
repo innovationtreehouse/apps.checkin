@@ -52,8 +52,8 @@ defineRoute({
 // may not act for; the two per-row tokens are the field backstop for the two
 // legitimate subjects:
 //   their_own      — Visit.personId === caller (a member editing their own row)
-//   led_households — Visit.personId is in a household the caller LEADS (AT3:
-//                    the lead is the responsible adult for members who
+//   led_households — Visit.personId is in a household the caller LEADS (the
+//                    lead is the responsible adult for members who
 //                    cannot self-serve). Lead-only, not household-wide: a
 //                    non-lead sibling holds neither token and sees nothing.
 // Both are needed — under led_households a plain member editing their own visit
@@ -79,14 +79,14 @@ defineRoute({
     orderedView: [],
 });
 
-// Staff insert of a past visit for ANOTHER person (AT3) — the walk-in
+// Staff insert of a past visit for ANOTHER person — the walk-in
 // neither the kiosk (live only, personId from the badge) nor the event roster
 // mark (program-scoped, event window) can record. Unlike the self-service
 // routes above, the target personId comes from the REQUEST BODY, so the role
 // gate is the entire subject boundary — there is no 'their_own' leg to fall
 // back on and no scope resolver in play. Sysadmin and board only: the same set
 // the sibling GET/PATCH/DELETE on /api/facility/visits carry and the same set
-// facility-ops/visits gates the page on, which must stay equal (AT13). Not
+// facility-ops/visits gates the page on, which must stay equal. Not
 // isOperations: operations' reach into attendance is aggregate only (the
 // trends, printing ID badges; docs/rules/attendance-checkin.md), so one
 // person's visit record stays outside it.
@@ -113,7 +113,7 @@ defineRoute({
     ],
 });
 
-// Board/sysadmin review of recent attendance-correction activity (AT12).
+// Board/sysadmin review of recent attendance-correction activity.
 // The handler does not query Visit directly — it reads AuditLog rows
 // where tableName === 'Visit' and SYNTHESIZES a Visit view per row from the
 // audit blob (arrivedAt/departedAt/arrivedVia/departedVia extracted from
@@ -133,8 +133,8 @@ defineRoute({
 // leave the route. Neither obligation is enforceable HERE: 'everyones:internal'
 // permits both fields wholesale and a tier does not reach inside a JSON blob,
 // so a handler that passed oldData straight through would ship a whole-row
-// snapshot with every suite green. The route PR carries the assertion instead
-// (correctionsAPI.integration.test.ts). No pagination — nothing else here would
+// snapshot with every suite green. correctionsAPI.integration.test.ts carries
+// the assertion instead. No pagination — nothing else here would
 // give total/page/pageSize a legal home under any envelope value (handler.ts
 // strips before the envelope wraps), so the handler caps rows and over-fetches
 // by one to signal "more" instead.
@@ -387,7 +387,7 @@ defineRoute({
 // existing stock before the LIVE_PERSON removal deletes those rows. The bag is
 // { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
 // _count of the residue relations) and { PersonMerge } (fromId only, so the page
-// can flag a legacy tombstone that has no archive row). Exposes tombstone identity,
+// can flag a tombstone that has no archive row). Exposes tombstone identity,
 // so isSysadmin/board only — the same band that already sees applicant PII.
 //
 // The grant is pii + internal + public: email is the one pii field; name/id/
@@ -615,7 +615,7 @@ defineRoute({
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
 // be confirmed (lib/shopify/stock.ts parks it in Program.shopifyStockParked;
-// legacy rows sit in shopifyStockUnconfirmed), and the per-program settle action
+// a program can also hold a parked sum in shopifyStockUnconfirmed), and the per-program settle action
 // ("Shopify has it" / "doesn't have it"). Board only: no sysadmin, no finance.
 // Rows are computed, all `internal`.
 defineRoute({
@@ -739,7 +739,7 @@ defineRoute({
 });
 
 // Integration error log (latest 200) — admin surface, all internal tier.
-// The response key is `errors` for back-compat with the existing UI.
+// The response key is `errors` because LinkStatusPanel reads that key.
 defineRoute({
     endpoint: 'GET /api/system-status/links',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -753,7 +753,7 @@ defineRoute({
 
 // Finance view log (B11) — who viewed finance records. Board only: finance
 // holders are most of the people it records, and sysadmins are kept out by
-// least privilege (FV-4); anyRole has no sysadmin auto-admit. Not
+// least privilege; anyRole has no sysadmin auto-admit. Not
 // `auditedRead`: the log holds no finance content, so reading it is not logged.
 //
 // FinanceViewLog has no relation to Person, so viewer names travel as a second
@@ -784,8 +784,7 @@ defineRoute({
 // widening it later is a boundary PR, which is the point. 'personal' is
 // required for RawBadgeLog.timestamp (the "scanned 2:14pm" the row copy is
 // built on) and location; 'internal' for the row's own bookkeeping —
-// reviewReason, clientEventId, personId, and the two new reviewedAt/reviewedBy
-// columns.
+// reviewReason, clientEventId, personId, and the reviewedAt/reviewedBy columns.
 //
 // Keyholders are admitted. isOperations stays out: the attendance rule
 // puts operations at aggregate only — they do not read one person's raw
@@ -869,6 +868,32 @@ defineRoute({
     returns: ['Visit', 'Event'],
     orderedView: [
         ['authenticated', ['their_own:personal', 'member', 'public']],
+    ],
+});
+
+// The first-sign-in question: does this adult join the household that added
+// them? Only Household.name leaves, and only to the person being asked.
+defineRoute({
+    endpoint: 'GET /api/profile/household-question',
+    authorize: 'authenticated',
+    allowJoinPending: true,
+    envelope: 'household',
+    // Bag: { Household }.
+    returns: ['Household'],
+    orderedView: [
+        ['authenticated', ['public']],
+    ],
+});
+
+// Records the answer. The bag is empty; the status tells the client the outcome.
+defineRoute({
+    endpoint: 'POST /api/profile/household-question',
+    authorize: 'authenticated',
+    allowJoinPending: true,
+    envelope: null,
+    returns: ['Household'],
+    orderedView: [
+        ['authenticated', ['public']],
     ],
 });
 
@@ -1068,8 +1093,18 @@ defineOutbound({
 defineOutbound({
     surface: 'gmail.read',
     // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com. Read-only by intent:
-    // the token comes from a refresher outside this repo and its scope is not checked.
+    // the token comes from gmail-refresher-function, whose consent CLI refuses any
+    // scope but gmail.readonly. The app does not check the scope at runtime.
     // List/get requests only: a date-window query string and message/attachment ids;
     // no model data. Mail read back is tiered by the receipt models that store it.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'gmail.oauth',
+    // gmail-refresher-function/src/oauth.ts → accounts.google.com, oauth2.googleapis.com.
+    // The app's client credentials, an authorization code or a refresh token; no model
+    // data. The consent URL also carries the mailbox address as login_hint: the org's
+    // own mailbox, named by the operator running consent, not a model field, so no tier.
     tiers: [],
 });

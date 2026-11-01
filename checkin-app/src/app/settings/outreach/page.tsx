@@ -8,6 +8,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { substituteTokens } from "@/lib/outreach/tokens";
 
@@ -48,7 +49,7 @@ const AUDIENCE_LABEL: Record<string, string> = {
 };
 
 export default function OutreachSettingsPage() {
-  const { ready, loading: authLoading } = useRequireRole(["isBoardMember", "isSysadmin", "isOperations"]);
+  const { ready, loading: authLoading } = useRequireRole(SETTINGS_ROLES);
 
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState({ subject: "", body: "" });

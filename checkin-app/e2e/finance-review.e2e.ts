@@ -69,7 +69,8 @@ test("a plain member is sent away from Finance review", async ({ browser }) => {
   const { context } = await signIn(browser, MEMBER);
   const page = await context.newPage();
   await page.goto("/finance/review");
-  await page.waitForLoadState("networkidle");
+  // The Finance section's role gate sends a viewer it refuses to the home page.
+  await expect(page).toHaveURL((url) => url.pathname === "/");
   await expect(page.getByRole("heading", { name: "Finance review" })).toHaveCount(0);
   await context.close();
 });

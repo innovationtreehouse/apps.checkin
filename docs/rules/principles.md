@@ -36,6 +36,9 @@ Things every domain takes as true because they are handled outside the app.
   outside the household, and business ties, are a deliberate limit: they are not
   modelled, and people declare them themselves.
   [Decision — *Policy: Ethics Policy, Art. III §III.2*]
+- Background-check review volume is low enough that a person handles mistakes,
+  through a Board reset, rather than a dedicated app feature. So a mistaken
+  rejection has no withdraw of its own.  [Decision — owner ruling 2026-10-30]
 
 ---
 
@@ -352,6 +355,12 @@ consistency follows risk*, and no double booking follows *apply once*.
 
 - **The app only adds to the books.** It never pays, voids, edits or deletes
   anything there. A correction is finance's to make, in the accounting system.
+
+- **The app has one create-only way of writing to the books, and a closed list of
+  what it writes.** It creates Purchases, Bills, Deposits and Vendors, and the
+  journal entry for a gift of goods, each with only the fields listed for it. A
+  Purchase is paid by card or cash, never by check. Writing any other entry type,
+  or another field, changes this rule.
 
 - **Finance's books come first.** Nothing is booked into a year that is closed
   in the books. Until the app starts posting in an area, it only matches what

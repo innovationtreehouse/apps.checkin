@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { archivedPeople } from "@/lib/person/archivedPeople";
 
 /**
  * GET /api/finance-ops/payments — the board's queue of reconciler-detected
@@ -64,7 +65,11 @@ export const GET = handler(
         ]);
 
         const procMap = new Map(processes.map((p) => [p.id, p]));
-        const personMap = new Map(persons.map((p) => [p.id, p]));
+        // A merged-away payer keeps their name; the address to chase falls to the household lead.
+        const personMap = new Map<number, { name: string | null; email?: string | null }>(persons.map((p) => [p.id, p]));
+        for (const archived of await archivedPeople(prisma, personIds.filter((id) => !personMap.has(id)))) {
+            personMap.set(archived.id, { name: archived.name });
+        }
         const programMap = new Map(programs.map((p) => [p.id, p]));
         const orderMap = new Map(orders.filter((o) => o.legacyId !== null).map((o) => [o.legacyId as string, o]));
 

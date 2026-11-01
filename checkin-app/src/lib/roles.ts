@@ -10,9 +10,8 @@ import { archiveOpenKvas, hasSignedCurrentKva, openKvaIfNeeded } from "@/lib/mem
  * derived from it — adding a role is meant to start and end here (plus the
  * PersonRoleKind enum in prisma/schema.prisma, and wherever the new flag needs
  * to be surfaced: next-auth.d.ts's JWT/Session interfaces, RoleBadge's
- * ROLE_META). The flag names are the derived claim names, unchanged from the
- * pre-table boolean-column era so `withAuth`/`BusinessRole`/`SessionUser`/the
- * ~200 session-claim consumers don't move (expand phase of expand/contract).
+ * ROLE_META). The flag names are the derived claim names that
+ * `withAuth`/`BusinessRole`/`SessionUser`/the session-claim consumers read.
  */
 export const FLAG_TO_KIND = {
     isSysadmin: "SYSADMIN",
@@ -34,10 +33,9 @@ export const KIND_TO_FLAG = Object.fromEntries(
 ) as Record<PersonRoleKind, RoleFlag>;
 
 /**
- * Legacy mirror columns on Person, kept in sync by write-through so the ~15
- * existing `where:{isBoardMember:true}`-style readers stay correct without
- * porting them this PR (contract PR ports them, then drops the columns).
- * OPERATIONS has none — it never shipped a column, so it's table-only.
+ * Legacy mirror columns on Person, kept in sync by write-through so
+ * `where:{isBoardMember:true}`-style readers stay correct.
+ * OPERATIONS has no column, so it's table-only.
  */
 export const KIND_TO_MIRROR: Partial<Record<PersonRoleKind, RoleFlag>> = {
     SYSADMIN: "isSysadmin",
@@ -115,7 +113,7 @@ export type TrustedRole = PersonRoleKind | "BUCKET_OWNER" | "BUCKET_TREASURER" |
 
 /**
  * The one answer to "is this person trusted?", and which roles make them so.
- * Board ruling B1/B2, 2026-10-27; trusted list per owner decisions 2026-10-27 and 2026-10-30.
+ * The list is set by Board ruling and owner decision.
  * Any row counts, including on an archived bucket or a past program, so the
  * answer stays fail-closed until the row itself is removed.
  */
@@ -213,7 +211,7 @@ export async function mayManageKeyVolunteers(db: DbClient, actor: { isBoardMembe
  * THE write choke point for role changes. Grants/revokes one `flag` on
  * `target`, owning every invariant a role write has to hold:
  *
- *  - the per-flag authority matrix (§4.3): a board actor may grant/revoke any
+ *  - the per-flag authority matrix: a board actor may grant/revoke any
  *    of the five flags, including adding/removing isSysadmin and removing
  *    isBoardMember; a sysadmin-only actor (not board) may grant any flag,
  *    including adding board, but may never remove board membership.
@@ -263,7 +261,7 @@ export async function setRoleFlag(
     return withTx(db, async (tx) => {
         // Lock the BOARD row set FIRST, then read THIS person's roles under the lock,
         // so the no-op short-circuit and the returned before/after are consistent with
-        // the write (thpr C: no pre-lock snapshot). ponytail: a no-op now takes the lock
+        // the write (no pre-lock snapshot). ponytail: a no-op takes the lock
         // before returning — fine, the board table is a handful of rows.
         await lockBoardRoles(tx);
 

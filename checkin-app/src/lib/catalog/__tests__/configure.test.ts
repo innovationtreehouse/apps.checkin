@@ -40,6 +40,7 @@ describe("configureCatalogRuntime", () => {
     const org = { id: "treehouse", name: "Innovation Treehouse" };
     findUnique.mockResolvedValue(org);
     await expect((await boot()).org()).resolves.toEqual(org);
+    expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "treehouse" } }));
   });
 });
 

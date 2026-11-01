@@ -1,4 +1,4 @@
-// Gmail intake (#1265 §2a): the last catch-up step of the host's daily cron. Each mailed file
+// Gmail intake: the last catch-up step of the host's daily cron. Each mailed file
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
@@ -9,7 +9,7 @@ import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipa
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrg, mailbox, ports } from "../runtime";
+import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -378,7 +378,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
   const started = Date.now();
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
   const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
   const ignoredHashes = new Set(
@@ -630,16 +630,20 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
       select: { id: true, gmailMessageId: true, receivedAt: true },
     });
-    // A capped run stores only a lower bound, so each due row is re-dated from its own message; one that cannot be fetched keeps its stored date.
-    const dated = await Promise.all(
-      due.map(async (row) => {
-        const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
-        if (!message) return row;
-        const receivedAt = new Date(Number(message.internalDate));
-        await db.receiptMailAtRisk.update({ where: { id: row.id }, data: { receivedAt } });
-        return { ...row, receivedAt };
-      }),
-    );
+    // A capped run stores only a lower bound, so each due row is re-dated from its own message, one at a time to spare Gmail; one that cannot be fetched keeps its stored date.
+    const dated: typeof due = [];
+    for (const row of due) {
+      const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
+      if (!message) {
+        dated.push(row);
+        continue;
+      }
+      const receivedAt = new Date(Number(message.internalDate));
+      dated.push({ ...row, receivedAt });
+      await db.receiptMailAtRisk
+        .update({ where: { id: row.id }, data: { receivedAt } })
+        .catch((err) => console.error(`[receipt] mail ageing re-date failed for row ${row.id}:`, err));
+    }
     const rows = dated.filter((r) => !r.receivedAt || r.receivedAt.getTime() < lastChance);
     if (rows.length === 0) return;
     const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));

@@ -46,10 +46,11 @@ test.afterAll(async () => {
   for (const step of undo.reverse()) await step();
 });
 
-/** The view tabs' labels, without their counts and pills. */
-async function viewLabels(page: Page): Promise<string[]> {
+/** The view tabs' labels, without their counts and pills, once at least `expected` tabs show. */
+async function viewLabels(page: Page, expected: number): Promise<string[]> {
   const labels = page.locator(".mantine-SegmentedControl-label");
-  await expect(labels.first()).toBeVisible();
+  // The list shows only "All" until the nav counts load.
+  await expect.poll(() => labels.count()).toBeGreaterThanOrEqual(expected);
   return (await labels.allInnerTexts()).map((t) => t.replace(/\s*\(\d+\)/, "").replace(/\s*\d+\s*$/, "").trim());
 }
 
@@ -67,7 +68,7 @@ for (const viewer of VIEWERS) {
     const watch = watchPage(page);
 
     await page.goto(viewer.page);
-    expect(await viewLabels(page)).toEqual(viewer.views.map((v) => LABELS[v]));
+    expect(await viewLabels(page, viewer.views.length)).toEqual(viewer.views.map((v) => LABELS[v]));
 
     const failures: string[] = [];
     for (const view of viewer.views) {

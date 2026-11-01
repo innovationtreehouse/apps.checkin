@@ -14,7 +14,6 @@ jest.mock("@checkin/expense/components/api", () => ({
     reload: () => { if (path) mockReload(path); },
   }),
   useRoles: () => ({ isFinance: true, isBoard: true }),
-  useBuckets: () => [],
   send: (...args: unknown[]) => mockSend(...args),
 }));
 
@@ -56,19 +55,21 @@ const line = (id: number) => ({
   gtin13: null, isDelayed: false, isCapital: false, depreciationYears: null, capitalOwnerId: null,
 });
 
-function load(specs: LineSpec[]) {
+function load(specs: LineSpec[], expense: Record<string, unknown> = {}, loads: Record<string, unknown> = {}) {
   mockLoads = {
     "/expenses/e1": {
       id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000 * specs.length, taxCents: 0, shippingCents: 0, discountCents: 0,
       currency: "USD", submittedAt: "2026-10-01T00:00:00Z", state: "owner_approval", needsReimbursement: false, reimburseePersonId: null, backfill: false,
       lineItems: specs.map((_, i) => line(i + 1)),
       approvals: [],
+      ...expense,
     },
     "/expenses/e1/line-item-approvals": specs.map((s, i) => ({ id: 10 + i, lineItemId: i + 1, ownerId: 3, status: s.status ?? "pending" })),
     "/expenses/e1/signoffs": specs.map((s, i) => ({
       lineItemId: i + 1, filled: [], missing: ["SUBMITTER", "TREASURER"], blocked: [], actions: s.actions ?? [], awaiting: s.awaiting ?? [],
       mayRecordBoardAuthorization: false,
     })),
+    ...loads,
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
@@ -227,5 +228,52 @@ describe("a failed line-actions load", () => {
   it("shows no error when the line actions load", () => {
     load([{ actions: [APPROVE] }]);
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
+  });
+});
+
+describe("other failed loads", () => {
+  it("a failed approvals load shows a red error with a retry, and the acts that need it stay disabled", async () => {
+    mockErrors = { "/expenses/e1/line-item-approvals": "Server error (500)" };
+    load([{ actions: [APPROVE, RAISE] }]);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load the bucket approvals");
+    expect(alert).toHaveTextContent("Server error (500)");
+    expect(screen.getByRole("button", { name: "Approve as Program approver" })).toBeDisabled();
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(mockReload).toHaveBeenCalledWith("/expenses/e1/line-item-approvals");
+  });
+
+  it("a failed vendor load shows a red error in the Reimbursee panel with a retry", () => {
+    mockErrors = { "/expenses/e1/reimbursee-vendor": "Server error (502)" };
+    load([{ actions: [] }], { needsReimbursement: true, reimburseePersonId: 4 });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load the reimbursee's QuickBooks vendor");
+    expect(alert).toHaveTextContent("Server error (502)");
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(mockReload).toHaveBeenCalledWith("/expenses/e1/reimbursee-vendor");
+  });
+
+  it("a failed bucket list shows a red error in the bucket dialog with a retry", async () => {
+    mockErrors = { "/local-owners": "Server error (503)" };
+    load([{ status: "exception_raised", actions: [{ act: "assign-bucket", primary: true, noteRequired: false }] }]);
+    expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Assign bucket" }));
+    const dialog = await screen.findByRole("dialog");
+    const alert = within(dialog).getByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load the bucket list");
+    expect(alert).toHaveTextContent("Server error (503)");
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(mockReload).toHaveBeenCalledWith("/local-owners");
+  });
+});
+
+describe("while the approvals load", () => {
+  it("keeps the acts that need an approval row disabled, and lets a signature through", async () => {
+    load([{ actions: [APPROVE] }, { actions: [{ ...SIGN_T, primary: true }] }], {}, { "/expenses/e1/line-item-approvals": null });
+    expect(screen.getByRole("button", { name: "Approve as Program approver" })).toBeDisabled();
+    const sign = screen.getByRole("button", { name: "Sign as Treasurer" });
+    expect(sign).toBeEnabled();
+    await act(async () => { fireEvent.click(sign); });
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-items/2/signoffs", "POST", { seat: "TREASURER" }, "Signed as Treasurer");
   });
 });

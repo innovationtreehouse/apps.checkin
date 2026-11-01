@@ -1,10 +1,7 @@
-// Mounts a receipt library call through checkin's handler(). The endpoint string MUST match
+// Mounts a receipt route factory through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/receipt.ts entry.
-import { receiptService } from "@checkin/receipt";
+import { routes } from "@checkin/receipt";
 import { handler } from "@/security/handler";
-import { readJson, receiptRoute } from "@/lib/receipt/route";
+import { receiptRoute } from "@/lib/receipt/route";
 
-export const PUT = handler(
-  "PUT /api/receipts/[id]/in-kind",
-  receiptRoute<{ id: string }>(async (ctx) => ({ ReceiptView: await receiptService.setInKind(ctx.params.id, await readJson(ctx)) })),
-);
+export const PUT = handler("PUT /api/receipts/[id]/in-kind", receiptRoute(routes.receipts.inKind));

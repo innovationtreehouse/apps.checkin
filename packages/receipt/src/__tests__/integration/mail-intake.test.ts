@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { db } from "../../db";
+import { db, getPrisma } from "../../db";
 import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
 import { MAX_FILE_BYTES } from "../../lib/file-type";
 import {
@@ -397,6 +397,42 @@ describeDb("mail intake ageing alert", () => {
     expect(await readMailbox()).toMatchObject({ failed: 1 });
     expect(agingAlerts).toMatchObject([{ messages: 2 }]);
     expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  /** Two stored rows past their last chance, with messages the listing no longer returns. */
+  async function storedAtRisk() {
+    send("a", { ageMs: old });
+    send("b", { ageMs: old });
+    mail.reader.listRecent = async () => [];
+    const receivedAt = new Date(Date.now() - old);
+    await db.receiptMailAtRisk.createMany({ data: ["a", "b"].map((gmailMessageId) => ({ orgId: TEST_ORG_ID, gmailMessageId, receivedAt })) });
+  }
+
+  it("finishes the run and still alerts when saving one re-dated row fails", async () => {
+    await storedAtRisk();
+    const update = vi.spyOn(getPrisma().receiptMailAtRisk, "update").mockRejectedValueOnce(new Error("row lock timeout"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ status: "ok" });
+    const failedRowId = update.mock.calls[0][0].where.id;
+    update.mockRestore();
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(logged).toHaveBeenCalledWith(`[receipt] mail ageing re-date failed for row ${failedRowId}:`, expect.any(Error));
+  });
+
+  it("fetches at-risk messages one at a time", async () => {
+    await storedAtRisk();
+    const { getMessage } = mail.reader;
+    let inFlight = 0;
+    let peak = 0;
+    mail.reader.getMessage = async (id) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight--;
+      return getMessage(id);
+    };
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(peak).toBe(1);
   });
 
   it("alerts for an old message whose reading failed", async () => {

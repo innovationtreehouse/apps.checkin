@@ -6,7 +6,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api, errorMessage } from "./api";
+import { api, useLoad } from "./api";
 import { LoadError } from "@checkin/component-ui";
 import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 
@@ -14,12 +14,11 @@ import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 // create/update routes ignore it — so it is shown read-only here.
 const EMPTY_REF = { partNumber: "", description: "", manufacturer: "", retailer: "", url: "" };
 
-function RefRow({ row: r, canEdit, onArchive, onEditingChange, onUpdated }: {
+function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
   row: ItemReferenceRow;
   canEdit: boolean;
   onArchive: () => void;
   onEditingChange: (editing: boolean) => void;
-  onUpdated: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,7 +46,6 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange, onUpdated }: {
           url: form.url || undefined,
         }),
       });
-      onUpdated();
       exitEdit();
       notifications.show({ message: "Reference updated", color: "green" });
     } catch (e) {
@@ -106,28 +104,17 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   onClose: () => void;
   canEdit: boolean;
 }) {
-  const [refs, setRefs] = useState<ItemReferenceRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const refsLoad = useLoad<ItemReferenceRow[]>(opened && item ? `/item-references?gtin13=${encodeURIComponent(item.gtin13)}` : null);
+  const refs = refsLoad.data ?? [];
+  const loading = refsLoad.data === null;
   const [addForm, setAddForm] = useState(EMPTY_REF);
   const [showAdd, setShowAdd] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editingRows, setEditingRows] = useState<Set<number>>(new Set());
 
-  async function loadRefs() {
-    if (!item) return;
-    setLoading(true);
-    try {
-      const data = await api<ItemReferenceRow[]>(`/item-references?gtin13=${encodeURIComponent(item.gtin13)}`);
-      setRefs(data);
-      setError(null);
-    } catch (e) { setError(errorMessage(e)); }
-    finally { setLoading(false); }
-  }
-
   const [wasOpened, setWasOpened] = useState(false);
-  if (opened && !wasOpened) { setWasOpened(true); loadRefs(); }
-  if (!opened && wasOpened) { setWasOpened(false); setRefs([]); setError(null); setShowAdd(false); setAddForm(EMPTY_REF); setEditingRows(new Set()); }
+  if (opened && !wasOpened) setWasOpened(true);
+  if (!opened && wasOpened) { setWasOpened(false); setShowAdd(false); setAddForm(EMPTY_REF); setEditingRows(new Set()); }
 
   async function handleCreate() {
     if (!item) return;
@@ -137,7 +124,6 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
         method: "POST",
         body: JSON.stringify({ gtin13: item.gtin13, partNumber: addForm.partNumber || undefined, description: addForm.description || undefined, manufacturer: addForm.manufacturer || undefined, retailer: addForm.retailer || undefined, url: addForm.url || undefined }),
       });
-      await loadRefs();
       setAddForm(EMPTY_REF);
       setShowAdd(false);
       notifications.show({ message: "Reference added", color: "green" });
@@ -149,7 +135,6 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   async function handleArchive(id: number) {
     try {
       await api(`/item-references/${id}/archive`, { method: "POST" });
-      await loadRefs();
       notifications.show({ message: "Reference archived", color: "orange" });
     } catch (e) {
       notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
@@ -173,7 +158,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   return (
     <Modal opened={opened} onClose={handleClose} title={item ? `References — ${item.name}` : "References"} size="xl" centered>
       {item && <Text size="sm" c="dimmed" ff="monospace" mb="md">{formatItemId(item.gtin13)}</Text>}
-      {error ? <LoadError what="references" message={error} onRetry={loadRefs} />
+      {refsLoad.error ? <LoadError what="references" message={refsLoad.error} onRetry={refsLoad.reload} />
         : loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 && !showAdd ? (
         <Text size="sm" c="dimmed" mb="md">No references yet.</Text>
       ) : (
@@ -191,7 +176,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
           </Table.Thead>
           <Table.Tbody>
             {refs.map((r) => (
-              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onEditingChange={(e) => handleEditingChange(r.id, e)} onUpdated={loadRefs} />
+              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onEditingChange={(e) => handleEditingChange(r.id, e)} />
             ))}
             {showAdd && (
               <Table.Tr>

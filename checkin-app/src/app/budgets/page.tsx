@@ -7,6 +7,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Bucket {
   id: number;
@@ -96,7 +97,7 @@ function clearError(title: string) {
 }
 
 export default function BudgetsPage() {
-  const { user, loading: authLoading, ready } = useRequireRole(["isFinance", "isBoardMember"]);
+  const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
   const isBoard = !!user?.isBoardMember;
 

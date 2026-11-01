@@ -184,8 +184,9 @@ model PersonMerge {
   ([`lib/person/mergeChain.ts`](../../checkin-app/src/lib/person/mergeChain.ts)), which already
   follows both `mergedIntoId` and `PersonMerge`; dropping the tombstone leaves only the archive arm.
 
-On `main` the `PersonMerge` model exists and every merge writes one (#1729); the tombstone row and
-its `mergedIntoId` are still kept alongside it.
+On `main` every merge writes a `PersonMerge` row (#1729) and deletes the merged-away `Person` row
+in the same transaction (2b-3). A data migration deletes each existing tombstone that has an
+archive row and no remaining reference; any it keeps stay listed on the census page.
 - **`AuditLog.affectedEntityId`** is a bare `Int` with no FK, so historical audit references survive
   a deleted `Person`.
 - `Person.mergedIntoId`, `mergedInto`, and `mergedFrom` are dropped.

@@ -1,5 +1,5 @@
 /**
- * Category route factories (#1286). Thin: parse → repo → model bag. The host's
+ * Category route factories. Thin: parse → repo → model bag. The host's
  * handler() runs admission + the stripper over the returned `{ Category }` bag.
  */
 import { httpError, parseBody, parseId, query } from "@checkin/component-kit";

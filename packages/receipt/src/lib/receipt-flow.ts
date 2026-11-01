@@ -3,14 +3,14 @@ import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
-import { getOrg, ports } from "../runtime";
+import { getOrgId, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
 import { receiptMath, type MathLine } from "./lineMath";
 import { missingDetails, missingDetailsNote } from "./missingDetails";
-import { describeCorrection, submitterCorrections } from "./submitterCorrections";
+import { describeCorrection, editsSinceReading, READING_APPLIED, submitterCorrections } from "./submitterCorrections";
 
 export function validateLineItemMath(
   lineItems: MathLine[],
@@ -43,18 +43,21 @@ export const SUBMITTER_CORRECTION_FIELDS: readonly string[] = ["taxCents", "rece
 /**
  * The review flags for a receipt. Tax and age also check the values its submitter corrected away,
  * read from the audited field edits, so a correction never drops a reason the original raised.
+ * Only edits since the latest reading count, because that reading replaced the values before it.
  */
 async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
-  const edits = await db.receiptAuditLog.findMany({
+  const rows = await db.receiptAuditLog.findMany({
     where: {
       receiptId: row.id,
-      action: "field_edit",
-      userId: row.uploadedByUserId,
-      fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] },
+      OR: [
+        { action: READING_APPLIED },
+        { action: "field_edit", userId: row.uploadedByUserId, fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] } },
+      ],
     },
-    select: { fieldChanged: true, valueBefore: true },
+    select: { id: true, action: true, fieldChanged: true, valueBefore: true },
     orderBy: [{ changedAt: "asc" }, { id: "asc" }],
   });
+  const edits = editsSinceReading(rows);
   const before = (field: string) =>
     edits.flatMap((e) => (e.fieldChanged === field && e.valueBefore !== null ? [e.valueBefore] : []));
   const date = row.receiptDate ?? "";
@@ -132,7 +135,7 @@ function submitterConfirmation(row: ReceiptRow) {
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     const detail = await db.receiptDetail.findFirst({ where: { id: receiptId, orgId }, select: { state: true } });
     if (detail?.state !== "receipt_finalized") return false;
     await sendDonorSync(receiptId, actor);
@@ -228,7 +231,7 @@ async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<vo
  * that step stands and the flow writes nothing.
  */
 export async function runFullFlow(receiptId: string, actor: Actor | null): Promise<void> {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const row = await receiptRepo.find(receiptId, orgId);
   if (!row || (row.state !== "uploaded" && row.state !== "flow_error")) return;
 
@@ -286,7 +289,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
     switch (nextState) {
       case "duplicate_flagged":
         await transition(
-          { state: "duplicate_flagged", duplicateFlaggedAt: new Date(), duplicateSuspectReceiptId: dupId },
+          { state: "duplicate_flagged", duplicateFlaggedAt: new Date(), duplicateSuspectReceiptId: dupId, validationNotes: null },
           `duplicate_flagged (suspect: ${dupId})`,
         );
         return;
@@ -299,7 +302,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         );
         return;
       case "submitter_review":
-        await transition({ state: "submitter_review" }, "submitter_review");
+        await transition({ state: "submitter_review", validationNotes: null }, "submitter_review");
         return;
       case "financial_review": {
         const reasons = [
@@ -310,7 +313,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         ]
           .filter(Boolean)
           .join("; ");
-        await transition({ state: "financial_review" }, reasons ? `financial_review (${reasons})` : "financial_review");
+        await transition({ state: "financial_review", validationNotes: null }, reasons ? `financial_review (${reasons})` : "financial_review");
         return;
       }
       case "receipt_finalized":

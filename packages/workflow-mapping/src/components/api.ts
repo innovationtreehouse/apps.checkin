@@ -1,5 +1,5 @@
 "use client";
-import { createClient, request, useViewer } from "@checkin/component-ui";
+import { createClient, useViewer } from "@checkin/component-ui";
 
 export { errorMessage, notifyNavCounts, type Loaded } from "@checkin/component-ui";
 
@@ -9,11 +9,6 @@ export { errorMessage, notifyNavCounts, type Loaded } from "@checkin/component-u
  * which controls to show.
  */
 export const { api, useLoad } = createClient("/api/workflow-mapping");
-
-/** Reads from the catalog's own /api/catalog/* routes, the source of the legal category values. */
-export function catalogApi<T>(path: string): Promise<T> {
-  return request<T>(`/api/catalog${path}`);
-}
 
 /** Mirrors the write routes' INVENTORY_MANAGER gate. */
 export function useCanManage(): boolean {

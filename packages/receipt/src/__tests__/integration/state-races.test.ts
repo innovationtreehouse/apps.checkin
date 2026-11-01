@@ -1,3 +1,4 @@
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { Prisma } from "../../generated/prisma/client";
@@ -26,17 +27,6 @@ async function receiptIn(state: string, detail: Prisma.ReceiptDetailUncheckedUpd
 
 const setState = (id: string, state: string) => Prisma.sql`UPDATE receipt_details SET state = ${state} WHERE id = ${id}`;
 
-/** Resolves once another session waits on a lock, or once `settled` is true. */
-async function untilBlocked(settled: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !settled(); i++) {
-    const [{ n }] = await db.$queryRaw<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n > 0) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  if (!settled()) throw new Error("the action never waited on the held write");
-}
-
 /**
  * Runs `action` while another transaction holds `statements` uncommitted, and commits them once
  * `action` waits on their locks: the competing write lands between the action's read and its write.
@@ -44,21 +34,20 @@ async function untilBlocked(settled: () => boolean): Promise<void> {
 async function racing<T>(statements: Prisma.Sql[], action: () => Promise<T>): Promise<PromiseSettledResult<T>> {
   let release!: () => void;
   const released = new Promise<void>((r) => (release = r));
-  let held!: () => void;
-  const isHeld = new Promise<void>((r) => (held = r));
+  let held!: (pid: number) => void;
+  const isHeld = new Promise<number>((r) => (held = r));
   const holder = db.$transaction(
     async (tx) => {
       for (const s of statements) await tx.$executeRaw(s);
-      held();
+      held(await backendPid(tx));
       await released;
     },
     { timeout: 20_000 },
   );
-  await isHeld;
-  let settled = false;
-  const result = Promise.allSettled([action()]).then(([r]) => ((settled = true), r));
+  const holderPid = await isHeld;
+  const result = Promise.allSettled([action()]).then(([r]) => r);
   try {
-    await untilBlocked(() => settled);
+    await waitersBehind(db, holderPid);
   } finally {
     release();
     await holder;

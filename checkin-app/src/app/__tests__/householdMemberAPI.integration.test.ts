@@ -232,8 +232,8 @@ describe('Household Member API Integration Tests', () => {
             expect(updatedProfile?.phone).toBeNull();
         });
 
-        // #1149 F1 / #1447: this form once stored DoB at noon UTC while every
-        // other writer stored midnight. A non-midnight DoB fails an SQL age
+        // This form stores DoB at UTC midnight, like every
+        // other writer. A non-midnight DoB fails an SQL age
         // filter cut at UTC midnight, so the student who turns 18 exactly on the
         // member-year boundary — the row the 18+ roster exists to show — is
         // silently dropped while calculateAge still reports them as 18.

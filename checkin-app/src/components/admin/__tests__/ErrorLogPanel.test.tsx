@@ -44,6 +44,6 @@ describe("ErrorLogPanel", () => {
   it("shows a failure message when the fetch fails", async () => {
     mockFetchJson({});
     renderWithProviders(<ErrorLogPanel />);
-    expect(await screen.findByText("Failed to load error log.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the error log")).toBeInTheDocument();
   });
 });

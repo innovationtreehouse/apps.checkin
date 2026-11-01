@@ -54,7 +54,7 @@ const PAID_PENDING_HOUSEHOLD_STATUSES: OrgMembershipStatus[] = ["NONE", "REVOKED
  * ({@link membershipFeeSettledAwaitingBg}). Such a household has paid in full and is
  * waiting on the board, so for programs it gets the member rate and sees
  * members-only programs, rather than being held at the non-member tier for the
- * review's duration (#1397).
+ * review's duration.
  *
  * PROGRAMS ONLY. Do NOT reuse this for "is this a member": member-only mailing
  * audiences, outreach variants, the shop org-members list and every other
@@ -181,8 +181,7 @@ export async function isActiveOrgMemberThrough(personId: number, through: Date |
  * Is this Person's membership fee settled through a program running to `through`? Same
  * duration rule as {@link isActiveOrgMemberThrough}, over the wider
  * {@link MEMBERSHIP_FEE_SETTLED_PERSON_WHERE} population. This is the member-PRICING
- * question; the members-only visibility gate is status-only ({@link isMembershipFeeSettled}),
- * matching what it replaced.
+ * question; the members-only visibility gate is status-only ({@link isMembershipFeeSettled}).
  */
 export async function isMembershipFeeSettledThrough(personId: number, through: Date | null): Promise<boolean> {
     return (await isMembershipFeeSettled(personId)) && coversThrough(personId, through);

@@ -1,4 +1,4 @@
-// The FINANCE mail queue (#1265 §2a): mailed receipts held for an unknown or unauthenticated
+// The FINANCE mail queue: mailed receipts held for an unknown or unauthenticated
 // sender, and those deferred for a known sender over their daily upload limit. Finance assigns
 // each to a submitter, which runs it through the mailed intake as that person, releases a
 // deferred one as its sender now, or discards it with a reason. Finance also keeps the ignore
@@ -7,7 +7,7 @@ import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
-import { getOrg, ports, requireActor } from "../runtime";
+import { getOrgId, ports, requireActor } from "../runtime";
 import { intakeDeferred, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
 import { closeUnreplyable } from "./mailReplies";
@@ -43,7 +43,7 @@ const auditIgnored = (tx: Tx, actor: ReceiptPrincipal, action: string, fieldChan
 
 /** Lists the file unless it already is; a new entry is audited against its source, `kind` and `sourceId`. */
 async function addIgnored(tx: Prisma.TransactionClient, actor: ReceiptPrincipal, fileHash: string, reason: string, kind: string, sourceId: string) {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const added = await tx.receiptIgnoredFile.createMany({ data: [{ orgId, fileHash, reason, addedByUserId: actor.id }], skipDuplicates: true });
   if (added.count === 1) await auditIgnored(tx, actor, "file_ignored", kind, sourceId, reason);
   return tx.receiptIgnoredFile.findUniqueOrThrow({ where: { orgId_fileHash: { orgId, fileHash } }, select: IGNORED_FIELDS });
@@ -57,7 +57,7 @@ function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
 
 async function storedItem(id: number) {
   const item = await db.receiptMailItem.findFirst({
-    where: { id, orgId: (await getOrg()).id, status: { in: STORED_STATUSES } },
+    where: { id, orgId: await getOrgId(), status: { in: STORED_STATUSES } },
     select: { ...ITEM_FIELDS, fileBlob: true, fileKey: true },
   });
   const fileBlob = item && (await readStoredFile(item));
@@ -70,7 +70,7 @@ export const mailQueueService = {
   async listHeld() {
     const actor = await requireActor();
     const items = await db.receiptMailItem.findMany({
-      where: { orgId: (await getOrg()).id, status: { in: STORED_STATUSES } },
+      where: { orgId: await getOrgId(), status: { in: STORED_STATUSES } },
       select: ITEM_FIELDS,
       orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
     });
@@ -144,7 +144,7 @@ export const mailQueueService = {
    */
   async assignedPassingItem(address: string, personId: number): Promise<{ id: number } | null> {
     await requireActor();
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     const items = await db.receiptMailItem.findMany({
       where: { orgId, senderAddress: address, status: "assigned", dmarcVerdict: "pass" satisfies DmarcVerdict, receiptId: { not: null } },
       select: { id: true, receiptId: true },
@@ -167,7 +167,7 @@ export const mailQueueService = {
   async discard(id: number, rawInput: unknown) {
     const actor = await requireActor();
     const { reason, ignoreFile } = parse(DiscardSchema, rawInput);
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     const { item, fileKeys } = await db.$transaction(async (tx) => {
       const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded", fileBlob: null } });
       if (done.count !== 1) throw new ServiceError(404, "Mail item not found");
@@ -199,14 +199,14 @@ export const mailQueueService = {
   /** Ignore-list entries, newest first. */
   async listIgnored() {
     await requireActor();
-    return db.receiptIgnoredFile.findMany({ where: { orgId: (await getOrg()).id }, select: IGNORED_FIELDS, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
+    return db.receiptIgnoredFile.findMany({ where: { orgId: await getOrgId() }, select: IGNORED_FIELDS, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
   },
 
   /** List a discarded or rejected receipt's file. Receipts already made from it are left as they are. */
   async ignoreReceiptFile(receiptId: string, rawInput: unknown) {
     const actor = await requireActor();
     const { reason } = parse(IgnoreSchema, rawInput);
-    const receipt = await db.receipt.findFirst({ where: { id: receiptId, orgId: (await getOrg()).id }, select: { fileHash: true, details: { select: { state: true } } } });
+    const receipt = await db.receipt.findFirst({ where: { id: receiptId, orgId: await getOrgId() }, select: { fileHash: true, details: { select: { state: true } } } });
     if (!receipt) throw new ServiceError(404, "Receipt not found");
     if (!IGNORABLE_STATES.has(receipt.details?.state ?? "")) throw new ServiceError(409, "Only a discarded or rejected receipt's file can be ignored");
     return db.$transaction((tx) => addIgnored(tx, actor, receipt.fileHash, reason, "receipt", receiptId));
@@ -215,7 +215,7 @@ export const mailQueueService = {
   /** Remove an entry; intake reads that file in mail it has not yet skipped. Audited like an add. */
   async removeIgnored(id: number) {
     const actor = await requireActor();
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     return db.$transaction(async (tx) => {
       const entry = await tx.receiptIgnoredFile.findFirst({ where: { id, orgId }, select: IGNORED_FIELDS });
       const removed = entry && (await tx.receiptIgnoredFile.deleteMany({ where: { id, orgId } }));

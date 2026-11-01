@@ -15,7 +15,7 @@ import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
 import { createReceiptService, type ReceiptService } from "./lib/services/receiptService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
-import { inertCatalogEventSource, type CatalogEventSource, type InventoryAlerts, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
+import { inertCatalogEventSource, type CatalogEventSource, type InventoryAlerts, type InventoryPrincipal, type InventoryRuntimeConfig } from "./contract";
 
 export const localInventoryRuntime = defineRuntime<InventoryRuntimeConfig, InventoryPrincipal>("local-inventory");
 const requireRuntime = localInventoryRuntime.require;
@@ -26,10 +26,6 @@ export const configureLocalInventory = localInventoryRuntime.configure;
 export const getPrincipal = localInventoryRuntime.getPrincipal;
 
 /** Org identity for the current request. */
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
-
 /** The current request's org id, the scope of every inventory row. */
 export const getOrgId = localInventoryRuntime.getOrgId;
 

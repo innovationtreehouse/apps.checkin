@@ -145,6 +145,18 @@ export const classifications = {
         alertedAt: 'internal',
         createdAt: 'internal',
     },
+    ReceiptOutcomeNotice: {
+        id: 'internal',
+        orgId: 'internal',
+        receiptId: 'internal',
+        event: 'internal',
+        claimedAt: 'internal',
+        uploaderSentAt: 'internal',
+        reimburseeSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
+        createdAt: 'internal',
+    },
     ReceiptIgnoredFile: {
         id: 'internal',
         orgId: 'internal',
@@ -189,6 +201,8 @@ export const relations = {
     ReceiptMailReply: {
     },
     ReceiptMailAtRisk: {
+    },
+    ReceiptOutcomeNotice: {
     },
     ReceiptIgnoredFile: {
     },

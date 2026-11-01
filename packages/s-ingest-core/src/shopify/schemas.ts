@@ -106,7 +106,14 @@ export const orderNodeSchema = z
     totalDiscountsSet: moneyBag.nullish(),
     currentTotalPriceSet: moneyBag.nullish(),
     totalRefundedSet: moneyBag.nullish(),
-    lineItems: z.object({ nodes: z.array(orderLineSchema).nullish(), edges: z.array(z.object({ node: orderLineSchema })).nullish() }).passthrough().nullish(),
+    lineItems: z
+      .object({
+        nodes: z.array(orderLineSchema).nullish(),
+        edges: z.array(z.object({ node: orderLineSchema })).nullish(),
+        pageInfo: z.object({ hasNextPage: z.boolean().nullish() }).passthrough().nullish(),
+      })
+      .passthrough()
+      .nullish(),
     refunds: z.array(refundSchema).nullish(),
   })
   .passthrough();
@@ -159,6 +166,8 @@ export interface NormalizedOrder {
   /** Coupon codes applied at checkout, verbatim. Empty for undiscounted orders. */
   discountCodes: string[];
   lines: NormalizedOrderLine[];
+  /** False when the payload may omit lines the order still has, so absence does not mean removal. */
+  linesComplete: boolean;
   refunds: NormalizedRefund[];
 }
 
@@ -211,6 +220,7 @@ export function normalizeOrder(node: OrderNode): NormalizedOrder {
       : undefined,
     discountCodes: node.discountCodes ?? [],
     lines,
+    linesComplete: !node.lineItems?.pageInfo?.hasNextPage,
     refunds,
   };
 }

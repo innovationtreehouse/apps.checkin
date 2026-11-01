@@ -1,4 +1,4 @@
-import { appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { SWEEP_DAYS, appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -76,23 +76,55 @@ interface PayoutSales {
   orderLines: MirrorOrderLine[];
   /** variantId → bucket id, or null for general income. An item with no entry is undecided. */
   categories: Map<string, number | null>;
+  /** orderGid → the order's current subtotal. An order with no entry is not checked for missing lines. */
+  subtotals: Map<string, number>;
 }
 
 async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirror): Promise<PayoutSales> {
   const txns = await mirror.transactions(payoutGid);
   const orderGids = [...new Set(txns.flatMap((t) => (t.orderGid ? [t.orderGid] : [])))];
-  const orderLines = orderGids.length ? await mirror.orderLines(orderGids) : [];
+  const [orderLines, subtotals] = orderGids.length ? await Promise.all([mirror.orderLines(orderGids), mirror.orderSubtotals(orderGids)]) : [[], []];
   const variantIds = [...new Set(orderLines.flatMap((l) => (l.variantId ? [l.variantId] : [])))];
   const mapped = await db.incomeItemCategory.findMany({ where: { orgId, variantId: { in: variantIds } } });
-  return { txns, orderLines, categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])) };
+  return {
+    txns,
+    orderLines,
+    categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])),
+    subtotals: new Map(subtotals.map((s) => [s.orderGid, s.subtotalCents])),
+  };
 }
 
 /**
- * Why a payout's deposit can't be built yet, naming its undecided items and unusable buckets,
- * or null when every sale has a usable decision. Custom items carry no variant and book as
- * general income.
+ * Whether an order's lines fall short of its subtotal, so the mirror lost at least one. Each line
+ * counts its current units with its discount prorated, within a cent of rounding per line.
+ * ponytail: a lost line passes once refunds take the subtotal down to the lines still held; compare against the original subtotal if the mirror ever keeps it.
+ */
+function missingLines(lines: MirrorOrderLine[], subtotalCents: number): boolean {
+  const current = lines.reduce((s, l) => (l.quantity ? s + ((l.priceCents * l.quantity - l.discountCents) * l.currentQuantity) / l.quantity : s), 0);
+  return current + lines.length < subtotalCents;
+}
+
+/**
+ * Why a payout's deposit can't be built yet, naming its undecided items, unusable buckets, and
+ * sales the mirror holds no or only some lines for, or null when every sale has a usable decision. Custom
+ * items carry no variant and book as general income. Orders are named by gid: an order's name
+ * can carry its buyer's, and income keeps no record of who bought.
  */
 export function mappingGap(sales: PayoutSales, problem: BucketProblem): string | null {
+  const lined = new Set(sales.orderLines.map((l) => l.orderGid));
+  const noLines = new Set<string>();
+  const missing = new Set<string>();
+  const noOrder = new Set<string>();
+  for (const t of sales.txns) {
+    if (!["charge", "refund"].includes(t.type.toLowerCase())) continue;
+    if (!t.orderGid) noOrder.add(t.txnGid);
+    else if (!lined.has(t.orderGid)) noLines.add(t.orderGid);
+    else {
+      const subtotal = sales.subtotals.get(t.orderGid);
+      const orderGid = t.orderGid;
+      if (subtotal !== undefined && missingLines(sales.orderLines.filter((l) => l.orderGid === orderGid), subtotal)) missing.add(orderGid);
+    }
+  }
   const undecided = new Set<string>();
   const broken = new Map<number, string>();
   for (const l of sales.orderLines) {
@@ -108,6 +140,9 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   const parts = [
     ...(undecided.size ? [`undecided items: ${[...undecided].sort().join(", ")}`] : []),
     ...[...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`),
+    ...(noLines.size ? [`orders with no lines: ${[...noLines].sort().join(", ")}`] : []),
+    ...(missing.size ? [`orders with missing lines: ${[...missing].sort().join(", ")}`] : []),
+    ...(noOrder.size ? [`transactions with no order: ${[...noOrder].sort().join(", ")}`] : []),
   ];
   return parts.length ? parts.join("; ") : null;
 }
@@ -286,7 +321,7 @@ function holdingData(d: QbDeposit, origin: string): RowData {
  * claim is still this post's. found → link (POSTED when it carries the payout's key);
  * created → POSTED; ambiguous or a lookup conflict → finance's queue; failed → POST_FAILED;
  * closed or needs-finance → NO_DEPOSIT, finance books it or skips it. A payout with an
- * undecided item or unusable bucket holds as NEEDS_MAPPING first. Returns null when another
+ * undecided item, unusable bucket or sale missing lines holds as NEEDS_MAPPING first. Returns null when another
  * holder has the reconcile lock and `wait` is off. `book` admits a NO_DEPOSIT payout.
  */
 export async function postPayout(
@@ -507,8 +542,8 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * check every assigned bucket (alerting finance once per bucket that has become unusable), then
  * post the outbox's WAITING rows and every NEEDS_MAPPING row, oldest first. A payout first seen
  * after switch-on books itself, however late it arrived; one seen before goes to finance as
- * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item or unusable bucket holds as
- * NEEDS_MAPPING until finance decides. Creates stop at the org's count and cents caps, which
+ * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item, unusable bucket or sale
+ * missing lines holds as NEEDS_MAPPING until the gap closes. Creates stop at the org's count and cents caps, which
  * fire the finance alert; failures and amount matches do not count. The host calls it in a
  * try/catch; it returns counts only.
  */
@@ -627,13 +662,10 @@ async function financeAnswered(tx: TxClient, orgId: string, id: number, entryId:
 /** What one orphan sweep read and reported. */
 export type SweepResult = { status: "unbound" } | { status: "ran"; read: number; flagged: number; full: boolean };
 
-/** How far back the orphan sweep looks for attempted payouts. */
-export const SWEEP_DAYS = 30;
-
 /**
  * The daily orphan sweep: one read of every deposit QuickBooks created since the oldest
  * attempt in the last SWEEP_DAYS, and a queue note on each payout whose key an entry carries
- * but which does not hold that entry. A full page alerts finance that some entries went
+ * but which does not hold that entry. A capped read alerts finance that some entries went
  * unseen. Reads QuickBooks only; finance voids or links what it reports. Unconfigured or
  * unbound, it reads nothing.
  */

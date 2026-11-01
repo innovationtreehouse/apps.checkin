@@ -18,7 +18,7 @@ function summary(payload: string): string {
 /** /donations/events — completed disbursements (booking batches); income books each deposit. */
 export default function EventsPage() {
   const [page, setPage] = useState(1);
-  const events = useLoad<EventRow[]>(paged("/disbursement-events", page));
+  const events = useLoad<EventRow[]>(paged("/disbursement-events", page), { keepPrevious: true });
 
   return (
     <>

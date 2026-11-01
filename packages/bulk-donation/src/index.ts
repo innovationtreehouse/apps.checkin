@@ -13,7 +13,6 @@ export type {
   DisbursementEvent,
   DisbursementSnapshot,
   WorkflowEvent,
-  DonationQbMatchExclusion,
   ManualInKindDonation,
   ManualInKindDonationLine,
   InKindDonationLine,
@@ -24,7 +23,6 @@ export * from "./lib/csv-parser";
 export * from "./lib/disbursement-processor";
 export * from "./lib/domain-rules";
 export * from "./lib/qb-match";
-export * from "./lib/qb-gate";
 export * from "./lib/in-kind-poster";
 export * from "./lib/deposit-handover";
 export { recordEvent, type EntityType, type WorkflowEventInput } from "./repositories/audit";

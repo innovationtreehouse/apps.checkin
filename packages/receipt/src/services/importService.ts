@@ -2,7 +2,7 @@ import { db } from "../db";
 import { checkImportBatch } from "../lib/importBatch";
 import { insertReceiptsTogether } from "../lib/insert";
 import { runFullFlow } from "../lib/receipt-flow";
-import { getOrg, requireActor } from "../runtime";
+import { getOrgId, requireActor } from "../runtime";
 import { ServiceError } from "@checkin/component-kit";
 
 export interface ImportRowResult {
@@ -32,7 +32,7 @@ export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
   const checked = checkImportBatch(rawBatch);
   if (!checked.ok) throw new ServiceError(400, `Import refused; nothing was imported. ${checked.problems.join("; ")}`);
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
 
   const loaded = await db.receiptDetail.findMany({
     where: { orgId, importSourceId: { in: checked.rows.map(({ row }) => row.importSourceId) } },

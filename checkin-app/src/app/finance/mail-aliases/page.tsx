@@ -5,6 +5,7 @@ import { Badge, Button, Group, Stack, Table, Text, TextInput, Title } from "@man
 import { notifications } from "@mantine/notifications";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Alias {
   id: number;
@@ -29,7 +30,7 @@ async function send<T>(url: string, init?: RequestInit): Promise<T | null> {
 }
 
 export default function MailAliasesPage() {
-  const { loading, ready } = useRequireRole(["isFinance", "isBoardMember"]);
+  const { loading, ready } = useRequireRole(FINANCE_ROLES);
   const [aliases, setAliases] = useState<Alias[] | null>(null);
   const [personEmail, setPersonEmail] = useState("");
   const [address, setAddress] = useState("");

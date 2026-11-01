@@ -209,7 +209,7 @@ async function readStock(gql: Gql, variantId: string, deadline: number) {
 
 /**
  * Send one recorded delta with `inventoryAdjustQuantities` and its idempotency key.
- * Shopify dedupes this mutation by key (dev store, 2026-10-14): a resend of a write
+ * Shopify dedupes this mutation by key (seen on the dev store): a resend of a write
  * that already landed returns its original result instead of applying it again, and
  * a resend of one that failed returns the original error. So the reply is always
  * definite: "applied", or a hard error (thrown), which means it did not apply.
@@ -575,7 +575,7 @@ export interface StockWriteOptions {
  * idempotency key and no compare: deltas commute with store sales. A timeout,
  * 5xx or IDEMPOTENCY_CONCURRENT_REQUEST resends the SAME request until Shopify
  * settles or the cap passes (15 s in a user request, 3 min otherwise). Shopify
- * dedupes this mutation by key (dev store, 2026-10-14), so a resend of a write
+ * dedupes this mutation by key (seen on the dev store), so a resend of a write
  * that already landed is not applied twice. A write left unsettled is resent
  * under its key by the next push; after a day (the key's lifetime) it is parked
  * as unconfirmed for the board instead.
@@ -704,8 +704,8 @@ export async function nudgeProgramStock(program: { id: number; shopifyVariantId:
  * still land, or a carry). The daily reconcile-shopify job calls it. Never throws.
  */
 export async function healProgramStock(): Promise<{ checked: number; settled: number }> {
-    // ponytail: the periodic drift check (recommendation §4, waiting on the board's
-    // store decision) will also read shopifyStockPushNeededAt; until then this is its only reader.
+    // ponytail: this is shopifyStockPushNeededAt's only reader; a periodic drift check
+    // could read it too.
     const programs = await prisma.program.findMany({
         where: {
             shopifyVariantId: { not: null },

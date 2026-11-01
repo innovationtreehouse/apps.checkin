@@ -69,4 +69,16 @@ const { entries, full } = await client.createdSince("Deposit", since);
 const hits = entries.filter((d) => appKeyOf(d)?.split(" ").includes(key)).map((d) => d.Id);
 report(hits.length === 1 && hits[0] === Id, `created-since finds Deposit ${Id} by key (hits: ${hits.join(",") || "none"}, full page: ${full})`);
 
+// 4. Every entity the read covers accepts the query and answers oldest first, since each page starts at the last row's CreateTime.
+for (const entity of ["Deposit", "Purchase", "Bill", "JournalEntry"] as const) {
+  try {
+    const read = await client.createdSince(entity, new Date("2000-01-01T00:00:00Z"));
+    const times = read.entries.map((e) => Date.parse(e.MetaData?.CreateTime ?? ""));
+    const ordered = times.every((t, i) => !Number.isNaN(t) && (i === 0 || times[i - 1] <= t));
+    report(ordered, `created-since reads ${entity}: ${times.length} entries, oldest first: ${ordered}, full: ${read.full}`);
+  } catch (e) {
+    report(false, `created-since read of ${entity} failed (${String(e)})`);
+  }
+}
+
 process.exit(failed ? 1 : 0);

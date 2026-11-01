@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
 import { CATCH_UP_CAP, MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
 import { insertReceiptsTogether } from "../../lib/insert";
@@ -169,9 +169,12 @@ describeDb("catch-up steps", () => {
     await db.receiptDetail.update({ where: { id: oldest.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 12 * 60_000) } });
     await db.receiptDetail.update({ where: { id: newer.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 11 * 60_000) } });
     const tx = vi.spyOn(getPrisma(), "$transaction").mockRejectedValueOnce(new Error("row lock timeout"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 
     expect(await sweepInterruptedOcr()).toEqual({ swept: 1, failed: 1 });
     tx.mockRestore();
+    expect(logged).toHaveBeenCalledWith(`[receipt] interrupted OCR sweep failed for receipt ${oldest.id}:`, expect.any(Error));
+    logged.mockRestore();
     expect(await stateOf(oldest.id)).toBe("auto_upload");
     expect(await stateOf(newer.id)).toBe("ocr_failed");
   });
@@ -193,14 +196,44 @@ describeDb("catch-up steps", () => {
     expect(await sweepStuckUploaded(later)).toEqual({ swept: 0, failed: 0 });
   });
 
+  describe("the restart note", () => {
+    const future = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+    const restarted = async (id: string, detail: Record<string, unknown> = {}) => {
+      await db.receiptDetail.update({ where: { id }, data: { state: "uploaded", ...detail } });
+      await sweepStuckUploaded(new Date(Date.now() + 61 * 60_000));
+      expect((await receiptService.get(id, "submitter")).validationNotes).toMatch(/Restart the flow/);
+      actAs(FINANCE);
+      return receiptService.restartFlow(id);
+    };
+
+    it("is gone once a restart lands in finance review", async () => {
+      const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: future }) });
+      expect(await restarted(r.id)).toMatchObject({ state: "financial_review", validationNotes: null });
+    });
+
+    it("is gone once a restart lands in submitter review", async () => {
+      const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: future }) });
+      expect(await restarted(r.id, { ocrStartedAt: new Date() })).toMatchObject({ state: "submitter_review", validationNotes: null });
+    });
+
+    it("is gone once a restart lands on a duplicate hold", async () => {
+      await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+      const copy = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+      expect(await restarted(copy.id)).toMatchObject({ state: "duplicate_flagged", validationNotes: null });
+    });
+  });
+
   it("keeps sweeping stuck receipts when one row's move fails", async () => {
     const first = await receiptService.upload(textFile(), "text/plain", {});
     const second = await receiptService.upload(textFile(), "text/plain", {});
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { state: "uploaded" } });
     const tx = vi.spyOn(getPrisma(), "$transaction").mockRejectedValueOnce(new Error("row lock timeout"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 
     expect(await sweepStuckUploaded(new Date(Date.now() + 61 * 60_000))).toEqual({ swept: 1, failed: 1 });
     tx.mockRestore();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("[receipt] stuck-upload sweep failed for receipt "), expect.any(Error));
+    logged.mockRestore();
     expect([await stateOf(first.id), await stateOf(second.id)].sort()).toEqual(["flow_error", "uploaded"]);
   });
 });

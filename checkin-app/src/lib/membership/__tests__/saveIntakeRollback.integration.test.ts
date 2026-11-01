@@ -57,7 +57,7 @@ describe('saveIntake rollback', () => {
         const { rejections, state } = await saveIntake(leadId, { secondaryParent: { name: 'Young Person', dob: '2020-01-01' } });
 
         expect(rejections.map((r) => r.code)).toEqual(['youth']);
-        expect(state.prefill.children.map((c) => c.name)).toEqual(['Young Person']);
-        expect(state.prefill.secondaryParent).toBeNull();
+        expect(state?.prefill.children.map((c) => c.name)).toEqual(['Young Person']);
+        expect(state?.prefill.secondaryParent).toBeNull();
     });
 });

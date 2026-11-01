@@ -9,7 +9,7 @@ import { isValidPhone, PHONE_ERROR } from "@/lib/phone";
 import { isYouth } from "@/lib/time";
 import EmergencyContactNotice from "@/components/ui/EmergencyContactNotice";
 
-// Per-household lead cap (issue #269). Server enforces it atomically in
+// Per-household lead cap. Server enforces it atomically in
 // lib/household/leads.ts (MAX_HOUSEHOLD_LEADS); hardcoded here — that module
 // pulls in prisma and can't be imported into a client bundle. Mirrors the
 // last-lead guard below, also hardcoded client-side.

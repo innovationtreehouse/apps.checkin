@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import { boardResetReview, ReviewError } from "@/lib/membership/review";
 import { apiError } from "@/lib/api-response";
+import { reviewErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
@@ -29,8 +30,7 @@ export const POST = withAuth({ roles: ["isBoardMember"] }, async (req, auth) => 
         return NextResponse.json({ outcome });
     } catch (error) {
         if (error instanceof ReviewError) {
-            const status = error.code === "not_found" ? 404 : error.code === "same_household_applicant" ? 403 : 409;
-            return NextResponse.json({ error: error.message, code: error.code }, { status });
+            return reviewErrorResponse(error);
         }
         logger.error("Review override error:", error);
         return apiError("Internal Server Error", 500);

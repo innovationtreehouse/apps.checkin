@@ -41,12 +41,6 @@ export const REGISTRY = {
         defaultSubject: "Attendance: significant {{scope}}-{{change}} of visit #{{visitId}}",
         defaultBody: "{{actorName}} {{verb}} {{whose}} visit (significance {{score}}).\n\n{{detail}}\n\nFull before/after is in the audit trail (Visit #{{visitId}}).",
     },
-    "attendance.keyholderHandover": {
-        allowedTokens: { leaverName: text, when: text, peopleInside: text },
-        sampleCtx: { leaverName: "Sam", when: "Mar 7, 5:40 PM", peopleInside: "3 people are" },
-        defaultSubject: "You were named as the keyholder in charge",
-        defaultBody: "{{leaverName}} checked out at {{when}} and named you as the keyholder they handed the building over to.\n\n{{peopleInside}} still recorded inside, and no keyholder is checked in. If you are there, check in; if not, let them know.",
-    },
 
     // ── programs ────────────────────────────────────────────────────────────
     "enrollment.confirm": {
@@ -172,7 +166,23 @@ export const REGISTRY = {
         allowedTokens: { problem: text },
         sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
         defaultSubject: "Inventory: catalog events need attention",
-        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once; a provisional item that can't be applied alerts on each run.",
+    },
+
+    "board.expenseEventsStuck": {
+        // problem: what the catch-up found, in code because it depends on the failure.
+        allowedTokens: { problem: text },
+        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
+        defaultSubject: "Expense: catalog events need attention",
+        defaultBody: "The expense catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending, and their budget buckets don't carry over to the real items. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+    },
+
+    "board.receiptMappingEventsStuck": {
+        // problem: what the catch-up found, in code because it depends on the failure.
+        allowedTokens: { problem: text },
+        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
+        defaultSubject: "Receipt mapping: catalog events need attention",
+        defaultBody: "The receipt mapping catch-up {{problem}}. Until they apply, lines on receipts in review can stay on items the catalog has already reviewed. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
     },
 
     // ── finance ─────────────────────────────────────────────────────────────
@@ -255,6 +265,29 @@ export const REGISTRY = {
         sampleCtx: { when: "March 7, 2026" },
         defaultSubject: "Receipt not accepted",
         defaultBody: "We read the email you sent to the receipt mailbox on {{when}}.",
+    },
+
+    // receipt: "your receipt" to its uploader, "a receipt for your reimbursement" to the person reimbursed.
+    "receipt.rejected": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt not accepted",
+        defaultBody: "Hi {{name}},\n\nFinance did not accept {{receipt}}.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\nThe reason is on the receipt. {{actionLink}}",
+    },
+
+    // ── expense ─────────────────────────────────────────────────────────────
+    // receipt: as for receipt.rejected.
+    "expense.lineRejected": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt reviewed: a line was not approved",
+        defaultBody: "Hi {{name}},\n\nFinance has finished reviewing {{receipt}}, and at least one of its lines was not approved.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\nWhat was not approved, and why, is on the receipt. {{actionLink}}",
+    },
+    "expense.reimbursementComplete": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Reimbursement approved",
+        defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
     },
 
     // ── shopify ─────────────────────────────────────────────────────────────

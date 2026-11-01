@@ -1,7 +1,11 @@
 /**
  * @jest-environment node
  */
-import { accessOf, readJsonCapped } from "@/lib/receipt/route";
+import { MAX_UPLOAD_BODY_BYTES as RECEIPT_UPLOAD_CEILING, type ReceiptRouteCtx } from "@checkin/receipt";
+import { accessOf, receiptRoute } from "@/lib/receipt/route";
+import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
+import type { Role } from "@/security/core";
+import type { HandlerContext } from "@/security/handler";
 
 describe("accessOf", () => {
   it("acts org-wide only for the finance and board views", () => {
@@ -12,23 +16,28 @@ describe("accessOf", () => {
   });
 });
 
-describe("readJsonCapped", () => {
-  const bytes = (text: string) => new TextEncoder().encode(text);
-  async function* body(text: string) {
-    yield bytes(text);
-  }
+describe("upload ceiling", () => {
+  it("matches the API's body limit", () => {
+    expect(RECEIPT_UPLOAD_CEILING).toBe(MAX_UPLOAD_BODY_BYTES);
+  });
+});
 
-  it("parses a JSON body within the cap", async () => {
-    await expect(readJsonCapped(body('[{"a":1}]'), null, 100, "split it")).resolves.toEqual([{ a: 1 }]);
+describe("receiptRoute", () => {
+  const mounted = async (role: Role, auth: unknown) => {
+    const factory = jest.fn<Promise<Record<string, unknown>>, [ReceiptRouteCtx]>(async () => ({}));
+    await receiptRoute(factory)({ params: {}, role, auth } as unknown as HandlerContext);
+    return factory.mock.calls[0][0];
+  };
+  const session = { type: "session", user: { id: 7 } };
+
+  it("names the submitter only under the submitter view", async () => {
+    expect((await mounted("authenticated", session)).submitterActorId).toBe(7);
+    expect((await mounted("isFinance", session)).submitterActorId).toBeNull();
+    expect((await mounted("isBoardMember", session)).submitterActorId).toBeNull();
   });
 
-  it("refuses an over-cap batch with the caller's message", async () => {
-    const big = JSON.stringify([{ fileBase64: "x".repeat(200) }]);
-    await expect(readJsonCapped(body(big), null, 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
-    await expect(readJsonCapped(body("[]"), "101", 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
-  });
-
-  it("answers 400 for a body that is not JSON", async () => {
-    await expect(readJsonCapped(body("not json"), null, 100, "split it")).rejects.toMatchObject({ status: 400 });
+  it("leaves the submitter unnamed without a session person", async () => {
+    expect((await mounted("authenticated", { type: "kiosk" })).submitterActorId).toBeNull();
+    expect((await mounted("authenticated", { type: "session", user: { id: "x" } })).submitterActorId).toBeNull();
   });
 });
