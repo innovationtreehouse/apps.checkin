@@ -1247,6 +1247,26 @@ describe("fast-path reversal webhook helper", () => {
         expect(takenBack()).toEqual([2, -2]);
     });
 
+    it("a test order fully refunded with restock before its paid webhook gives nothing back, even on redelivery", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs19a-${TAG}@ex.com`, status: "ACTIVE" });
+        const oid = `${TAG}-329a`;
+        const lines = [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }];
+        await refund(oid, lines);
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        await refund(oid, lines);
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        expect(takenBack()).toEqual([]);
+    });
+
+    it("a test order partly refunded before its paid webhook gives back only the seats still out", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs19b-${TAG}@ex.com`, status: "ACTIVE" });
+        const oid = `${TAG}-329b`;
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }], `${oid}-r2`);
+        expect(takenBack()).toEqual([1, -1]);
+    });
+
     it("a redelivered refund that removed a named sibling takes nothing back", async () => {
         const oid = `${TAG}-323`;
         const e = await makeOnSaleEnrollment({ email: `rs13-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
