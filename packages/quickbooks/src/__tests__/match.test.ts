@@ -31,6 +31,26 @@ const run = (deposits: QboDeposit[], req: Partial<MatchRequest> = {}) =>
   );
 
 describe("findMatch", () => {
+  it("ignores a voided entry carrying the key, so nothing stops a create", () => {
+    expect(run([deposit("10", "2025-03-05", 0, { PrivateNote: `app:${base.key}` })])).toEqual({ kind: "not-found" });
+  });
+
+  it("still finds a hand entry beside a voided entry carrying the key", () => {
+    expect(run([deposit("10", "2025-03-05", 0, { PrivateNote: `app:${base.key}` }), deposit("11", "2025-03-05", 123.45)])).toEqual({
+      kind: "found",
+      id: "11",
+      via: "amount",
+    });
+  });
+
+  it("finds a $0 record's own $0 entry by key", () => {
+    expect(run([deposit("10", "2025-03-05", 0, { PrivateNote: `app:${base.key}` })], { amountCents: 0 })).toEqual({
+      kind: "found",
+      id: "10",
+      via: "key",
+    });
+  });
+
   it("finds a single hand entry on net amount + date in window", () => {
     expect(run([deposit("10", "2025-03-05", 123.45), deposit("11", "2025-03-05", 99)])).toEqual({
       kind: "found",
