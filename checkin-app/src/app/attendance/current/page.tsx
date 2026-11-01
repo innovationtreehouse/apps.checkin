@@ -257,7 +257,7 @@ function KioskDisplayInner() {
         </Group>
 
         {/* Safety warnings — a missing roster reads as unknown, not as all-clear */}
-        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} mb="lg" />}
+        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} queued={data?.building?.queued} mb="lg" />}
         {!loading && !unconfirmed && !safety && (
           <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
             {data

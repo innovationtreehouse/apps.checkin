@@ -22,6 +22,9 @@ jest.mock('@/lib/prisma', () => {
         personMerge: {
             findUnique: jest.fn().mockResolvedValue(null),
         },
+        facilityClose: {
+            findFirst: jest.fn().mockResolvedValue(null),
+        },
         rawBadgeLog: {
             create: jest.fn(),
             findFirst: jest.fn(),
@@ -373,6 +376,19 @@ describe('POST /api/scan', () => {
 
         expect(prisma.person.findUnique).toHaveBeenCalledTimes(1);
         expect(logger.info).not.toHaveBeenCalled();
+    });
+
+    it('an acknowledgement carries a null lastNightlyCloseAt before any nightly close', async () => {
+        (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+        (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 1 });
+        const req = new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId: 1, clientEventId: 'evt-seen' }),
+        }) as unknown as import('next/server').NextRequest;
+        const json = await (await POST(req)).json();
+        expect(json.type).toBe('duplicate_ignored');
+        expect(json.lastNightlyCloseAt).toBeNull();
+        (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
     });
 
     it('should silently ignore repeated scans within 3 seconds', async () => {

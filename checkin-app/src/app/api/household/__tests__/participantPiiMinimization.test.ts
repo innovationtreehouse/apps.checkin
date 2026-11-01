@@ -29,6 +29,7 @@ jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
         person: { findUnique: jest.fn() },
+        facilityClose: { findFirst: jest.fn().mockResolvedValue(null) },
         // GET /api/household derives valid-until for an ACTIVE household; no membership row here.
         household: { findUnique: jest.fn().mockResolvedValue(null) },
         visit: { findMany: jest.fn() },

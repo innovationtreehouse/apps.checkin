@@ -11,11 +11,12 @@ import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTrigger
 import { systemActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
+import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
 
 /** A nightly run this soon after the last one is a retry of the same night. */
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
 
-export const GET = withCron(async () => {
+export const GET = withCron(() => duringNightlyRun(async () => {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
@@ -186,4 +187,4 @@ export const GET = withCron(async () => {
             adultDobPurged,
             personAgreements
         });
-});
+}));
