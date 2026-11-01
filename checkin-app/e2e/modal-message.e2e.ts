@@ -79,10 +79,24 @@ test.describe("a failure message while a modal is open", () => {
   });
 
   test("focus stays in the modal after a refused save", async ({ browser }) => {
-    test.fail(true, "Bug: the submit button's loading state drops focus to the body, so Tab walks the page behind the open modal.");
-    const { context, dialog } = await refusedSave(browser, { width: 1280, height: 800 });
+    const { context, page, dialog } = await refusedSave(browser, { width: 1280, height: 800 });
     try {
       expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+      await page.keyboard.press("Tab");
+      expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("focus returns to the button that opened the modal after a save that worked", async ({ browser }) => {
+    const { context } = await signIn(browser, INVENTORY_MANAGER);
+    try {
+      const page = await context.newPage();
+      await page.goto("/catalog/items");
+      await addItem(page, `Modal focus ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Add Item" })).toBeFocused();
     } finally {
       await context.close();
     }
