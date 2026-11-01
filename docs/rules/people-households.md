@@ -346,8 +346,9 @@ Things the app takes as true because they are handled outside it.
 - Approving a renewal or a change retires the approval it replaces, so a trusted
   adult holds at most one live approval.  [Decision]
 
-- A board override that denies a change leaves the earlier approval standing.
-  Force-approve refuses an adult the household withdrew, and refuses when the
+- A board override that denies a change leaves the earlier approval standing.  [Decision — owner ruling 2026-11-01]
+
+- Force-approve refuses an adult the household withdrew, and refuses when the
   family's household or the adult's own household is denied.  [Decision]
 
 - A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
