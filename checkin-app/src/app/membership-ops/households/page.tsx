@@ -107,7 +107,8 @@ export default function AdminHouseholdsPage() {
       const res = await fetch('/api/membership-ops/households', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ householdId, year: grantYear.year, reason })
+        // `active: true` keeps a task on the previous release from reading this as a revoke; drop it next release.
+        body: JSON.stringify({ householdId, active: true, year: grantYear.year, reason })
       });
 
       if (res.ok) {

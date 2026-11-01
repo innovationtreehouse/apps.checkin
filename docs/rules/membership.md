@@ -425,12 +425,12 @@ Procedure below is built on them.
 - Renewals open only inside the renewal window, and opening skips every
   household already handled this cycle — renewed, granted the coming year,
   joined in-window, or closed by the board — so no family is billed twice. The
-  one exception is the board granting the current year to a lapsed active
+  one exception is a board grant to a lapsed active
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
 - Renewals start only from the board's own actions: its "open renewals" button
-  opens them for every household due, and granting the current year opens one
+  opens them for every household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6, 2026-10-27*]
 

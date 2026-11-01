@@ -425,6 +425,16 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).toMatchObject({ status: 'PENDING_PAYMENT', paidAt: null });
     });
 
+    it('a grant carrying active: true beside its year records that year', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('activeandyear');
+        const m = await prisma.orgMembership.create({ data: { householdId } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+
+        expect((await post({ householdId, active: true, year: YEAR, reason: 'Paid by check' })).status).toBe(200);
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).appliesToYear).toBe(YEAR);
+    });
+
     it.each([[{ active: true }], [{ comingYear: true }], [{}]])('a body with no year and no explicit revoke (%j) changes nothing', async (body) => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold(`noyear${Object.keys(body).join('')}`);
