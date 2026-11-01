@@ -1902,6 +1902,10 @@ model PaymentException {
   resolutionNote       String?
   /// @sensitivity:internal
   detectedAt           DateTime                 @default(now())
+  /// What the daily pass last saw on the order, e.g. refunded total. A resolved row
+  /// reopens only when this changes.
+  /// @sensitivity:internal
+  evidence             String?
 
   // Idempotent re-detection: one row per (kind, order, person), so every person on
   // a multi-person order gets their own row. Two partial unique indexes in raw SQL

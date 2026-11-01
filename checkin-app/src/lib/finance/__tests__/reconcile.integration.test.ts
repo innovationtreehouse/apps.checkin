@@ -12,6 +12,7 @@ import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
+import { recordPaymentException } from "@/lib/finance/reconcile/exceptions";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
@@ -31,7 +32,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     isConfigured: () => true,
     ordersChangedSince: jest.fn(async () => [] as MirrorOrder[]),
     ordersByLegacyIds: jest.fn(async () => [] as MirrorOrder[]),
-    disputedOrderGids: jest.fn(async () => new Set<string>()),
+    orderDisputeCounts: jest.fn(async () => new Map<string, number>()),
     // Each test starts with the membership variant on the order (see beforeEach).
     orderLineVariantIds: jest.fn(),
     orderLines: jest.fn(async () => [] as { variantId: string; quantity: number; currentQuantity: number }[]),
@@ -51,7 +52,7 @@ const TAG = "reconcile-matrix-test";
 const MEMBERSHIP_VARIANT = "variant-normal-1";
 const ordersChangedSince = mirror.ordersChangedSince as jest.Mock;
 const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
-const disputedOrderGids = mirror.disputedOrderGids as jest.Mock;
+const orderDisputeCounts = mirror.orderDisputeCounts as jest.Mock;
 const orderLineVariantIds = mirror.orderLineVariantIds as jest.Mock;
 const orderLines = mirror.orderLines as jest.Mock;
 const incomeOrderLines = mirror.incomeOrderLines as jest.Mock;
@@ -173,7 +174,7 @@ beforeEach(() => {
 afterEach(async () => {
     ordersChangedSince.mockResolvedValue([]);
     ordersByLegacyIds.mockResolvedValue([]);
-    disputedOrderGids.mockResolvedValue(new Set());
+    orderDisputeCounts.mockResolvedValue(new Map());
     orderLines.mockResolvedValue([]);
     incomeOrderLines.mockResolvedValue([]);
     adjustInventory.mockClear();
@@ -613,7 +614,7 @@ describe("reversal detection", () => {
         const { processId } = await makeApplicant({ email: `cb-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
         const o = order({ legacyId: oid, financialStatus: "PAID" });
         ordersByLegacyIds.mockResolvedValue([o]);
-        disputedOrderGids.mockResolvedValue(new Set([o.orderGid]));
+        orderDisputeCounts.mockResolvedValue(new Map([[o.orderGid, 1]]));
 
         await runReconcile();
         const ex = await prisma.paymentException.findFirst({ where: { kind: "CHARGEBACK", processId } });
@@ -1441,5 +1442,193 @@ describe("daily reversal pass, multi-person order", () => {
         await runReconcile();
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(2);
         expect(await prisma.programParticipant.count({ where: { programId: e.programId } })).toBe(2);
+    });
+});
+
+describe("a resolved exception and the next day's pass", () => {
+    const resolve = (where: { shopifyOrderId: string; kind: "REFUND" | "CHARGEBACK" | "CANCELLED" | "AMOUNT_MISMATCH" | "DISCOUNT_UNAUTHORIZED" }) =>
+        prisma.paymentException.updateMany({ where, data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Board: child keeps the place" } });
+    const row = (shopifyOrderId: string, kind: "REFUND" | "CHARGEBACK" | "AMOUNT_MISMATCH" | "DISCOUNT_UNAUTHORIZED") =>
+        prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId, kind } });
+    const expectStillResolved = (ex: { status: string; resolutionNote: string | null }) => {
+        expect(ex.status).toBe("RESOLVED");
+        expect(ex.resolutionNote).toBe("Board: child keeps the place");
+    };
+    const partialRefund = (legacyId: string, totalRefundedCents: number) => order({ legacyId, financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents });
+
+    it("keeps a resolved partial refund resolved, note and all, day after day", async () => {
+        const oid = `${TAG}-700`;
+        await makeProgramEnrollment({ email: `reso-keep-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 500)]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "REFUND" });
+
+        await runReconcile();
+        await runReconcile();
+        expectStillResolved(await row(oid, "REFUND"));
+    });
+
+    it("keeps it resolved after the child withdraws", async () => {
+        const oid = `${TAG}-701`;
+        const { programId, personId } = await makeProgramEnrollment({ email: `reso-wd-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 500)]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "REFUND" });
+        await prisma.programParticipant.update({ where: { programId_personId: { programId, personId } }, data: { status: "WITHDRAWN" } });
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "REFUND"));
+    });
+
+    it("reopens on a further refund, and a later pass leaves the reopened row alone", async () => {
+        const oid = `${TAG}-702`;
+        await makeProgramEnrollment({ email: `reso-more-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 500)]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "REFUND" });
+
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 800)]);
+        await runReconcile();
+        const reopened = await row(oid, "REFUND");
+        expect(reopened.status).toBe("OPEN");
+        expect(reopened.resolutionNote).toBeNull();
+
+        await resolve({ shopifyOrderId: oid, kind: "REFUND" });
+        await runReconcile();
+        expectStillResolved(await row(oid, "REFUND"));
+    });
+
+    it("counts a refund seen while the row was open as covered by its resolution", async () => {
+        const oid = `${TAG}-703`;
+        await makeProgramEnrollment({ email: `reso-open-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 500)]);
+        await runReconcile();
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 800)]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "REFUND" });
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "REFUND"));
+    });
+
+    it("reopens a resolved chargeback on a new dispute, not on the same one", async () => {
+        const oid = `${TAG}-704`;
+        const { processId } = await makeApplicant({ email: `reso-cb-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        const o = order({ legacyId: oid });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        orderDisputeCounts.mockResolvedValue(new Map([[o.orderGid, 1]]));
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "CHARGEBACK" });
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "CHARGEBACK"));
+
+        orderDisputeCounts.mockResolvedValue(new Map([[o.orderGid, 2]]));
+        await runReconcile();
+        const reopened = await row(oid, "CHARGEBACK");
+        expect(reopened.status).toBe("OPEN");
+        expect(reopened.processId).toBe(processId);
+    });
+
+    it("does not reopen on a webhook redelivery; the next pass reopens on the further refund it carried", async () => {
+        const oid = `${TAG}-705`;
+        await makeProgramEnrollment({ email: `reso-hook-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 500)]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "REFUND" });
+
+        await raiseReversalByOrderId(oid, "REFUND");
+        expectStillResolved(await row(oid, "REFUND"));
+
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 800)]);
+        await runReconcile();
+        expect((await row(oid, "REFUND")).status).toBe("OPEN");
+    });
+
+    it("keeps a row resolved before evidence was stored resolved, then reopens on a further refund", async () => {
+        const oid = `${TAG}-706`;
+        const { programId, personId } = await makeProgramEnrollment({ email: `reso-old-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await prisma.paymentException.create({
+            data: { kind: "REFUND", shopifyOrderId: oid, programId, personId, status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Board: child keeps the place" },
+        });
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 500)]);
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "REFUND"));
+
+        ordersByLegacyIds.mockResolvedValue([partialRefund(oid, 800)]);
+        await runReconcile();
+        expect((await row(oid, "REFUND")).status).toBe("OPEN");
+    });
+
+    it("keeps a resolved under-seated mismatch resolved until the seat count changes", async () => {
+        const oid = `${TAG}-707`;
+        const email = `reso-seats-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "ACTIVE", shopifyOrderId: oid });
+        for (const n of [1, 2]) {
+            const sib = await prisma.person.create({ data: { name: `Sib ${n} ${email}`, householdId } });
+            await prisma.programParticipant.create({ data: { programId, personId: sib.id, status: "ACTIVE", shopifyOrderId: oid } });
+        }
+        const o = order({ legacyId: oid });
+        const seats = (currentQuantity: number): IncomeMirrorLineRow[] => [{ orderGid: o.orderGid, variantId, title: null, sku: null, quantity: 3, currentQuantity, priceCents: 5000, discountCents: 0 }];
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue(seats(2));
+        await runReconcile();
+        expect((await row(oid, "AMOUNT_MISMATCH")).personId).toBe(personId);
+        await resolve({ shopifyOrderId: oid, kind: "AMOUNT_MISMATCH" });
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "AMOUNT_MISMATCH"));
+
+        incomeOrderLines.mockResolvedValue(seats(1));
+        await runReconcile();
+        expect((await row(oid, "AMOUNT_MISMATCH")).status).toBe("OPEN");
+    });
+
+    it("keeps a resolved dropped-membership-item mismatch resolved", async () => {
+        const oid = `${TAG}-708`;
+        await makeApplicant({ email: `reso-item-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        const o = order({ legacyId: oid });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue([{ orderGid: o.orderGid, variantId: MEMBERSHIP_VARIANT, title: null, sku: null, quantity: 1, currentQuantity: 0, priceCents: 5000, discountCents: 0 }]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "AMOUNT_MISMATCH" });
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "AMOUNT_MISMATCH"));
+    });
+
+    it("reopens a resolved order when a person tracks it, but not when a pass sees it again", async () => {
+        const oid = `${TAG}-710`;
+        await prisma.paymentException.create({
+            data: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid, status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Board: child keeps the place" },
+        });
+        expect(await recordPaymentException(prisma, "UNMATCHED_ORDER", { shopifyOrderId: oid })).toBeNull();
+
+        const notice = await recordPaymentException(prisma, "UNMATCHED_ORDER", { shopifyOrderId: oid, reopen: true });
+        expect(notice?.kind).toBe("UNMATCHED_ORDER");
+        expect((await prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId: oid } })).status).toBe("OPEN");
+    });
+
+    it("sends one notice when two raises reopen the same row together", async () => {
+        const oid = `${TAG}-711`;
+        await prisma.paymentException.create({
+            data: { kind: "REFUND", shopifyOrderId: oid, status: "RESOLVED", resolvedAt: new Date(), evidence: "refunded=500" },
+        });
+        const notices = await Promise.all([1, 2].map(() => recordPaymentException(prisma, "REFUND", { shopifyOrderId: oid, evidence: "refunded=800" })));
+        expect(notices.filter(Boolean)).toHaveLength(1);
+    });
+
+    it("keeps a resolved volunteer-code flag on an activated order resolved", async () => {
+        const oid = `${TAG}-709`;
+        await makeApplicant({ email: `reso-code-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
+        const o = order({ legacyId: oid, totalCents: 2000, discountCents: 3000, discountCodes: [VOLUNTEER_CODE] });
+        ordersByLegacyIds.mockResolvedValue([o]);
+        incomeOrderLines.mockResolvedValue([{ orderGid: o.orderGid, variantId: MEMBERSHIP_VARIANT, title: null, sku: null, quantity: 1, currentQuantity: 1, priceCents: 2000, discountCents: 3000 }]);
+        await runReconcile();
+        await resolve({ shopifyOrderId: oid, kind: "DISCOUNT_UNAUTHORIZED" });
+
+        await runReconcile();
+        expectStillResolved(await row(oid, "DISCOUNT_UNAUTHORIZED"));
     });
 });

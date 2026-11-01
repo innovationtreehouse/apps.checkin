@@ -139,7 +139,7 @@ describe('kind: order', () => {
         const res = await POST(req({ kind: 'order', shopifyOrderId: '900' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ tracked: true });
-        expect(raisePaymentExceptionMock).toHaveBeenCalledWith('UNMATCHED_ORDER', { shopifyOrderId: '900' });
+        expect(raisePaymentExceptionMock).toHaveBeenCalledWith('UNMATCHED_ORDER', { shopifyOrderId: '900', reopen: true });
         expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 actorId: 5,
