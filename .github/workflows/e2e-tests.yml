@@ -59,8 +59,9 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # Seven persona sweeps and the journeys on a cold dev server; each test has its own limit.
-    timeout-minutes: 60
+    # Seven persona sweeps and the journeys on a cold dev server. Playwright's globalTimeout
+    # (55 min) ends the tests first, leaving room for the stack's start-up and the upload.
+    timeout-minutes: 75
     permissions:
       contents: read
       id-token: write # mint the GitHub OIDC token to assume the AWS role (no stored creds)
@@ -105,11 +106,11 @@ jobs:
         run: docker compose -f deploy/docker-compose.flow.yml down -v
 
   # One open issue tracks a failing nightly run: opened or updated on each red run, commented
-  # on and closed by the next green one.
+  # on and closed by the next green one. A gate that did not succeed is a red run too.
   report:
     name: Track nightly failures
     needs: [gate, e2e]
-    if: always() && github.event_name == 'schedule' && needs.gate.outputs.run == 'true'
+    if: always() && github.event_name == 'schedule' && (needs.gate.result != 'success' || needs.gate.outputs.run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -129,7 +130,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RESULT: ${{ needs.e2e.result }}
+          RESULT: ${{ needs.gate.result == 'success' && needs.e2e.result || format('gate {0}', needs.gate.result) }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
@@ -152,15 +153,24 @@ jobs:
               const out = [];
               const walk = (suite, path) => {
                 for (const spec of suite.specs ?? []) {
-                  if (spec.tests.some((t) => t.status === "unexpected")) out.push(`- ${spec.file}:${spec.line} › ${[...path, spec.title].join(" › ")}`);
+                  const name = `${spec.file}:${spec.line} › ${[...path, spec.title].join(" › ")}`;
+                  if (spec.tests.some((t) => t.status === "unexpected")) out.push(`- ${name}`);
+                  // A test cut off by the global timeout is reported as skipped with an interrupted result.
+                  else if (spec.tests.some((t) => (t.results ?? []).some((res) => res.status === "interrupted"))) out.push(`- ${name} (interrupted)`);
                 }
                 for (const child of suite.suites ?? []) walk(child, [...path, child.title]);
               };
               for (const suite of r.suites ?? []) walk(suite, []);
+              for (const err of r.errors ?? []) out.push(`- ${(err.message ?? "").split("\n")[0]}`);
               console.log(out.join("\n"));
             ' "$PWD/report/e2e-results.json")"
           fi
-          [ -n "$failed" ] || failed="- No test results: the run ended ($RESULT) before Playwright reported. See the run's log."
+          if [ -z "$failed" ]; then
+            case "$RESULT" in
+              gate*) failed="- No tests ran: the job that checks for new commits ended ($RESULT). See the run's log." ;;
+              *) failed="- No test results: the run ended ($RESULT) before Playwright reported. See the run's log." ;;
+            esac
+          fi
           body="$(printf 'The nightly browser tests failed on `%s` (%s).\n\nRun: %s\n\nFailed tests:\n%s\n' "$HEAD_SHA" "$RESULT" "$RUN_URL" "$failed")"
 
           if [ -n "$issue" ]; then
