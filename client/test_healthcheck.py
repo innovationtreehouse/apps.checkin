@@ -73,7 +73,9 @@ class TestLocalHealth(unittest.TestCase):
         self.assertTrue(failed[0].startswith("proxy"))
 
     def test_missing_config_fails(self):
-        self.assertTrue(healthcheck.check(os.path.join(self.dir.name, "absent.json")))
+        failed = healthcheck.check(os.path.join(self.dir.name, "absent.json"))
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0].startswith("config"))
 
 
 class TestScannerHeld(unittest.TestCase):

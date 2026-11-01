@@ -753,8 +753,8 @@ jobs:
           python-version: '3.11'
 
       # client.py / badge.py import nacl and requests at module scope, so the
-      # tests can't run without them. Tests replace evdev with a fake, since it
-      # needs real input devices.
+      # tests can't run without them. evdev installs too, but tests replace it
+      # with a fake, since it needs real input devices.
       - name: Install dependencies
         if: needs.changes.outputs.client == 'true'
         run: pip install -r client/requirements.txt

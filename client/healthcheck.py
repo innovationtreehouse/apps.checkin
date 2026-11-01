@@ -16,6 +16,9 @@ def check(config_path="config.json"):
     try:
         with open(config_path) as f:
             port = int(json.load(f).get("listen_port", DEFAULT_PORT))
+    except (OSError, ValueError) as e:
+        return [f"config ({e})"]
+    try:
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn.request("GET", HEALTH_PATH)
         checks = json.loads(conn.getresponse().read())
