@@ -149,7 +149,7 @@ describe("QuickBooksClient", () => {
     await expect(client.vendorById("3")).resolves.toMatchObject({ Id: "3" });
     await expect(client.vendorById("4")).resolves.toBeNull();
     expect(sql(0)).toBe("SELECT * FROM Vendor WHERE DisplayName LIKE '%O\\'Ne%' MAXRESULTS 20");
-    expect(sql(1)).toBe("SELECT * FROM Vendor WHERE Id IN ('3')");
+    expect(sql(1)).toBe("SELECT * FROM Vendor WHERE Id IN ('3') MAXRESULTS 1");
   });
 
   it("reads a Bill's Balance and LinkedTxn so a caller can tell it was paid", async () => {
@@ -162,7 +162,7 @@ describe("QuickBooksClient", () => {
     const client = new QuickBooksClient(tokens, sandbox);
     respond("BillPayment", [{ Id: "90", TxnDate: "2025-04-02", TotalAmt: 50 }]);
     await expect(client.billPaymentsByIds(["90", "9' OR Id > '0"])).resolves.toEqual([{ Id: "90", TxnDate: "2025-04-02", TotalAmt: 50 }]);
-    expect(sql(0)).toBe("SELECT * FROM BillPayment WHERE Id IN ('90', '9\\' OR Id > \\'0')");
+    expect(sql(0)).toBe("SELECT * FROM BillPayment WHERE Id IN ('90', '9\\' OR Id > \\'0') MAXRESULTS 2");
   });
 
   it.each([
@@ -172,9 +172,19 @@ describe("QuickBooksClient", () => {
     const client = new QuickBooksClient(tokens, sandbox);
     respond(entity, [{ Id: "7", TxnDate: "2025-04-01", TotalAmt: 5 }]);
     await expect(client[method](["7", "x'y"])).resolves.toEqual([{ Id: "7", TxnDate: "2025-04-01", TotalAmt: 5 }]);
-    expect(sql(0)).toBe(`SELECT * FROM ${entity} WHERE Id IN ('7', 'x\\'y')`);
+    expect(sql(0)).toBe(`SELECT * FROM ${entity} WHERE Id IN ('7', 'x\\'y') MAXRESULTS 2`);
     await expect(client[method]([])).resolves.toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([101, 1000])("returns all %i rows of an id lookup from a QuickBooks that defaults to 100 rows", async (count) => {
+    const ids = Array.from({ length: count }, (_, i) => String(i));
+    fetchMock.mockImplementationOnce(async (url: string) => {
+      const query = new URL(url).searchParams.get("query")!;
+      const limit = Number(/MAXRESULTS (\d+)$/.exec(query)?.[1] ?? 100);
+      return new Response(JSON.stringify({ QueryResponse: { Bill: ids.slice(0, limit).map((Id) => ({ Id })) } }));
+    });
+    await expect(new QuickBooksClient(tokens, sandbox).billsByIds(ids)).resolves.toHaveLength(count);
   });
 
   it("reads no BillPayments for no ids and refuses more than a page of ids", async () => {
