@@ -116,6 +116,7 @@ describe("caller ports", () => {
     expect(await getCatalogItem("0000000000000")).toBeNull();
     expect(await getOwnerDirectory().list()).toEqual([]);
     await expect(getInventoryApply().apply({ receiptId: inventorySourceKey(1), orgId: ORG, retailer: null, lineItems: [] })).rejects.toBeInstanceOf(NotWiredError);
+    expect(await getInventoryApply().failureReason(inventorySourceKey(1))).toBeNull();
   });
 
   it("X10 parses what the bound catalog returns", async () => {

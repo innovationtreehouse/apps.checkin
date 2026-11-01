@@ -134,6 +134,20 @@ describeDb("apply idempotency", () => {
     ]);
   });
 
+  it("a refused donation line records the failure and its reason until a retry applies", async () => {
+    const svc = makeReceiptService();
+    const refused = [{ gtin13: GTIN, quantityDelta: 1, isProvisional: true }];
+
+    await expect(svc.applyDonation(TEST_ORG_ID, "7", refused)).rejects.toMatchObject({ status: 400 });
+    expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ sourceKey: "donation:7", status: "failed", failureReason: `Not a provisional GTIN: ${GTIN}` });
+    expect(await svc.donationFailureReason(TEST_ORG_ID, "7")).toBe(`Not a provisional GTIN: ${GTIN}`);
+    expect(await svc.donationFailureReason(TEST_ORG_ID_2, "7")).toBeNull();
+
+    await svc.applyDonation(TEST_ORG_ID, "7", [{ gtin13: GTIN, quantityDelta: 1 }]);
+    expect(await svc.donationFailureReason(TEST_ORG_ID, "7")).toBeNull();
+    expect(await qty(TEST_ORG_ID)).toBe(1);
+  });
+
   it("rejects malformed input at the boundary before touching stock", async () => {
     const svc = makeReceiptService();
     const bad: Array<[string, string, number, number | undefined]> = [
