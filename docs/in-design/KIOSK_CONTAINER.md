@@ -139,6 +139,11 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
   badge in that gap gets no acknowledgement and is not recorded. The closed window
   already exists for this kind of work. A release waits at most a day.
 - **Queue stays put.** Unsent scans wait in the file, so no drain is needed first.
+- **The tag moves only after the image passes (owner, 2026-11-01).** After the prod
+  deploy, the image is pushed by digest with no tag, and the flow and Playwright
+  tiers run against that digest with the same release's server code. A failure
+  leaves the tag where it is and fails the run visibly. A forced update skips this:
+  it is for a door already wrong, and two people approve it.
 - **The tag moves after the prod deploy.** The existing protocol hold still
   protects any skew. The server must keep accepting the protocol of a kiosk up to
   a day behind, which the presence rollout already requires.
