@@ -143,6 +143,10 @@ denial fired a `+1` — that let the seat resell out from under a denied-but-not
 applicant, silently drifting DB capacity and Shopify's count apart.) Sends no automatic
 email — see §5.
 
+A request whose hold failed has no seat to keep, so denying it stamps nothing: the flag
+clears, the row is an ordinary unpaid claim with its non-payment notices and no grace
+clock, and the denial is kept in the audit log.
+
 ### Approval (`POST /api/finance-ops/payment-plans`)
 
 No Shopify operation either (the seat was already taken out of the pool at application

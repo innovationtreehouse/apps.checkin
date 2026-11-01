@@ -3,7 +3,7 @@ import { normalizeAuditData } from "@/lib/auditPayload";
 // Audit payloads are stored as raw objects, but older rows hold a
 // double-encoded JSON string. The reader must render both shapes identically.
 describe("normalizeAuditData", () => {
-  it("passes a raw object through unchanged (new write shape)", () => {
+  it("passes a raw object through unchanged (current write shape)", () => {
     const obj = { status: "ACTIVE", via: "card" };
     expect(normalizeAuditData(obj)).toBe(obj);
   });

@@ -30,8 +30,18 @@ export const RECON_KIND = {
    * each drain retries it and books it once finance closes the gap.
    */
   NEEDS_MAPPING: "NEEDS_MAPPING",
+  /** A hand-loaded payout first seen after switch-on: the app never creates from one, so finance settles it. */
+  HAND_LOADED: "HAND_LOADED",
+  /**
+   * A waiting payout no longer paid in the mirror once its window ran out. A settled row keeps
+   * this kind, so the unpaid payout finance settled does not drift back to the queue.
+   */
+  PAYOUT_NOT_PAID: "PAYOUT_NOT_PAID",
 } as const;
 export type ReconKind = (typeof RECON_KIND)[keyof typeof RECON_KIND];
+
+/** Kinds that clear on their own: the row goes back to waiting once the mirror agrees, if never attempted. */
+const CLEARING_KINDS: (string | null)[] = [RECON_KIND.TXN_SUM_MISMATCH, RECON_KIND.HAND_LOADED, RECON_KIND.PAYOUT_NOT_PAID];
 
 export const RECON_RESOLUTION = { AUTO: "AUTO", MANUAL: "MANUAL", DISMISSED: "DISMISSED" } as const;
 
@@ -75,6 +85,9 @@ export function nextNote(current: string | null, depositId: string | null, next:
 
 /** The queue note on an attempted payout a deposit fits by amount: its own deposit may sit outside the window. */
 export const ATTEMPTED_MATCH_NOTE = "a deposit fits by amount, but the app may already have booked this payout; matching checks for the app's own deposit first";
+
+/** The queue note on an attempted payout whose net changed: a deposit the app booked would carry the old net. */
+export const ATTEMPTED_NET_NOTE = "the payout's net changed after the app tried to book it, so the app may have booked the old amount; matching checks for the app's own deposit first";
 
 /** When each source's posting switched on for the org; null while that source is off. */
 export type SwitchOn = { shopify: Date | null; benevity: Date | null };
@@ -160,6 +173,12 @@ export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]
   return facts.sort((a, b) => a.payoutDate.localeCompare(b.payoutDate) || a.payoutGid.localeCompare(b.payoutGid));
 }
 
+/** Why the mirror no longer shows a payout as paid, or null while it does. */
+function unpaidCause(payout: MirrorPayout | null): string | null {
+  if (!payout) return "payout_missing";
+  return payout.status === "paid" ? null : `payout_status:${payout.status}`;
+}
+
 /**
  * Why a settled row must reopen, or null when its payout and deposit still agree with it. A
  * Benevity row's expected deposit is frozen once posted, so only its deposit is checked.
@@ -170,9 +189,11 @@ function driftCause(
   deposits: Map<string, QbDeposit>,
 ): string | null {
   if (!isBenevity(row)) {
-    if (!payout) return "payout_missing";
-    if (payout.status !== "paid") return `payout_status:${payout.status}`;
-    if (payout.netCents !== row.payoutNetCents) return "payout_amount";
+    if (row.kind !== RECON_KIND.PAYOUT_NOT_PAID) {
+      const unpaid = unpaidCause(payout);
+      if (unpaid) return unpaid;
+    }
+    if (payout && payout.netCents !== row.payoutNetCents) return "payout_amount";
   }
   if (!row.depositId) return null;
   const d = deposits.get(row.depositId);
@@ -217,6 +238,19 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   const settledPayouts = new Map<string, MirrorPayout | null>();
   for (const { source, payoutGid } of settled) {
     settledPayouts.set(rowKey({ source, payoutGid }), source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
+  }
+
+  // A waiting payout outside the paid read has left paid, or fell behind reconcileFrom.
+  const factKeys = new Set(facts.map((f) => rowKey({ source: f.depositSource, payoutGid: f.payoutGid })));
+  const waiting = mirror && banks.shopify
+    ? await db.payoutReconciliation.findMany({
+        where: { orgId, status: RECON_STATUS.WAITING, source: DEPOSIT_SOURCE.SHOPIFY },
+        select: { source: true, payoutGid: true },
+      })
+    : [];
+  const waitingPayouts = new Map<string, MirrorPayout | null>();
+  for (const w of waiting) {
+    if (mirror && !factKeys.has(rowKey(w))) waitingPayouts.set(rowKey(w), await mirror.payout(w.payoutGid));
   }
 
   // Reads only each payout's match window and each settled deposit's booked day, never history.
@@ -266,6 +300,20 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
         byKey.set(rowKey(row), updated);
         await audit(tx, orgId, "reconciliation.drift", row, updated, { userId: null, reason: cause });
         result.drifted++;
+      }
+
+      // A waiting payout that left paid has its window to come back; after that, finance settles it.
+      for (const row of rows) {
+        if (row.status !== RECON_STATUS.WAITING || !waitingPayouts.has(rowKey(row)) || isClaimed(row, now.getTime())) continue;
+        const cause = unpaidCause(waitingPayouts.get(rowKey(row)) ?? null);
+        if (!cause || today <= addDays(row.payoutDate, windowDays(row.source, benevityDays))) continue;
+        const saved = await tx.payoutReconciliation.update({
+          where: { id: row.id },
+          data: { status: RECON_STATUS.OPEN, kind: RECON_KIND.PAYOUT_NOT_PAID },
+        });
+        byKey.set(rowKey(row), saved);
+        await audit(tx, orgId, "reconciliation.opened", row, saved, { userId: null, reason: cause });
+        result.opened++;
       }
 
       // The lookup is the shared findMatch with the bank account findOrCreate uses, so the two
@@ -354,12 +402,43 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
         }
         // Inside the window an unfound payout waits in the outbox for drainIncomeOutbox. An
         // ambiguous one never waits there: it goes straight to finance and is never created.
-        if (!fact.sumMismatch && !windowElapsed && match?.kind !== "ambiguous") {
-          if (row) continue;
-          const saved = await tx.payoutReconciliation.create({
-            data: { ...base(orgId, fact, now), status: RECON_STATUS.WAITING },
+        // A hand-loaded payout seen after switch-on can never be created, so it has nothing to wait for.
+        const handLoaded = seenAfterOn && fact.source === "hand_loaded";
+        if (!fact.sumMismatch && !windowElapsed && !handLoaded && match?.kind !== "ambiguous") {
+          if (!row) {
+            const saved = await tx.payoutReconciliation.create({
+              data: { ...base(orgId, fact, now), status: RECON_STATUS.WAITING },
+            });
+            await audit(tx, orgId, "reconciliation.waiting", null, saved);
+            continue;
+          }
+          if (row.status === RECON_STATUS.WAITING) {
+            if (row.payoutNetCents === fact.netCents) continue;
+            if (row.qbCreateAttemptedAt) {
+              const saved = await tx.payoutReconciliation.update({
+                where: { id: row.id },
+                data: {
+                  status: RECON_STATUS.OPEN,
+                  kind: RECON_KIND.AMBIGUOUS_DEPOSIT,
+                  payoutNetCents: fact.netCents,
+                  qbNote: nextNote(row.qbNote, null, ATTEMPTED_NET_NOTE),
+                },
+              });
+              await audit(tx, orgId, "reconciliation.opened", row, saved, { userId: null, reason: ATTEMPTED_NET_NOTE });
+              result.opened++;
+              continue;
+            }
+            const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { payoutNetCents: fact.netCents } });
+            await audit(tx, orgId, "reconciliation.waiting", row, saved, { userId: null, reason: "payout_amount" });
+            continue;
+          }
+          // Never attempted, so no deposit of the app's can have landed.
+          if (row.qbCreateAttemptedAt || !CLEARING_KINDS.includes(row.kind)) continue;
+          const saved = await tx.payoutReconciliation.update({
+            where: { id: row.id },
+            data: { status: RECON_STATUS.WAITING, kind: null, payoutNetCents: fact.netCents },
           });
-          await audit(tx, orgId, "reconciliation.waiting", null, saved);
+          await audit(tx, orgId, "reconciliation.waiting", row, saved, { userId: null, reason: `${row.kind} cleared` });
           continue;
         }
 
@@ -367,7 +446,9 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           ? RECON_KIND.TXN_SUM_MISMATCH
           : match?.kind === "ambiguous"
             ? RECON_KIND.AMBIGUOUS_DEPOSIT
-            : RECON_KIND.NO_DEPOSIT;
+            : handLoaded
+              ? RECON_KIND.HAND_LOADED
+              : RECON_KIND.NO_DEPOSIT;
         if (open && row.kind === kind && row.payoutNetCents === fact.netCents) continue;
 
         const saved = row

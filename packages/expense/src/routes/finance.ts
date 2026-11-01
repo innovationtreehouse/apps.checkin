@@ -12,6 +12,7 @@ import { createPartOwnerRepository } from "../repositories/partOwner";
 import { writeOrgAudit } from "../lib/audit";
 import { getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
+import { withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
 import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
@@ -49,7 +50,7 @@ export const holdLineAccount: ExpenseRouteHandler = async ({ req, params, princi
 
 export const holdResubmit: ExpenseRouteHandler = async ({ params, principal }) => {
   await mapServiceErrors(() => resubmitHeldExpense(principal, params.expenseId));
-  return { Expense: await db.expense.findFirst({ where: { id: params.expenseId } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.expenseId } })) };
 };
 
 // ── Account mapping + QuickBooks accounts ─────────────────────────────────────
@@ -308,7 +309,7 @@ export const candidates: ExpenseRouteHandler = async ({ params, principal }) => 
 export const match: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { qbTxnId } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1) }));
   await mapServiceErrors(() => matchExpenseToQb(principal, params.id, qbTxnId));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
 };
 
 const QbResolveSchema = z.object({ action: z.literal("skip"), reason: z.string().trim().min(1, "A reason is required to skip").max(500) }).strict();
@@ -316,5 +317,5 @@ const QbResolveSchema = z.object({ action: z.literal("skip"), reason: z.string()
 export const qbResolve: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { reason } = await parseBody(req, QbResolveSchema);
   await mapServiceErrors(() => skipExpenseQb(principal, params.id, reason));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
 };

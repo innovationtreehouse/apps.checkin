@@ -159,7 +159,7 @@ describe("getFullAttendance({ kiosk: true })", () => {
     });
 });
 
-describe("getFullAttendance() — privileged caller (unchanged)", () => {
+describe("getFullAttendance() — privileged caller", () => {
     it("keeps dateOfBirth, phone and the household emergency contacts", async () => {
         const { attendance } = await getFullAttendance();
 
@@ -248,7 +248,7 @@ describe("no-keyholder visits", () => {
     });
 });
 
-describe("two-deep calc fails closed on unknown DOB (#300)", () => {
+describe("two-deep calc fails closed on unknown DOB", () => {
     // Youth (hh 8) + real adult (hh 6) + null-DOB visitor in the youth's
     // household. A null→adult default would let the null-DOB visitor
     // "accompany" the youth, masking the violation. The supervising-adult
@@ -274,7 +274,7 @@ describe("two-deep calc fails closed on unknown DOB (#300)", () => {
         expect(supervisingAdultVisits).toHaveBeenCalled();
     });
 
-    it("a DoB-stripped declared adult (#1165) still accompanies their own youth", async () => {
+    it("a DoB-stripped declared adult still accompanies their own youth", async () => {
         // Same shape, but the null-DoB visitor is a 26+ member whose DoB was
         // deliberately deleted: isDeclaredAdult wins over the fail-closed default,
         // so the youth of household 8 counts as accompanied.

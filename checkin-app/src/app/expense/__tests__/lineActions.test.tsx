@@ -79,7 +79,7 @@ const RAISE: Act = { act: "raise-exception", primary: false, noteRequired: true 
 const SIGN_T: Act = { act: "sign", seat: "TREASURER", primary: false, noteRequired: false };
 const rowOf = (n: number) => screen.getAllByRole("row")[n];
 
-describe("only the acts the server returns are drawn (3.15, #2433)", () => {
+describe("only the acts the server returns are drawn", () => {
   it("draws no act and no Sign-as button on a line with none, only its status", () => {
     load([{ actions: [], awaiting: ["Awaiting approval", "Awaiting Treasurer"] }]);
     expect(screen.queryByRole("button", { name: /^Sign as/ })).not.toBeInTheDocument();

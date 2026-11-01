@@ -164,7 +164,7 @@ describe('syncContractStatus', () => {
         expect(a.advanced).toHaveLength(1);
     });
 
-    it('TERMINAL: a declined/expired request clears the stored Zoho ids so the next click starts fresh (#876)', async () => {
+    it('TERMINAL: a declined/expired request clears the stored Zoho ids so the next click starts fresh', async () => {
         const { userId, processId } = await makeApplicant({ zohoActionId: `act-${TAG}` });
         mockGetRequestStatus.mockResolvedValue('terminal');
 

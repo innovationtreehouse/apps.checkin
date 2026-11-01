@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import type { Prisma } from "@/generated/prisma/client";
 
 // Denies a pending scholarship / payment-plan request — the sibling of
 // POST /api/finance-ops/payment-plans (approve).
@@ -15,6 +16,8 @@ import { fromWhere } from "@/lib/programs/enrollmentState";
 // denied-but-not-withdrawn applicant. The hold is released, exactly once, by whichever of withdrawal /
 // normal payment / grace-period expiry fires first (see
 // docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md).
+// A request whose hold failed has no seat to keep: denying it returns the row to
+// an ordinary unpaid claim, and only the audit log records the denial.
 export const POST = withAuth(
     { roles: ['isBoardMember'] },
     async (req, auth) => {
@@ -36,20 +39,30 @@ export const POST = withAuth(
                 }
             }
 
-            const data = { isPaymentPlanRequested: false, paymentPlanDeniedAt: new Date() };
+            const deniedAt = new Date();
+            const heldData = { isPaymentPlanRequested: false, paymentPlanDeniedAt: deniedAt };
 
             // Scope to the pending request so refusing a non-pending/nonexistent
             // request is a no-op error, mirroring approve's guard. Transactional
             // true->false guard: a double-refuse (already false) 409s instead of
             // re-stamping paymentPlanDeniedAt.
-            const { count } = await prisma.programParticipant.updateMany({
-                // Deny CAS: from-state status from the definition; isPaymentPlanRequested stays literal.
-                where: { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') },
-                data,
+            const held = await prisma.programParticipant.updateMany({
+                // Deny CAS: from-state status from the definition; the flag narrowing stays literal.
+                where: { programId, personId: participantId, isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, ...fromWhere('PENDING_HELD') },
+                data: heldData,
             });
 
-            if (count === 0) {
-                return apiError("No pending payment-plan request", 409);
+            let auditData: Prisma.InputJsonObject = heldData;
+            if (held.count === 0) {
+                const noHoldData = { isPaymentPlanRequested: false };
+                const noHold = await prisma.programParticipant.updateMany({
+                    where: { programId, personId: participantId, isPaymentPlanRequested: true, inventoryHeldAt: null, ...fromWhere('PENDING_HOLD_FAILED') },
+                    data: noHoldData,
+                });
+                if (noHold.count === 0) {
+                    return apiError("No pending payment-plan request", 409);
+                }
+                auditData = { ...noHoldData, deniedAt: deniedAt.toISOString(), reason: "payment_plan_denied_no_hold" };
             }
 
             if (auth.type === 'session') {
@@ -60,7 +73,7 @@ export const POST = withAuth(
                         tableName: "ProgramParticipant",
                         affectedEntityId: participantId,
                         secondaryAffectedEntity: programId,
-                        newData: data,
+                        newData: auditData,
                     },
                 });
             }
@@ -68,8 +81,8 @@ export const POST = withAuth(
             // Denial is deliberately silent — no automatic applicant email: the ack
             // at request time is the only automatic applicant email; the board
             // communicates decisions, including this one, manually.
-            // That means the scholarshipDenialGraceDays clock (§4) starts
-            // without any notice to the applicant.
+            // That means the scholarshipDenialGraceDays clock (§4), which runs only
+            // on a held seat, starts without any notice to the applicant.
 
             return NextResponse.json({ success: true });
         } catch (error) {

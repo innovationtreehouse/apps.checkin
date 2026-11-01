@@ -2,7 +2,7 @@
 
 import { centsToDecimalString } from "@checkin/money";
 import { useState } from "react";
-import { Alert, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { LoadError } from "@checkin/component-ui";
@@ -15,6 +15,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
+import { membershipYearLabel, variantSlotYears } from "@/lib/programYear";
 
 interface Settings {
   standardMembershipFeeCents: number;
@@ -28,6 +29,22 @@ interface Settings {
   scholarshipDenialGraceDays: number | null;
   releasedLibraries: string[];
 }
+
+interface YearVariant {
+  membershipYear: number;
+  shopifyVariantId: string;
+  productUrl: string | null;
+}
+
+/** One membership year's slot on the form. */
+interface YearSlot {
+  year: number;
+  variantId: string;
+  productUrl: string;
+}
+
+// A task on the previous release returns the settings row directly.
+type SettingsBody = { BoardSettings: Settings; MembershipYearVariant: YearVariant[] } | Settings;
 
 // Next occurrence (>= now) of the stored boundary's month/day, as a label.
 // ponytail: mirrors nextBoundary() in lib/membership/renewal.ts — can't import, it pulls in prisma.
@@ -49,7 +66,11 @@ export default function MembershipSettingsPage() {
   const [boundaryUnlocked, setBoundaryUnlocked] = useState(false);
   const [variantId, setVariantId] = useState("");
   const [productUrl, setProductUrl] = useState("");
-  const [extracting, setExtracting] = useState(false);
+  const [slots, setSlots] = useState<YearSlot[]>([]);
+  const [savedSlots, setSavedSlots] = useState<YearSlot[]>([]);
+  const [slotErrors, setSlotErrors] = useState<Record<number, string>>({});
+  // The slot year being extracted, or "single" for the single-variant field.
+  const [extracting, setExtracting] = useState<number | "single" | null>(null);
   const [discountCode, setDiscountCode] = useState("");
   // Dev-instance-only: where contract signing requests go ('zoho' | 'debug').
   // Strictly CHECKIN_ENV=dev, not useIsDevInstance()'s not-prod: the API only
@@ -71,10 +92,11 @@ export default function MembershipSettingsPage() {
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
-  const { data, error, reload } = useLoad<{ settings: Settings }>("/api/settings/membership");
-  const releasedLibraries = data?.settings.releasedLibraries ?? [];
+  const { data, error, reload } = useLoad<{ settings: SettingsBody }>("/api/settings/membership");
+  const body = data?.settings;
+  const releasedLibraries = (body && "BoardSettings" in body ? body.BoardSettings : body)?.releasedLibraries ?? [];
 
-  const current = { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget };
+  const current = { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) };
 
   // Confirm-checkbox gate only matters when a boundary already exists — changing
   // it shifts every household's cycle. First-time set has nothing to shift.
@@ -91,17 +113,35 @@ export default function MembershipSettingsPage() {
       const g = parseInt(scholarshipGraceDays.trim(), 10);
       if (!Number.isInteger(g) || g <= 0 || String(g) !== scholarshipGraceDays.trim()) fe.scholarshipGraceDays = "Enter a positive whole number of days, or leave blank to disable.";
     }
-    if (fe.standardFee || fe.volunteerFee || fe.variantId || fe.scholarshipGraceDays) { setFieldErrors(fe); return; }
+    const slotFe: Record<number, string> = {};
+    slots.forEach((slot, i) => {
+      const id = slot.variantId.trim();
+      if (id === "" && savedSlots[i]?.variantId) slotFe[slot.year] = "A saved variant can be replaced, not cleared.";
+      else if (id !== "" && !/^\d+$/.test(id)) slotFe[slot.year] = "Must be a numeric Shopify variant ID.";
+    });
+    setSlotErrors(slotFe);
+    if (fe.standardFee || fe.volunteerFee || fe.variantId || fe.scholarshipGraceDays || Object.keys(slotFe).length) { setFieldErrors(fe); return; }
+    const changedSlots = slots.filter((slot, i) =>
+      slot.variantId.trim() !== "" &&
+      (slot.variantId.trim() !== savedSlots[i]?.variantId || slot.productUrl.trim() !== savedSlots[i]?.productUrl));
     setSaving(true);
     try {
       const res = await fetch("/api/settings/membership", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          perYearVariantClient: true,
           standardMembershipFeeCents: Math.round(parseFloat(standardFee || "0") * 100),
           volunteerMembershipFeeCents: Math.round(parseFloat(volunteerFee || "0") * 100),
           orgMembershipVariantId: variantId.trim() || null,
           orgMembershipProductUrl: productUrl.trim() || null,
+          ...(changedSlots.length ? {
+            membershipYearVariants: changedSlots.map((slot) => ({
+              membershipYear: slot.year,
+              shopifyVariantId: slot.variantId.trim(),
+              productUrl: slot.productUrl.trim() || null,
+            })),
+          } : {}),
           volunteerFamilyDiscountCode: discountCode.trim() || null,
           bgRecheckMonths: Math.round(parseInt(bgRecheckMonths || "0", 10)),
           scholarshipDenialGraceDays: scholarshipGraceDays.trim() === "" ? null : parseInt(scholarshipGraceDays.trim(), 10),
@@ -112,7 +152,7 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setInitial(current); reload(); }
+      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setInitial(current); setSavedSlots(slots); reload(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
@@ -122,25 +162,29 @@ export default function MembershipSettingsPage() {
   // Shopify admin UI hides the lone variant of a single-variant product, so
   // there is nowhere to copy it from). Fills the variant-ID field only —
   // nothing is persisted until the admin presses Save settings.
-  const extractVariant = async () => {
+  const extractVariant = async (slot: number | "single", url: string, fill: (variantId: string) => void) => {
     setSaveNotice(null);
-    setExtracting(true);
+    setExtracting(slot);
     try {
       const res = await fetch("/api/settings/membership/extract-variant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productUrl: productUrl.trim() }),
+        body: JSON.stringify({ productUrl: url.trim() }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setVariantId(data.variantId);
-        setFieldErrors((f) => ({ ...f, variantId: undefined }));
+        fill(data.variantId);
         notifications.show({ message: `Variant ${data.variantId} filled in — press Save settings to keep it.` });
       } else {
         setSaveNotice({ text: data.error || "Could not extract the variant.", err: true });
       }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
-    finally { setExtracting(false); }
+    finally { setExtracting(null); }
+  };
+
+  const updateSlot = (year: number, change: Partial<YearSlot>) => {
+    setSlots((current) => current.map((slot) => (slot.year === year ? { ...slot, ...change } : slot)));
+    setSlotErrors((errors) => ({ ...errors, [year]: "" }));
   };
 
   const bulkOpenRenewals = async () => {
@@ -158,7 +202,15 @@ export default function MembershipSettingsPage() {
 
   const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
-  useSeedForm(data, isDirty, ({ settings }) => {
+  useSeedForm(data, isDirty, ({ settings: answer }) => {
+    const settings = "BoardSettings" in answer ? answer.BoardSettings : answer;
+    const rows = "BoardSettings" in answer ? answer.MembershipYearVariant : [];
+    const loadedSlots: YearSlot[] = settings.orgMembershipYearBoundary
+      ? variantSlotYears(new Date(settings.orgMembershipYearBoundary), new Date()).map((year) => {
+          const row = rows.find((r) => r.membershipYear === year);
+          return { year, variantId: row?.shopifyVariantId ?? "", productUrl: row?.productUrl ?? "" };
+        })
+      : [];
     const snap = {
       standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
       volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
@@ -169,6 +221,7 @@ export default function MembershipSettingsPage() {
       productUrl: settings.orgMembershipProductUrl ?? "",
       discountCode: settings.volunteerFamilyDiscountCode ?? "",
       signingTarget: settings.devSigningTarget ?? "zoho",
+      slots: JSON.stringify(loadedSlots),
     };
     setStandardFee(snap.standardFee);
     setVolunteerFee(snap.volunteerFee);
@@ -179,6 +232,8 @@ export default function MembershipSettingsPage() {
     setProductUrl(snap.productUrl);
     setDiscountCode(snap.discountCode);
     setSigningTarget(snap.signingTarget);
+    setSlots(loadedSlots);
+    setSavedSlots(loadedSlots);
     setInitial(snap);
   });
 
@@ -263,7 +318,12 @@ export default function MembershipSettingsPage() {
                   value={productUrl}
                   onChange={(e) => setProductUrl(e.currentTarget.value)}
                 />
-                <Button variant="light" loading={extracting} disabled={extracting || !productUrl.trim()} onClick={extractVariant}>
+                <Button
+                  variant="light"
+                  loading={extracting === "single"}
+                  disabled={extracting !== null || !productUrl.trim()}
+                  onClick={() => extractVariant("single", productUrl, (id) => { setVariantId(id); setFieldErrors((f) => ({ ...f, variantId: undefined })); })}
+                >
                   Extract variant from URL
                 </Button>
               </Group>
@@ -285,6 +345,43 @@ export default function MembershipSettingsPage() {
                 value={discountCode}
                 onChange={(e) => setDiscountCode(e.currentTarget.value)}
               />
+              {slots.map((slot, i) => {
+                const label = membershipYearLabel(slot.year);
+                return (
+                  <Stack key={slot.year} gap="xs">
+                    <Group gap="xs">
+                      <Title order={5}>{label}</Title>
+                      {i === 1 && slot.variantId.trim() === "" && <Badge color="red">needs variant</Badge>}
+                    </Group>
+                    <Group align="flex-end" gap="sm" wrap="wrap">
+                      <TextInput
+                        label={`${label} product URL`}
+                        placeholder="https://your-store.myshopify.com/products/membership"
+                        w={420}
+                        value={slot.productUrl}
+                        onChange={(e) => updateSlot(slot.year, { productUrl: e.currentTarget.value })}
+                      />
+                      <Button
+                        variant="light"
+                        aria-label={`Extract variant from URL for ${label}`}
+                        loading={extracting === slot.year}
+                        disabled={extracting !== null || !slot.productUrl.trim()}
+                        onClick={() => extractVariant(slot.year, slot.productUrl, (variantId) => updateSlot(slot.year, { variantId }))}
+                      >
+                        Extract variant from URL
+                      </Button>
+                    </Group>
+                    <TextInput
+                      label={`${label} variant ID`}
+                      placeholder="1234567890"
+                      w={260}
+                      error={slotErrors[slot.year]}
+                      value={slot.variantId}
+                      onChange={(e) => updateSlot(slot.year, { variantId: e.currentTarget.value })}
+                    />
+                  </Stack>
+                );
+              })}
             </Stack>
 
             <Alert color={boundary ? "yellow" : "red"} variant="light" mt="md" title="Membership-year boundary">

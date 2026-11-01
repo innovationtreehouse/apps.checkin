@@ -604,6 +604,12 @@ describeDb("mail intake sender authentication", () => {
     expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
   });
 
+  it("holds a message whose From address is not ASCII, recording that the sender is unverified", async () => {
+    send("m1", { from: ["Alice <alic\u00e9@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
+    expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
+  });
+
   it("holds a member's message that passed DMARC on SPF alone, with no aligned DKIM signature", async () => {
     send("m1", { auth: ["mx.google.com; dkim=pass header.i=@mailer.example.net; spf=pass; dmarc=pass header.from=example.org"] });
     send("m2", { auth: ["mx.google.com; spf=pass; dmarc=pass header.from=example.org"] });

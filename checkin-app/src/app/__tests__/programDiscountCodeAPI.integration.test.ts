@@ -249,7 +249,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         );
     });
 
-    it('a non-member still gets { code: null } with no reason (unchanged behavior)', async () => {
+    it('a non-member still gets { code: null } with no reason', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: nonMemberPersonId } });
         const res = await post(coveredProgramId, [nonMemberPersonId]);
         expect(res.status).toBe(200);

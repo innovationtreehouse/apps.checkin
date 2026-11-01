@@ -250,7 +250,7 @@ describe('Programs API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES an anonymous caller — the regression case for Finding 1', async () => {
+        it('DENIES an anonymous caller', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
 
             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });
@@ -276,7 +276,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('DENIES an authenticated admin who is NOT a verified org member and has no canAccessStaging flag', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });
             const res = await GET(req as unknown as import("next/server").NextRequest);
@@ -310,7 +310,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('should missing required program name', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
@@ -321,7 +321,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('should require max participants', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
@@ -334,7 +334,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('should allow admins to create a program', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
@@ -353,7 +353,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('clamps publiclyVisible to false on create when the program is not members-only', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',

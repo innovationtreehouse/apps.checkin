@@ -23,7 +23,7 @@ describe("domain error status maps", () => {
     it.each([
         ["ReviewError", REVIEW_ERROR_STATUS, {
             not_reviewer: 403, not_found: 404, wrong_phase: 409, same_household_applicant: 403,
-            same_household_reviewer: 403, already_attested: 409, not_undoable: 409, invalid_subject: 400,
+            same_household_reviewer: 403, already_attested: 409, not_undoable: 409, invalid_subject: 400, shopify_unavailable: 503,
         }],
         ["PaymentError", PAYMENT_ERROR_STATUS, { not_found: 404, wrong_phase: 409, forbidden: 403 }],
         ["ExternalError", EXTERNAL_ERROR_STATUS, {

@@ -97,9 +97,11 @@ export default function PublicProgramsDirectory() {
               checked={activeOnly}
               onChange={(e) => setActiveOnly(e.currentTarget.checked)}
             />
-            <Button component={Link} href="/program-ops/new" variant="light">
-              + New Program
-            </Button>
+            {session?.user?.isBoardMember && (
+              <Button component={Link} href="/program-ops/new" variant="light">
+                + New Program
+              </Button>
+            )}
           </Group>
         )}
       </Group>

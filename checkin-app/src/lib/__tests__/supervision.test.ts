@@ -64,7 +64,7 @@ describe("who counts as a supervising adult", () => {
         expect(await count([visit(1, 10), visit(2, 20, { dateOfBirth: yearsAgo(15) })])).toBe(1);
     });
 
-    it("excludes an unknown age but keeps a DoB-stripped declared adult (#1165, #300)", async () => {
+    it("excludes an unknown age but keeps a DoB-stripped declared adult", async () => {
         const unknown = visit(1, 10, { dateOfBirth: null });
         const declared = visit(2, 20, { dateOfBirth: null, isDeclaredAdult: true });
         expect(await count([unknown, declared])).toBe(1);

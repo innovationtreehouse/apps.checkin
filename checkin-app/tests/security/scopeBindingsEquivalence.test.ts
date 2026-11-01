@@ -338,7 +338,7 @@ function expectedFromSnapshot(
     return expected;
 }
 
-describe('S1 — scopesHeld ≡ frozen switch + intentional deltas (personas × models × rows)', () => {
+describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models × rows)', () => {
     it('matches the snapshot (plus documented post-snapshot bindings)', () => {
         const mismatches: string[] = [];
         for (const [pName, pCtx] of Object.entries(PERSONAS)) {

@@ -191,20 +191,20 @@ describeDb("in-kind audit", () => {
 describeDb("stale donor sends (in-kind findings K2–K4)", () => {
   const OLD_DONOR = { firstName: "Old", lastName: "Donor", companyName: null };
 
-  it("K2: an older donor call landing after a newer one changes nothing", async () => {
+  it("an older donor call landing after a newer one changes nothing", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 1);
     await recordInKindDonor(orgId, R1, OLD_DONOR, 0);
     expect(await row()).toMatchObject({ donorFirstName: "Jane", donorReplacedAt: null });
   });
 
-  it("K2: an older donor call after a withdrawal with no money does not bring the row back", async () => {
+  it("an older donor call after a withdrawal with no money does not bring the row back", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 0);
     await withdrawInKind(orgId, R1, 1);
     await recordInKindDonor(orgId, R1, DONOR, 0);
     expect(await row()).toBeNull();
   });
 
-  it("K3: an older withdrawal landing after the money leaves the gift waiting on a decision", async () => {
+  it("an older withdrawal landing after the money leaves the gift waiting on a decision", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 3);
     await ingestInKind(receipt(R1));
     await withdrawInKind(orgId, R1, 2);
@@ -212,7 +212,7 @@ describeDb("stale donor sends (in-kind findings K2–K4)", () => {
     expect((await queue()).map((q) => q.state)).toEqual(["decision"]);
   });
 
-  it("K4: no donor call writes donor details back onto a settled withdrawal", async () => {
+  it("no donor call writes donor details back onto a settled withdrawal", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 1);
     await ingestInKind(receipt(R1));
     await withdrawInKind(orgId, R1, 2);

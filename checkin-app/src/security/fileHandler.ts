@@ -16,8 +16,8 @@
  *      unless the view is own-rows-only; a failed write is an opaque 500.
  *   8. Emit row[field] (bytes) with the headers fixed for its content type.
  *
- * Errors thrown from the user fn: `ApiResponseError` → its status, message and
- * optional code; anything else → opaque 500.
+ * Errors thrown from the user fn: `ApiResponseError` → its status, message,
+ * optional code and field names; anything else → opaque 500.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */

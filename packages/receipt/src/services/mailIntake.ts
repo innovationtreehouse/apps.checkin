@@ -62,7 +62,8 @@ type Headers = { name: string; value: string }[];
 const headerValues = (headers: Headers | undefined, name: string): string[] =>
   (headers ?? []).filter((h) => h.name.toLowerCase() === name.toLowerCase()).map((h) => h.value);
 
-const ADDR_SPEC = /^[^\s@<>"(),;:]+@[^\s@<>"(),;:]+\.[^\s@<>"(),;:]+$/;
+// ASCII only: lowercasing folds some other letters to ASCII, as the Kelvin sign to `k`, naming another person's address.
+const ADDR_SPEC = /^[^\s@<>"(),;:\u0080-\uffff]+@[^\s@<>"(),;:\u0080-\uffff]+\.[^\s@<>"(),;:\u0080-\uffff]+$/;
 
 /**
  * An RFC 5322 header with comments as whitespace and each quoted string as a lone `"`, which no
@@ -102,8 +103,8 @@ export function fromAddress(headers: Headers | undefined): string | null {
   // A comma lists two addresses; a colon or semicolon is group syntax.
   if (bare === null || /[,;:]/.test(bare)) return null;
   // A display name holds no `@`: one there would be a second candidate address.
-  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim().toLowerCase();
-  return ADDR_SPEC.test(spec) ? spec : null;
+  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim();
+  return ADDR_SPEC.test(spec) ? spec.toLowerCase() : null;
 }
 
 type AuthResToken = { word: string } | { sep: ";" | "=" };

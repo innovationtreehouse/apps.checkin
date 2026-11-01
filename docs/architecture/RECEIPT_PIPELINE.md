@@ -43,7 +43,7 @@ the crossing names the code comments use.
 | Gift intake (X9) | bulk-donation, `inKind.ts`, `services/inKindService.ts` | `donationSink` | Written once. A replay that differs is kept out and raised for finance. |
 | Gift decision | bulk-donation, `services/inKindAcceptService.ts` | `capital` in `lib/bulkDonation/configure.ts` sends accepted lines to expense | `waitingOn` names what is outstanding. |
 | Expense posting | expense, `lib/expense-qb-processor.ts`, `lib/expense-qb-poster.ts` | `quickbooks.posting` in `lib/expense/configure.ts`; `app/api/cron/qbo-posting` | No single account for a line gives `qb_on_hold`. A failed post retries on the drain, then waits on finance as `NEEDS_FINANCE`. |
-| Gift posting | bulk-donation, `lib/in-kind-poster.ts` | `inKindQbPosting()` in `lib/bulkDonation/configure.ts`; `app/api/cron/qbo-posting` | `POST_FAILED` retries next run. Anything the drain can't settle goes to finance. |
+| Gift posting | bulk-donation, `lib/in-kind-poster.ts` | `inKindQbPosting()` in `lib/bulkDonation/configure.ts`; `app/api/cron/qbo-posting` | `POST_FAILED` retries next run, up to `MAX_POST_ATTEMPTS`. Anything the drain can't settle goes to finance. A run stopped by its failure streak alerts finance. |
 
 Three things commonly mislead a reader. A set `pushedAt` means workflow-mapping accepted the
 receipt, and the money may still have failed there as `apply_failed`. Expense state `qb_complete`

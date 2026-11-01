@@ -614,7 +614,7 @@ describe('POST /api/scan', () => {
     // row rides the same endpoint with `dead: true` instead of `replay: true`;
     // it only ever parks, sharing replay's clientEventId/scannedAt identity so
     // a re-sent dead row dedups on the same pre-read/P2002 path.
-    describe('dead-lettered scan ingest (Q10)', () => {
+    describe('dead-lettered scan ingest', () => {
         function deadReq(overrides: Record<string, unknown> = {}) {
             return new Request('http://localhost/api/scan', {
                 method: 'POST',

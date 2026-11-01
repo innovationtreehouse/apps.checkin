@@ -17,6 +17,7 @@ import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed, raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
+import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
@@ -67,7 +68,8 @@ export class ReviewError extends ServiceError {
             | "same_household_reviewer"
             | "already_attested"
             | "invalid_subject"
-            | "not_undoable",
+            | "not_undoable"
+            | "shopify_unavailable",
         message: string,
     ) {
         super(REVIEW_ERROR_STATUS[code], message, code);
@@ -307,6 +309,16 @@ export async function attest(
 ) {
     const reviewer = await loadReviewer(reviewerId);
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) throw new ReviewError("not_reviewer", "You are not a background-check reviewer.");
+
+    if (input.result === "APPROVE") {
+        const paid = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { paidAt: true, shopifyOrderId: true } });
+        if (paid?.paidAt && paid.shopifyOrderId) {
+            await recordUnreportedReversal(paid.shopifyOrderId).catch((error) => {
+                logger.error("attest: Shopify order read failed:", { processId }, error);
+                throw new ReviewError("shopify_unavailable", "We couldn't confirm with Shopify that this application's payment still stands, so your approval wasn't saved. Please try again later.");
+            });
+        }
+    }
 
     // Re-check eligibility, create the attestation, recompute approvals, and converge
     // all inside one transaction. FOR UPDATE on the OrgMembershipProcess row serializes

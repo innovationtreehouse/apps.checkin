@@ -332,7 +332,7 @@ describe('advanceExternalIfComplete', () => {
         prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 7 });
     });
 
-    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition (#874) and pings reviewers', async () => {
+    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition and pings reviewers', async () => {
         const advanced = { ...readyProcess, status: 'PENDING_PAYMENT' };
         prisma.orgMembershipProcess.findUnique
             .mockResolvedValueOnce(readyProcess) // pre-tx eligibility read
@@ -526,7 +526,7 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(url).toBe('https://sign.example/embed-existing');
     });
 
-    it('dead stored request (declined/expired) → clears the ids and creates a fresh one (#876)', async () => {
+    it('dead stored request (declined/expired) → clears the ids and creates a fresh one', async () => {
         prisma.person.findUnique.mockResolvedValue({
             ...leadUser,
             household: { orgMembership: { processes: [{ ...pendingProcess, zohoEnvelopeId: 'req-dead', zohoActionId: 'act-dead' }] } },

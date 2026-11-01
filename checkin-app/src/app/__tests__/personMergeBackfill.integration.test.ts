@@ -53,7 +53,7 @@ async function tombstone(name: string, intoId: number, householdId: number, data
     return p.id;
 }
 
-describe('PersonMerge backfill (#1456 2b-3 prerequisite)', () => {
+describe('PersonMerge backfill', () => {
     let householdId: number;
     let keeperId: number;
     let auditedId: number;
