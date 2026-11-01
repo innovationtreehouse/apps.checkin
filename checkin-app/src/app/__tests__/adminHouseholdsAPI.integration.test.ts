@@ -24,7 +24,7 @@ describe('Admin Households API Integration Tests', () => {
     let testHousehold2Id: number;
     let testProgramId: number;
 
-    // BG "valid until" fixtures (addendum): a dedicated household with two leads
+    // BG "valid until" fixtures: a dedicated household with two leads
     // (B checked later than A) and a non-lead PERSON_BG-subject stand-in (C, latest
     // of all) plus a member with no check on file (D).
     let bgHouseholdId: number;

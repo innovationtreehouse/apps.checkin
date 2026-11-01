@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * Self-correction of own visits (AT5, #1256) and a household lead's correction
- * of a member's (AT3, #1254): PATCH edits times, DELETE tombstones. The
+ * Self-correction of own visits and a household lead's correction
+ * of a member's: PATCH edits times, DELETE tombstones. The
  * invariants under test: scope is the only gate (404 on out-of-scope/tombstoned
  * — no existence oracle), validity checks reject bad times, the write is
  * audited with type "self_correction" + significance, a significant change
@@ -176,7 +176,7 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         expect(emailBoardMembers).not.toHaveBeenCalled();
     });
 
-    // The bug this fixes: a corrected arrival must be restamped to the current
+    // A corrected arrival must be restamped to the current
     // typed-form source (TYPED), so a SECOND correction of the same time is
     // weighed as overwriting a self-report, not the original measurement
     // (docs/rules/attendance-checkin.md, visit-record). The edit's own
@@ -185,7 +185,7 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         const leadMarked = { ...baseVisit, arrivedVia: "LEAD_MARKED", departedVia: "LEAD_MARKED" };
         visitFindUnique.mockResolvedValue(leadMarked);
         // A real update returns the row's untouched columns as-is, not a static
-        // fixture's default — the mock has to reflect that to catch this bug.
+        // fixture's default — the mock has to reflect that to catch a missed restamp.
         tx.visit.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ ...leadMarked, ...args.data }));
         const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:05:00Z" }), ctx as never);
 
@@ -324,7 +324,7 @@ describe("DELETE /api/attendance/manual/[id]", () => {
     });
 });
 
-// AT3 §3: a household lead corrects a member's visit on the same terms as their
+// A household lead corrects a member's visit on the same terms as their
 // own — the lead is the responsible adult, and a minor cannot self-serve at all.
 describe("household-lead correction of a member's visit", () => {
     const memberVisit = { ...baseVisit, personId: MEMBER_ID };
@@ -383,11 +383,11 @@ describe("household-lead correction of a member's visit", () => {
         });
     });
 
-    // THE regression pin for the registry↔route seam. Both edges matter: the
+    // Pins the registry↔route seam. Both edges matter: the
     // times must SURVIVE (led_households:personal is granted and resolving) and
     // the 'internal' tombstone columns must be GONE. The session carries no
     // householdLead claim — the roster resolves from the DB (householdLeadship),
-    // which is the whole point: the view no longer depends on the session claim.
+    // so the view does not depend on the session claim.
     it("strips the internal tombstone columns while keeping the times the lead may see", async () => {
         personFindMany.mockResolvedValue([{ id: OWN_ID }, { id: MEMBER_ID }]);
 
@@ -402,11 +402,11 @@ describe("household-lead correction of a member's visit", () => {
         }
     });
 
-    // #1614 case (a): a sysadmin who is NOT a household lead, correcting a visit
+    // A sysadmin who is NOT a household lead, correcting a visit
     // in their own household. canManage is true via the sysadmin override in
     // householdLeadship, so led_households resolves and the times ship — even
-    // though no householdLead claim rides the session. This is the divergence
-    // the roster used to have with the write authz, now closed.
+    // though no householdLead claim rides the session. The roster agrees with the
+    // write authz here.
     it("keeps the times for a sysadmin who is not a household lead", async () => {
         personFindUnique.mockResolvedValue({ isKeyholder: false, householdId: HOUSEHOLD_ID, isHouseholdLead: false, isSysadmin: true });
         personFindMany.mockResolvedValue([{ id: OWN_ID }, { id: MEMBER_ID }]);

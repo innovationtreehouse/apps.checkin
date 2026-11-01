@@ -230,10 +230,9 @@ describe('POST /api/scan', () => {
         });
     });
 
-    // #1456 phase 2b. The tombstone walk above only runs because the merged-away
-    // Person row still loads. Once 2b-3 deletes it, `findUnique` misses and the
-    // 404 fires first — the badge is rejected at the door, which is the failure
-    // the walk exists to prevent. These cover the archive branch that replaces it.
+    // The tombstone walk above needs the merged-away Person row to load. Once that
+    // row is deleted `findUnique` misses, and without the archive branch these cover
+    // the 404 would reject the badge at the door.
     describe('resolving a badge whose Person row no longer exists', () => {
         const scanReq = (participantId: number) => new Request('http://localhost/api/scan', {
             method: 'POST',
@@ -264,7 +263,7 @@ describe('POST /api/scan', () => {
             });
         });
 
-        // The two records coexist during 2b: an old tombstone Person row can point
+        // A tombstone Person row can point
         // at a survivor that was itself merged away and deleted later, so one chain
         // alternates between the two lookups.
         it('walks a chain that alternates between a tombstone row and the archive', async () => {
@@ -595,7 +594,7 @@ describe('POST /api/scan', () => {
         });
     });
 
-    // #1347 PR-2 / Q10 — server-side DLQ ingest. A terminally-failed outbox
+    // Server-side DLQ ingest. A terminally-failed outbox
     // row rides the same endpoint with `dead: true` instead of `replay: true`;
     // it only ever parks, sharing replay's clientEventId/scannedAt identity so
     // a re-sent dead row dedups on the same pre-read/P2002 path.
@@ -735,8 +734,8 @@ describe('POST /api/scan', () => {
         });
     });
 
-    // The live kiosk scan carries clientEventId (D4 try-first) but no replay
-    // flag: it must dedup, and otherwise behave exactly like a legacy live scan.
+    // The live kiosk scan carries clientEventId but no replay flag: it must
+    // dedup, and otherwise behave exactly like a live scan without one.
     describe('live scans carrying a clientEventId (no replay flag)', () => {
         function liveReq(overrides: Record<string, unknown> = {}) {
             return new Request('http://localhost/api/scan', {
@@ -926,8 +925,8 @@ describe('POST /api/scan', () => {
         });
     });
 
-    // #1347 PR-0 / Q16 remainder: the supervision confirm inherited the same
-    // debounce swallow the force-close confirm has a token for. The exemption
+    // The debounce would swallow the supervision confirm, as it would the
+    // force-close confirm that has a token for it. The exemption
     // is tied to a fresh supervisionWarnedAt stamp, no second token minted.
     describe('supervision confirm exemption from the debounce', () => {
         const scanReq = (body: Record<string, unknown>) => new Request('http://localhost/api/scan', {
@@ -980,10 +979,10 @@ describe('POST /api/scan', () => {
             }));
         });
 
-        // Fable review finding (2026-08-21): a USB hardware double-read of the
+        // A USB hardware double-read of the
         // WARNING scan itself (duplicate keystrokes ~300-800ms apart, no client
-        // dedup) must NOT read as a confirm -- pre-PR-0 it debounced, and the
-        // fix must not regress that into an unacknowledged auto-departure.
+        // dedup) must debounce, NOT read as a confirm, which would be an unacknowledged
+        // auto-departure.
         it('debounces a second badge 500ms after the warning -- a hardware double-read dead front', async () => {
             mockCountForWarnedAtAge(500);
 
