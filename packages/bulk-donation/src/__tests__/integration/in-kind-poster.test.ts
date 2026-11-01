@@ -14,7 +14,7 @@ import { ingestInKind, recordInKindDonor } from "../../inKind";
 import { inKindAcceptService, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import { inKindKey, inKindPostingOnAt, runInKindQbPosting } from "../../lib/in-kind-poster";
 import { InKindQbResolveInputSchema, resolveInKindQb, type InKindQbResolveInput } from "../../lib/in-kind-resolve";
-import { readDonationSettings, updateDonationSettings } from "../../services/settingsService";
+import { DEFAULT_DONATION_SETTINGS, readDonationSettings, updateDonationSettings } from "../../services/settingsService";
 import type { InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 
@@ -575,6 +575,12 @@ describeDb("in-kind drain settings", () => {
     clearingPair("2026-11-15");
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ matched: 1 });
+  });
+
+  it("reads the same defaults with no settings row as a new row's columns give", async () => {
+    await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
+    await db.donationOrgSettings.create({ data: { orgId } });
+    await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
   });
 
   it("records a change with its before and after", async () => {
