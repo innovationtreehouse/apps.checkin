@@ -10,6 +10,23 @@ import { receiveCompletedReceipt } from "../../services/intakeService";
 const FINANCE = principal(3, { isFinance: true });
 
 describe("updateExpenseSettings — guards", () => {
+  it("asserts the org", async () => {
+    await expect(updateExpenseSettings("org-other", { boardReviewTotalCents: 1 }, FINANCE)).rejects.toThrow(/not this org/);
+  });
+
+  it("only FINANCE or the board edits", async () => {
+    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 1 }, principal(9))).rejects.toMatchObject({ status: 403 });
+  });
+
+  it.each([{ boardReviewTotalCents: 0 }, { boardReviewTotalCents: -1 }, { capitalLineItemThresholdCents: 1.5 }, { capitalEquipmentUnitCents: 50_000 }, { bogus: 1 }])(
+    "rejects %j",
+    async (patch) => {
+      await expect(updateExpenseSettings(ORG, patch, FINANCE)).rejects.toThrow();
+    },
+  );
+});
+
+describeDb("expense settings", () => {
   it("holds the QuickBooks limits to finance lowers, the Board raises", async () => {
     await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 60 }, FINANCE)).rejects.toMatchObject({ status: 403 });
     await updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 40 }, FINANCE);
@@ -28,23 +45,6 @@ describe("updateExpenseSettings — guards", () => {
     await expect(updateExpenseSettings(ORG, { qbMatchWindowDays: 0 }, FINANCE)).rejects.toThrow();
   });
 
-  it("asserts the org", async () => {
-    await expect(updateExpenseSettings("org-other", { boardReviewTotalCents: 1 }, FINANCE)).rejects.toThrow(/not this org/);
-  });
-
-  it("only FINANCE or the board edits", async () => {
-    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 1 }, principal(9))).rejects.toMatchObject({ status: 403 });
-  });
-
-  it.each([{ boardReviewTotalCents: 0 }, { boardReviewTotalCents: -1 }, { capitalLineItemThresholdCents: 1.5 }, { capitalEquipmentUnitCents: 50_000 }, { bogus: 1 }])(
-    "rejects %j",
-    async (patch) => {
-      await expect(updateExpenseSettings(ORG, patch, FINANCE)).rejects.toThrow();
-    },
-  );
-});
-
-describeDb("expense settings", () => {
   it("a missing row reads as the defaults", async () => {
     expect(await getExpenseSettings(ORG)).toEqual(DEFAULT_EXPENSE_SETTINGS);
     expect(DEFAULT_EXPENSE_SETTINGS).toMatchObject({
