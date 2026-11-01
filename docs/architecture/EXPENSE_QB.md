@@ -190,7 +190,7 @@ takes over the stale claim finds the entry by key instead of creating a second o
 `GET /api/cron/qbo-posting` answers only to `QBO_POSTING_CRON_SECRET`, runs daily,
 and returns `{}`. Counts go to the log, and a failed step is recorded on the cron
 run. Expense's step, `runExpenseQbPosting`, runs first, ahead of the donation
-hand-over, in-kind and income, and each lane fails on its own. It has three parts,
+hand-over, in-kind and income, and each lane fails on its own. It has four parts,
 each also failing on its own:
 
 - `recoverStrandedQbExpenses`: expenses left in `qb_pending` or `qb_error` with no
@@ -198,6 +198,8 @@ each also failing on its own:
 - `drainExpenseOutbox`: every outboxed expense not yet in QuickBooks, oldest receipt
   first, then the orphan sweep.
 - `checkQbDrift`: the drift check below.
+- `sweepOutcomeNotices`: the outcome emails still owed to a receipt's uploader and
+  the person reimbursed, at most 50, each given up after three failed sends.
 
 Expense's non-QuickBooks catch-up, `runExpenseCatchUp` (intake replay and catalog
 events), runs from `/api/cron/reconcile-shopify` instead.

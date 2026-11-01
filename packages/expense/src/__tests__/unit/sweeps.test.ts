@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { drainExpenseOutbox } from "../../lib/expense-qb-poster";
 import { checkQbDrift } from "../../lib/expense-qb-drift";
 import { recoverStrandedQbExpenses } from "../../lib/expense-qb-processor";
+import { sweepOutcomeNotices } from "../../lib/outcome-notices";
 import { catchUpCatalogEvents } from "../../services/catalogEventConsumer";
 import { replayReceivedPayloads } from "../../services/intakeService";
 import { runExpenseCatchUp, runExpenseQbPosting } from "../../services/sweeps";
@@ -9,6 +10,7 @@ import { runExpenseCatchUp, runExpenseQbPosting } from "../../services/sweeps";
 vi.mock("../../lib/expense-qb-processor", () => ({ recoverStrandedQbExpenses: vi.fn() }));
 vi.mock("../../lib/expense-qb-poster", () => ({ drainExpenseOutbox: vi.fn() }));
 vi.mock("../../lib/expense-qb-drift", () => ({ checkQbDrift: vi.fn() }));
+vi.mock("../../lib/outcome-notices", () => ({ sweepOutcomeNotices: vi.fn() }));
 vi.mock("../../services/catalogEventConsumer", () => ({ catchUpCatalogEvents: vi.fn() }));
 vi.mock("../../services/intakeService", () => ({ replayReceivedPayloads: vi.fn() }));
 
@@ -35,15 +37,17 @@ describe("expense sweeps", () => {
     vi.mocked(recoverStrandedQbExpenses).mockRejectedValue(new Error("stranded"));
     vi.mocked(drainExpenseOutbox).mockRejectedValue(new Error("drain"));
     vi.mocked(checkQbDrift).mockRejectedValue(new Error("drift"));
+    vi.mocked(sweepOutcomeNotices).mockRejectedValue(new Error("mail"));
 
     expect(await runExpenseQbPosting()).toEqual({
       stranded: { error: true },
       qbPost: { error: true },
       qbDrift: { error: true },
-      failedParts: ["stranded", "qbPost", "qbDrift"],
+      outcomeNotices: { error: true },
+      failedParts: ["stranded", "qbPost", "qbDrift", "outcomeNotices"],
     });
 
-    expect(loggedLines(logged).map((l) => l.part)).toEqual(["stranded", "qbPost", "qbDrift"]);
+    expect(loggedLines(logged).map((l) => l.part)).toEqual(["stranded", "qbPost", "qbDrift", "outcomeNotices"]);
   });
 
   it("names only the part that failed, and none when counts or unbound come back", async () => {
@@ -52,6 +56,7 @@ describe("expense sweeps", () => {
     vi.mocked(recoverStrandedQbExpenses).mockResolvedValue(stranded);
     vi.mocked(drainExpenseOutbox).mockRejectedValue(new Error("drain"));
     vi.mocked(checkQbDrift).mockResolvedValue("unbound");
+    vi.mocked(sweepOutcomeNotices).mockResolvedValue({ sent: 0, failed: 0 });
 
     expect((await runExpenseQbPosting()).failedParts).toEqual(["qbPost"]);
 

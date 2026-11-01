@@ -9,6 +9,7 @@ import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb } from "./expense-qb-poster";
+import { sendOutcomeNotices } from "./outcome-notices";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -454,6 +455,7 @@ async function processExpenseForQb(
       snapshots,
     );
     if (!committed) return;
+    await sendOutcomeNotices([expenseId]);
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
     // Unique constraint on expenseEvents → concurrent run already committed; safe to ignore

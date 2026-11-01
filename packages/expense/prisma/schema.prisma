@@ -416,6 +416,39 @@ model ExpenseEvent {
   @@map("expense_events")
 }
 
+// One email owed per expense outcome: to the receipt's uploader, and to the person reimbursed when
+// that is someone else. Written in the transition into the final state, so it is owed exactly once.
+model ExpenseOutcomeNotice {
+  /// @sensitivity:internal
+  id               Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId            String    @map("org_id")
+  // The expense's id, which is its receipt's id.
+  /// @sensitivity:internal
+  expenseId        String    @map("expense_id")
+  // expense_line_rejected | reimbursement_complete
+  /// @sensitivity:internal
+  event            String
+  // Set before sending, so a send is never repeated; cleared only after a send that reported failure.
+  /// @sensitivity:internal
+  claimedAt        DateTime? @map("claimed_at")
+  /// @sensitivity:internal
+  uploaderSentAt   DateTime? @map("uploader_sent_at")
+  /// @sensitivity:internal
+  reimburseeSentAt DateTime? @map("reimbursee_sent_at")
+  // Set once every owed copy is sent, given up after OUTCOME_ATTEMPTS, or at creation when nothing is owed.
+  /// @sensitivity:internal
+  doneAt           DateTime? @map("done_at")
+  /// @sensitivity:internal
+  attempts         Int       @default(0)
+  /// @sensitivity:internal
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@unique([expenseId, event])
+  @@index([orgId, doneAt])
+  @@map("expense_outcome_notices")
+}
+
 model ExpenseQbAccount {
   /// @sensitivity:internal
   id        Int    @id @default(autoincrement())

@@ -35,7 +35,7 @@ describe('GET /api/cron/qbo-posting', () => {
         create = jest.fn().mockResolvedValue({});
         prisma.cronRunLog.create = create;
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
-        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound', failedParts: [] });
+        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound', outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
         jest.mocked(runDonationDepositHandOver).mockResolvedValue('unbound');
         jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
         jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: 'unbound' });
@@ -87,7 +87,7 @@ describe('GET /api/cron/qbo-posting', () => {
     });
 
     it('records the expense parts that failed and still runs the other steps', async () => {
-        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: { error: true }, qbDrift: { error: true }, failedParts: ['qbPost', 'qbDrift'] });
+        jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: { error: true }, qbDrift: { error: true }, outcomeNotices: { sent: 0, failed: 0 }, failedParts: ['qbPost', 'qbDrift'] });
 
         const res = await GET(req());
 

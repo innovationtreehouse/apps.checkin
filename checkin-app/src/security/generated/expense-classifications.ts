@@ -157,6 +157,18 @@ export const classifications = {
         expenseId: 'internal',
         createdAt: 'internal',
     },
+    ExpenseOutcomeNotice: {
+        id: 'internal',
+        orgId: 'internal',
+        expenseId: 'internal',
+        event: 'internal',
+        claimedAt: 'internal',
+        uploaderSentAt: 'internal',
+        reimburseeSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
+        createdAt: 'internal',
+    },
     ExpenseQbAccount: {
         id: 'internal',
         orgId: 'internal',
@@ -344,6 +356,8 @@ export const relations = {
         lineItem: { model: 'ExpenseLineItem', isList: false },
     },
     ExpenseEvent: {
+    },
+    ExpenseOutcomeNotice: {
     },
     ExpenseQbAccount: {
     },
