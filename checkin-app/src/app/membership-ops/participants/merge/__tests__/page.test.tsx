@@ -323,7 +323,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(await screen.findByText("Keep and augment")).toBeInTheDocument();
   });
 
-  // Matrix 19
   it("renders a radio group only for true conflicts (shared null phone gets no radio)", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockRoutes();
@@ -343,7 +342,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(within(picker).queryByText("Date of Birth")).not.toBeInTheDocument();
   });
 
-  // Matrix 20
   it("defaults each conflict radio to the keeper's value; swapping resets defaults to the new keeper", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockRoutes();
@@ -362,7 +360,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(screen.getByRole("radio", { name: /bob@example\.com · unverified/ })).toBeChecked();
   });
 
-  // Matrix 21
   it("includes the chosen fieldChoices in the merge POST body", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockRoutes();
@@ -388,7 +385,6 @@ describe("membership-ops/participants/merge page", () => {
     );
   });
 
-  // Matrix 22
   it("shows each side's own login identity (email + Google + verified marker), not 'Connected'", async () => {
     const gia = {
       id: 60, name: "Gia Google", email: "gia@example.com", phone: null, googleId: "g-gia-000000",
@@ -425,7 +421,6 @@ describe("membership-ops/participants/merge page", () => {
     expect(within(picker).queryByText("Connected")).not.toBeInTheDocument();
   });
 
-  // Matrix 23
   it("wraps a dateOfBirth conflict in a warning alert instead of a plain radio", async () => {
     const dan = {
       id: 70, name: "Dan Date", email: "dan@example.com", phone: null, googleId: "g70",

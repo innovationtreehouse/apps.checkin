@@ -683,7 +683,7 @@ describe('Program payment-plan routes', () => {
                 });
                 expect(audit).not.toBeNull();
 
-                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all — this supersedes the earlier deny-time +1
+                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all
 
                 // Double-refuse: the second call finds isPaymentPlanRequested
                 // already false -> 409, no-op.
