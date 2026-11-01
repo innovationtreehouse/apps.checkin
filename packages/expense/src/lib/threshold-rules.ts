@@ -2,22 +2,22 @@
 import type { ExpenseSettings } from "../contract";
 
 /**
- * Which change to each threshold loosens a control. "up": a higher value; a lower one tightens.
+ * Raising a threshold loosens its control; lowering it tightens.
  * A capital review threshold of 0 sends every expense to review, so 0 is its tightest value.
  * FINANCE may tighten freely, and loosen only up to the policy value; past that, or for a
  * threshold with no policy value, loosening is the Board's. A `boardOnly` threshold is the
  * Board's to change in either direction; an `either` setting is finance's or the Board's in either
  * direction. Every field must be listed here.
  */
-export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up"; policyCents?: number; boardOnly?: true; either?: true }> = {
-  boardReviewTotalCents: { loosens: "up", policyCents: 200_000 },
-  everydayTotalLimitCents: { loosens: "up", policyCents: 50_000, boardOnly: true },
-  everydayItemLimitCents: { loosens: "up", policyCents: 25_000, boardOnly: true },
-  capitalTotalThresholdCents: { loosens: "up" },
-  capitalLineItemThresholdCents: { loosens: "up" },
-  qbMatchWindowDays: { loosens: "up", either: true },
-  qbMaxCreatesPerRun: { loosens: "up" },
-  qbMaxCreatesPerDay: { loosens: "up" },
+export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { policyCents?: number; boardOnly?: true; either?: true }> = {
+  boardReviewTotalCents: { policyCents: 200_000 },
+  everydayTotalLimitCents: { policyCents: 50_000, boardOnly: true },
+  everydayItemLimitCents: { policyCents: 25_000, boardOnly: true },
+  capitalTotalThresholdCents: {},
+  capitalLineItemThresholdCents: {},
+  qbMatchWindowDays: { either: true },
+  qbMaxCreatesPerRun: {},
+  qbMaxCreatesPerDay: {},
 };
 
 /** Fields in the change that only the Board may make. */
