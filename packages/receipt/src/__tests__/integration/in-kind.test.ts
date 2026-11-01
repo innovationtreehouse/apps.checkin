@@ -6,7 +6,7 @@ import { importReceipts } from "../../services/importService";
 import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, TEST_ORG_ID, clearAll, configure, manualDetails, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, TEST_ORG_ID, clearAll, configure, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -34,6 +34,19 @@ describeDb("in-kind mark and donor (X13)", () => {
     await expect(receiptService.setInKind(r.id, typed, refuse)).rejects.toMatchObject({ status: 403 });
     expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: false, donorLastName: null });
     expect(refuse).toHaveBeenCalledTimes(2);
+  });
+
+  it("reserves no OCR call for an upload whose typed-in donor is refused", async () => {
+    const extract = vi.fn(okOcr().extract);
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, ocr: { extract } });
+    const refuse = vi.fn(async () => {
+      throw new ServiceError(403, "own household");
+    });
+    const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    await expect(receiptService.upload(textFile(), "text/plain", typed, refuse)).rejects.toMatchObject({ status: 403 });
+    expect(await db.receiptAuditLog.count({ where: { action: "ocr_call" } })).toBe(0);
+    expect(extract).not.toHaveBeenCalled();
+    expect(await db.receipt.count()).toBe(0);
   });
 
   it("records a typed-in donor the check passes", async () => {
