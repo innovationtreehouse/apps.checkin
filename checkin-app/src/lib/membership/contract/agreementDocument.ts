@@ -63,7 +63,7 @@ export async function loadAgreementPdf(): Promise<LoadedAgreement> {
         // task role has s3:ListBucket so this surfaces as NoSuchKey, not a 403.
         if (e instanceof NoSuchKey || (e as { name?: string })?.name === "NoSuchKey") {
             throw new AgreementUnavailableError(
-                `Membership agreement PDF not found at s3://${bucket}/${key} (pending issue #289).`,
+                `Membership agreement PDF not found at s3://${bucket}/${key}. Upload it there, or point AGREEMENT_PDF_S3_BUCKET and AGREEMENT_PDF_S3_KEY at the existing object.`,
             );
         }
         throw e;

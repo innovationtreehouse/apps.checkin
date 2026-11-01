@@ -141,6 +141,12 @@ describe("PATCH /api/household/member — declaring someone over 25", () => {
         expect(tx.person.update).not.toHaveBeenCalled();
     });
 
+    it("accepts an older date typed over an under-18 date, storing the declaration instead", async () => {
+        findPerson.mockResolvedValue(person(CHILD, YOUTH_DOB));
+        expect((await patch({ participantId: CHILD, dob: "1990-01-01", over25: true })).status).toBe(200);
+        expect(written()).toMatchObject({ dateOfBirth: null, isDeclaredAdult: true });
+    });
+
     it("accepts a declaration in a later save once the date is cleared", async () => {
         findPerson.mockResolvedValue(person(CHILD, YOUTH_DOB));
         expect((await patch({ participantId: CHILD, dob: "", over25: false })).status).toBe(200);

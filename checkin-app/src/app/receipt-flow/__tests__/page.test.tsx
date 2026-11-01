@@ -61,7 +61,9 @@ describe("receipt flow status page", () => {
     mockFetchJson({});
     renderWithProviders(<ReceiptFlowStatusPage />);
 
-    expect(await screen.findByText("Couldn't load the counts (error 404).")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the counts")).toBeInTheDocument();
+    expect(screen.getByText("HTTP 404")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it("sends anyone else away", () => {

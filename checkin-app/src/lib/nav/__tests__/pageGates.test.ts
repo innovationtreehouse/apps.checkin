@@ -3,8 +3,9 @@ import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import { ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
 import { linkGate } from "@/lib/nav/gates";
 import { FINANCE, FINANCE_ROLES } from "@/lib/nav/sections/finance";
-import { MEMBERSHIP_OPS, MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
+import { MEMBERSHIP_OPS, MEMBERSHIP_OPS_ADMIN_ROLES, MEMBERSHIP_PARTICIPANTS_ROLES } from "@/lib/nav/sections/membershipOps";
 import { NEW_PROGRAM_ROLES, PROGRAM_OPS } from "@/lib/nav/sections/programOps";
+import { PAYMENT_PLAN_ROLES, REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
 import { SAFETY, SAFETY_ROLES, TRUSTED_ADULTS_ROLES } from "@/lib/nav/sections/safety";
 import { LOCALIZATION_ROLES, SETTINGS, SETTINGS_ADMIN_ROLES, SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import type { NavGate, NavUser } from "@/lib/nav/types";
@@ -25,10 +26,13 @@ const admitted = (test: (user: NavUser) => boolean) => flags.filter((_, i) => te
 const CASES: Array<[string, readonly RoleFlag[], NavGate]> = [
   ["/books-map", FINANCE_ROLES, linkGate(FINANCE, "/books-map")],
   ["/budgets", FINANCE_ROLES, linkGate(FINANCE, "/budgets")],
+  ["/finance-ops/membership-payment-plan", PAYMENT_PLAN_ROLES, linkGate(REVENUE_OPS, "/finance-ops/membership-payment-plan")],
+  ["/finance-ops/payment-plan", PAYMENT_PLAN_ROLES, linkGate(REVENUE_OPS, "/finance-ops/payment-plan")],
   ["/finance/mail-aliases", FINANCE_ROLES, linkGate(FINANCE, "/finance/mail-aliases")],
   ["/membership-ops/households", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/households")],
   // A detail page has no descriptor of its own; it takes its parent tab's gate.
   ["/membership-ops/households/[id]", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/households")],
+  ["/membership-ops/participants", MEMBERSHIP_PARTICIPANTS_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/participants")],
   ["/membership-ops/participants/merge", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/participants/merge")],
   ["/membership-ops/participants/new", MEMBERSHIP_OPS_ADMIN_ROLES, pageGate("/membership-ops/participants/new")],
   ["/membership-ops/participants/tombstones", MEMBERSHIP_OPS_ADMIN_ROLES, pageGate("/membership-ops/participants/tombstones")],

@@ -8,8 +8,15 @@
 
 import prisma from '@/lib/prisma';
 import { saveIntake } from '@/lib/membership/intake';
+import { recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
+
+jest.mock('@/lib/membership/selfGrantGuard', () => {
+    const actual = jest.requireActual('@/lib/membership/selfGrantGuard');
+    return { ...actual, recordSelfGrantRefusal: jest.fn(actual.recordSelfGrantRefusal) };
+});
 
 const TAG = 'save-intake-rollback-test';
+const REFUSAL_WRITE_FAILED = `refusal write failed ${TAG}`;
 
 describe('saveIntake rollback', () => {
     let householdId: number, leadId: number, takenEmailOwnerId: number;
@@ -20,6 +27,7 @@ describe('saveIntake rollback', () => {
             select: { id: true, householdId: true },
         });
         const personIds = people.map((p) => p.id);
+        await prisma.errorLog.deleteMany({ where: { message: REFUSAL_WRITE_FAILED } });
         await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: personIds } }, { affectedEntityId: { in: personIds } }] } });
         await prisma.person.deleteMany({ where: { id: { in: personIds } } });
         await prisma.household.deleteMany({ where: { OR: [{ name: { contains: TAG } }, { id: { in: people.map((p) => p.householdId) } }] } });
@@ -51,6 +59,24 @@ describe('saveIntake rollback', () => {
         expect((await prisma.household.findUniqueOrThrow({ where: { id: householdId } })).line1).toBeNull();
         expect(await prisma.person.count({ where: { householdId } })).toBe(1);
         expect((await prisma.person.findUniqueOrThrow({ where: { id: takenEmailOwnerId } })).householdId).not.toBe(householdId);
+    });
+
+    it('a failed refusal write leaves a taken email reported as email_in_use', async () => {
+        const refused = await prisma.household.create({ data: { name: `Refused ${TAG}` } });
+        const actorId = (await prisma.person.create({ data: { name: 'Sysadmin', email: `sysadmin-${TAG}@example.com`, isSysadmin: true, isDeclaredAdult: true, householdId: refused.id } })).id;
+        const guardianId = (await prisma.person.create({ data: { name: 'Guardian', isDeclaredAdult: true, householdId: refused.id } })).id;
+        jest.mocked(recordSelfGrantRefusal).mockRejectedValueOnce(new Error(REFUSAL_WRITE_FAILED));
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(saveIntake(actorId, {
+            secondaryParent: { id: guardianId, name: 'Guardian' },
+            children: [{ name: 'Child', email: `taken-${TAG}@example.com` }],
+        })).rejects.toMatchObject({ code: 'email_in_use', fields: ['children'] });
+
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('self-grant refusal failed'), expect.anything(), expect.anything());
+        consoleError.mockRestore();
+        expect(recordSelfGrantRefusal).toHaveBeenCalledTimes(1);
+        expect(await prisma.person.count({ where: { householdId: refused.id } })).toBe(2);
     });
 
     it('a youth second parent saves as a member with a rejection', async () => {

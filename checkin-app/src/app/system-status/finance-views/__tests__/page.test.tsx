@@ -2,8 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-import { screen, waitFor } from "@testing-library/react";
-import { notifications } from "@mantine/notifications";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, router, resetRtl } from "@/test-helpers/rtl";
 import { visibleLinks } from "@/lib/nav/gates";
 import { SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
@@ -77,25 +76,27 @@ describe("FinanceViewsPage", () => {
         expect(screen.getAllByRole("row")).toHaveLength(50);
     });
 
-    it("raises a red chip that stays up when the log fails to load", async () => {
+    it("dims the old rows and holds the pager while the next page loads", async () => {
         setSession({ id: 2, isBoardMember: true });
-        const show = jest.spyOn(notifications, "show");
-        global.fetch = jest.fn().mockResolvedValue({
-            ok: false,
-            status: 500,
-            json: async () => ({ error: "Internal Server Error" }),
-        });
+        const rows = Array.from({ length: 51 }, (_, i) => ({ ...logRow, id: i + 1 }));
+        mockFetchJson({ "/api/system-status/finance-views": { FinanceViewLog: rows, Person: [] } });
+        renderWithProviders(<FinanceViewsPage />);
+        const older = await screen.findByRole("button", { name: "Older" });
+        expect(screen.getByRole("table").closest('[aria-busy="false"]')).not.toBeNull();
+
+        global.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
+        fireEvent.click(older);
+
+        await waitFor(() => expect(screen.getByRole("table").closest('[aria-busy="true"]')).not.toBeNull());
+        expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+    });
+
+    it("shows the failure, not an empty log, when the log fails to load", async () => {
+        setSession({ id: 2, isBoardMember: true });
+        mockFetchJson({});
         renderWithProviders(<FinanceViewsPage />);
 
-        await waitFor(() =>
-            expect(show).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    color: "red",
-                    title: "Couldn't load the finance view log",
-                    message: "Internal Server Error",
-                    autoClose: false,
-                }),
-            ),
-        );
+        expect(await screen.findByText("Couldn't load the finance view log")).toBeInTheDocument();
+        expect(screen.queryByText("No finance views match these filters.")).not.toBeInTheDocument();
     });
 });
