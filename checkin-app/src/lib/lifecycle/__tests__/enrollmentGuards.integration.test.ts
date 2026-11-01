@@ -3,8 +3,8 @@
  */
 /**
  * Runs every declared enrollment guard on Postgres, over every on-diagram row shape.
- * The guard must admit exactly its declared from-states, and each admitted row must
- * classify to its declared to-state afterwards.
+ * The guard must admit exactly its declared from-states, each admitted row must
+ * classify to its declared to-state afterwards, and a row it refuses must still classify.
  */
 import prisma from '@/lib/prisma';
 import {
@@ -22,6 +22,9 @@ import {
 const TAG = 'enrollment-guards-test';
 const writes: Record<EnrollmentWriteName, EnrollmentWrite> = ENROLLMENT_WRITES;
 const guards: Record<string, EnrollmentGuard> = ENROLLMENT_GUARDS;
+
+/** request-payment-plan runs `reapply` in the same transaction when `apply`'s takeHold matches nothing. */
+const CONTINUES_WITH: Record<string, EnrollmentWriteName> = { apply: 'reapply' };
 
 describe('enrollment guards on real rows', () => {
     let programId: number;
@@ -63,9 +66,10 @@ describe('enrollment guards on real rows', () => {
         });
     }
 
-    it.each(Object.entries(guards))('%s admits its from-states and lands on its to-state', async (_name, guard) => {
+    it.each(Object.entries(guards))('%s admits its from-states, lands on its to-state, and leaves a refused row on the diagram', async (name, guard) => {
         const admittedBy = guard.admittedBy ?? guard.steps[guard.steps.length - 1];
         const admitted = new Set<string>();
+        const refusedOffDiagram: string[] = [];
         const landed: Record<string, string | null> = {};
         for (const shape of enumerateEnrollmentRows()) {
             const from = classify(shape);
@@ -79,11 +83,17 @@ describe('enrollment guards on real rows', () => {
                 });
                 if (step === admittedBy) took = count > 0;
             }
-            if (!took) continue;
+            if (!took) {
+                const next = CONTINUES_WITH[name];
+                if (next) await prisma.programParticipant.updateMany({ where: { programId, personId, ...writes[next].where }, data: writes[next].data(new Date()) });
+                if (classify(toRow(await prisma.programParticipant.findUniqueOrThrow({ where: key() }))) === null) refusedOffDiagram.push(from);
+                continue;
+            }
             admitted.add(from);
             landed[from] = classify(toRow(await prisma.programParticipant.findUniqueOrThrow({ where: key() })));
         }
         expect([...admitted].sort()).toEqual([...guard.from].sort());
         expect(landed).toEqual(Object.fromEntries(guard.from.map((from) => [from, guard.to])));
+        expect(refusedOffDiagram).toEqual([]);
     });
 });
