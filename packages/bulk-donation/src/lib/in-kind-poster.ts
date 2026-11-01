@@ -3,7 +3,6 @@
 // clearing account, which the drain matches instead. Claim, call, settle, as the other lanes.
 import { dollarsToCents } from "@checkin/money";
 import {
-  MATCH_WINDOW_DAYS,
   STALE_CLAIM_MS,
   SWEEP_DAYS,
   appKeyOf,
@@ -26,6 +25,7 @@ import { db, isUniqueConstraintError, type DbOrTx } from "../db";
 import { getInKindCapital, getInKindQbPosting } from "../runtime";
 import type { InKindQbPosting } from "../contract";
 import { recordEvent } from "../repositories/audit";
+import { readDonationSettings, type DonationSettings } from "../services/settingsService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
 import { QB_MATCH_STATE } from "./qb-match";
@@ -65,7 +65,7 @@ async function switchInKindPostingOn(orgId: string, now: Date): Promise<Date> {
   return at;
 }
 
-const windowOf = (date: string) => ({ from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) });
+const windowOf = (date: string, days: number) => ({ from: shiftDate(date, -days), to: shiftDate(date, days) });
 
 /** One QuickBooks entry a settle claims for the gift. */
 export interface Entry {
@@ -98,6 +98,7 @@ export interface Run {
   ctx: ReadinessContext;
   /** Every gift still to book, so a hand booking two gifts could own goes to finance. */
   open: GiftToBook[];
+  settings: DonationSettings;
 }
 
 export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "failed" | "waiting";
@@ -174,7 +175,7 @@ export function claimedDepositIds(orgId: string): Promise<Set<string>> {
  */
 async function matchClearingPair(run: Run, gift: GiftToBook, txnDate: string): Promise<Settlement | null> {
   const clearing = run.accounts.INKIND_CLEARING;
-  const w = windowOf(txnDate);
+  const w = windowOf(txnDate, run.settings.qbMatchWindowDays);
   const [deposits, purchases, heldDeposits, heldPurchases] = await Promise.all([
     run.client.depositsBetween(w.from, w.to),
     run.client.purchasesBetween(w.from, w.to),
@@ -188,7 +189,7 @@ async function matchClearingPair(run: Run, gift: GiftToBook, txnDate: string): P
   if (d.length === 0 && p.length === 0) return null;
   const ids = [...d.map((e) => `Deposit ${e.Id}`), ...p.map((e) => `Purchase ${e.Id}`)].join(", ");
   if (d.length !== 1 || p.length !== 1) return needsFinance(`Finance's clearing-account bookings ${ids} may be this gift's; match them or skip`);
-  const rivals = run.open.filter((o) => (o.source !== gift.source || o.id !== gift.id) && o.totalCents === gift.totalCents && o.txnDate && [d[0].TxnDate, p[0].TxnDate].every((t) => inWindow(t, o.txnDate as string)));
+  const rivals = run.open.filter((o) => (o.source !== gift.source || o.id !== gift.id) && o.totalCents === gift.totalCents && o.txnDate && [d[0].TxnDate, p[0].TxnDate].every((t) => inWindow(t, o.txnDate as string, run.settings.qbMatchWindowDays)));
   if (rivals.length > 0) return needsFinance(`Finance's clearing-account bookings ${ids} could belong to this gift or another of the same value; match them to one`);
   return {
     state: QB_MATCH_STATE.MATCHED,
@@ -201,8 +202,8 @@ async function matchClearingPair(run: Run, gift: GiftToBook, txnDate: string): P
   };
 }
 
-function inWindow(date: string, around: string): boolean {
-  const w = windowOf(around);
+function inWindow(date: string, around: string, days: number): boolean {
+  const w = windowOf(around, days);
   return date >= w.from && date <= w.to;
 }
 
@@ -254,7 +255,7 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
       lines,
       memo: `In-kind gift ${gift.source} ${gift.id}`,
       key: inKindKey(run.orgId, gift.source, gift.id),
-      window: windowOf(txnDate),
+      window: windowOf(txnDate, run.settings.qbMatchWindowDays),
       claimedIds: await heldIds(run.orgId, "JournalEntry"),
       closedThrough: gate.closedThrough,
       mayCreate: gate.mayCreate,
@@ -441,7 +442,7 @@ export interface InKindDrainCounts {
  * The in-kind drain, run from the daily cron. It runs only with QuickBooks bound and every in-kind
  * role in the books map, then switches the lane on (once, for good) and reads the books closing
  * date once for the run. Each gift waiting on nothing but booking posts, oldest first, until the
- * per-run create cap or the failure streak; the orphan sweep runs last.
+ * per-run create limit or the failure streak; the orphan sweep runs last.
  */
 export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | "unconfigured"> {
   const posting = getInKindQbPosting();
@@ -454,7 +455,8 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this in-kind run creates nothing: ${close.error}`);
   const ctx = await inKindReadiness.readReadiness(orgId);
   const { ready, open } = await inKindReadiness.giftsToBook(orgId, ctx);
-  const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open };
+  const settings = await readDonationSettings(db, orgId);
+  const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open, settings };
 
   const counts: InKindDrainCounts = {
     posted: 0, matched: 0, unbooked: 0, needs_finance: 0, failed: 0, waiting: 0,
@@ -462,6 +464,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   };
   const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
     counts,
+    maxCreatesPerRun: settings.qbMaxCreatesPerRun,
     failures: ["failed"],
     post: async (gift) => {
       const result = await postGift(run, gift.source, gift.id, new Date());

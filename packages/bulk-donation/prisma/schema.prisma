@@ -292,6 +292,11 @@ model DonationOrgSettings {
   inKindQbPostingOnAt DateTime? @map("in_kind_qb_posting_on_at")
   /// @sensitivity:internal
   depositsHandedOverAt DateTime? @map("deposits_handed_over_at") @ignore
+  // Days either side of a gift's date a QuickBooks entry may match.
+  /// @sensitivity:internal
+  qbMatchWindowDays Int @default(7) @map("qb_match_window_days")
+  /// @sensitivity:internal
+  qbMaxCreatesPerRun Int @default(25) @map("qb_max_creates_per_run")
 
   @@map("donation_org_settings")
 }

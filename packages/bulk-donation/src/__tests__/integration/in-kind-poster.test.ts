@@ -14,6 +14,7 @@ import { ingestInKind, recordInKindDonor } from "../../inKind";
 import { inKindAcceptService, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import { inKindKey, inKindPostingOnAt, runInKindQbPosting } from "../../lib/in-kind-poster";
 import { InKindQbResolveInputSchema, resolveInKindQb, type InKindQbResolveInput } from "../../lib/in-kind-resolve";
+import { readDonationSettings, updateDonationSettings } from "../../services/settingsService";
 import type { InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 
@@ -539,5 +540,48 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect(await resolve(id, { action: "skip", reason: "looks unbooked" })).toMatchObject({ qbState: "CREATED" });
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000", matchState: "CREATED" }]);
     expect(qbo.posts).toHaveLength(1);
+  });
+});
+
+describeDb("in-kind drain settings", () => {
+  const set = (data: { qbMatchWindowDays?: number; qbMaxCreatesPerRun?: number }) =>
+    db.donationOrgSettings.upsert({ where: { orgId }, create: { orgId, ...data }, update: data });
+  const clearingPair = (date: string) => {
+    qbo.deposits.push({ Id: "51", TxnDate: date, TotalAmt: 33, DepositToAccountRef: { value: "290" } });
+    qbo.purchases.push({ Id: "52", TxnDate: date, TotalAmt: 33, AccountRef: { value: "290" } });
+  };
+
+  it("stops at the org's per-run limit", async () => {
+    await switchOn();
+    await set({ qbMaxCreatesPerRun: 1 });
+    await acceptedGift();
+    await acceptedGift();
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capped: true });
+  });
+
+  it("looks for finance's pair only within the org's match window", async () => {
+    await switchOn();
+    await set({ qbMatchWindowDays: 1 });
+    await acceptedGift();
+    clearingPair("2026-10-22");
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ matched: 0, posted: 1 });
+  });
+
+  it("finds finance's pair anywhere in a widened match window", async () => {
+    await set({ qbMatchWindowDays: 30 });
+    await acceptedGift();
+    clearingPair("2026-11-15");
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ matched: 1 });
+  });
+
+  it("records a change with its before and after", async () => {
+    await updateDonationSettings(orgId, { qbMatchWindowDays: 3 }, { isFinance: true, isBoard: false }, ACTOR);
+
+    await expect(readDonationSettings(db, orgId)).resolves.toEqual({ qbMatchWindowDays: 3, qbMaxCreatesPerRun: 25 });
+    const event = await db.workflowEvent.findFirstOrThrow({ where: { orgId, eventType: "SETTINGS_UPDATED" } });
+    expect(JSON.parse(event.payload ?? "")).toEqual({ before: { qbMatchWindowDays: 7 }, after: { qbMatchWindowDays: 3 } });
   });
 });
