@@ -499,11 +499,15 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(zohoSign.submitRequest).toHaveBeenCalledTimes(1);
         // Claimed for the caller BEFORE Zoho is called, then the ids stored under that claim.
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenNthCalledWith(1, {
-            where: { id: 20, zohoSignerPersonId: null, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoSignerPersonId: 1 },
+            where: {
+                id: 20,
+                OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }],
+                AND: [{ OR: [{ zohoSignerPersonId: null }, { zohoClaimedAt: { lt: expect.any(Date) } }] }],
+            },
+            data: { zohoSignerPersonId: 1, zohoClaimedAt: expect.any(Date) },
         });
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenNthCalledWith(2, {
-            where: { id: 20, zohoSignerPersonId: 1 },
+            where: { id: 20, zohoSignerPersonId: 1, zohoClaimedAt: expect.any(Date) },
             data: { zohoEnvelopeId: 'req-1', zohoActionId: 'act-1' },
         });
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
@@ -705,10 +709,63 @@ describe('getOrCreateContractSigningUrl', () => {
 
         await expect(getOrCreateContractSigningUrl(1)).rejects.toThrow('Zoho 500');
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith({
-            where: { id: 20, zohoSignerPersonId: 1, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            where: { id: 20, zohoSignerPersonId: 1, zohoClaimedAt: expect.any(Date), OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
             data: { zohoSignerPersonId: null },
         });
         expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('storing the ids fails after the create → recalls the new request and releases the claim', async () => {
+        prisma.person.findUnique.mockResolvedValue(leadUser);
+        zohoSign.getAccessToken.mockResolvedValue('token-1');
+        zohoSign.createRequest.mockResolvedValue({ requestId: 'req-1', actionId: 'act-1', documentId: 'doc-1' });
+        zohoSign.submitRequest.mockResolvedValue(undefined);
+        prisma.orgMembershipProcess.updateMany
+            .mockResolvedValueOnce({ count: 1 })
+            .mockRejectedValueOnce(new Error('db down'))
+            .mockResolvedValueOnce({ count: 1 });
+
+        await expect(getOrCreateContractSigningUrl(1)).rejects.toThrow('db down');
+
+        expect(zohoSign.recallRequest).toHaveBeenCalledWith('token-1', 'req-1');
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith({
+            where: { id: 20, zohoSignerPersonId: 1, zohoClaimedAt: expect.any(Date), OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: null },
+        });
+        expect(zohoSign.getEmbeddedSignUrl).not.toHaveBeenCalled();
+    });
+
+    it('a failed recall and release do not hide the store failure', async () => {
+        prisma.person.findUnique.mockResolvedValue(leadUser);
+        zohoSign.getAccessToken.mockResolvedValue('token-1');
+        zohoSign.createRequest.mockResolvedValue({ requestId: 'req-1', actionId: 'act-1', documentId: 'doc-1' });
+        zohoSign.submitRequest.mockResolvedValue(undefined);
+        zohoSign.recallRequest.mockRejectedValue(new Error('Zoho 500'));
+        prisma.orgMembershipProcess.updateMany
+            .mockResolvedValueOnce({ count: 1 })
+            .mockRejectedValueOnce(new Error('db down'))
+            .mockRejectedValueOnce(new Error('db still down'));
+
+        const consoleError = jest.spyOn(console, 'error').mockImplementation();
+
+        await expect(getOrCreateContractSigningUrl(1)).rejects.toThrow('db down');
+
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Could not recall unstored Zoho request req-1'));
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Could not release signing claim'));
+        consoleError.mockRestore();
+    });
+
+    it('the claim was lost during the create → recalls the new request and embeds nothing', async () => {
+        prisma.person.findUnique.mockResolvedValue(leadUser);
+        zohoSign.getAccessToken.mockResolvedValue('token-1');
+        zohoSign.createRequest.mockResolvedValue({ requestId: 'req-1', actionId: 'act-1', documentId: 'doc-1' });
+        zohoSign.submitRequest.mockResolvedValue(undefined);
+        prisma.orgMembershipProcess.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+        await expect(getOrCreateContractSigningUrl(1)).rejects.toMatchObject({ code: 'wrong_phase' });
+
+        expect(zohoSign.recallRequest).toHaveBeenCalledWith('token-1', 'req-1');
+        expect(zohoSign.getEmbeddedSignUrl).not.toHaveBeenCalled();
     });
 });
 

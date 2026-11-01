@@ -568,6 +568,11 @@ model OrgMembershipProcess {
   /// @sensitivity:internal
   zohoSignerPersonId    Int?
   zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
+  /// When zohoSignerPersonId last claimed this process to create a Zoho request.
+  /// Identifies the claim: only its holder stores ids, and it can be taken over
+  /// once old enough that its holder must be gone.
+  /// @sensitivity:internal
+  zohoClaimedAt         DateTime?
   /// @sensitivity:internal
   contractSignedAt      DateTime?
   /// The BoardSettings.keyVolunteerAgreementVersion a KEY_VOLUNTEER_AGREEMENT

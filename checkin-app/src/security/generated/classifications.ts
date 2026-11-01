@@ -101,6 +101,7 @@ export const classifications = {
         zohoEnvelopeId: 'internal',
         zohoActionId: 'internal',
         zohoSignerPersonId: 'internal',
+        zohoClaimedAt: 'internal',
         contractSignedAt: 'internal',
         agreementVersion: 'internal',
         bgConsentAt: 'internal',
