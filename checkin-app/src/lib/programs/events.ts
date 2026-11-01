@@ -7,6 +7,7 @@ import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { intervalsOverlap } from "@/lib/attendanceConflicts";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 
 export interface EventEditor {
     id: number;
@@ -182,7 +183,11 @@ export async function manualEditAttendance(
     const targetId = Number(participantId);
     if (event.programId != null) {
         const [enrolled, volunteering] = await Promise.all([
-            prisma.programParticipant.findFirst({ where: { programId: event.programId, personId: targetId }, select: { personId: true } }),
+            // Someone who has withdrawn stays correctable for sessions that started before they left.
+            prisma.programParticipant.findFirst({
+                where: { programId: event.programId, personId: targetId, OR: [ENROLLED_PARTICIPANT, { endedAt: { gt: event.startAt } }] },
+                select: { personId: true },
+            }),
             prisma.programVolunteer.findFirst({ where: { programId: event.programId, personId: targetId }, select: { personId: true } }),
         ]);
         if (!enrolled && !volunteering) {

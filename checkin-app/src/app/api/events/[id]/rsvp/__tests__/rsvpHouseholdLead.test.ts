@@ -8,6 +8,7 @@
 
 import { PATCH } from '@/app/api/events/[id]/rsvp/route';
 import { getServerSession } from 'next-auth/next';
+import prisma from '@/lib/prisma';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -81,6 +82,34 @@ it('forbids RSVPing to a program event with no tie to the program', async () => 
 
     expect(res.status).toBe(403);
     expect(mockRsvpUpsert).not.toHaveBeenCalled();
+});
+
+describe('a withdrawn enrollment', () => {
+    // Applies the query's status condition to a stored WITHDRAWN row.
+    const withdrawnRow = async ({ where }: { where: { status?: { not: string } } }) =>
+        where.status?.not === 'WITHDRAWN' ? null : { personId: 7, status: 'WITHDRAWN' };
+
+    beforeEach(() => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 7 } });
+        mockEventFindUnique.mockResolvedValue({
+            id: 5, programId: 3, endAt: new Date(Date.now() + 3600_000), program: { id: 3, leadMentorId: 99 },
+        });
+        (prisma.programParticipant.findUnique as jest.Mock).mockImplementation(withdrawnRow);
+    });
+
+    it.each(['ATTENDING', 'MAYBE', 'NO_RESPONSE'])('cannot RSVP %s', async (status) => {
+        const res = await PATCH(body({ status }), { params });
+
+        expect(res.status).toBe(403);
+        expect(mockRsvpUpsert).not.toHaveBeenCalled();
+    });
+
+    it('can still decline', async () => {
+        const res = await PATCH(body({ status: 'NOT_ATTENDING' }), { params });
+
+        expect(res.status).toBe(200);
+        expect(mockRsvpUpsert).toHaveBeenCalledTimes(1);
+    });
 });
 
 it('forbids a lead from RSVPing for someone outside their household', async () => {

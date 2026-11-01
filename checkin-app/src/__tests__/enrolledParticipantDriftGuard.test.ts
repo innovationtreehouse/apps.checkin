@@ -50,7 +50,6 @@ const ALLOWLIST: Record<string, string> = {
     // ── history and identity tooling ──────────────────────────────────────────
     'lib/person/merge/plan.ts': 'Person merge plan: moves every enrollment row, withdrawn ones included, so history follows the surviving person.',
     'app/api/membership-ops/participants/merge/analyze/route.ts': 'Person merge analysis: shows every enrollment row the merge will move, withdrawn ones included.',
-    'lib/programs/events.ts': 'Attendance-correction IDOR guard pinned to one target: a correction to a past session must still be allowed for someone who was enrolled then and has since withdrawn.',
 
     // ── dev-only tooling ──────────────────────────────────────────────────────
     'app/api/dev/shopify/orders-paid/route.ts': 'Dev-only mock-webhook firer (isDevInstance gated). Reads the rows named in the request body. No production effect.',

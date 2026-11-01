@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import { canActFor } from "@/lib/household/activityMembers";
 import { RSVP_STATUSES, type RSVPStatus } from "@/types/rsvp";
 import { apiError } from "@/lib/api-response";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 
 export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -56,7 +57,9 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
                     programId_personId: {
                         programId: event.programId,
                         personId: currentUserId
-                    }
+                    },
+                    // Someone who withdrew may still decline, so an earlier Yes can be retracted.
+                    ...(status === "NOT_ATTENDING" ? {} : ENROLLED_PARTICIPANT),
                 }
             });
             const isVolunteer = await prisma.programVolunteer.findUnique({
