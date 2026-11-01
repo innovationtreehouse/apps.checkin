@@ -5,7 +5,7 @@
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedAccountMapping, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedAccountMapping, seedApproval, seedExpense, seedLineItem, seedSubmitterSeat, signAllLines, ORG } from "../helpers/seed";
 import type { OutcomeMail } from "../../contract";
 import { raiseException, rejectException, approveLine } from "../../services/approvalService";
 import { advanceWorkflow, advanceWorkflowInTx } from "../../lib/workflow-engine";
@@ -31,7 +31,7 @@ async function reimbursementInApproval() {
   const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: REIMBURSEE, submitterId: UPLOADER });
   await db.expense.update({ where: { id }, data: { receiptDate: "2026-10-02" } });
   const li = await seedLineItem(id, { gtin13: "0000000000017" });
-  return { id, approvalId: await seedApproval(id, li, { ownerId: 100 }) };
+  return { id, li, approvalId: await seedApproval(id, li, { ownerId: 100 }) };
 }
 
 async function inQbPending(opts: { needsReimbursement: boolean; backfill?: boolean }) {
@@ -68,7 +68,8 @@ describeDb("outcome notices: written by the final transitions only", () => {
   });
 
   it("an approval that sends the expense on to QuickBooks owes nothing", async () => {
-    const { id, approvalId } = await reimbursementInApproval();
+    const { id, li, approvalId } = await reimbursementInApproval();
+    await seedSubmitterSeat(li, REIMBURSEE);
     await approveLine(LEADER, id, approvalId);
     expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).not.toBe("rejected");
     expect(await notices(id)).toEqual([]);
