@@ -4,18 +4,11 @@
  * lazy Org-registry accessor, so both libraries stamp the same org id and
  * person ids, and boot stays DB-free. The S5 replay read is bound to the catalog's events.
  */
-import { configureLocalInventory, type InventoryAlerts } from "@checkin/local-inventory";
+import { configureLocalInventory } from "@checkin/local-inventory";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/components/host";
+import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
 
-const alerts: InventoryAlerts = {
-  async orgEventsStuck({ failed, unprocessed, unreadable }) {
-    const { emailBoardMembers } = await import("@/lib/emailRecipients");
-    const problem = unreadable
-      ? "could not read the catalog's events"
-      : `found ${failed} newly failed and ${unprocessed} unprocessed catalog event(s)`;
-    await emailBoardMembers("board.inventoryEventsStuck", { problem }, "Inventory catalog event alert failed:");
-  },
-};
+const alerts = orgEventAlerts("board.inventoryEventsStuck", "Inventory catalog event alert failed:");
 
 export function configureLocalInventoryRuntime(): void {
   configureLocalInventory({ auth: { getPrincipal }, org: getOrg, catalogEventSource: { eventsSince: catalogEventsSince }, alerts });

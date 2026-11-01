@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, lastPage, latestGate } from "../../components/api";
+import { api, clampPage, lastPage } from "../../components/api";
 
 function stubFetch(status: number, body: string) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status })));
@@ -29,13 +29,12 @@ describe("api()", () => {
   });
 });
 
-describe("latestGate()", () => {
-  it("only the most recent request stays current", () => {
-    const begin = latestGate();
-    const first = begin();
-    const second = begin();
-    expect(first()).toBe(false);
-    expect(second()).toBe(true);
+describe("clampPage()", () => {
+  it("moves back to the last page when the list shrinks, and never below 1", () => {
+    expect(clampPage(3, 100, 50)).toBe(2);
+    expect(clampPage(2, 100, 50)).toBe(2);
+    expect(clampPage(1, 100, 50)).toBe(1);
+    expect(clampPage(2, 0, 50)).toBe(1);
   });
 });
 

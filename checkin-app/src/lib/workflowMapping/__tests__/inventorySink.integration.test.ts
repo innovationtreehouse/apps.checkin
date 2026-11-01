@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X4 binding: workflow-mapping's InventorySink driven into the real
+ * Workflow-mapping's InventorySink driven into the real
  * local-inventory apply, each library on its own throwaway database migrated
  * from its committed migrations. The receipt runs through the library services
  * (proceed → apply → retry-apply) exactly as the routes call them.
@@ -78,7 +78,7 @@ beforeAll(async () => {
     configureWorkflowMapping({
         auth: { getPrincipal: async () => ({ id: 1, name: 'Manager' }) },
         org: async () => ORG,
-        // The expense leg (X5) is a stand-in, so each test chooses whether the money side lands.
+        // The expense leg is a stand-in, so each test chooses whether the money side lands.
         expenseSink: {
             pushReceipt: async () => {
                 if (expense.fails) throw new Error('ExpenseSink.pushReceipt not wired');

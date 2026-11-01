@@ -25,8 +25,7 @@ import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "
  * always drops its OWN temp DBs there. It refuses checkmein/checkin_dev/
  * checkin_prod as a guard against pointing it at a real environment.
  *
- * What "validate" means (see #792, which did this by hand once and hit both
- * of these the hard way):
+ * What "validate" means:
  *  1. Semantic schema identity: a fresh DB migrated through the FULL current
  *     chain (TRUTH) must dump the same schema (scripts/compare-schema-dumps.sh)
  *     as a fresh DB with only the generated candidate applied.

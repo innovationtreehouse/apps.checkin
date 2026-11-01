@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Alert, Badge, Group, SegmentedControl, Stack, Switch, Table, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { FACILITY_RECORD_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -31,7 +33,7 @@ type AuditRow = {
   tableName: string;
   affectedEntityId: number;
   secondaryAffectedEntity: number | null;
-  newData: { type?: string; significance?: { score: number; flagged: boolean } };
+  newData: { type?: string; significance?: { score: number; flagged: boolean }; overlapsVisitIds?: number[] };
 };
 
 type PersonRef = { id: number; name: string | null; mergedIntoId: number | null };
@@ -132,32 +134,8 @@ export default function CorrectionsPage() {
   // Defaults to the significant changes (executive summary); the full feed
   // is one switch away.
   const [flaggedOnly, setFlaggedOnly] = useState(true);
-  const [data, setData] = useState<Payload | null>(null);
-  const [loadedQuery, setLoadedQuery] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
-  // Loading is derived, not stored: the data on hand either belongs to the
-  // current query or a fetch for it is still in flight.
-  const query = `${period}|${flaggedOnly}`;
-  const loading = loadedQuery !== query;
-
-  useEffect(() => {
-    if (!ready) return;
-    // `live` drops a response the user has already filtered past. Without it a
-    // slow earlier request settles last and leaves loadedQuery on the old query,
-    // so the derived flag latches loading with no fetch pending.
-    let live = true;
-    const params = new URLSearchParams({ period, flagged: String(flaggedOnly) });
-    fetch(`/api/facility/corrections?${params}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("request failed");
-        return res.json();
-      })
-      .then((body: Payload) => { if (live) { setData(body); setError(""); } })
-      .catch(() => { if (live) { setData(null); setError("Failed to load corrections."); } })
-      .finally(() => { if (live) setLoadedQuery(query); });
-    return () => { live = false; };
-  }, [ready, period, flaggedOnly, query]);
+  const params = new URLSearchParams({ period, flagged: String(flaggedOnly) });
+  const { data, error, reload } = useLoad<Payload>(ready ? `/api/facility/corrections?${params}` : null);
 
   const people = useMemo(() => new Map((data?.Person ?? []).map((p) => [p.id, p])), [data]);
 
@@ -195,23 +173,20 @@ export default function CorrectionsPage() {
         />
       </Group>
 
-      {error && <Alert color="red">{error}</Alert>}
-
-      {overflowed && (
+      {!error && overflowed && (
         <Alert color="yellow" variant="light">
           More than {MAX_ROWS} corrections in this range — showing the most recent {MAX_ROWS}.
           Narrow the period to see the rest.
         </Alert>
       )}
 
-      {/* The loader comes first so a retry after a failure still shows progress —
-          `error` survives until the next success, and gating it away with the
-          rest left a stale alert and nothing moving. On error the result is
-          suppressed entirely: a count of zero and "No corrections in this range"
-          are both assertions about a period that was never read. */}
-      {loading && rows.length === 0 ? (
+      {/* On error the result is suppressed: a count of zero and "No corrections in
+          this range" are both assertions about a period that was never read. */}
+      {error ? (
+        <LoadError what="corrections" message={error} onRetry={reload} />
+      ) : !data ? (
         <PageLoader />
-      ) : !error ? (
+      ) : (
         <>
         {/* The range runs from the start of the chosen period to now, so the
             count describes "this week/month/quarter/year". Counted over the
@@ -259,7 +234,14 @@ export default function CorrectionsPage() {
                       <Table.Td>{nameFor(r.secondaryAffectedEntity, people)}</Table.Td>
                       <Table.Td><VisitTimes v={before} /></Table.Td>
                       <Table.Td><VisitTimes v={after} /></Table.Td>
-                      <Table.Td><ScoreBadge sig={r.newData.significance} /></Table.Td>
+                      <Table.Td>
+                        <Stack gap={2}>
+                          <ScoreBadge sig={r.newData.significance} />
+                          {r.newData.overlapsVisitIds?.length ? (
+                            <Text size="xs" c="red">Overlaps visit {r.newData.overlapsVisitIds.map((id) => `#${id}`).join(", ")}</Text>
+                          ) : null}
+                        </Stack>
+                      </Table.Td>
                     </Table.Tr>
                   );
                 })
@@ -268,7 +250,7 @@ export default function CorrectionsPage() {
           </Table>
         </Table.ScrollContainer>
         </>
-      ) : null}
+      )}
     </Stack>
   );
 }

@@ -45,8 +45,8 @@ const row = {
     inventoryHeldAt: '2026-01-06T00:00:00.000Z',
 };
 
-describe('ProgramParticipant.pendingSince field-stripping (#1409)', () => {
-    it('lead mentor now sees pendingSince (personal, a band this view holds)', () => {
+describe('ProgramParticipant.pendingSince field-stripping', () => {
+    it('lead mentor sees pendingSince (personal, a band this view holds)', () => {
         const tokens = tokensFor(ENDPOINT, 'programLeadMentor');
         const leadCtx = ctx({ programsLed: new Set([7]) });
         const out = stripValue('ProgramParticipant', row, tokens, leadCtx) as Record<string, unknown>;

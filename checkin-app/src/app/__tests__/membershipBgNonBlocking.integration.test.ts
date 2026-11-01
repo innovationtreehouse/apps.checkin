@@ -4,7 +4,7 @@
 /**
  * Integration coverage for the non-blocking background-check flow.
  *
- * The check is now a PARALLEL track: after the contract is signed + consent is
+ * The check is a PARALLEL track: after the contract is signed + consent is
  * given (or a valid prior check exists), the application advances straight to
  * PENDING_PAYMENT. The membership only goes ACTIVE once BOTH payment and the
  * check are done — whichever finishes last. A valid prior check auto-clears the
@@ -262,7 +262,7 @@ describe('background check is non-blocking', () => {
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
 
-    it('pre-designated volunteer family is flagged at PENDING_PAYMENT, before the check clears (#874)', async () => {
+    it('pre-designated volunteer family is flagged at PENDING_PAYMENT, before the check clears', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         const lead = await prisma.person.findUnique({ where: { id: leadId } });
         await linkSignIn(leadId);
@@ -277,7 +277,7 @@ describe('background check is non-blocking', () => {
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
-    it('fresh-check intake shortcut still matches the designation allowlist (#874)', async () => {
+    it('fresh-check intake shortcut matches the designation allowlist', async () => {
         await setBgPolicy();
         const { processId, orgMembershipId, householdId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION', { lastBackgroundCheck: new Date() });
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { status: 'INTAKE' } });
@@ -294,7 +294,7 @@ describe('background check is non-blocking', () => {
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
-    it('renewal with a still-valid background check matches a designation added since the last cycle (#874)', async () => {
+    it('renewal with a still-valid background check matches a designation added since the last cycle', async () => {
         await setBgPolicy();
         const { orgMembershipId, processId, leadId, leadEmail } = await makeFreshRenewal();
         await linkSignIn(leadId);
@@ -539,7 +539,7 @@ describe('background check is non-blocking', () => {
         await beginRenewal(processId, leadId);
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(proc?.bgClearedAt).not.toBeNull(); // the bug: was null → paid renewal stuck forever
+        expect(proc?.bgClearedAt).not.toBeNull(); // null leaves a paid renewal stuck forever
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
         await activate(processId, { via: 'payment', shopifyOrderId: 'renew-pay' });

@@ -1,5 +1,5 @@
 /**
- * #5 (part 1) + #2 (integration) — checkAndProcessExpense end to end.
+ * checkAndProcessExpense end to end.
  *
  * The catalog port is a stub (the only external dependency); the database, rule
  * matching, allocation, hold creation, sign-off hold and state transitions are all
@@ -151,6 +151,29 @@ describeDb("checkAndProcessExpense — non-inventory lines", () => {
     expect((await holdsFor(id)).map((h) => h.status)).not.toContain("PENDING");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("6100");
     expect(inv.lookupItems).not.toHaveBeenCalled();
+  });
+});
+
+describeDb("checkAndProcessExpense — finance's account set during processing", () => {
+  it("books the account finance set after the lines were read, before the lock", async () => {
+    const finance = principal(500, { isFinance: true });
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 200 });
+    const manual = await seedLineItem(id, { manualQbAccount: "6100", totalPriceCents: 100 });
+    const part = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [part]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await signAllLines(id);
+    const lookup = inv.lookupItems.getMockImplementation()!;
+    inv.lookupItems.mockImplementationOnce(async (...args: unknown[]) => {
+      await setHeldLineAccount(finance, id, manual, "6200");
+      return lookup(...args);
+    });
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: manual } })).resolvedQbAccount).toBe("6200");
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: part } })).resolvedQbAccount).toBe("4000");
   });
 });
 

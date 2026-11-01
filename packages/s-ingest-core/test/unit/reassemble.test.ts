@@ -3,11 +3,11 @@
  * trickiest pure function in the package — it merges INLINE children with `__parentId`
  * flattened children across `{nodes}` / `{edges}` / bare-array shapes, and must NOT
  * double-count a child returned in both representations (the explicit design goal in
- * bulkOrders.ts). Previously it was exercised only indirectly through one DB test.
+ * bulkOrders.ts).
  */
 import { describe, it, expect } from "vitest";
 import { parseBulkJsonl, reassembleOrders, ingestBulkOrders } from "../../src/ingest/bulkOrders.js";
-import { normalizeOrder } from "../../src/shopify/schemas.js";
+import { normalizeOrder, orderNodeSchema } from "../../src/shopify/schemas.js";
 import { EventSource } from "../../src/generated/prisma/client.js";
 
 const orderId = "gid://shopify/Order/7001";
@@ -135,6 +135,24 @@ describe("reassembleOrders", () => {
   it("derives legacyResourceId from the GID when absent in bulk output", () => {
     const [order] = reassembleOrders([{ id: orderId, name: "#7001" }]);
     expect(normalizeOrder(order).legacyId).toBe("7001");
+  });
+
+  it("treats the lines as complete by default", () => {
+    const [order] = reassembleOrders([{ id: orderId }]);
+    expect(normalizeOrder(order).linesComplete).toBe(true);
+  });
+
+  it("marks every order's lines incomplete when the export lost a record, and the mark survives a re-parse", () => {
+    const [order] = reassembleOrders([{ id: orderId }], { lostRecords: true });
+    expect(normalizeOrder(order).linesComplete).toBe(false);
+    expect(normalizeOrder(orderNodeSchema.parse(JSON.parse(JSON.stringify(order)))).linesComplete).toBe(false);
+  });
+
+  it("marks lines incomplete when the connection says more pages exist", () => {
+    const node = { id: orderId, lineItems: { nodes: [], pageInfo: { hasNextPage: true } } };
+    expect(normalizeOrder(orderNodeSchema.parse(node)).linesComplete).toBe(false);
+    const last = { id: orderId, lineItems: { nodes: [], pageInfo: { hasNextPage: false } } };
+    expect(normalizeOrder(orderNodeSchema.parse(last)).linesComplete).toBe(true);
   });
 
   it("keeps an explicit legacyResourceId when present", () => {

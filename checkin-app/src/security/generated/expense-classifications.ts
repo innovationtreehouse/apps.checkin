@@ -11,6 +11,9 @@ export const classifications = {
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
         qbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
+        qbMaxCreatesPerDay: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',
@@ -152,6 +155,18 @@ export const classifications = {
         id: 'internal',
         orgId: 'internal',
         expenseId: 'internal',
+        createdAt: 'internal',
+    },
+    ExpenseOutcomeNotice: {
+        id: 'internal',
+        orgId: 'internal',
+        expenseId: 'internal',
+        event: 'internal',
+        claimedAt: 'internal',
+        uploaderSentAt: 'internal',
+        reimburseeSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
         createdAt: 'internal',
     },
     ExpenseQbAccount: {
@@ -341,6 +356,8 @@ export const relations = {
         lineItem: { model: 'ExpenseLineItem', isList: false },
     },
     ExpenseEvent: {
+    },
+    ExpenseOutcomeNotice: {
     },
     ExpenseQbAccount: {
     },

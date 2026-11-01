@@ -1,15 +1,15 @@
-// Gmail intake (#1265 §2a): the last catch-up step of the host's daily cron. Each mailed file
+// Gmail intake: the last catch-up step of the host's daily cron. Each mailed file
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
 import { isServiceError, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../contract";
+import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrg, mailbox, ports } from "../runtime";
+import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -64,17 +64,46 @@ const headerValues = (headers: Headers | undefined, name: string): string[] =>
 
 const ADDR_SPEC = /^[^\s@<>"(),;:]+@[^\s@<>"(),;:]+\.[^\s@<>"(),;:]+$/;
 
+/**
+ * An RFC 5322 header with comments as whitespace and each quoted string as a lone `"`, which no
+ * addr-spec may hold. Comments nest and both forms read quoted pairs. Null when either is
+ * unterminated, or a `)` or `\` stands outside them.
+ */
+function withoutCommentsAndQuotes(value: string): string | null {
+  let bare = "";
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (c === ")" || c === "\\") return null;
+    if (c === "(") {
+      for (let depth = 1; depth > 0; ) {
+        i++;
+        if (i >= value.length) return null;
+        if (value[i] === "\\") i++;
+        else if (value[i] === "(") depth++;
+        else if (value[i] === ")") depth--;
+      }
+      bare += " ";
+    } else if (c === '"') {
+      for (i++; value[i] !== '"'; i++) {
+        if (value[i] === "\\") i++;
+        if (i >= value.length) return null;
+      }
+      bare += '"';
+    } else bare += c;
+  }
+  return bare;
+}
+
 /** The addr-spec of the message's single `From` header holding a single address, lowercased; else null. */
 export function fromAddress(headers: Headers | undefined): string | null {
   const froms = headerValues(headers, "From");
   if (froms.length !== 1) return null;
-  const bare = froms[0].replace(/"(?:[^"\\]|\\.)*"/g, "").replace(/\([^()]*\)/g, "");
+  const bare = withoutCommentsAndQuotes(froms[0]);
   // A comma lists two addresses; a colon or semicolon is group syntax.
-  if (/[,;:]/.test(bare)) return null;
-  const angles = [...bare.matchAll(/<([^<>]*)>/g)];
-  const spec = angles.length === 1 ? angles[0][1] : angles.length === 0 && !/[<>]/.test(bare) ? bare : null;
-  const trimmed = spec?.trim().toLowerCase();
-  return trimmed && ADDR_SPEC.test(trimmed) ? trimmed : null;
+  if (bare === null || /[,;:]/.test(bare)) return null;
+  // A display name holds no `@`: one there would be a second candidate address.
+  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim().toLowerCase();
+  return ADDR_SPEC.test(spec) ? spec : null;
 }
 
 type AuthResToken = { word: string } | { sep: ";" | "=" };
@@ -251,13 +280,28 @@ function ownParts(part: MailPart): MailPart[] {
   return [part, ...(part.parts ?? []).flatMap(ownParts)];
 }
 
-/** Messages attached whole (forwarded as attachment): never opened, only counted. */
-const forwardedCount = (part: MailPart): number => (isForwarded(part) ? 1 : (part.parts ?? []).reduce((n, p) => n + forwardedCount(p), 0));
+/** Messages attached whole (forwarded as attachment): never opened. */
+const forwardedParts = (part: MailPart): MailPart[] => (isForwarded(part) ? [part] : (part.parts ?? []).flatMap(forwardedParts));
+
+/** What a mail client attaches on its own (signatures, invites, contact cards, Outlook's wrapper): never a refused receipt. */
+const CLIENT_ATTACHMENT_TYPES = new Set([
+  "application/pkcs7-signature",
+  "application/x-pkcs7-signature",
+  "application/pgp-signature",
+  "text/calendar",
+  "application/ics",
+  "text/vcard",
+  "text/x-vcard",
+  "application/ms-tnef",
+]);
 
 const isAttachment = (p: MailPart) =>
   !!p.filename && !/^\s*inline/i.test(headerValues(p.headers, "Content-Disposition")[0] ?? "");
 
-type MailFile = { declaredType: string; size: number; read: () => Promise<Buffer>; body?: true };
+type MailFile = { name: string; declaredType: string; size: number; read: () => Promise<Buffer>; body?: true };
+
+const FILE_NAME_MAX = 200;
+const fileName = (p: MailPart, fallback: string) => (p.filename || fallback).slice(0, FILE_NAME_MAX);
 
 // ponytail: a legible receipt image under the floor is skipped silently; lower it if one is ever found.
 /** Inline images under this declared size (tracking pixels, icons, small logos) are skipped without a download. */
@@ -271,9 +315,10 @@ const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
  * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
  * holds no money amount. `ignored` counts the inline parts under the floor, a trivial body and
- * each message attached whole.
+ * each message attached whole. `refused` names the attachments never read: an unaccepted type or
+ * a message attached whole.
  */
-export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number } {
+export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number; refused: MailRefusal[] } {
   const parts = ownParts(msg.payload);
   const typeOf = (p: MailPart) => p.mimeType.toLowerCase();
   const read = (p: MailPart) => async () =>
@@ -282,12 +327,17 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
       : p.body?.attachmentId
         ? reader.getAttachment(msg.id, p.body.attachmentId)
         : Buffer.alloc(0);
-  const file = (p: MailPart, declaredType = typeOf(p)): MailFile => ({ declaredType, size: p.body?.size ?? 0, read: read(p) });
+  const file = (p: MailPart, declaredType = typeOf(p)): MailFile => ({ name: fileName(p, declaredType === "text/plain" ? "the text of your email" : "an image in your email"), declaredType, size: p.body?.size ?? 0, read: read(p) });
 
   const attachments = parts.filter((p) => isAttachment(p) && ACCEPTED_TYPES.has(typeOf(p)));
   const inline = parts.filter((p) => !isAttachment(p) && typeOf(p) !== "text/plain" && ACCEPTED_TYPES.has(typeOf(p)));
   const sized = inline.filter((p) => (p.body?.size ?? 0) >= INLINE_FLOOR_BYTES);
-  let ignored = inline.length - sized.length + forwardedCount(msg.payload);
+  const forwarded = forwardedParts(msg.payload);
+  let ignored = inline.length - sized.length + forwarded.length;
+  const refused: MailRefusal[] = [
+    ...parts.filter((p) => isAttachment(p) && !ACCEPTED_TYPES.has(typeOf(p)) && !CLIENT_ATTACHMENT_TYPES.has(typeOf(p))).map((p) => ({ file: fileName(p, "an attachment"), reason: "wrong_type" as const })),
+    ...forwarded.map((p) => ({ file: fileName(p, "an attached email"), reason: "forwarded" as const })),
+  ];
 
   const bodyPart = (type: string) => parts.find((p) => !isAttachment(p) && typeOf(p) === type && p.body?.data);
   // HTML is stored as its source text: a receipt file is never served as a page.
@@ -297,7 +347,7 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
     if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push({ ...file(body, "text/plain"), body: true });
     else ignored++;
   }
-  return { files, ignored };
+  return { files, ignored, refused };
 }
 
 const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
@@ -357,7 +407,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
   const started = Date.now();
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
   const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
   const ignoredHashes = new Set(
@@ -393,30 +443,51 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   }
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
-    const { files, ignored } = mailFiles(msg, reader);
+    const { files, ignored, refused } = mailFiles(msg, reader);
     // Every file already in the ledger: nothing to download.
-    if (files.length > 0 && (await db.receiptMailItem.count({ where: { gmailMessageId: msg.id } })) >= files.length) {
-      counts.skipped += files.length;
-      return;
-    }
-    counts.ignored += ignored;
+    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
+    const ledgered = files.length > 0 && rows.length >= files.length;
+    // A file refused on an earlier pass is never read again, so its row carries it into the notice.
+    refused.push(...rows.flatMap((r) => (r.refusal ? [r.refusal as unknown as MailRefusal] : [])));
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
     const verdict = dmarcVerdict(headers, address);
     const aligned = verdict === "pass";
-    const sender: ReceiptPrincipal | null = address && aligned ? await ports().people.submitterByEmail(address) : null;
+    const sender: ReceiptPrincipal | null = address && aligned && (!ledgered || refused.length > 0) ? await ports().people.submitterByEmail(address) : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
     const reply = { orgId, gmailMessageId: msg.id, senderAddress: address ?? "", receivedAt: new Date(Number(msg.internalDate)), replyToSender: aligned && !isAutomated(msg.payload, address) };
     const oweReply = (tx: Prisma.TransactionClient | typeof db) => tx.receiptMailReply.createMany({ data: [reply], skipDuplicates: true });
+    /**
+     * Written once. Reopens a row already finished, since its acknowledgement may have gone out on an
+     * earlier pass, but never one left claimed by a crash: that could resend its acknowledgement.
+     */
+    const oweRefusals = async () => {
+      if (!sender || !reply.replyToSender || refused.length === 0) return;
+      const refusals = refused as unknown as Prisma.InputJsonValue;
+      await oweReply(db);
+      await db.receiptMailReply.updateMany({
+        where: { gmailMessageId: msg.id, refusals: { equals: [] }, refusalSentAt: null, OR: [{ claimedAt: null }, { doneAt: { not: null } }] },
+        data: { refusals, doneAt: null, claimedAt: null, attempts: 0 },
+      });
+    };
+    if (ledgered) {
+      counts.skipped += files.length;
+      await oweRefusals();
+      return;
+    }
+    counts.ignored += ignored;
+    let putOff = false;
 
     for (const file of files) {
       if (sender && capped()) {
         counts.deferred++;
+        putOff = true;
         continue;
       }
       if (file.size > MAX_FILE_BYTES) {
         counts.rejected++;
+        refused.push({ file: file.name, reason: "too_large" });
         continue;
       }
       if (!sender && !roomToHold(file.size)) continue;
@@ -431,6 +502,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       const check = ignoredHashes.has(key.attachmentHash) ? null : checkReceiptFile(bytes, file.declaredType);
       if (check && !check.ok) {
         counts.rejected++;
+        refused.push({ file: file.name, reason: bytes.length === 0 ? "empty" : bytes.length > MAX_FILE_BYTES ? "too_large" : "wrong_type" });
         continue;
       }
       try {
@@ -453,7 +525,17 @@ export async function readMailbox(): Promise<MailIntakeResult> {
             // Over the sender's daily upload limit: stored to retry on a later run.
             if (!isStatus(err, 429)) throw err;
           }
-          if (!roomToHold(bytes.length)) continue;
+          if (!roomToHold(bytes.length)) {
+            // Final at the ceiling, so a later run cannot take a file the sender was told to send again.
+            if (stored() >= MAIL_HELD_CEILING) {
+              const refusal: MailRefusal = { file: file.name, reason: "ceiling" };
+              await db.receiptMailItem.create({ data: { ...item, status: "refused", refusal: { ...refusal } } });
+              refused.push(refusal);
+            } else {
+              putOff = true;
+            }
+            continue;
+          }
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
@@ -477,6 +559,8 @@ export async function readMailbox(): Promise<MailIntakeResult> {
         counts.skipped++;
       }
     }
+    // A put-off file may be refused yet, so the one notice waits for the pass that finishes the message.
+    if (!putOff) await oweRefusals();
   }
 
   /**
@@ -566,12 +650,30 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     });
   }
 
-  /** One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent. */
-  async function alertAtRisk(): Promise<void> {
-    const rows = await db.receiptMailAtRisk.findMany({
+  /**
+   * One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent.
+   * Overlapping runs can each send it. One duplicate email is accepted: claiming rows before the send would lose the alert if the run died in between.
+   */
+  async function alertAtRisk(reader: MailboxReader): Promise<void> {
+    const due = await db.receiptMailAtRisk.findMany({
       where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
-      select: { id: true, receivedAt: true },
+      select: { id: true, gmailMessageId: true, receivedAt: true },
     });
+    // A capped run stores only a lower bound, so each due row is re-dated from its own message, one at a time to spare Gmail; one that cannot be fetched keeps its stored date.
+    const dated: typeof due = [];
+    for (const row of due) {
+      const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
+      if (!message) {
+        dated.push(row);
+        continue;
+      }
+      const receivedAt = new Date(Number(message.internalDate));
+      dated.push({ ...row, receivedAt });
+      await db.receiptMailAtRisk
+        .update({ where: { id: row.id }, data: { receivedAt } })
+        .catch((err) => console.error(`[receipt] mail ageing re-date failed for row ${row.id}:`, err));
+    }
+    const rows = dated.filter((r) => !r.receivedAt || r.receivedAt.getTime() < lastChance);
     if (rows.length === 0) return;
     const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));
     try {
@@ -599,7 +701,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     }
   }
   if (ids) await readListed(ids, reader);
-  await alertAtRisk();
+  await alertAtRisk(reader);
 
   let replies = { sent: 0, failed: 0 };
   try {

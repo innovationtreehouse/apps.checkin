@@ -332,7 +332,9 @@ Read these before changing the relevant area — start here, then follow links.
 **Operations** (`docs/ops/`)
 - `docs/ops/dev-instance.md` — the `CHECKIN_ENV` prod/dev/local model, persona-mint/impersonation, and the dev dashboard's seed macros / reset / ledger (read before touching auth/env, or before adding anything that must not exist in prod).
 - `docs/ops/production-runbook.md` — how to deploy to production and roll back.
+- `docs/ops/quickbooks-go-live.md` — the ordered steps for turning on QuickBooks posting in production.
 - `docs/ops/shopify-dev-store.md` — the Shopify dev store and its webhooks in dev and local.
+- `docs/ops/receipt-files-backfill.md` — copying existing receipt files to their bucket, and the verify gate, per environment.
 
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).
@@ -346,7 +348,8 @@ Read these before changing the relevant area — start here, then follow links.
 
 **Architecture** (`docs/architecture/`)
 - `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` — single-pool Shopify capacity model + the scholarship hold-ledger state machine (read before touching `Program`/`ProgramParticipant` capacity or payment-plan logic).
+- `RECEIPT_PIPELINE.md` — one receipt from arrival to its QuickBooks entry: each hand-off between the receipt, workflow-mapping, expense and bulk-donation libraries, and the host file that binds it.
 
 **Subprojects** (each has its own `README.md`)
 - `client/` — the Raspberry-Pi kiosk client (Python).
-- `packages/*` (e.g. `monitoring-db`, `pg-test-harness`, `telemetry`), `layers/prisma-runtime/`, and the Lambda `*-function/` dirs (`s-read-function/`, `s-replay-function/`, `monitoring-relay-function/`, `monitoring-watchdog-function/`) — see the README in each; `s-read-function/` also has `MONITORING-PRD.md` + `FUTUREWORK.md`.
+- `packages/*` (e.g. `monitoring-db`, `pg-test-harness`, `telemetry`), `layers/prisma-runtime/`, and the Lambda `*-function/` dirs — see the README in each; `s-read-function/` also has `MONITORING-PRD.md` + `FUTUREWORK.md`.

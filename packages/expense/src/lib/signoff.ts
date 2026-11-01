@@ -1,6 +1,7 @@
-// Sign-off seats on money leaving the org (Financial Policy F2 / F2-COI). Pure rules over facts
+// Sign-off seats on money leaving the org (Financial Policy Arts. IX and XII). Pure rules over facts
 // the service gathers through the SignoffDirectory port. The program approver signs a line by
 // approving it, so the approval is not a seat.
+import type { Prisma } from "../generated/prisma/client";
 
 /** The seats in the order they are signed; the line's approval comes between the first two. */
 export const SEATS = ["SUBMITTER", "TREASURER", "BOARD"] as const;
@@ -33,6 +34,8 @@ export interface SignoffFacts {
   seatedHouseholds: number[];
   /** A non-Everyday card-charge line without written Board authorization. */
   boardSeat: boolean;
+  /** FINANCE made the line's bucket final while conflicted on the expense. */
+  conflictedFinal: boolean;
   /** The line's approval is `approved`: the program approver's sign-off. */
   approved: boolean;
   /** Who approved the line; null while it is not approved, or for a line approved at intake. */
@@ -55,6 +58,9 @@ function otherStepSigners(facts: SignoffFacts, step: Step): Set<number> {
 }
 
 export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
+
+/** A pending line, or one finance moved to another bucket, which waits for that bucket's approver. */
+export const APPROVABLE_STATUSES = new Set(["pending", "finance_assigned"]);
 
 export interface FilledSeat {
   seat: Seat;
@@ -144,10 +150,11 @@ export function boardAuthorizationRefusal(factsByLine: SignoffFacts[], userId: n
 
 /**
  * The line takes the Board seat: a non-Everyday card charge without written Board authorization,
- * or a reimbursement owed to a non-member, whose Board signature follows the line's approval.
+ * a reimbursement owed to a non-member, or a line whose bucket a conflicted FINANCE holder made
+ * final. The last two take a Board signature after the line's approval, which no authorization replaces.
  */
 export function takesBoardSeat(facts: SignoffFacts): boolean {
-  return facts.boardSeat || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
+  return facts.boardSeat || facts.conflictedFinal || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
 }
 
 /** Who the seat belongs to; a Board member stands in for a Treasurer only when none of them can sign. */
@@ -280,4 +287,32 @@ export function approvalRefusal(facts: SignoffFacts, filled: FilledSeat[], userI
   if (facts.seatedHouseholds.includes(userId)) return "Someone in your household already signs off on this expense";
   if (!approvesAsStandIn(facts, userId)) return null;
   return facts.board.includes(userId) ? null : "This line item is not in a bucket you approve";
+}
+
+/**
+ * Expenses with a line `me` may approve, as a query over the expense rows: every check of
+ * approvalRefusal and the approve act that reads only the expense and `me`. It keeps each expense
+ * with a line they allow, and may keep more: whether a Board stand-in's approval is the line's main
+ * act needs the other approvers' households, so lineActions decides. `household` is everyone in
+ * `me`'s household, merged-away people included; `buckets` are the buckets `me` approves.
+ */
+export function approvableByCallerWhere(me: number, household: number[], buckets: number[], isBoard: boolean): Prisma.ExpenseWhereInput {
+  const mine = [...new Set([me, ...household])];
+  const mates = mine.filter((id) => id !== me);
+  const waiting: Prisma.LineItemOwnerApprovalWhereInput = { status: { in: [...APPROVABLE_STATUSES] }, ...(isBoard ? {} : { ownerId: { in: buckets } }) };
+  return {
+    backfill: false,
+    state: "owner_approval",
+    // Not conflicted: neither party is `me` or in their household; a reimbursee is named.
+    submitterId: { notIn: mine },
+    AND: [
+      { OR: [{ needsReimbursement: false, reimburseePersonId: null }, { reimburseePersonId: { notIn: mine } }] },
+      // A reimbursement line is approved once its submitter seat is signed.
+      { OR: [{ needsReimbursement: false, approvals: { some: waiting } }, { needsReimbursement: true, approvals: { some: { ...waiting, lineItem: { signoffs: { some: { seat: "SUBMITTER" } } } } } }] },
+      // `me` signs no seat or Board step on it, and nobody in their household signs any step.
+      { lineItems: { none: { signoffs: { some: { signerUserId: { in: mine } } } } } },
+      { approvals: { none: { status: "approved", decidedByUserId: { in: mates } } } },
+      { OR: [{ boardAuthorizedByUserId: null }, { boardAuthorizedByUserId: { notIn: mine } }] },
+    ],
+  };
 }

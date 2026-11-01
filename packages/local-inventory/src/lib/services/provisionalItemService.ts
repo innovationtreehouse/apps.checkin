@@ -4,6 +4,7 @@ import type { ProvisionalItemRepository } from "../repositories/provisionalItemR
 import type { ProvisionalResolutionRepository } from "../repositories/provisionalResolutionRepository";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
+import { methodsFor, type QuantityMethod } from "../mergeConflictMethods";
 import {
   assertProvisionalTransition,
   assertMergeConflictTransition,
@@ -332,7 +333,7 @@ export function createProvisionalItemService({
     async resolveConflict(
       conflictId: number,
       orgId: string,
-      resolution: { quantityMethod: "use_provisional" | "use_existing" | "sum" },
+      resolution: { quantityMethod: QuantityMethod },
       userId: number,
       username?: string,
     ) {
@@ -352,6 +353,9 @@ export function createProvisionalItemService({
         );
         const provisionalQty = provisionalRow?.existingQuantity ?? 0;
         const existingQty = realRow?.existingQuantity ?? 0;
+        if (!methodsFor(provisionalQty).some((m) => m.value === resolution.quantityMethod)) {
+          throw new ServiceError(409, "The provisional item holds no stock, so its count can't replace the real count");
+        }
 
         let finalQuantity: number;
         if (resolution.quantityMethod === "use_provisional") finalQuantity = provisionalQty;

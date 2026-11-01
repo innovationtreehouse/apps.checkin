@@ -44,11 +44,59 @@ const unbooked = {
 const wrap = () => render(<MantineProvider><InKindQueuePage /></MantineProvider>);
 const lastBody = () => JSON.parse(String((mockApi.mock.calls.at(-1)?.[1] as RequestInit).body));
 
+beforeAll(() => {
+  window.matchMedia ||= ((query: string) =>
+    ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} }) as unknown as MediaQueryList);
+  globalThis.ResizeObserver ||= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  Element.prototype.scrollIntoView ||= () => {};
+});
+
 beforeEach(() => {
   mockApi.mockReset();
   mockApi.mockResolvedValue({});
   mockUser = { id: 1, isFinance: true };
   mockQueue = [unbooked];
+});
+
+describe("in-kind queue: the accept screen", () => {
+  const HOUSEHOLD = "I am not the donor and do not share a household with them.";
+  const GOODS = /I have confirmed these goods exist and arrived/;
+  const undecided = { ...unbooked, source: "receipt", receiptId: "r-1", outcome: null, state: "decision", waitingOn: ["decision"], qbState: null, qbNote: null };
+
+  it("enables accept only once the goods are confirmed, and sends the confirmation", async () => {
+    mockQueue = [undecided];
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
+    fireEvent.click(screen.getByLabelText(HOUSEHOLD));
+    const accept = screen.getByRole("button", { name: "Accept" });
+    expect(accept).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(GOODS));
+    fireEvent.click(accept);
+    await waitFor(() => expect(lastBody()).toEqual({ outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true, confirmGoodsReceived: true }));
+  });
+
+  it("refuses without confirming the goods", async () => {
+    mockQueue = [undecided];
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Decide" }));
+    fireEvent.click(screen.getByLabelText(HOUSEHOLD));
+    fireEvent.click(screen.getByRole("button", { name: "Refuse" }));
+    await waitFor(() => expect(lastBody()).toEqual({ outcome: "refuse", confirmOutsideDonorHousehold: true }));
+  });
+
+  it("does not ask about the goods when changing an accepted gift's bucket", async () => {
+    mockQueue = [{ ...undecided, outcome: "ACCEPTED", state: "booking", waitingOn: ["booking"] }];
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Change bucket" }));
+    expect(screen.queryByLabelText(GOODS)).toBeNull();
+    fireEvent.click(screen.getByLabelText(HOUSEHOLD));
+    fireEvent.click(screen.getAllByRole("button", { name: "Change bucket" })[1]);
+    await waitFor(() => expect(lastBody()).toEqual({ outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true }));
+  });
 });
 
 describe("in-kind queue: finance's QuickBooks actions", () => {

@@ -1,28 +1,8 @@
 import { defineConfig } from "vitest/config";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolveJsToTs } from "@checkin/pg-test-harness/vitest-plugin";
 
-/**
- * Source uses NodeNext-style `.js` import specifiers (correct for Node/Lambda), but on
- * disk the files are `.ts`. This pre-resolver rewrites a relative `.js` import to its
- * `.ts` sibling when one exists. The generated Prisma client (via @checkin/monitoring-db)
- * is real `.js` with no `.ts` sibling and falls through untouched. Mirrors
- * `packages/monitoring-db/vitest.config.ts`.
- */
 export default defineConfig({
-  plugins: [
-    {
-      name: "resolve-js-to-ts",
-      enforce: "pre",
-      resolveId(source, importer) {
-        if (importer && source.startsWith(".") && source.endsWith(".js")) {
-          const tsPath = resolve(dirname(importer), source.replace(/\.js$/, ".ts"));
-          if (existsSync(tsPath)) return tsPath;
-        }
-        return null;
-      },
-    },
-  ],
+  plugins: [resolveJsToTs()],
   test: {
     // Unit suites live beside the source as `src/*.test.ts` (fully mocked, no DB). The
     // DB-gated integration tier lives under `test/integration/` and self-skips unless

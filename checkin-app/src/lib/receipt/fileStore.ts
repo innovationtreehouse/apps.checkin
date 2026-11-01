@@ -1,5 +1,5 @@
 /**
- * The receipt library's file store (#1265 S3 design §2). Deployed instances use a private bucket
+ * The receipt library's file store. Deployed instances use a private bucket
  * with the ECS task role, as the membership agreement does; a laptop uses a temp directory.
  */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -50,6 +50,11 @@ export function createS3FileStore(): ReceiptFileStore {
             await s3Client().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
         },
     };
+}
+
+/** Chosen by CHECKIN_ENV, never by whether a bucket is set: a deployed instance with none refuses files. */
+export function receiptFileStore(): ReceiptFileStore {
+    return config.isLocal() ? createTempDirFileStore() : createS3FileStore();
 }
 
 export function createTempDirFileStore(root = join(tmpdir(), "checkin-receipt-files")): ReceiptFileStore {

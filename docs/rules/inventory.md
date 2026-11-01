@@ -72,6 +72,16 @@ How the pieces are built is described in
   line. It is closed by resolving it, which records an outcome and when it was
   resolved, never by deleting it. `[Decision]`
 
+- An open reference conflict shows the item its part is on now, and says so when
+  that is no longer the item it was raised against. The reviewer then acts as
+  normal: "keep existing" keeps the current item. A resolve is refused only if
+  the part moved between the page loading and the click, and the page reloads
+  with the updated question. If the part is already on the proposed item, nothing
+  is left to decide and the conflict is closed as resolved. A resolved conflict
+  records the item it was decided against; its audit entry keeps the item raised.
+  This screen offers no way back to the original item; that is fixed by hand in
+  the global catalog. `[Decision — owner ruling 2026-10-31]`
+
 ### On-hand stock
 
 - A receipt or a donation of goods adds to stock once. Sending it again never
@@ -123,7 +133,7 @@ How the pieces are built is described in
 - A receipt's lines can be edited only while it waits for review. Once it is
   sent to apply, its lines can't be edited, even when the apply fails: a
   failed part is retried with the same lines, and a mistake is corrected by
-  hand outside receiving (issue #2267). `[Decision — owner]`
+  hand outside receiving. `[Decision — owner]`
 
 - The person who uploaded a receipt, or anyone in their household, may map its
   lines in Part mapping (link, propose or mark not inventory) and send it to

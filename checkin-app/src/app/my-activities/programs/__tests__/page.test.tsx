@@ -64,4 +64,12 @@ describe("MyProgramsDashboard", () => {
         renderWithProviders(<MyProgramsDashboard />);
         expect(await screen.findByText("You are not enrolled in any programs yet.")).toBeInTheDocument();
     });
+
+    it("shows the failure, not an empty list, when the load fails", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderWithProviders(<MyProgramsDashboard />);
+        expect(await screen.findByText("Couldn't load your programs")).toBeInTheDocument();
+        expect(screen.queryByText("You are not enrolled in any programs yet.")).not.toBeInTheDocument();
+    });
 });

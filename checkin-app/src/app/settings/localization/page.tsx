@@ -6,6 +6,7 @@ import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { LOCALIZATION_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -35,7 +36,7 @@ const LOCALE_OPTIONS = [
 
 export default function LocalizationSettingsPage() {
   // Stricter than the /settings layout (isSysadmin OR board): localization is isSysadmin-only.
-  const { ready, loading: authLoading } = useRequireRole(["isSysadmin"]);
+  const { ready, loading: authLoading } = useRequireRole(LOCALIZATION_ROLES);
 
   const [timezone, setTimezone] = useState("America/Chicago");
   const [locale, setLocale] = useState("en-US");

@@ -8,6 +8,7 @@ import { checkoutVariantId } from "@/lib/programs/variants";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { householdLeadship } from "@/lib/household/leads";
+import { signCheckout } from "@/lib/programs/checkoutSignature";
 
 // Server-minted, single-use member discount code for a single-pool program's
 // checkout link (see mintMemberDiscountCode in lib/shopify/discounts.ts), bound to the
@@ -18,9 +19,9 @@ import { householdLeadship } from "@/lib/household/leads";
 // lead — docs/rules/programs.md), so anyone else is refused with a 403.
 // One order pays for one household: `participantIds` (the children in this
 // checkout) must all be in the caller's household, or the checkout is refused
-// with a 400. Otherwise always 200s, with { code: null } when a discount doesn't
-// apply (not a member / legacy program / no unpaid claim / mint failure) — the
-// caller falls back to an undiscounted checkout link.
+// with a 400. Otherwise always 200s with the checkout `signature` the link must
+// carry, and { code: null } when a discount doesn't apply (not a member / legacy
+// program / no unpaid claim / mint failure) — an undiscounted checkout link.
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
@@ -44,33 +45,34 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     if (enrollees.length !== participantIds.length || enrollees.some((e) => e.householdId !== caller.householdId)) {
         return apiError("Everyone in one checkout must be from your household. Pay for each household separately.", 400);
     }
+    const signature = signCheckout(programId, participantIds, caller.householdId);
 
     // The discount is the gap between the two prices, so both must be known.
     const variantId = checkoutVariantId(program);
     if (!variantId || program.orgMemberPriceCents == null || program.nonOrgMemberPriceCents == null) {
-        return NextResponse.json({ code: null });
+        return NextResponse.json({ code: null, signature });
     }
 
     // The membership fee is settled, not "is a member": a household that has paid and is waiting on
-    // background clearance pays the member rate too (#1397).
+    // background clearance pays the member rate too.
     const isMemberNow = await isMembershipFeeSettled(auth.user.id);
-    if (!isMemberNow) return NextResponse.json({ code: null });
+    if (!isMemberNow) return NextResponse.json({ code: null, signature });
 
     // A settled membership fee doesn't necessarily cover the program's WHOLE run — a
     // not-yet-renewed household is valid only through the upcoming membership-year
     // boundary, so a program ending after that boundary must charge full price.
     const covers = await isMembershipFeeSettledThrough(auth.user.id, await programCoverageDate(program));
-    if (!covers) return NextResponse.json({ code: null, reason: "membership_ends_before_program" });
+    if (!covers) return NextResponse.json({ code: null, signature, reason: "membership_ends_before_program" });
 
     const amountOffCents = program.nonOrgMemberPriceCents - program.orgMemberPriceCents;
-    if (amountOffCents <= 0) return NextResponse.json({ code: null });
+    if (amountOffCents <= 0) return NextResponse.json({ code: null, signature });
 
     // A code is minted only for a checkout that pays for real unpaid claims.
     const unpaid = await prisma.programParticipant.count({
         where: { programId, personId: { in: participantIds }, person: LIVE_PERSON, ...fromWhere("PENDING_UNPAID") },
     });
-    if (unpaid !== participantIds.length) return NextResponse.json({ code: null });
+    if (unpaid !== participantIds.length) return NextResponse.json({ code: null, signature });
 
     const code = await mintMemberDiscountCode(program, caller.householdId, amountOffCents);
-    return NextResponse.json({ code });
+    return NextResponse.json({ code, signature });
 });

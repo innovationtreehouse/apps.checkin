@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Card, Center, Stack, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { Card, Stack, Table, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
+import { SAFETY_ROLES } from "@/lib/nav/sections/safety";
 import { formatPhone } from "@/lib/phone";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -15,47 +16,16 @@ type BoardMember = {
 };
 
 export default function BoardContactInfoPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember', 'isKeyholder']);
+  const { ready, loading: authLoading } = useRequireRole(SAFETY_ROLES);
 
-  const [members, setMembers] = useState<BoardMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { data, error, reload } = useLoad<{ members?: BoardMember[] }>(ready ? "/api/safety/board-contacts" : null);
 
-  const fetchMembers = useCallback(() => fetch('/api/safety/board-contacts')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setMembers(data.members || []);
-      } else {
-        setError("Failed to load board contacts. Ensure you have the proper authorizations.");
-      }
-    })
-    .catch((e) => {
-      console.error("Failed to load board contacts:", e);
-      notifications.show({ color: "red", message: "Network error loading board contacts.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchMembers();
-  }, [ready, fetchMembers]);
-
-  if (authLoading || loading) {
-    return <PageLoader />;
-  }
-
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
+  if (error) return <LoadError what="board contacts" message={error} onRetry={reload} />;
+  if (!data) return <PageLoader />;
 
-  if (error) {
-    return (
-      <Center mih="60vh">
-        <Title order={3} c="red">{error}</Title>
-      </Center>
-    );
-  }
+  const members = data.members ?? [];
 
   return (
     <Stack>

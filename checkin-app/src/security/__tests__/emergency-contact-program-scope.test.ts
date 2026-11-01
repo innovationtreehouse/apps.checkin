@@ -49,7 +49,7 @@ function tokensFor(endpoint: string, role: Role): readonly Token[] {
 
 const ENDPOINT = 'GET /api/programs/[id]';
 
-// The EC row as the route now ships it (householdId included, #fix).
+// The EC row as the route ships it (householdId included).
 const ecRow = { id: 7, householdId: 42, name: 'Jane Doe', phone: '5551234567', relationship: 'Aunt' };
 // Lead of a program that a child of household 42 is enrolled in.
 const lead = ctx({ selfId: 10, programsLed: new Set([100]), householdIdsInScopePrograms: new Set([42]) });
@@ -111,8 +111,8 @@ describe('EmergencyContact field-stripping on GET /api/programs/[id]', () => {
         expect(out.relationship).toBeUndefined();
     });
 
-    it('regression: a lead viewing a row that dropped householdId sees nothing personal', () => {
-        // The pre-fix bug — fail-closed strips even for an authorized lead.
+    it('a lead viewing a row that dropped householdId sees nothing personal', () => {
+        // Fail-closed strips even for an authorized lead.
         const tokens = tokensFor(ENDPOINT, 'programLeadMentor');
         const noKey = { id: 7, name: 'Jane Doe', phone: '5551234567', relationship: 'Aunt' };
         const out = stripValue('EmergencyContact', noKey, tokens, lead) as Record<string, unknown>;

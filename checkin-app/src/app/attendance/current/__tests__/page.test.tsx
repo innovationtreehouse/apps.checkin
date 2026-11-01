@@ -25,16 +25,8 @@ const attendanceData = {
   building: { reachable: true, lastSeenAt: null },
 };
 
-const householdData = {
-  household: {
-    householdMembers: [{ id: 90, name: "Jamie Kid", email: "jamie@example.com" }],
-  },
-};
-
 function mockRoutes(overrides: Record<string, unknown | (() => unknown)> = {}) {
   return mockFetchJson({
-    "/api/household": householdData,
-    "/api/roles": { people: [{ id: 555, name: "Wendy West", email: "wendy@example.com", isKeyholder: false, isSysadmin: false }] },
     "/api/attendance": attendanceData,
     ...overrides,
   });
@@ -51,8 +43,7 @@ function postFromWrapper(data: unknown) {
   fireEvent(window, new MessageEvent("message", { data, origin: window.location.origin, source: window.parent }));
 }
 
-// The admin (id 1, sysadmin + keyholder) is not checked in and has a household,
-// so both the self check-in button and the household check-in row render.
+// The admin (id 1, sysadmin + keyholder) is not checked in and leads a household.
 function setAdminSession() {
   setSession({ id: 1, isSysadmin: true, isKeyholder: true, householdId: 5, householdLead: true });
 }
@@ -67,94 +58,20 @@ describe("attendance/current page", () => {
     expect(screen.getByText("Karen Keyholder")).toBeInTheDocument();
     expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
     expect(screen.getByText("Stu Student")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check Me In" })).toBeInTheDocument();
   });
 
-  it("checks the current admin in", async () => {
+  it("offers no way to check anyone in or out: people badge at the kiosk", async () => {
     setAdminSession();
     const fetchMock = mockRoutes();
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("People Present: 3");
 
-    fireEvent.click(screen.getByRole("button", { name: "Check Me In" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/attendance",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId: 1 }),
-        }),
-      ),
-    );
-  });
-
-  it("checks in a household member from the household row", async () => {
-    setAdminSession();
-    const fetchMock = mockRoutes();
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    expect(await screen.findByText("Check In Household Members")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Jamie Kid" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/attendance",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId: 90 }),
-        }),
-      ),
-    );
-  });
-
-  it("searches and manually checks in a match", async () => {
-    setAdminSession();
-    const fetchMock = mockRoutes();
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.change(screen.getByPlaceholderText("Manually check someone in (Search by name, email, or ID)..."), {
-      target: { value: "Wendy" },
-    });
-
-    expect(await screen.findByText("Wendy West")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Check In" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/attendance",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId: 555 }),
-        }),
-      ),
-    );
-  });
-
-  it("force-checks-out a user via the sign-out modal", async () => {
-    setAdminSession();
-    const fetchMock = mockRoutes();
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.click(screen.getByRole("button", { name: "Sign out a user" }));
-    const modal = await screen.findByRole("dialog", { name: "Sign Out A User" });
-    expect(within(modal).getByText("Val Volunteer")).toBeInTheDocument();
-    // Rows are sorted alphabetically: Karen, Stu, Val -> Val is the 3rd "Sign Out" button.
-    const signOutButtons = within(modal).getAllByRole("button", { name: "Sign Out" });
-    fireEvent.click(signOutButtons[2]);
-
-    const confirmModal = await screen.findByRole("dialog", { name: "Force Checkout" });
-    fireEvent.click(within(confirmModal).getByRole("button", { name: "Force Checkout" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/attendance",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ visitId: 202 }) }),
-      ),
-    );
+    for (const name of ["Check Me In", "Sign out a user", "Out", "Check In"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByPlaceholderText(/check someone in/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Check In Household Members")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([, init]) => !(init as RequestInit | undefined)?.method)).toBe(true);
   });
 
   it("kiosk idle-stop keys on mode=kiosk or signedRequest, not URL sig params", () => {
@@ -172,9 +89,6 @@ describe("attendance/current page", () => {
 
     expect(await screen.findByText("Karen")).toBeInTheDocument();
     expect(screen.queryByText("Karen Keyholder")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sign out a user" })).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Manually check someone in (Search by name, email, or ID)...")).not.toBeInTheDocument();
     expect(screen.queryByText("Household Check-ins")).not.toBeInTheDocument();
   });
 
@@ -233,26 +147,6 @@ describe("attendance/current page", () => {
     expect(screen.getByText("Kid Eight")).toBeInTheDocument();
     expect(screen.getByText("Individual names are only visible to administrators", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Your household members are shown above.", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check Me In" })).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Manually check someone in (Search by name, email, or ID)...")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sign out a user" })).not.toBeInTheDocument();
-  });
-
-  it("limited access shows the checked-in banner when self is already present", async () => {
-    setSession({ id: 42, householdId: 8 });
-    mockFetchJson({
-      "/api/attendance": {
-        access: "limited",
-        counts: { keyholders: 0, volunteers: 1, students: 0, total: 1 },
-        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
-        building: { reachable: true, lastSeenAt: null },
-        self: { id: 401, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 42, email: "self@example.com", name: "Self Member", isKeyholder: false, isSysadmin: false, householdId: 8 } },
-        household: [],
-      },
-    });
-    renderWithProviders(<KioskDisplay />);
-
-    expect(await screen.findByText("You are currently checked in!")).toBeInTheDocument();
   });
 
   it("shows a server error message when loading attendance fails", async () => {
@@ -327,7 +221,6 @@ describe("attendance/current page", () => {
   it("counts a visitor with no recorded birth date as youth, not as a supervising adult", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": {
         access: "full",
         attendance: [
@@ -349,7 +242,6 @@ describe("attendance/current page", () => {
   it("never shows the facility open on no-keyholder visits: closed banner + per-visit mark", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": {
         access: "full",
         attendance: [
@@ -448,6 +340,17 @@ describe("attendance/current page", () => {
       expect(screen.queryByText("Supervision status unknown")).not.toBeInTheDocument();
     });
 
+    it("says it is syncing while the kiosk has scans queued, instead of stating building state", async () => {
+      setAdminSession();
+      mockRoutes({ "/api/attendance": { ...unreachable, building: { reachable: false, lastSeenAt: null, queued: 2 } } });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Syncing 2 scans from the kiosk")).toBeInTheDocument();
+      expect(screen.queryByText("Can't confirm building state")).not.toBeInTheDocument();
+      expect(screen.queryByText("People Present: 3")).not.toBeInTheDocument();
+      expect(screen.queryByText("Critical Warning")).not.toBeInTheDocument();
+    });
+
     it("reads a payload without the link as unreachable", async () => {
       setAdminSession();
       const { building: _omit, ...withoutLink } = attendanceData;
@@ -484,14 +387,14 @@ describe("attendance/current page", () => {
         attendance: [],
         counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
-        building: { reachable: true, lastSeenAt: null },
+        // Off the kiosk an unreachable link reads as unconfirmed, so "empty" proves kiosk mode.
+        building: { reachable: false, lastSeenAt: null },
         signedRequest: true,
       },
     });
     renderWithProviders(<KioskDisplay />);
 
     await screen.findByText("The facility is currently empty.");
-    expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
   });
 
   const emptySnapshot = {
@@ -512,7 +415,6 @@ describe("attendance/current page", () => {
 
     // Off the kiosk a pushed roster carries no building link, so it reads as unconfirmed.
     expect(await screen.findByText("No open visits recorded.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check Me In" })).toBeInTheDocument();
   });
 
   it.each([
@@ -616,165 +518,25 @@ describe("attendance/current page", () => {
     expect(screen.queryByText(/Not up to date/)).not.toBeInTheDocument();
   });
 
-  it("includes kiosk-signature headers on both the initial load and a post-action refresh", async () => {
+  it("includes kiosk-signature headers on the load", async () => {
     setSearchParams("sig=abc&ts=123&nonce=xyz");
     setAdminSession();
     const fetchMock = mockRoutes();
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("People Present: 3");
 
-    fireEvent.click(screen.getByRole("button", { name: "Check Me In" }));
-
     await waitFor(() => {
       const signed = fetchMock.mock.calls.filter(([u, init]) => {
         const headers = (init as RequestInit | undefined)?.headers as Record<string, string> | undefined;
         return u === "/api/attendance" && headers?.["x-kiosk-signature"] === "abc";
       });
-      expect(signed.length).toBeGreaterThanOrEqual(2);
+      expect(signed.length).toBeGreaterThanOrEqual(1);
     });
-  });
-
-  it("ignores single-character search queries (debounced)", async () => {
-    setAdminSession();
-    const fetchMock = mockRoutes();
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.change(screen.getByPlaceholderText("Manually check someone in (Search by name, email, or ID)..."), { target: { value: "W" } });
-    await new Promise((resolve) => setTimeout(resolve, 350));
-
-    expect(screen.queryByText("Wendy West")).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([u]) => u === "/api/roles")).toBe(false);
-  });
-
-  it("matches search results by email and labels a nameless match Unnamed", async () => {
-    setAdminSession();
-    mockRoutes({
-      "/api/roles": {
-        people: [
-          { id: 777, name: null, email: "noname@example.com", isKeyholder: false, isSysadmin: false },
-          // Matches neither name nor email — exercises the filtered-out (no match) path.
-          { id: 778, name: "Other Person", email: "other@example.com", isKeyholder: false, isSysadmin: false },
-        ],
-      },
-    });
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.change(screen.getByPlaceholderText("Manually check someone in (Search by name, email, or ID)..."), { target: { value: "noname" } });
-
-    expect(await screen.findByText("Unnamed")).toBeInTheDocument();
-    expect(screen.getByText("noname@example.com")).toBeInTheDocument();
-    expect(screen.queryByText("Other Person")).not.toBeInTheDocument();
-  });
-
-  it("silently ignores a failed search request", async () => {
-    setAdminSession();
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/roles")) throw new Error("down");
-      if (url.includes("/api/household")) return { ok: true, json: async () => householdData } as Response;
-      if (url.includes("/api/attendance")) return { ok: true, json: async () => attendanceData } as Response;
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.change(screen.getByPlaceholderText("Manually check someone in (Search by name, email, or ID)..."), { target: { value: "wendy" } });
-    await new Promise((resolve) => setTimeout(resolve, 350));
-
-    expect(screen.queryByText("Wendy West")).not.toBeInTheDocument();
-  });
-
-  it("keeps the user checked in when force-checkout is cancelled", async () => {
-    window.confirm = jest.fn(() => false);
-    setAdminSession();
-    const fetchMock = mockRoutes();
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.click(screen.getByRole("button", { name: "Sign out a user" }));
-    const modal = await screen.findByRole("dialog");
-    fireEvent.click(within(modal).getAllByRole("button", { name: "Sign Out" })[0]);
-
-    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "DELETE")).toBe(false);
-  });
-
-  it("alerts on a server failure and then a network error during force-checkout", async () => {
-    window.confirm = jest.fn(() => true);
-    window.alert = jest.fn();
-    setAdminSession();
-    let failMode: "server" | "network" = "server";
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (init?.method === "DELETE") {
-        if (failMode === "network") throw new Error("down");
-        return { ok: false, json: async () => ({}) } as Response;
-      }
-      if (url.includes("/api/household")) return { ok: true, json: async () => householdData } as Response;
-      return { ok: true, json: async () => attendanceData } as Response;
-    }) as unknown as typeof fetch;
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.click(screen.getByRole("button", { name: "Sign out a user" }));
-    const modal = await screen.findByRole("dialog");
-    fireEvent.click(within(modal).getAllByRole("button", { name: "Sign Out" })[0]);
-    const confirmModal = await screen.findByRole("dialog", { name: "Force Checkout" });
-    fireEvent.click(within(confirmModal).getByRole("button", { name: "Force Checkout" }));
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Failed to force checkout.", autoClose: false }),
-      ),
-    );
-
-    failMode = "network";
-    fireEvent.click(within(modal).getAllByRole("button", { name: "Sign Out" })[0]);
-    const confirmModal2 = await screen.findByRole("dialog", { name: "Force Checkout" });
-    fireEvent.click(within(confirmModal2).getByRole("button", { name: "Force Checkout" }));
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error.", autoClose: false }),
-      ),
-    );
-  });
-
-  it("alerts on a server failure and then a network error during manual check-in", async () => {
-    window.alert = jest.fn();
-    setAdminSession();
-    let failMode: "server" | "network" = "server";
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (init?.method === "POST") {
-        if (failMode === "network") throw new Error("down");
-        return { ok: false, json: async () => ({ error: "Already checked in" }) } as Response;
-      }
-      if (url.includes("/api/household")) return { ok: true, json: async () => householdData } as Response;
-      return { ok: true, json: async () => attendanceData } as Response;
-    }) as unknown as typeof fetch;
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.click(screen.getByRole("button", { name: "Check Me In" }));
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Already checked in", autoClose: false }),
-      ),
-    );
-
-    failMode = "network";
-    fireEvent.click(screen.getByRole("button", { name: "Check Me In" }));
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error.", autoClose: false }),
-      ),
-    );
   });
 
   it("opens the emergency-contact modal with multiple contacts, then a no-contact fallback", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": {
         access: "full",
         attendance: [
@@ -841,23 +603,9 @@ describe("attendance/current page", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("closes the sign-out modal via Mantine's own close button", async () => {
-    setAdminSession();
-    mockRoutes();
-    renderWithProviders(<KioskDisplay />);
-    await screen.findByText("People Present: 3");
-
-    fireEvent.click(screen.getByRole("button", { name: "Sign out a user" }));
-    const modal = await screen.findByRole("dialog");
-    fireEvent.click(modal.querySelector(".mantine-Modal-close")!);
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  });
-
   it("shows program badges and phone numbers, and falls back to the email prefix for nameless participants", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": {
         access: "full",
         attendance: [
@@ -882,59 +630,12 @@ describe("attendance/current page", () => {
     expect(screen.getByText("555-123-4567", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("val")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign out a user" }));
-    const modal = await screen.findByRole("dialog");
-    expect(within(modal).getByText("val")).toBeInTheDocument();
-
-    fireEvent.change(within(modal).getByPlaceholderText("Search checked-in users..."), { target: { value: "val@example" } });
-    expect(within(modal).getByText("val")).toBeInTheDocument();
-    expect(within(modal).queryByText("Karen Keyholder")).not.toBeInTheDocument();
-  });
-
-  it("shows the checked-in banner for self and force-checks-out self with the self wording", async () => {
-    window.confirm = jest.fn(() => true);
-    window.alert = jest.fn();
-    setAdminSession();
-    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (init?.method === "DELETE") return { ok: false, json: async () => ({}) } as Response;
-      if (url.includes("/api/household")) return { ok: true, json: async () => householdData } as Response;
-      if (url.includes("/api/attendance")) {
-        return {
-          ok: true,
-          json: async () => ({
-            access: "full",
-            attendance: [
-              { id: 999, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 1, email: "admin@example.com", name: "Admin Self", isKeyholder: true, isSysadmin: true, dateOfBirth: "1980-01-01", householdId: 5 } },
-            ],
-            counts: { keyholders: 1, volunteers: 0, students: 0, total: 1 },
-            safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
-            building: { reachable: true, lastSeenAt: null },
-          }),
-        } as Response;
-      }
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-    renderWithProviders(<KioskDisplay />);
-
-    expect(await screen.findByText("You are currently checked in!")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Out" }));
-    // isSelf → no window.confirm prompt, and the "check out" (not "force checkout") wording.
-    expect(window.confirm).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Failed to check out.", autoClose: false }),
-      ),
-    );
   });
 
   it("does not treat a roster without safety flags as two-deep compliant (B6)", async () => {
     setAdminSession();
     const { safety: _omit, ...withoutSafety } = attendanceData;
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": withoutSafety,
     });
     renderWithProviders(<KioskDisplay />);
@@ -947,7 +648,6 @@ describe("attendance/current page", () => {
   it("treats a malformed safety object as unknown, not compliant (B6)", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": { ...attendanceData, safety: {} },
     });
     renderWithProviders(<KioskDisplay />);
@@ -958,7 +658,6 @@ describe("attendance/current page", () => {
   it("treats a partial safety object (one flag missing) as unknown (B6)", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": { ...attendanceData, safety: { isTwoDeepViolation: true } },
     });
     renderWithProviders(<KioskDisplay />);
@@ -972,7 +671,6 @@ describe("attendance/current page", () => {
   it("shows a critical two-deep-violation banner over the last-keyholder warning", async () => {
     setAdminSession();
     mockFetchJson({
-      "/api/household": householdData,
       "/api/attendance": { ...attendanceData, safety: { facilityOpen: true, isLastKeyholder: true, isTwoDeepViolation: true } },
     });
     renderWithProviders(<KioskDisplay />);
@@ -981,18 +679,4 @@ describe("attendance/current page", () => {
     expect(screen.queryByText("Only one isKeyholder is currently in the building.")).not.toBeInTheDocument();
   });
 
-  it("shows the household fetch failure and error branches without crashing", async () => {
-    setAdminSession();
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/household")) throw new Error("down");
-      if (url.includes("/api/attendance")) return { ok: true, json: async () => attendanceData } as Response;
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-    renderWithProviders(<KioskDisplay />);
-
-    expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
-    // Household fetch failed silently — no household check-in row to show.
-    expect(screen.queryByText("Check In Household Members")).not.toBeInTheDocument();
-  });
 });

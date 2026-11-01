@@ -39,10 +39,10 @@ permissions:
   contents: read    # checkout the released tag (validate + deploy)
   packages: write   # push the image to ghcr.io (deploy job)
   # checks: write is not used by THIS workflow — it's the ceiling for the
-  # reusable ci.yml call: its `test` job requests checks: write (dorny
-  # test-reporter), and a called job may never exceed the caller's grants.
-  # Without this line the run dies at startup_failure with zero jobs —
-  # which is exactly how v1.0.0's first deploy attempt failed (2026-07-14).
+  # reusable ci.yml call: its unit-tests/integration-tests jobs request
+  # checks: write (dorny/test-reporter), and a called job may never exceed the
+  # caller's grants. Without this line the run dies at startup_failure with
+  # zero jobs.
   checks: write
 
 concurrency:
@@ -51,17 +51,15 @@ concurrency:
 
 env:
   AWS_REGION: us-east-2
-  # The fleet standardized on ghcr.io (dev, arbor, s-read, bootstrap all push
-  # there; the prod task defs pull via the shared ghcr-pull-credentials
-  # secret). The ECR registry this workflow originally targeted is vestigial.
+  # The fleet uses ghcr.io (dev, arbor, s-read, bootstrap all push there; the
+  # prod task defs pull via the shared ghcr-pull-credentials secret).
   IMAGE_REPO: ghcr.io/innovationtreehouse/checkin-prod
   # Prod runs on the shared Managed-Instances cluster, not a dedicated
-  # checkin-prod cluster (infra #104 destroyed that one). Names below come from
-  # the infra repo — see the "prod infra" note in the PR description.
+  # checkin-prod cluster. Names below come from the infra repo.
   ECS_CLUSTER: treehouse-prod
   ECS_SERVICE: checkin-prod
   # Migrations run on FARGATE_SPOT, not the prepaid c6g (a one-off 512-MiB task
-  # can't place there while the wiki is awake — the v1.0.1 wedge). awsvpc needs
+  # can't place there while the wiki is awake). awsvpc needs
   # explicit networking: the default-VPC public subnets + the checkin-prod
   # service SG (Aurora ingress: infra network module, database_from_checkin_prod;
   # public IP for the ghcr pull — no NAT). Values come from the infra repo
@@ -76,9 +74,8 @@ env:
 
 jobs:
   # A release must ship from its OWN release line: v1.1.x may only be cut from
-  # rel/1.1. Supersedes the old branch-guard job (any rel/* branch) — matching
-  # the specific line implies containment in some rel/* line, so running both
-  # was redundant.
+  # rel/1.1. Matching the specific line implies containment in some rel/* line,
+  # so no separate any-rel/* guard runs.
   #
   # Checks ANCESTRY, not `release.target_commitish`. That field can be a branch
   # name OR a bare SHA, is chosen by whoever cut the release, and is re-taggable —
@@ -101,9 +98,8 @@ jobs:
 
   # Re-run the FULL CI pipeline (lint, type-check, migration-drift, Jest, the
   # security contract tests, AND the deploy build + boot/smoke) against the exact
-  # released tag. This is the H1 fix: a release tag can point at any commit, and
-  # we no longer trust whatever check status happened to exist there — we prove
-  # the released code green from scratch before a human is even asked to approve.
+  # released tag. A release tag can point at any commit, and whatever check
+  # status exists there is not trusted — we prove the released code green from scratch before a human is even asked to approve.
   # Needs release-branch-match so a mis-cut release fails with ONE error
   # instead of burning a full CI pass in parallel with the rejection.
   validate:
@@ -115,18 +111,13 @@ jobs:
     secrets: inherit
 
   # Migration COUNT is deliberately ungated here — no CI job blocks a release
-  # on how many new migrations it carries. The team manages coalescing
-  # manually per release (docs/ops/MIGRATION_COALESCE_FLOW.md is still the
-  # playbook and its script still works); this used to be enforced by a
-  # blocking release-time job (removed) plus an advisory PR-time check (also
-  # removed) — both judged a per-release human call, not CI's, after the old
-  # gate blocked the legitimate v1.0.4 deploy (4 additive migrations vs. its
-  # budget of 1).
+  # on how many new migrations it carries. Coalescing is a per-release human
+  # call, not CI's, because a batch of additive migrations can be legitimate
+  # (docs/ops/MIGRATION_COALESCE_FLOW.md is the playbook).
   #
-  # Historical warning, still true: `prisma migrate deploy` is not
-  # transactional across migrations, so a multi-migration release that fails
-  # mid-batch can leave prod partially migrated behind a P3009 (the
-  # 2026-07-02 incident). A human should still weigh coalescing before
+  # `prisma migrate deploy` is not transactional across migrations, so a
+  # multi-migration release that fails mid-batch can leave prod partially
+  # migrated behind a P3009. A human should weigh coalescing before
   # releasing a multi-migration batch.
 
   deploy:
@@ -280,8 +271,7 @@ jobs:
 
           # Surface the container's own output either way — without this, a failure
           # only shows the exit code here and the real Prisma error (P3009 etc.)
-          # hides in CloudWatch, which is how the 2026-07-02 P3009 wedge went
-          # undiagnosed for a day (mirrors deploy-dev.yml).
+          # hides in CloudWatch (mirrors deploy-dev.yml).
           TASK_ID="${TASK_ARN##*/}"
           echo "--- migrate container logs (/ecs/checkin-migrate-prod) ---"
           ./scripts/dump-task-logs.sh /ecs/checkin-migrate-prod "ecs/checkin-migrate/$TASK_ID"
@@ -361,6 +351,12 @@ jobs:
       # credentials assumed above. Skips while the function does not exist yet.
       - name: Deploy qbo-refresher (prod)
         uses: ./.github/actions/deploy-qbo-refresher
+        with:
+          environment: prod
+
+      # The Gmail token refresher Lambda, on the same terms as qbo-refresher.
+      - name: Deploy gmail-refresher (prod)
+        uses: ./.github/actions/deploy-gmail-refresher
         with:
           environment: prod
 

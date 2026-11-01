@@ -5,8 +5,7 @@
  * Concurrency test for attest(): two reviewers attesting the same
  * OrgMembershipProcess at the same time must serialize on the FOR UPDATE lock so
  * the process advances to payment exactly once (no double advance / double
- * background-date stamp). Regression guard for the TOCTOU race fixed in
- * lib/membership/review.ts.
+ * background-date stamp). Guards the check-then-act window in lib/membership/review.ts.
  */
 
 import { attest, ReviewError } from '@/lib/membership/review';
@@ -81,7 +80,7 @@ describe('attest() concurrency', () => {
 
         // One approval already on record; two more reviewers attest concurrently.
         // The invariant: regardless of interleaving, the process advances to payment
-        // exactly once. Pre-fix, both could read 1 prior APPROVE, both compute
+        // exactly once. Without the lock, both could read 1 prior APPROVE, both compute
         // approvals === 2, and both call advanceToPayment (double background-date
         // stamp). The FOR UPDATE lock serializes them so the loser re-reads
         // PENDING_PAYMENT and bails with wrong_phase.

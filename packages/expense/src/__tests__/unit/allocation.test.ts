@@ -1,5 +1,5 @@
 /**
- * #2 — Proportional penny-allocation algorithm (allocateAmount).
+ * Proportional penny-allocation algorithm (allocateAmount).
  *
  * All monetary values are integer cents. The cardinal invariant is that the
  * allocated cents sum back to exactly the input total — never losing or

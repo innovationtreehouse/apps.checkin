@@ -8,7 +8,6 @@ import type {
   InKindDirectory,
   InKindQbPosting,
   InventoryApply,
-  OrgIdentity,
   OwnerDirectory,
 } from "./contract";
 
@@ -47,10 +46,6 @@ export const getPrincipal = bulkDonationRuntime.getPrincipal;
 export const getOrgId = bulkDonationRuntime.getOrgId;
 
 export const assertOrg = bulkDonationRuntime.assertOrg;
-
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
 
 export function getOwnerDirectory(): OwnerDirectory {
   return requireRuntime().owners ?? INERT_OWNERS;

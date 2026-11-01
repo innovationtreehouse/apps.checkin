@@ -14,8 +14,7 @@
  * clean no-op (returns null, no second audit row). Drop the index and the second
  * INSERT succeeds → this fails.
  *
- * The machine never emails (PR-2, outreach engine) — createRenewalProcess no
- * longer reminds, so this test no longer asserts a send; sendEmail is mocked only
+ * The machine never emails, so this test asserts no send; sendEmail is mocked only
  * as a blanket guard against any accidental real network call.
  */
 

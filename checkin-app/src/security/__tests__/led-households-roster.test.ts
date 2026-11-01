@@ -2,14 +2,14 @@
  * @jest-environment node
  */
 /**
- * led_households roster resolves from the DB, not the JWT claim (#1614).
+ * led_households roster resolves from the DB, not the JWT claim.
  *
  * The write authz (visitSubject → householdLeadship, DB, sysadmin-inclusive)
  * and the view roster (buildCallerContext → ctx.ledHouseholdMemberIds) must
  * read the SAME predicate, or a write lands while the response is stripped of
- * its `personal` fields (arrivedAt/departedAt). buildCallerContext used to gate
- * the roster on the `auth.user.householdLead` session claim, which has no
- * sysadmin leg and goes stale — strictly narrower than canManage.
+ * its `personal` fields (arrivedAt/departedAt). The `auth.user.householdLead`
+ * session claim cannot stand in for it: it has no sysadmin leg and goes stale,
+ * so it is strictly narrower than canManage.
  *
  * These pin the roster prefetch (the transitive path that feeds led_households)
  * against buildCallerContext directly, since the hand-built CallerContext in
@@ -68,7 +68,7 @@ function mockDb(row: { isHouseholdLead: boolean; isSysadmin: boolean } | null) {
 
 describe('ledHouseholdMemberIds prefetch reads canManage from the DB', () => {
     it('populates the roster for a sysadmin who is NOT a household lead', async () => {
-        // Case (a) in #1614: the sysadmin override makes canManage true even
+        // The sysadmin override makes canManage true even
         // though isHouseholdLead is false, so the roster — and led_households —
         // must resolve for their own household.
         const { findUnique, findMany } = mockDb({ isHouseholdLead: false, isSysadmin: true });
@@ -107,8 +107,8 @@ describe('ledHouseholdMemberIds prefetch reads canManage from the DB', () => {
     });
 
     it('populates the roster for a stale-JWT lead (claim false, DB true)', async () => {
-        // Case (b): promoted to lead after the token was minted. The claim says
-        // not-lead; the DB says lead. Reading the DB is what fixes it.
+        // Promoted to lead after the token was minted. The claim says not-lead;
+        // the DB says lead, and the DB decides.
         mockDb({ isHouseholdLead: true, isSysadmin: false });
 
         const ctx = await buildCallerContext(sessionAuth(5, false), LED_ONLY);

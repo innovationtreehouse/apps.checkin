@@ -1,10 +1,9 @@
 /**
- * View models for the catalog UI (#1286 track 5).
+ * View models for the catalog UI.
  *
- * These mirror the JSON the /api/catalog/* routes actually return — Prisma model
- * bags stripped by checkin's handler(), NOT the source app's flattened shapes.
- * Concretely: list routes return a bare array of rows (no {items,total,page}
- * envelope — dropped in track 4), item rows carry nested `category`/`subcategory`
+ * These mirror the JSON the /api/catalog/* routes return: Prisma model bags
+ * stripped by checkin's handler(). List routes return a bare array of rows (no
+ * {items,total,page} envelope), item rows carry nested `category`/`subcategory`
  * relations rather than flattened `category`/`categoryLetter` strings, and dates
  * arrive as ISO strings over the wire. Keep these in sync with the route
  * factories in ../routes/* and the includes in ../repositories/*.
@@ -129,4 +128,6 @@ export interface ReferenceConflictRow {
   createdAt: string;
   resolvedAt: string | null;
   resolution: string | null;
+  /** Where the part is now; `existingGtin13` is the item the open conflict was raised against. */
+  itemReference: { gtin13: string };
 }

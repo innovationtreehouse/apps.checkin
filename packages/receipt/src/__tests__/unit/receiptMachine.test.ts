@@ -115,6 +115,10 @@ describe('intake pipeline transitions', () => {
     expect(transition('ocr_failed', 'OCR_RETRY')).toBe('auto_upload');
   });
 
+  it('ocr_failed → RESUBMIT → uploaded', () => {
+    expect(transition('ocr_failed', 'RESUBMIT')).toBe('uploaded');
+  });
+
   it('auto_upload → OCR_SUCCEEDED → uploaded', () => {
     expect(transition('auto_upload', 'OCR_SUCCEEDED')).toBe('uploaded');
   });

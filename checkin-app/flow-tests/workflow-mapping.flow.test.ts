@@ -1,5 +1,5 @@
 /**
- * Receipt mapping (#1289): the persona matrix over all 10 routes, and a manager
+ * Receipt mapping: the persona matrix over all 10 routes, and a manager
  * journey from proceed through apply into org inventory (X4) and expense (X5).
  * Real HTTP against the running dev server and the seeded workflow-mapping DB
  * (see docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).

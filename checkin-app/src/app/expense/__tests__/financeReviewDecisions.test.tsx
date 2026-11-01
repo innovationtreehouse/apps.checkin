@@ -11,7 +11,6 @@ const mockGoTo = jest.fn<void, [string]>();
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
-  useBuckets: () => [],
   send: (...args: [string, string, unknown, string]) => mockSend(...args),
   api: (path: string) => mockApi(path),
   goTo: (href: string) => mockGoTo(href),
@@ -94,6 +93,34 @@ describe("Approve tax", () => {
     wrap(<ExpenseDetailPage id="e1" />);
     fireEvent.click(screen.getByRole("button", { name: "Approve tax" }));
     await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/expenses/e1/tax-approval", "POST", { note: null }, "Tax approved"));
+  });
+});
+
+describe("Skip in QuickBooks", () => {
+  const unbooked = () => load(expense({ qbMatchState: "UNBOOKED" }), [reason("QB_UNBOOKED", { tab: "qb" })], { "/expenses/e1/qb-candidates": [] });
+
+  it("takes a required reason, then posts it", async () => {
+    unbooked();
+    wrap(<ExpenseDetailPage id="e1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    const confirm = await screen.findByRole("button", { name: "Skip this expense" });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Why it is skipped/), { target: { value: "Booked by hand" } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/expenses/e1/qb-resolve", "POST", { action: "skip", reason: "Booked by hand" }, "Skipped in QuickBooks"));
+  });
+
+  it("is not offered to a viewer who cannot act on the reason", () => {
+    load(expense({ qbMatchState: "UNBOOKED" }), [reason("QB_UNBOOKED", { tab: "qb", actionable: false })], { "/expenses/e1/qb-candidates": [] });
+    wrap(<ExpenseDetailPage id="e1" />);
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+  });
+
+  it("says a skipped expense was not sent, and offers nothing more", () => {
+    load(expense({ qbMatchState: "SKIPPED" }), []);
+    wrap(<ExpenseDetailPage id="e1" />);
+    expect(screen.getByText(/finance skipped it/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
   });
 });
 

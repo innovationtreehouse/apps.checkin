@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Regression guard for GET /api/safety/board-contacts.
+ * Guard for GET /api/safety/board-contacts.
  *
  * Pins the field set leaving the emergency board contact sheet. Two distinct
  * properties, and they pull in opposite directions:

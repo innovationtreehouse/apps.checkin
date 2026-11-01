@@ -32,7 +32,7 @@ export default function MembershipReviewPage() {
   const { data: session, status: sessionStatus } = useSession();
   const canReset = !!session?.user?.isBoardMember;
   // No h1 here: this page always renders inside the Membership Ops layout, whose
-  // tab bar already labels it (the standalone /membership/review route is gone).
+  // tab bar already labels it.
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);

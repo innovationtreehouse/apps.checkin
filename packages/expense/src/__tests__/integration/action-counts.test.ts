@@ -1,7 +1,7 @@
 /**
  * The expense list's per-view action counts: each counts only what the viewer can act on, leaves
- * out expenses the server would refuse a conflicted viewer, and gives Board-only viewers nothing
- * for FINANCE-only steps.
+ * out lines a conflicted approver may not approve, and gives Board-only viewers nothing for
+ * FINANCE-only steps.
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
@@ -65,12 +65,12 @@ describeDb("expense action counts", () => {
   describe("assign ownership", () => {
     beforeEach(() => seedLine("assign_ownership", { ownerId: null }));
 
-    it("counts an unassigned line's expense for FINANCE", async () => {
+    it("counts an unassigned line's expense for FINANCE, a conflicted holder included", async () => {
       expect(await counts(FINANCE)).toEqual({ ...NONE, assign_ownership: 1 });
+      expect(await counts(CONFLICTED_FINANCE)).toEqual({ ...NONE, assign_ownership: 1 });
     });
 
-    it("leaves it out for a conflicted FINANCE holder, the Board and an approver", async () => {
-      expect(await counts(CONFLICTED_FINANCE)).toEqual(NONE);
+    it("leaves it out for the Board and an approver", async () => {
       expect(await counts(BOARD)).toEqual(NONE);
       expect(await counts(APPROVER)).toEqual(NONE);
     });
@@ -114,12 +114,12 @@ describeDb("expense action counts", () => {
   describe("exceptions", () => {
     beforeEach(() => seedLine("owner_approval", { ownerId: 100, status: "exception_raised" }));
 
-    it("counts an expense with a raised exception for FINANCE", async () => {
+    it("counts an expense with a raised exception for FINANCE, a conflicted holder included: they may move the line", async () => {
       expect(await counts(FINANCE)).toEqual({ ...NONE, owner_exception: 1 });
+      expect(await counts(CONFLICTED_FINANCE)).toEqual({ ...NONE, owner_exception: 1 });
     });
 
-    it("leaves it out for a conflicted FINANCE holder, the Board and the bucket's approver", async () => {
-      expect(await counts(CONFLICTED_FINANCE)).toEqual(NONE);
+    it("leaves it out for the Board and the bucket's approver", async () => {
       expect(await counts(BOARD)).toEqual(NONE);
       expect(await counts(APPROVER)).toEqual(NONE);
     });

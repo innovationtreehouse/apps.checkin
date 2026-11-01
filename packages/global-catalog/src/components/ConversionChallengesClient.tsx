@@ -1,37 +1,23 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatItemId } from "../lib/gtin";
-import { api, errorMessage } from "./api";
+import { api, useLoad } from "./api";
 import { LoadError } from "@checkin/component-ui";
 import type { ConversionChallengeRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
 
 export default function ConversionChallengesClient() {
-  const [challenges, setChallenges] = useState<ConversionChallengeRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: challenges, error, reload } = useLoad<ConversionChallengeRow[]>(`/conversion-challenges?page=1&limit=${PAGE_LIMIT}`);
   const [acting, setActing] = useState<number | null>(null);
-
-  function fetchChallenges() {
-    return api<ConversionChallengeRow[]>(`/conversion-challenges?page=1&limit=${PAGE_LIMIT}`)
-      .then((rows) => { setChallenges(rows); setError(null); }, (e) => setError(errorMessage(e)))
-      .finally(() => setLoading(false));
-  }
-  useEffect(() => { fetchChallenges(); }, []);
-  async function load() {
-    setLoading(true);
-    await fetchChallenges();
-  }
 
   async function handleAccept(id: number) {
     setActing(id);
     try {
       await api(`/conversion-challenges/${id}/accept`, { method: "POST" });
       notifications.show({ message: "Challenge accepted — conversion factor updated", color: "green" });
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setActing(null); }
   }
@@ -41,7 +27,6 @@ export default function ConversionChallengesClient() {
     try {
       await api(`/conversion-challenges/${id}/reject`, { method: "POST" });
       notifications.show({ message: "Challenge rejected", color: "orange" });
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setActing(null); }
   }
@@ -55,7 +40,7 @@ export default function ConversionChallengesClient() {
       <Title order={3} mb="xs">Conversion Factor Challenges</Title>
       <Text size="sm" c="dimmed" mb="md">Organization managers have flagged these learned conversion factors as incorrect. Accepting updates the factor and increments the version; rejecting leaves it unchanged.</Text>
 
-      {error ? <LoadError what="conversion challenges" message={error} onRetry={load} /> : loading ? <Text c="dimmed">Loading…</Text> : challenges.length === 0 ? (
+      {error ? <LoadError what="conversion challenges" message={error} onRetry={reload} /> : challenges === null ? <Text c="dimmed">Loading…</Text> : challenges.length === 0 ? (
         <Text c="dimmed">No pending conversion factor challenges.</Text>
       ) : (
         <Table striped highlightOnHover withTableBorder>

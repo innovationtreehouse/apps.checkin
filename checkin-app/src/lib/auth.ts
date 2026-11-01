@@ -15,7 +15,7 @@ import type { AuthenticatedUser, BusinessRole, AuthResult } from '@/types/auth';
 async function resolveAuthResult(
     req: NextRequest,
     body?: string,
-    opts?: { sessionOnly?: boolean }
+    opts?: { sessionOnly?: boolean; allowJoinPending?: boolean }
 ): Promise<AuthResult> {
     // 1. Try kiosk signature. Skipped for session-only resolution: verifying a
     // signature consumes its single-use nonce, so a caller that discards kiosk
@@ -33,7 +33,8 @@ async function resolveAuthResult(
                 req.headers.get('x-kiosk-timestamp'),
                 req.headers.get('x-kiosk-signature'),
                 req.headers.get('x-kiosk-nonce'),
-                pubKeys
+                pubKeys,
+                req.headers.get('x-kiosk-queue-depth')
             );
             if (result.ok) return { type: 'kiosk' };
         } else if (pubKeys.length === 0 && config.isLocal()) {
@@ -55,8 +56,9 @@ async function resolveAuthResult(
         // dev guest persona), or a denied household locked out of the whole app. Either
         // way every route fails closed, regardless of its role list. The jwt callback
         // already strips a denied household's role flags; this also denies plain member
-        // endpoints.
-        if (!isAcceptedSession(session.user)) {
+        // endpoints. A session with an open household question is refused the same way
+        // unless the caller passes allowJoinPending.
+        if (!isAcceptedSession(session.user, opts)) {
             return { type: 'unauthenticated' };
         }
         return { type: 'session', user: session.user as AuthenticatedUser };
@@ -80,7 +82,7 @@ async function resolveAuthResult(
 export async function authenticateRequest(
     req: NextRequest,
     body?: string,
-    opts?: { sessionOnly?: boolean }
+    opts?: { sessionOnly?: boolean; allowJoinPending?: boolean }
 ): Promise<AuthResult> {
     const result = await resolveAuthResult(req, body, opts);
 

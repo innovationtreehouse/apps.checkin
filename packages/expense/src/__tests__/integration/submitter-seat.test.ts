@@ -1,5 +1,5 @@
 /**
- * The reimbursement submitter's seat (#2432): recorded at intake from their confirmation of the
+ * The reimbursement submitter's seat: recorded at intake from their confirmation of the
  * receipt, absent on a card charge, and given again through the receipt once finance clears it.
  */
 import { beforeEach, it, expect } from "vitest";
@@ -155,6 +155,19 @@ describeDb("confirming again through the receipt", () => {
       message: expect.stringMatching(/another step/),
     });
     expect(await submitterSeats(id)).toEqual([]);
+  });
+
+  it("is offered only to whom it would sign: not the Board member who recorded the Board authorization", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 1 });
+    await seedApproval(id, await seedLineItem(id), { ownerId: 100 });
+    await db.expense.update({ where: { id }, data: { boardAuthorization: "Board minutes, item 4", boardAuthorizedByUserId: 5 } });
+    expect(await submitterConfirmations.confirmable([id], 5)).toEqual([]);
+    expect(await submitterConfirmations.confirmable([id], 6)).toEqual([id]);
+    expect(await submitterConfirmations.confirmable([id], 1)).toEqual([id]);
+    expect(await submitterConfirmations.confirmable([id], 2)).toEqual([]);
+    await submitterConfirmations.confirm(id, 1, { id: 1, name: "person-1" }, null);
+    expect(await submitterConfirmations.confirmable([id], 1)).toEqual([]);
   });
 
   it("only an open reimbursement, for its reimbursee", async () => {

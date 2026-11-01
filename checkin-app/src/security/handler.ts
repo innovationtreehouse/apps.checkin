@@ -20,8 +20,8 @@
  *   8. Wrap in envelope, emit.
  *
  * Errors thrown from the user fn are caught:
- *   - `ApiResponseError` → mapped to its declared status & message.
- *   - any other error    → opaque 500 (closes #127/#122 class).
+ *   - `ApiResponseError` → mapped to its declared status, message & optional code.
+ *   - any other error    → opaque 500, so its message never reaches the client.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -37,10 +37,16 @@ import { stripBag } from './stripper';
 import './registry';
 
 export class ApiResponseError extends Error {
-    constructor(public readonly status: number, message: string) {
+    constructor(public readonly status: number, message: string, public readonly code?: string) {
         super(message);
         this.name = 'ApiResponseError';
     }
+}
+
+/** The error body: `{ error }`, plus `code` only when the thrower set one. */
+export function renderApiResponseError(err: ApiResponseError): NextResponse {
+    if (err.code === undefined) return apiError(err.message, err.status);
+    return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
 }
 
 export const notFound = (message = 'Not found') => new ApiResponseError(404, message);
@@ -131,7 +137,8 @@ export function handler<P extends Record<string, string> = Record<string, string
         }
 
         const params = (ctx?.params ? await ctx.params : ({} as P)) ?? ({} as P);
-        const auth = await authenticateRequest(req);
+        const { allowJoinPending } = spec;
+        const auth = await authenticateRequest(req, undefined, { allowJoinPending });
         const callerCtx = await buildCallerContext(auth, spec.ctxNeeds);
 
         const { allowed } = await resolveAccess(spec.authorize, {
@@ -139,6 +146,7 @@ export function handler<P extends Record<string, string> = Record<string, string
             params,
             callerContext: callerCtx,
             authorization: req.headers.get('authorization'),
+            allowJoinPending,
         });
         if (!allowed) {
             return apiError(
@@ -150,7 +158,7 @@ export function handler<P extends Record<string, string> = Record<string, string
         let chosenRole: Role | undefined;
         let viewTokens: readonly Token[] = [];
         for (const [role, tokens] of spec.orderedView) {
-            if (callerHoldsRole(role, auth, params, callerCtx)) {
+            if (callerHoldsRole(role, auth, params, callerCtx, { allowJoinPending })) {
                 chosenRole = role;
                 viewTokens = tokens;
                 break;
@@ -167,7 +175,7 @@ export function handler<P extends Record<string, string> = Record<string, string
         try {
             bag = await fn({ req, auth, params, role: chosenRole });
         } catch (err) {
-            if (err instanceof ApiResponseError) return apiError(err.message, err.status);
+            if (err instanceof ApiResponseError) return renderApiResponseError(err);
             console.error(`[${endpoint}] handler error:`, err);
             return apiError('Internal Server Error', 500);
         }

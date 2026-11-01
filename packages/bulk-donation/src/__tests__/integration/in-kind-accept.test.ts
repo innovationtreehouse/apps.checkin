@@ -109,7 +109,7 @@ async function manualGift(): Promise<{ id: number; lineIds: number[] }> {
   return { id, lineIds: lines.map((l) => l.id) };
 }
 
-const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true };
+const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true, confirmGoodsReceived: true };
 const by = (actorUserId: number) => ({ actorUserId, actorUsername: `u${actorUserId}` });
 const queueFor = (callerId: number) => inKindAcceptService.listQueue(orgId, callerId);
 
@@ -175,7 +175,45 @@ describeDb("accepting", () => {
     for (const bucketId of [3, 4, 404]) {
       await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, bucketId }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
     }
-    await expect(inKindAcceptService.decide("receipt", id, { outcome: "accept", confirmOutsideDonorHousehold: true }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    await expect(inKindAcceptService.decide("receipt", id, { outcome: "accept", confirmOutsideDonorHousehold: true, confirmGoodsReceived: true }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("refuses to accept a gift, with a receipt or without, until the decider confirms the goods", async () => {
+    const id = await receiptGift();
+    const { id: manualId, lineIds } = await manualGift();
+    const lineValues = lineIds.map((lineId) => ({ lineId, valueCents: 100 }));
+    const unconfirmed: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true };
+
+    await expect(inKindAcceptService.decide("receipt", id, unconfirmed, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    await expect(inKindAcceptService.decide("manual", manualId, { ...unconfirmed, lineValues }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).decisionOutcome).toBeNull();
+    expect((await db.manualInKindDonation.findUniqueOrThrow({ where: { id: manualId } })).decisionOutcome).toBeNull();
+    expect(await db.workflowEvent.count({ where: { orgId, eventType: "IN_KIND_DECIDED" } })).toBe(0);
+  });
+
+  it("records the goods confirmation on an accepted gift, with a receipt or without", async () => {
+    const id = await receiptGift();
+    const { id: manualId, lineIds } = await manualGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    await inKindAcceptService.decide("manual", manualId, { ...ACCEPT, lineValues: lineIds.map((lineId) => ({ lineId, valueCents: 100 })) }, by(FINANCE));
+    const events = await db.workflowEvent.findMany({ where: { orgId, eventType: "IN_KIND_DECIDED" } });
+    expect(events.map((e) => [e.entityType, e.actorUserId, JSON.parse(e.payload ?? "{}").goodsConfirmed]).sort()).toEqual([
+      ["in_kind", FINANCE, true],
+      ["manual_in_kind", FINANCE, true],
+    ]);
+  });
+
+  it("refusing or returning needs no goods confirmation and records none", async () => {
+    const id = await receiptGift();
+    await expect(inKindAcceptService.decide("receipt", id, { outcome: "refuse", confirmOutsideDonorHousehold: true }, by(FINANCE))).resolves.toMatchObject({ outcome: "REFUSED" });
+    const [event] = await db.workflowEvent.findMany({ where: { orgId, eventType: "IN_KIND_DECIDED" } });
+    expect(JSON.parse(event.payload ?? "{}")).not.toHaveProperty("goodsConfirmed");
+  });
+
+  it("changing an accepted gift's bucket does not ask for the goods again", async () => {
+    const id = await receiptGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    await expect(inKindAcceptService.decide("receipt", id, { outcome: "accept", bucketId: 2, confirmOutsideDonorHousehold: true }, by(FINANCE))).resolves.toMatchObject({ budgetOwnerId: 2 });
   });
 
   it("keeps a receipt gift's values: line values are refused", async () => {
@@ -338,14 +376,12 @@ describeDb("listByBucket", () => {
 });
 
 describeDb("getGift", () => {
-  const reader = { actorUserId: FINANCE, actorUsername: "fin", route: "GET /api/donations/in-kind/receipt/[id]" };
-
-  it("shows a receipt gift with its donor, lines, state and history, and audits the donor read", async () => {
+  it("shows a receipt gift with its donor, lines, state and history, leaving old donor-read rows out", async () => {
     const id = await receiptGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
     await db.inKindBooking.create({ data: { orgId, source: "receipt", giftId: id, side: "revenue", matchState: "MATCHED", qbTxnId: "D-9" } });
 
-    const gift = await inKindAcceptService.getGift(orgId, "receipt", id, reader);
+    const gift = await inKindAcceptService.getGift(orgId, "receipt", id);
     expect(gift).toMatchObject({
       id,
       source: "receipt",
@@ -366,14 +402,15 @@ describeDb("getGift", () => {
     expect(gift.events.map((e) => e.eventType)).toEqual(["IN_KIND_MONEY_RECEIVED", "IN_KIND_DONOR_RECORDED", "IN_KIND_DECIDED"]);
     expect(gift.events[2]).toMatchObject({ actorUsername: `u${FINANCE}` });
 
-    const reads = await db.workflowEvent.findMany({ where: { orgId, eventType: "DONOR_DATA_READ", entityType: "in_kind", entityId: R1 } });
-    expect(reads).toHaveLength(1);
-    expect((await inKindAcceptService.getGift(orgId, "receipt", id, reader)).events).toHaveLength(3);
+    await db.workflowEvent.create({
+      data: { orgId, entityType: "in_kind", entityId: R1, eventType: "DONOR_DATA_READ", actorUserId: FINANCE, payload: JSON.stringify({ route: "GET /api/receipts" }) },
+    });
+    expect((await inKindAcceptService.getGift(orgId, "receipt", id)).events).toHaveLength(3);
   });
 
   it("shows a gift without a receipt with its recorder, suggested values and inventory source key", async () => {
     const { id } = await manualGift();
-    const gift = await inKindAcceptService.getGift(orgId, "manual", id, { ...reader, route: "GET /api/donations/in-kind/manual/[id]" });
+    const gift = await inKindAcceptService.getGift(orgId, "manual", id);
     expect(gift).toMatchObject({
       source: "manual",
       receiptId: null,
@@ -388,7 +425,6 @@ describeDb("getGift", () => {
     expect(gift.inventoryLoadedAt).not.toBeNull();
     expect(gift.lines.map((l) => [l.quantity, l.suggestedValueCents])).toEqual([[1, 4000], [2, null]]);
     expect(gift.events.map((e) => e.eventType)).toEqual(["MANUAL_IN_KIND_RECORDED"]);
-    expect(await db.workflowEvent.count({ where: { orgId, eventType: "DONOR_DATA_READ", entityType: "manual_in_kind", entityId: String(id) } })).toBe(1);
   });
 
   it("shows a failed inventory load as not loaded", async () => {
@@ -400,14 +436,14 @@ describeDb("getGift", () => {
       donationDate: "2026-10-02",
       lines: [{ gtin13: DRILL, quantity: 1 }],
     });
-    expect(await inKindAcceptService.getGift(orgId, "manual", id, reader)).toMatchObject({ inventorySourceKey: `donation:${id}`, inventoryLoadedAt: null });
+    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({ inventorySourceKey: `donation:${id}`, inventoryLoadedAt: null });
   });
 
   it("shows a settled withdrawal with nothing left to do and no donor", async () => {
     const id = await receiptGift();
     await withdrawInKind(orgId, R1, 0);
     await inKindService.settle(orgId, id, "withdrawal", by(FINANCE));
-    expect(await inKindAcceptService.getGift(orgId, "receipt", id, reader)).toMatchObject({
+    expect(await inKindAcceptService.getGift(orgId, "receipt", id)).toMatchObject({
       state: null,
       waitingOn: [],
       donorFirstName: null,
@@ -418,8 +454,8 @@ describeDb("getGift", () => {
 
   it("404s a gift in another org or of the other source", async () => {
     const id = await receiptGift();
-    await expect(inKindAcceptService.getGift("other-org", "receipt", id, reader)).rejects.toMatchObject({ status: 404 });
-    await expect(inKindAcceptService.getGift(orgId, "manual", id, reader)).rejects.toMatchObject({ status: 404 });
+    await expect(inKindAcceptService.getGift("other-org", "receipt", id)).rejects.toMatchObject({ status: 404 });
+    await expect(inKindAcceptService.getGift(orgId, "manual", id)).rejects.toMatchObject({ status: 404 });
   });
 });
 

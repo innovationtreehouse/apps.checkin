@@ -6,6 +6,7 @@ import { notifications } from "@mantine/notifications";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 interface ClassRow {
@@ -52,7 +53,7 @@ function choices(options: Option[] | null, saved: string | null) {
 }
 
 export default function BooksMapPage() {
-  const { user, loading: authLoading, ready } = useRequireRole(["isFinance", "isBoardMember"]);
+  const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
 
   const [classRows, setClassRows] = useState<ClassRow[]>([]);
@@ -89,8 +90,8 @@ export default function BooksMapPage() {
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
         books to. Income reads the Shopify and Benevity accounts and the Classes from here, gifts of goods read their four
-        accounts and the Classes, and expenses read the Organisation card. Donation deposits from bulk uploads still use
-        the bank account set in the app settings. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
+        accounts and the Classes, and expenses read the Organisation card. Income books donation deposits from bulk uploads
+        to the Benevity disbursements bank account below. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
       </Text>
 
       <Title order={4}>Accounts</Title>

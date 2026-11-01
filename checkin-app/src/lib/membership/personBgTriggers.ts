@@ -8,7 +8,7 @@ import { systemActor } from "@/lib/auditActor";
 
 /**
  * Triggers that OPEN a per-person background-check obligation (PERSON_BG process,
- * Phase 2 — warn-only). Two triggers, both keyed on the SAME "who needs a check"
+ * warn-only). Two triggers, both keyed on the SAME "who needs a check"
  * rule as the compliance dashboard: personBgVerdict === "NEEDED" over
  * bgObligatedWhere (program-attached ∪ leads of ACTIVE member households — Trigger
  * A is a daily cron over all Persons, so that membership bound is what keeps it off

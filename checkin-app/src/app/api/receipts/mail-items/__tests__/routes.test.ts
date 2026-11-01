@@ -11,8 +11,7 @@ import { POST as discard } from "../[id]/discard/route";
 import { GET as file } from "../[id]/file/route";
 
 jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
-jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
-jest.mock("@checkin/receipt", () => ({
+jest.mock("@checkin/receipt/services/mailQueueService", () => ({
   mailQueueService: { listHeld: jest.fn(), assign: jest.fn(), discard: jest.fn(), getFile: jest.fn() },
 }));
 

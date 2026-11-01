@@ -23,7 +23,7 @@ jest.mock('next-auth/next', () => ({
 }));
 jest.mock('@/lib/notifications', () => ({
     // route.ts's fire-without-await edge does `notifyNewProgramAnnounced(...).catch(...)`
-    // (#1154 belt-and-suspenders) — the mock must resolve so `.catch` is defined.
+    // — the mock must resolve so `.catch` is defined.
     notifyNewProgramAnnounced: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -135,9 +135,9 @@ describe('New-program announce notification trigger', () => {
         expect(mockNotify).not.toHaveBeenCalled();
     });
 
-    // #1164 review F2/F3/F6: announcedAt is a once-per-program-lifetime claim.
+    // announcedAt is a once-per-program-lifetime claim.
     describe('once-per-lifetime announcedAt claim', () => {
-        it('sets announcedAt on the first fire, and closing + reopening enrollment does NOT re-fire (F2)', async () => {
+        it('sets announcedAt on the first fire, and closing + reopening enrollment does NOT re-fire', async () => {
             const name = `${PROGRAM_NAME_TAG} reopen`;
             const program = await prisma.program.create({
                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
@@ -150,7 +150,7 @@ describe('New-program announce notification trigger', () => {
             const announced = await prisma.program.findUnique({ where: { id: program.id } });
             expect(announced?.announcedAt).not.toBeNull();
 
-            // Close, then reopen — the old row-compare logic would fire again here.
+            // Close, then reopen — a row compare would fire again here.
             expect((await patch(program.id, { enrollmentStatus: 'CLOSED' })).status).toBe(200);
             expect((await patch(program.id, { enrollmentStatus: 'OPEN' })).status).toBe(200);
             expect(mockNotify).toHaveBeenCalledTimes(1);
@@ -178,7 +178,7 @@ describe('New-program announce notification trigger', () => {
             expect(mockNotify).toHaveBeenCalledTimes(1);
         });
 
-        it('writes an AuditLog row for the blast with the triggering actor (F6)', async () => {
+        it('writes an AuditLog row for the blast with the triggering actor', async () => {
             const name = `${PROGRAM_NAME_TAG} audit`;
             const program = await prisma.program.create({
                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },

@@ -29,7 +29,7 @@ export function createItemReferenceRepository(db: Prisma.TransactionClient) {
 
     findByMfrDesc: (descriptionNormalized: string, manufacturer: string) =>
       db.itemReference.findFirst({
-        where: { descriptionNormalized, manufacturer, archivedAt: null },
+        where: { descriptionNormalized, manufacturer, partNumber: null, archivedAt: null },
         select: REF_SELECT,
       }),
 
@@ -123,6 +123,7 @@ export function createItemReferenceRepository(db: Prisma.TransactionClient) {
         db.referenceConflict.count({ where }),
         db.referenceConflict.findMany({
           where,
+          include: { itemReference: { select: { gtin13: true } } },
           orderBy: { createdAt: "desc" },
           take: limit,
           skip: (page - 1) * limit,

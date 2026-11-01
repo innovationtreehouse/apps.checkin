@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for Phase 3 (manual review mode) of the per-person background
+ * Integration tests for manual review mode of the per-person background
  * check: the board-driven "record an external check → submit for review" action.
  *   - submit opens a PERSON_BG (dedup-guarded) + sets bgConsentAt + is audit-logged,
  *     is idempotent, and the route rejects a non-board/non-sysadmin caller;
@@ -104,7 +104,7 @@ async function cleanup() {
     await prisma.household.deleteMany({ where: { id: { in: [...ids, ...peopleHhIds] } } });
 }
 
-describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
+describe('manual PERSON_BG submit + queue gating + e2e', () => {
     let restoreBoardSettings: () => Promise<void> = async () => {};
     let rev1 = 0, rev2 = 0, board = 0, nonReviewer = 0;
 
@@ -186,7 +186,7 @@ describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
         // "No household on file" rather than blank (Person.householdId is required,
         // so an empty-name household is the real "no household context" case).
         // name is NOT NULL; "" is the empty sentinel and the render's falsy check
-        // (`household?.name ? … : "No household on file"`) treats it like the old null.
+        // (`household?.name ? … : "No household on file"`) treats it like a missing name.
         const namelessHh = await prisma.household.create({ data: { name: "" } });
         const orphan = await makePerson('queue-orphan', namelessHh.id, { dateOfBirth: ADULT_DOB });
         const orphanBg = await prisma.orgMembershipProcess.create({

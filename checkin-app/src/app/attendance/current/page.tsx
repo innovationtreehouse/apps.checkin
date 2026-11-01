@@ -4,27 +4,23 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
-import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconHeartHandshake, IconKey, IconSchool, type Icon } from "@tabler/icons-react";
 import {
   Alert, Anchor, Badge, Box, Button, Card, Center, Group, Loader, Modal, Paper,
-  SimpleGrid, Stack, Text, TextInput, Title,
+  SimpleGrid, Stack, Text, Title,
 } from "@mantine/core";
 import { isYouth } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { PageContainer } from "@/components/ui/PageContainer";
 import { formatPhone } from "@/lib/phone";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
-import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { AttendanceTabs } from "../AttendanceTabs";
-import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from "@/components/CloseChoiceDialog";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { BuildingUnconfirmedAlert } from "@/components/BuildingUnconfirmedAlert";
 import type { BuildingLink } from "@/lib/kioskSeen";
-import { personQueryMatcher } from "@/lib/searchId";
 
 type Person = {
   id: number;
@@ -76,26 +72,11 @@ function KioskDisplayInner() {
   // A `mode=kiosk` preview opened by a privileged session carries full names, so it is labelled
   // here instead.
   const [namesAreKioskLabels, setNamesAreKioskLabels] = useState(false);
-  const [checkingOut, setCheckingOut] = useState<number | null>(null);
-  const [household, setHousehold] = useState<{ householdMembers: Person[] } | null>(null);
-  const [showSignOutModal, setShowSignOutModal] = useState(false);
-  const [searchSignOutQuery, setSearchSignOutQuery] = useState("");
   const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
-  const [confirmCheckoutOpened, { open: openConfirmCheckout, close: closeConfirmCheckout }] = useDisclosure(false);
-  const [pendingCheckoutVisitId, setPendingCheckoutVisitId] = useState<number | null>(null);
-  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<Person[]>([]);
-  const [checkingInId, setCheckingInId] = useState<number | null>(null);
 
   const currentUserIsSysadmin = session?.user?.isSysadmin || false;
   const currentUserIsKeyholder = session?.user?.isKeyholder || false;
   const currentUserIsBoardMember = session?.user?.isBoardMember || false;
-  const currentUserHouseholdId = session?.user?.householdId || null;
-  const canManuallyCheckInGlobal = currentUserIsSysadmin || currentUserIsKeyholder || currentUserIsBoardMember;
-  const canAdminCheckout = currentUserIsSysadmin || currentUserIsKeyholder || currentUserIsBoardMember;
-  const canCheckInHousehold = Boolean(currentUserHouseholdId);
 
   const isFull = data?.access === "full";
   // Absent attendance is UNKNOWN, never "empty and compliant": every count and
@@ -121,41 +102,17 @@ function KioskDisplayInner() {
   const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth, { unknownIs: "youth" });
 
   const fullAttendance = isFull ? (data as FullResponse).attendance : [];
-  const matchesSignOutQuery = personQueryMatcher(searchSignOutQuery);
   const keyholderList = fullAttendance.filter(v => v.participant.isKeyholder);
   const volunteerList = fullAttendance.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
   const youthList = fullAttendance.filter(v => visitIsYouth(v));
 
   const limitedHousehold = !isFull && data ? (data as LimitedResponse).household : [];
-  const limitedSelf = !isFull && data ? (data as LimitedResponse).self : null;
   const householdKeyholders = limitedHousehold.filter(v => v.participant.isKeyholder);
   const householdVolunteers = limitedHousehold.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
   const householdYouth = limitedHousehold.filter(v => visitIsYouth(v));
 
-  const isCheckedIn = isFull
-    ? fullAttendance.some(v => v.participant.id === session?.user?.id)
-    : limitedSelf !== null;
-
-  useEffect(() => {
-    const fetchHousehold = async () => {
-      if (!currentUserHouseholdId) return;
-      try {
-        const res = await fetch("/api/household");
-        if (res.ok) {
-          const hData = await res.json();
-          setHousehold(hData.household);
-        }
-      } catch (error) {
-        console.error("Failed to fetch household:", error);
-      }
-    };
-    if (canCheckInHousehold) fetchHousehold();
-  }, [canCheckInHousehold, currentUserHouseholdId]);
-
-  // Unattended kiosk displays must not idle-stop. The Pi proxy never puts
-  // sig/ts/nonce on the iframe URL, so keying on those params froze the
-  // door screen after 10 quiet minutes. Gate on mode=kiosk (the URL the
-  // proxy actually loads) or the signedRequest response flag.
+  // Unattended kiosk displays must not idle-stop. The gate includes mode=kiosk
+  // because the Pi proxy loads that URL without sig/ts/nonce on it.
   const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
   const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
@@ -217,128 +174,7 @@ function KioskDisplayInner() {
     return () => window.removeEventListener("message", handleMessage);
   }, [fetchAttendance]);
 
-  useEffect(() => {
-    const performSearch = async () => {
-      if (searchQuery.length < 2) {
-        setSearchResults([]);
-        return;
-      }
-      try {
-        const res = await fetch(`/api/roles`);
-        if (res.ok) {
-          const data = await res.json();
-          const matchesSearch = personQueryMatcher(searchQuery);
-          const filtered = data.people.filter((p: Person) => matchesSearch(p));
-          setSearchResults(filtered);
-        }
-      } catch (error) {
-        console.error("Search error:", error);
-      }
-    };
-    const timeoutId = setTimeout(performSearch, 300);
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
 
-  const refreshAttendance = async () => {
-    const headers: Record<string, string> = {};
-    const sigParamsUrl = searchParams.get("sig");
-    const tsParamsUrl = searchParams.get("ts");
-    const nonceParamsUrl = searchParams.get("nonce");
-    if (sigParamsUrl && tsParamsUrl && nonceParamsUrl) {
-      headers["x-kiosk-signature"] = sigParamsUrl;
-      headers["x-kiosk-timestamp"] = tsParamsUrl;
-      headers["x-kiosk-nonce"] = nonceParamsUrl;
-    }
-    const attRes = await fetch("/api/attendance", { headers });
-    const json = await attRes.json().catch(() => ({}));
-    if (attRes.ok && (json.access === "full" || json.access === "limited")) {
-      setData(json);
-      setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
-      if (json.signedRequest) setIsKioskMode(true);
-    }
-    // Refresh nav/sub-tab building counts too — they read a separate cached fetch.
-    notifyNavRefresh();
-  };
-
-  const handleForceCheckout = async (visitId: number, isSelf: boolean = false) => {
-    if (!isSelf) {
-      setPendingCheckoutVisitId(visitId);
-      openConfirmCheckout();
-      return;
-    }
-    await doForceCheckout(visitId, true);
-  };
-
-  const doForceCheckout = async (visitId: number, isSelf: boolean = false, answer?: CloseChoiceAnswer) => {
-    setCheckingOut(visitId);
-    let next: CloseChoiceAnswer | null = null;
-    try {
-      const res = await fetch("/api/attendance", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitId, ...answer }),
-      });
-      const resData = await res.json().catch(() => ({}));
-      if (res.ok) {
-        if (resData.facilityClosed) {
-          notifications.show({ color: "yellow", message: "Facility closed — all remaining visits ended.", autoClose: 5000 });
-        }
-        refreshAttendance();
-      } else if (isCloseChoiceWarning(resData)) {
-        next = await askCloseChoice(resData);
-      } else {
-        notifications.show({ color: "red", message: isSelf ? "Failed to check out." : "Failed to force checkout.", autoClose: false });
-      }
-    } catch (e) {
-      console.error("Attendance action failed:", e);
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setCheckingOut(null);
-    }
-    if (next) await doForceCheckout(visitId, isSelf, next);
-  };
-
-  const confirmForceCheckout = async () => {
-    if (pendingCheckoutVisitId === null) return;
-    closeConfirmCheckout();
-    const visitId = pendingCheckoutVisitId;
-    setPendingCheckoutVisitId(null);
-    await doForceCheckout(visitId);
-  };
-
-  const handleManualCheckIn = async (participantId: number) => {
-    setCheckingInId(participantId);
-    try {
-      const res = await fetch("/api/attendance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId }),
-      });
-      if (res.ok) {
-        setSearchQuery("");
-        setSearchResults([]);
-        refreshAttendance();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        if (d.error === "User is already checked in") {
-          notifications.show({ color: "red", message: d.error, autoClose: false });
-          refreshAttendance();
-        } else {
-          notifications.show({ color: "red", message: d.error || "Action failed.", autoClose: false });
-        }
-      }
-    } catch (e) {
-      console.error("Attendance action failed:", e);
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setCheckingInId(null);
-    }
-  };
-
-  const checkedInIds = isFull
-    ? fullAttendance.map(v => v.participant.id)
-    : [...limitedHousehold.map(v => v.participant.id), ...(limitedSelf ? [limitedSelf.participant.id] : [])];
-  const displayResults = searchResults.filter(p => !checkedInIds.includes(p.id));
 
   const kioskDisplayNames = useMemo(() => {
     if (!isKioskMode || namesAreKioskLabels) return new Map<number, string>();
@@ -348,7 +184,7 @@ function KioskDisplayInner() {
 
   const canSeeNames = !isKioskMode && (currentUserIsKeyholder || currentUserIsSysadmin || currentUserIsBoardMember);
 
-  const renderPersonCard = (visit: Visit, showCheckout: boolean) => {
+  const renderPersonCard = (visit: Visit) => {
     const hue = visit.event?.program?.name
       ? visit.event.program.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360
       : 0;
@@ -380,21 +216,10 @@ function KioskDisplayInner() {
               <Text size="xs" c="blue">📞 {formatPhone(visit.participant.phone)}</Text>
             )}
           </Box>
-          {showCheckout && (
-            <Button size="compact-xs" color="red" variant="light" onClick={() => handleForceCheckout(visit.id, visit.participant.id === session?.user?.id)} disabled={checkingOut === visit.id}>
-              {checkingOut === visit.id ? "..." : "Out"}
-            </Button>
-          )}
         </Group>
       </Paper>
     );
   };
-
-  const canCheckoutVisit = (visit: Visit): boolean => Boolean(
-    visit.participant.id === session?.user?.id ||
-    (session?.user?.householdLead &&
-      visit.participant.householdId === currentUserHouseholdId)
-  );
 
   const renderColumn = (ColumnIcon: Icon, count: number, label: string, color: string, list: Visit[]) => (
     <div>
@@ -406,44 +231,19 @@ function KioskDisplayInner() {
         </div>
       </Group>
       <SimpleGrid cols={list.length > 10 ? 2 : 1} spacing="xs">
-        {list.map(v => renderPersonCard(v, canCheckoutVisit(v)))}
+        {list.map(v => renderPersonCard(v))}
       </SimpleGrid>
     </div>
   );
-
-  const userId = session?.user?.id;
 
   const pageBody = (
     <>
       {!isKioskMode && <AttendanceTabs />}
       <Card withBorder radius="md" padding="lg" style={{ width: "100%", maxWidth: 1200, margin: "0 auto" }}>
-        {/* Check-in button — hidden in kiosk mode */}
-        {!isKioskMode && (
-          <Box mb="lg">
-            {!isCheckedIn ? (
-              <Button
-                fullWidth size="md"
-                onClick={() => { if (userId) handleManualCheckIn(userId); }}
-                disabled={checkingInId === userId}
-                loading={checkingInId === userId}
-              >
-                Check Me In
-              </Button>
-            ) : (
-              <Alert color="teal" ta="center">You are currently checked in!</Alert>
-            )}
-          </Box>
-        )}
-
         {/* Header */}
         <Group justify="space-between" align="center" wrap="wrap" mb="lg">
           <Title order={1}>Current Attendance</Title>
           <Group align="center" gap="md" wrap="wrap">
-            {!isKioskMode && canAdminCheckout && (
-              <Button color="red" variant="light" radius="xl" size="xs" fz={15} onClick={() => setShowSignOutModal(true)}>
-                Sign out a user
-              </Button>
-            )}
             {kioskStale && <Text size="sm" c="dimmed">Not up to date{asOf ? ` — as of ${formatTime(asOf)}` : ""}</Text>}
             <CountBadge intent="info" size="lg">
               {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
@@ -456,51 +256,8 @@ function KioskDisplayInner() {
           </Group>
         </Group>
 
-        {/* Household check-in buttons — hidden in kiosk mode */}
-        {!isKioskMode && canCheckInHousehold && household && session?.user?.householdLead && (
-          <Box mb="lg">
-            <Title order={4} c="blue" mb="sm">Check In Household Members</Title>
-            <Group gap="xs" wrap="wrap">
-              {household.householdMembers?.filter((p) => !checkedInIds.includes(p.id)).map((p) => (
-                <Button key={p.id} variant="default" onClick={() => handleManualCheckIn(p.id)} disabled={checkingInId === p.id}>
-                  {checkingInId === p.id ? "..." : (p.name || p.email)}
-                </Button>
-              ))}
-              {household.householdMembers?.filter((p) => !checkedInIds.includes(p.id)).length === 0 && (
-                <Text c="dimmed" fs="italic" size="sm">All household members are currently checked in!</Text>
-              )}
-            </Group>
-          </Box>
-        )}
-
-        {/* Admin manual check-in search — hidden in kiosk mode */}
-        {!isKioskMode && canManuallyCheckInGlobal && (
-          <Box mb="lg" pos="relative">
-            <TextInput
-              placeholder="Manually check someone in (Search by name, email, or ID)..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.currentTarget.value)}
-            />
-            {displayResults.length > 0 && searchQuery.length >= 2 && (
-              <Paper withBorder shadow="md" radius="sm" pos="absolute" left={0} right={0} style={{ zIndex: 10, maxHeight: 200, overflowY: "auto" }}>
-                {displayResults.map((p) => (
-                  <Group key={p.id} justify="space-between" p="sm" style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}>
-                    <div>
-                      <Text fw={500}>{p.name || "Unnamed"}</Text>
-                      <Text size="xs" c="dimmed">{p.email}</Text>
-                    </div>
-                    <Button size="compact-xs" variant="light" disabled={checkingInId === p.id} onClick={() => handleManualCheckIn(p.id)}>
-                      {checkingInId === p.id ? "..." : "Check In"}
-                    </Button>
-                  </Group>
-                ))}
-              </Paper>
-            )}
-          </Box>
-        )}
-
         {/* Safety warnings — a missing roster reads as unknown, not as all-clear */}
-        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} mb="lg" />}
+        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} queued={data?.building?.queued} mb="lg" />}
         {!loading && !unconfirmed && !safety && (
           <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
             {data
@@ -556,39 +313,6 @@ function KioskDisplayInner() {
         )}
       </Card>
 
-      {/* Admin Sign Out Modal */}
-      <Modal opened={showSignOutModal} onClose={() => setShowSignOutModal(false)} title={<Text span fw={700} fz="lg">Sign Out A User</Text>} size="lg">
-        <TextInput
-          placeholder="Search checked-in users..."
-          value={searchSignOutQuery}
-          onChange={(e) => setSearchSignOutQuery(e.currentTarget.value)}
-          data-autofocus
-          mb="md"
-        />
-        <Stack gap="xs" style={{ maxHeight: "60vh", overflowY: "auto" }}>
-          {fullAttendance.length === 0 ? (
-            <Text c="dimmed" ta="center" py="xl">No one is checked in.</Text>
-          ) : (
-            fullAttendance
-              .filter(v => matchesSignOutQuery(v.participant))
-              .sort((a, b) => (a.participant.name || "").localeCompare(b.participant.name || ""))
-              .map(v => (
-                <Paper key={v.id} withBorder radius="md" p="sm">
-                  <Group justify="space-between">
-                    <div>
-                      <Text fw={500}>{v.participant.name || v.participant.email.split('@')[0]}</Text>
-                      <Text size="xs" c="dimmed">Arrived: {formatTime(v.arrivedAt)}</Text>
-                    </div>
-                    <Button color="red" variant="light" onClick={() => handleForceCheckout(v.id)} disabled={checkingOut === v.id}>
-                      {checkingOut === v.id ? "Signing Out..." : "Sign Out"}
-                    </Button>
-                  </Group>
-                </Paper>
-              ))
-          )}
-        </Stack>
-      </Modal>
-
       {/* Emergency Contact Modal */}
       <Modal
         opened={!!selectedParticipant}
@@ -633,29 +357,14 @@ function KioskDisplayInner() {
         )}
       </Modal>
 
-      {/* Force Checkout Confirmation Modal */}
-      <Modal
-        opened={confirmCheckoutOpened}
-        onClose={closeConfirmCheckout}
-        title={<Text span fw={700} fz="lg">Force Checkout</Text>}
-        centered
-      >
-        <Text mb="lg">Are you sure you want to force checkout this user?</Text>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={closeConfirmCheckout}>Cancel</Button>
-          <Button color="red" onClick={confirmForceCheckout}>Force Checkout</Button>
-        </Group>
-      </Modal>
-
-      {closeChoiceDialog}
     </>
   );
 
   // Kiosk mode is a fullscreen board surface with its own chrome (cursor
   // hidden, content pulled up under the header); the member-facing page rides
-  // the canonical PageContainer like every other page — no hand-rolled copy of
-  // its margins (PR #1026 review). A plain conditional (not a per-render
-  // wrapper component) so the subtree never remounts when state changes.
+  // the canonical PageContainer like every other page. A plain conditional
+  // (not a per-render wrapper component) so the subtree never remounts when
+  // state changes.
   return isKioskMode ? (
     <Box style={{ cursor: "none", marginTop: -25, paddingLeft: 8, display: "flow-root" }}>{pageBody}</Box>
   ) : (

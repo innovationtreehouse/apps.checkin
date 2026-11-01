@@ -126,7 +126,7 @@ describe('isYouth', () => {
     expect(isYouth('', { unknownIs: 'adult' })).toBe(false);
   });
 
-  it('unknown DOB fails closed when the caller opts in (#300)', () => {
+  it('unknown DOB fails closed when the caller opts in', () => {
     expect(isYouth(null, { unknownIs: 'youth' })).toBe(true);
     expect(isYouth(undefined, { unknownIs: 'youth' })).toBe(true);
     // known DOB is never overridden by the option
@@ -163,7 +163,7 @@ describe('time.ts formatting utilities', () => {
   it('formatDate formats dates correctly in Central Time', () => {
     // 12:00 UTC is 06:00 CST (or 07:00 CDT depending on daylight savings, normally Jest uses the system timezone but we forced the options timeZone)
     const formatted = formatDate(testDate, TZ);
-    // Since we aren't strict on the exact locale string structure (which varies based on the environment), we just check it returns a string for now, or mock Intl
+    // The exact locale string varies by environment, so this only checks for a non-empty string.
     expect(typeof formatted).toBe('string');
     expect(formatted.length).toBeGreaterThan(0);
   });

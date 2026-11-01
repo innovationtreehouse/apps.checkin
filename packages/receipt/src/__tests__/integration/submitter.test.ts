@@ -120,6 +120,19 @@ describeDb("My receipts", () => {
     expect((await receiptService.listMine({ hideCompleted: true })).map((r) => r.id)).toEqual([owed.id]);
   });
 
+  it("a receipt X12 has no status for reads 'status unavailable' and stays listed", async () => {
+    const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    await receiptService.submitterConfirm(owed.id);
+    configure({
+      receiptSink: ports.receiptSink,
+      reimbursementStatus: { forReceipts: async () => new Map([[owed.id, { paidOn: null, statusUnavailable: true }]]) },
+    });
+    expect((await receiptService.listMine()).find((r) => r.id === owed.id)).toMatchObject({
+      reimbursement: { paidOn: null, statusUnavailable: true },
+      complete: false,
+    });
+  });
+
   it("asks X12 only about the caller's own owed receipts", async () => {
     const asked: ReimbursementAsk[][] = [];
     configure({

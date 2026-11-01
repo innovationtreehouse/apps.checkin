@@ -3,12 +3,10 @@
  * alert, or every spec that asserts "no problems" passes a page that shows one.
  */
 import { expect, test } from "@playwright/test";
+import { addItem, SEEDED_ITEM } from "./support/catalog";
 import { watchPage } from "./support/pageErrors";
-import { FINANCE, releaseLibraries, type Undo } from "./support/seedState";
+import { FINANCE, INVENTORY_MANAGER, releaseLibraries, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
-
-/** The seed's open reconciliation row (packages/income/prisma/seed.ts). */
-const SEED_PAYOUT = "gid://shopify/ShopifyPaymentsPayout/seed-1";
 
 const undo: Undo[] = [];
 test.beforeAll(async () => {
@@ -18,16 +16,16 @@ test.afterAll(async () => {
   for (const step of undo.reverse()) await step();
 });
 
-test("the page watch sees a red error chip", async ({ browser }) => {
-  const { context } = await signIn(browser, FINANCE);
+test("the page watch sees a red error chip, once", async ({ browser }) => {
+  const { context } = await signIn(browser, INVENTORY_MANAGER);
   const page = await context.newPage();
   const watch = watchPage(page);
-  await page.goto("/income/reconciliation");
-  await page.getByRole("row").filter({ hasText: SEED_PAYOUT }).getByText("Resolve", { exact: true }).click();
-  // Dismissing with no reason shows a red chip and sends nothing.
-  await page.getByRole("button", { name: "Dismiss", exact: true }).click();
-  await expect(page.locator(".mantine-Notification-root").filter({ hasText: "Enter a reason first" })).toBeVisible();
-  expect(await watch.problems()).toContain("error chip: Enter a reason first");
+  await page.goto("/catalog/items");
+  // A name the catalog already has is refused with a red chip that stays, and nothing is written.
+  await addItem(page, SEEDED_ITEM);
+  await expect(page.locator(".mantine-Notification-root").filter({ hasText: "already exists" })).toBeVisible();
+  expect((await watch.problems()).some((p) => p.startsWith("error chip:") && p.includes("already exists"))).toBe(true);
+  expect(await watch.problems()).toEqual([]);
   await context.close();
 });
 

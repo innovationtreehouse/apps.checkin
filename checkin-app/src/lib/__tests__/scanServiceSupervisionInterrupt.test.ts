@@ -1,5 +1,5 @@
 /**
- * The departure interrupt ladder (#1436). Drives the REAL supervising-adult test
+ * The departure interrupt ladder. Drives the REAL supervising-adult test
  * through processCheckout, so the two stay wired together:
  *
  *   third supervising adult leaves (two remain) → warning, checkout proceeds
@@ -74,7 +74,7 @@ function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPrese
 
 async function checkout(householdIds: number[], warnedAt: Date | null = null, youthPresent = true) {
     const { db, update } = fakeDb(householdIds, warnedAt, youthPresent);
-    const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db));
+    const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
     return { res, body: await res.json(), update, db };
 }
 
@@ -115,10 +115,8 @@ describe("rung 2 — the next supervising adult leaves", () => {
         expect(body.type).toBe("checkout");
     });
 
-    it("confirms and departs on a second badge just 1s after the warning (#1347 PR-0)", async () => {
-        // The route's debounce used to swallow exactly this scan; the ladder
-        // itself was never the problem -- it accepts any stamp inside the
-        // window, however close to the warning.
+    it("confirms and departs on a second badge just 1s after the warning", async () => {
+        // The ladder accepts any stamp inside the window, however close to the warning.
         const { res, body } = await checkout([10, 20], new Date(Date.now() - 1_000));
 
         expect(res.status).toBe(200);
@@ -181,7 +179,7 @@ describe("a departure that removes no supervising adult", () => {
             openVisits([10, 20]).map(v => ({ ...v, id: v.id === DEPARTING_VISIT ? 999 : v.id })),
         );
 
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
 
         expect(res.status).toBe(200);
         expect((await res.json()).warning).toBeUndefined();
@@ -192,7 +190,7 @@ describe("a departure that removes no supervising adult", () => {
 describe("youth check-in below two supervising adults", () => {
     it("warns but is never blocked", async () => {
         const { db } = fakeDb([10]);
-        const res = await wire(processCheckin(youth, "kiosk", db));
+        const res = await wire(processCheckin(youth, db));
         const body = await res.json();
 
         expect(res.status).toBe(200);
@@ -202,17 +200,17 @@ describe("youth check-in below two supervising adults", () => {
 
     it("says nothing when the room is two deep", async () => {
         const { db } = fakeDb([10, 20]);
-        expect((await (await wire(processCheckin(youth, "kiosk", db))).json()).warning).toBeUndefined();
+        expect((await (await wire(processCheckin(youth, db))).json()).warning).toBeUndefined();
     });
 
     it("costs an adult check-in no supervision query at all", async () => {
         const { db } = fakeDb([10]);
-        await wire(processCheckin(adult, "kiosk", db));
+        await wire(processCheckin(adult, db));
         expect(db.visit.findMany).not.toHaveBeenCalled();
     });
 });
 
-describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
+describe("a REPLAYED departure skips the ladder entirely", () => {
     // The confirm rung answers 400 {type:"warning"} and records nothing, but the
     // outbox's classify_response acks that shape — a replayed departure hitting
     // it would be deleted from the queue with the visit still open, and no one
@@ -222,7 +220,7 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
     it("departs instead of demanding a confirm nobody can give", async () => {
         const { db, update } = fakeDb([10, 20]);
 
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db, SCANNED_AT, true));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db, SCANNED_AT, true));
         const body = await res.json();
 
         expect(res.status).toBe(200);
@@ -236,7 +234,7 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
     it("still departs when the room is left with NO supervising adult", async () => {
         const { db } = fakeDb([10]);
 
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db, SCANNED_AT, true));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db, SCANNED_AT, true));
 
         expect(res.status).toBe(200);
         expect((await res.json()).type).toBe("checkout");
@@ -249,30 +247,3 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
     });
 });
 
-describe("a web (session) checkout skips the ladder (rule: badge scanner only)", () => {
-    // docs/rules/attendance-checkin.md, Supervision: whoever checks someone out
-    // from the web is not at the reader and cannot re-badge to confirm.
-    it("departs without a confirm when the room would drop below two deep", async () => {
-        const { db, update } = fakeDb([10, 20]);
-
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "session", db));
-        const body = await res.json();
-
-        expect(res.status).toBe(200);
-        expect(body.type).toBe("checkout");
-        expect(body.warning).toBeUndefined();
-        expect(update).not.toHaveBeenCalled();
-        expect(db.visit.findMany).not.toHaveBeenCalled();
-    });
-
-    it("leaves the kiosk badge on the ladder", async () => {
-        const { db } = fakeDb([10, 20]);
-
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, "kiosk", db));
-        const body = await res.json();
-
-        expect(res.status).toBe(400);
-        expect(body.type).toBe("warning");
-        expect(body.error).toMatch(/within 15 seconds/);
-    });
-});

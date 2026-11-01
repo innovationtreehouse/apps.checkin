@@ -1,9 +1,9 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { ReceiptPrincipal } from "../../contract";
 import { db } from "../../db";
 import { checkDuplicate } from "../../lib/receipt-flow";
 import { receiptRepo } from "../../repositories/receipt";
-import { getOrg } from "../../runtime";
+import { getOrgId } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
@@ -40,7 +40,7 @@ describeDb("duplicate detection", () => {
     const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme  Hardware", receiptDate: "2999-01-01" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "acme hardware ", receiptDate: "2999-01-02" }) });
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "N-1" } });
-    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    const row = await receiptRepo.find(second.id, await getOrgId());
     expect(row && (await checkDuplicate(row))).toBe(first.id);
   });
 
@@ -48,7 +48,7 @@ describeDb("duplicate detection", () => {
     const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "" } });
-    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    const row = await receiptRepo.find(second.id, await getOrgId());
     expect(row && (await checkDuplicate(row))).toBeNull();
   });
 
@@ -58,7 +58,7 @@ describeDb("duplicate detection", () => {
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
     await db.receiptDetail.update({ where: { id: first.id }, data: { [field]: a } });
     await db.receiptDetail.update({ where: { id: second.id }, data: { [field]: b } });
-    const row = await receiptRepo.find(second.id, (await getOrg()).id);
+    const row = await receiptRepo.find(second.id, await getOrgId());
     return { first: first.id, matched: row && (await checkDuplicate(row)) };
   }
 
@@ -91,6 +91,31 @@ describeDb("duplicate detection", () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
     expect(second.state).not.toBe("duplicate_flagged");
+  });
+
+  const GIFT = { isInKind: true, donor: { self: true } };
+  const REIMBURSED = { needsReimbursement: true };
+
+  describe.each([
+    ["gift first", GIFT, REIMBURSED],
+    ["reimbursement first", REIMBURSED, GIFT],
+  ])("one purchase as a gift of goods and for reimbursement, %s", (_order, firstKind, secondKind) => {
+    beforeEach(() => {
+      const ports = recordingPorts();
+      configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink });
+    });
+
+    it.each([
+      ["the same file", () => { const file = textFile(); return [file, file]; }],
+      ["a different file with the same retailer, date and total", () => [textFile(), textFile()]],
+    ])("holds the later one for finance on %s", async (_match, files) => {
+      const [a, b] = files();
+      const first = await receiptService.upload(a, "text/plain", { details: manualDetails(), ...firstKind });
+      const second = await receiptService.upload(b, "text/plain", { details: manualDetails(), ...secondKind });
+      expect(second.state).toBe("duplicate_flagged");
+      expect(second.duplicateSuspectReceiptId).toBe(first.id);
+      expect((await receiptService.duplicateGroup(second.id)).members.map((m) => m.id).sort()).toEqual([first.id, second.id].sort());
+    });
   });
 
   it("two identical files uploaded at once: at least one is held, and both are in one group", async () => {

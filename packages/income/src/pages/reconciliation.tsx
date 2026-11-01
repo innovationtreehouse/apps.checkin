@@ -41,7 +41,9 @@ const KIND_HELP: Record<string, string> = {
   DRIFT: "The payout or its deposit changed after it was reconciled",
   POST_FAILED: "Creating the deposit failed",
   OVER_CAP: "Larger than the per-run cap, so it is never created automatically; retry to create it",
-  NEEDS_MAPPING: "Waiting for item decisions on the Items page; books itself on the next run once they are made",
+  HAND_LOADED: "A payout from loaded history, which the app never books itself; book it by hand, then match it, or dismiss it with a reason",
+  PAYOUT_NOT_PAID: "The store no longer shows this payout as paid. If it is paid again the app takes it back; otherwise match it or dismiss it with a reason",
+  NEEDS_MAPPING: "Held for the reason below. Books itself on the next run once items are decided on the Items page, buckets are fixed and order lines arrive. A transaction with no order, or an order whose lines never arrive, stays held: book it by hand, then match it, or dismiss it with a reason",
 };
 
 async function post<T>(path: string, body: unknown): Promise<T> {

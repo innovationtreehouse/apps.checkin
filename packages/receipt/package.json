@@ -18,6 +18,10 @@
     "./nav": {
       "types": "./src/nav.ts",
       "import": "./src/nav.ts"
+    },
+    "./gmail": {
+      "types": "./src/lib/gmail.ts",
+      "import": "./src/lib/gmail.ts"
     }
   },
   "scripts": {
@@ -34,6 +38,7 @@
     "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
+    "@checkin/utils": "*",
     "@checkin/workflows": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",

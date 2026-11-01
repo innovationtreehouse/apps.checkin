@@ -135,11 +135,11 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
 /**
  * Count of jobs needing attention — the nav-badge number. BOTH halves: a job that
  * stopped running, and a job that runs nightly but cannot finish its work. Counting
- * only staleness is what let a sweep fail every row forever behind a green pill.
+ * only staleness would let a sweep fail every row forever behind a green pill.
  *
  * ponytail: shares getCronJobStatuses' two reads rather than keeping a leaner
- * aggregate for the nav-poll path — the panel's "failure detail" IS half the badge
- * now, so a second query shape would only be the same reads spelled twice.
+ * aggregate for the nav-poll path — the panel's "failure detail" IS half the badge,
+ * so a second query shape would only be the same reads spelled twice.
  */
 export async function countUnhealthyCronJobs(now: Date = new Date()): Promise<number> {
     return (await getCronJobStatuses(now)).filter((j) => j.stale || j.lastError).length;

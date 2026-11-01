@@ -1,5 +1,5 @@
 // Public surface of the @checkin/receipt library. Pages and nav are the ./pages/* and ./nav
-// subpath exports; the host mounts the services behind its own routes.
+// subpath exports; the host mounts the route factories under its handler().
 export * from "./contract";
 export * from "./runtime";
 export { db, getPrisma } from "./db";
@@ -14,7 +14,11 @@ export { importReceipts, type ImportRowResult } from "./services/importService";
 export { orgSettingsService } from "./services/orgSettingsService";
 export { createGmailReader } from "./lib/gmail";
 export { createMemoryFileStore } from "./lib/fileStorage";
+export { backfillFiles, verifyFiles, type FileBackfillReport, type FileVerifyReport } from "./services/fileBackfill";
 export { readMailbox, type MailIntakeResult } from "./services/mailIntake";
+export { sweepOutcomeNotices } from "./services/outcomeNotices";
 export { repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepStuckUploaded } from "./services/catchUp";
 export { mailQueueService } from "./services/mailQueueService";
 export { receiptStateCounts, RECEIPT_STATES, type ReceiptStateCount } from "./services/stateCounts";
+export * as routes from "./routes";
+export { MAX_UPLOAD_BODY_BYTES } from "./routes/_shared";

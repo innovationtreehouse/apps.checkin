@@ -4,13 +4,14 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const GET = handler('GET /api/finance-ops/membership-payment-plans', async () => {
     const requests = await prisma.orgMembershipProcess.findMany({
-        // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition (#1080).
+        // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition.
         where: {
             isPaymentPlanRequested: true,
             ...fromWhere('PENDING_PAYMENT'),
@@ -69,7 +70,7 @@ export const POST = withAuth(
             // approving a stale/nonexistent request is a no-op error, mirroring the
             // GET queue's filter.
             const process = await prisma.orgMembershipProcess.findFirst({
-                // Approve probe: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+                // Approve probe: from-state status from the definition; isPaymentPlanRequested stays literal.
                 where: { id: processId, isPaymentPlanRequested: true, ...fromWhere('PENDING_PAYMENT') },
                 select: { id: true },
             });
@@ -99,7 +100,7 @@ export const POST = withAuth(
             return NextResponse.json({ success: true });
         } catch (error) {
             if (error instanceof PaymentError) {
-                return apiError(error.message, error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 409);
+                return apiError(error.message, PAYMENT_ERROR_STATUS[error.code]);
             }
             logger.error("Failed to approve membership payment plan:", error);
             return apiError("Failed to approve payment plan", 500);

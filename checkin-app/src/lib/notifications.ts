@@ -60,8 +60,8 @@ export async function sendNotification(userId: number, eventType: NotificationEv
 
 /**
  * Broadcast a "new program announced" email to members whose household membership
- * covers the program's FULL DURATION (#1061 rule, reused verbatim), respecting each
- * person's notifyNewPrograms / email prefs (default ON). Paced at 5/sec (#1154).
+ * covers the program's FULL DURATION (the isActiveOrgMemberThrough rule), respecting each
+ * person's notifyNewPrograms / email prefs (default ON). Paced at 5/sec.
  *
  * The single gate is maybeAnnounceOnOpen in @/lib/programAnnounce — it owns the
  * announceOnOpen opt-in, the transition rule, and the once-per-lifetime announcedAt
@@ -88,7 +88,7 @@ export async function notifyNewProgramAnnounced(
             const s = u.notificationSettings as unknown as Record<string, boolean> | null;
             if (s?.notifyNewPrograms === false) continue; // opted out of this notice
             if (s?.email === false) continue;              // opted out of all email
-            // ponytail: reuse isActiveOrgMemberThrough verbatim (#1061 — one definition of
+            // ponytail: reuse isActiveOrgMemberThrough verbatim (one definition of
             // "covered for the program year"). N indexed reads over the active-member set;
             // fires once per program, fire-and-forget — fine. If the member base grows,
             // dedupe the horizon per householdId via membershipValidThrough.

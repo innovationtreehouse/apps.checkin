@@ -1,10 +1,12 @@
 import prisma from "@/lib/prisma";
 import { Prisma, type Event } from "@/generated/prisma/client";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
-import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
-import { lockFacility } from "@/lib/facilityLock";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
+import { intervalsOverlap } from "@/lib/attendanceConflicts";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
+import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 
 export interface EventEditor {
     id: number;
@@ -21,7 +23,7 @@ export interface EventEditContext {
     isCoreVolunteer: boolean;
 }
 
-export type EventRefusal = "invalid" | "forbidden" | "facility_closed";
+export type EventRefusal = "invalid" | "forbidden";
 
 export type EventEditResult<T> =
     | { ok: true; value: T }
@@ -77,7 +79,7 @@ export async function editEventTime(
     const { event } = ctx;
     // Core volunteers can't edit or cancel events. Only lead mentors, isSysadmin, board.
     if (!ctx.isSysAdminOrBoard && !ctx.isLeadMentor) {
-        return refuse("forbidden", "Forbidden: Only Lead Mentors or Admins can edit/cancel events");
+        return refuse("forbidden", "Forbidden: Only Program Leaders or Admins can edit/cancel events");
     }
 
     // Block edits to an event that has already finished — rescheduling a
@@ -153,9 +155,11 @@ export interface AttendanceCorrection {
     departedAt?: string;
 }
 
-const FACILITY_CLOSED = "Facility is closed — only a badge at the door opens it. Set a departure time to record this visit as closed.";
-
-/** A lead's Present/Absent correction of one person's visit to this event. */
+/**
+ * A lead's Present/Absent correction of one person's visit to this event. A
+ * Present mark records attendance: it links a kiosk visit covering the session,
+ * or else writes a closed visit. It never opens a visit or ends one.
+ */
 export async function manualEditAttendance(
     ctx: EventEditContext,
     { participantId, status, arrivedAt, departedAt }: AttendanceCorrection,
@@ -190,26 +194,30 @@ export async function manualEditAttendance(
     let dep: Date | null = null;
     let arrival: Date | null = null;
     if (status === 'Present') {
+        const now = new Date();
+        if (now < event.startAt) {
+            return refuse("invalid", "Attendance can be marked once the session has started.");
+        }
         if (!arrivedAt) {
             return refuse("invalid", "Arrival time is required for Present status");
         }
+        if (!departedAt) {
+            return refuse("invalid", "Departure time is required for Present status");
+        }
 
-        const now = new Date();
         const ar = parseVisitTime(arrivedAt, "arrival", now);
         if (!ar.ok) return refuse("invalid", ar.error);
         arrival = ar.value;
 
-        if (departedAt) {
-            const dr = parseVisitTime(departedAt, "departure", now);
-            if (!dr.ok) return refuse("invalid", dr.error);
-            if (!departureAfterArrival(ar.value, dr.value)) {
-                return refuse("invalid", "Departure time must be after arrival time");
-            }
-            if (!withinMaxDuration(ar.value, dr.value)) {
-                return refuse("invalid", "A visit cannot be longer than 24 hours.");
-            }
-            dep = dr.value;
+        const dr = parseVisitTime(departedAt, "departure", now);
+        if (!dr.ok) return refuse("invalid", dr.error);
+        if (!departureAfterArrival(ar.value, dr.value)) {
+            return refuse("invalid", "Departure time must be after arrival time");
         }
+        if (!withinMaxDuration(ar.value, dr.value)) {
+            return refuse("invalid", "A visit cannot be longer than 24 hours.");
+        }
+        dep = dr.value;
     }
 
     // Read-modify-write on this person's visit state, exactly like /api/scan
@@ -217,11 +225,8 @@ export async function manualEditAttendance(
     // correction can't race a kiosk scan or the facility-close sweep, and
     // re-read the visit state inside the lock. Returns an error message to
     // surface as a refusal, or null on success.
-    const failure = await prisma.$transaction(async (tx): Promise<string | null> => {
+    const failure = await prisma.$transaction(async (tx): Promise<string | { openSince: Date } | null> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${targetId})`;
-        if (status === 'Present' && dep === null) {
-            await lockFacility(tx);
-        }
 
         if (status === 'Absent') {
             // An open visit (departedAt = null) means they physically scanned in
@@ -231,7 +236,7 @@ export async function manualEditAttendance(
                 where: { personId: targetId, associatedEventId: eventId, departedAt: null, ...LIVE_VISIT }
             });
             if (openVisit) {
-                return "Participant is currently checked in — check them out before marking Absent";
+                return OPEN_VISIT_REFUSAL;
             }
             // Only closed visits remain; safe to clear on an Absent
             // correction — as a TOMBSTONE, never a row removal.
@@ -274,59 +279,58 @@ export async function manualEditAttendance(
 
         if (status !== 'Present') return null;
 
-        // A person has at most one open LIVE visit
-        // (Visit_one_open_per_participant excludes tombstones), so this finds
-        // it whichever event — if any — it belongs to.
-        const openVisit = await tx.visit.findFirst({
-            where: { personId: targetId, departedAt: null, ...LIVE_VISIT }
-        });
+        const visits = await tx.visit.findMany({ where: { personId: targetId, ...LIVE_VISIT } });
+        const marked = { arrivedAt: arrival!, departedAt: dep };
+        const session = { arrivedAt: event.startAt, departedAt: event.endAt };
+        const existingVisit = visits.find(v => v.associatedEventId === eventId && !v.departedAt)
+            ?? visits.find(v => v.associatedEventId === eventId);
 
-        // A Present mark with no departure leaves the person open, and their
-        // existing open visit IS that presence. Adopt an ordinary walk-in
-        // (unassociated) into this event rather than writing a second open
-        // visit, which the one-open-visit index rejects outright.
-        const adoptable = openVisit !== null && (
-            openVisit.associatedEventId === eventId ||
-            (dep === null && openVisit.associatedEventId === null)
-        );
-        if (dep === null && openVisit && !adoptable) {
-            return "Participant is currently checked in for another session. Check them out, or set a departure time, before marking them Present here.";
+        // Only the kiosk or the nightly close ends an open visit.
+        if (existingVisit && !existingVisit.departedAt) return null;
+
+        const covering = existingVisit ? undefined : visits.find(v => v.associatedEventId === null && (
+            (v.arrivedVia === "SCANNER" && intervalsOverlap(v, session)) ||
+            (!v.departedAt && intervalsOverlap(v, marked))
+        ));
+        if (covering) {
+            await tx.visit.update({ where: { id: covering.id }, data: { associatedEventId: eventId } });
+            await tx.auditLog.create({
+                data: {
+                    actorId: userId,
+                    action: "EDIT",
+                    tableName: "Visit",
+                    affectedEntityId: covering.id,
+                    secondaryAffectedEntity: targetId,
+                    oldData: { associatedEventId: null },
+                    newData: { associatedEventId: eventId, type: "lead_attendance_correction", status: "Present" },
+                }
+            });
+            return null;
         }
 
-        const existingVisit = adoptable ? openVisit : await tx.visit.findFirst({
-            where: { personId: targetId, associatedEventId: eventId, ...LIVE_VISIT }
-        });
+        const overlaps = await findVisitOverlaps(tx, targetId, marked, existingVisit?.id);
+        if (overlaps.openSince) return { openSince: overlaps.openSince };
 
         // arrivedVia records how the arrival was measured, not who last
         // touched the row. A visit this mark creates is staff-asserted
-        // (createTimes -> LEAD_MARKED); an adopted walk-in whose arrival
-        // is unchanged keeps its SCANNER/WEB. Only when a correction
-        // genuinely moves the arrival time does it become a typed clock —
-        // restamped TYPED on the update branch below, so the next
-        // correction weighs it as a self-report. A departure the lead
-        // typed is staff-asserted whatever the arrival was.
+        // (createTimes -> LEAD_MARKED). A correction that keeps the arrival
+        // keeps its source; one that moves it restamps TYPED on the update
+        // branch below, so the next correction weighs it as a self-report. A
+        // departure the lead typed is staff-asserted whatever the arrival was.
         const times = {
             arrivedAt: arrival!,
             departedAt: dep,
-            departedVia: departedAt ? "LEAD_MARKED" : null
+            departedVia: "LEAD_MARKED"
         } satisfies Prisma.VisitUncheckedUpdateInput;
         const createTimes = { ...times, arrivedVia: "LEAD_MARKED" } satisfies Prisma.VisitUncheckedUpdateInput;
 
         // Every human visit-write logs, with
         // secondaryAffectedEntity = the subject so a correction review
         // reads actor ≠ subject without a join (§6.6).
-        // Never reopen a closed visit: a Present mark with no departure
-        // against a visit that has one would null it. facility/visits
-        // PATCH refuses the same edit.
-        if (existingVisit?.departedAt && !dep) {
-            return "This visit is already closed. Provide a departure time, or remove the visit instead of reopening it.";
-        }
-
         if (existingVisit) {
             // Restamp the arrival source only when the lead actually moved
             // the arrival time — a Present mark that only re-times the
-            // departure (or purely adopts a walk-in) leaves the measured
-            // arrival, and its source, untouched. Compare at minute
+            // departure leaves the measured arrival, and its source, untouched. Compare at minute
             // granularity: the client's datetime-local input is minute-
             // precision, so an untouched sub-minute arrival round-trips to a
             // slightly different value; only a whole-minute move is a real
@@ -356,17 +360,11 @@ export async function manualEditAttendance(
                     },
                     newData: {
                         ...times, type: "lead_attendance_correction", status: "Present",
-                        significance: editSignificance(existingVisit, { arrivedAt: arrival!, departedAt: dep }, { byProxy: userId !== targetId }),
+                        ...overlapFlag(overlaps.closedIds, editSignificance(existingVisit, { arrivedAt: arrival!, departedAt: dep }, { byProxy: userId !== targetId })),
                     }
                 }
             });
         } else {
-            // An open mark claims the person is inside now, so it needs a
-            // keyholder already in: nobody, keyholder included, opens the
-            // building from the web. A closed mark is a past record.
-            if (dep === null && await tx.visit.count({ where: KEYHOLDER_IN_BUILDING }) === 0) {
-                return FACILITY_CLOSED;
-            }
             const created = await tx.visit.create({
                 data: { ...createTimes, personId: targetId, associatedEventId: eventId }
             });
@@ -377,7 +375,7 @@ export async function manualEditAttendance(
                     tableName: "Visit",
                     affectedEntityId: created.id,
                     secondaryAffectedEntity: targetId,
-                    newData: { ...createTimes, type: "lead_attendance_correction", status: "Present" }
+                    newData: { ...createTimes, type: "lead_attendance_correction", status: "Present", ...overlapFlag(overlaps.closedIds) }
                 }
             });
         }
@@ -385,6 +383,6 @@ export async function manualEditAttendance(
     }, { maxWait: 5000, timeout: 15000 });
     invalidateAttendanceCache();
 
-    if (failure) return refuse(failure === FACILITY_CLOSED ? "facility_closed" : "invalid", failure);
+    if (failure) return refuse("invalid", typeof failure === "string" ? failure : await openOverlapRefusal(failure.openSince));
     return { ok: true, value: {} };
 }

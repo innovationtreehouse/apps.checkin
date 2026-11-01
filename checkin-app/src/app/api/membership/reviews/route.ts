@@ -5,20 +5,10 @@ import prisma from "@/lib/prisma";
 import { handler, unauthorized } from "@/security/handler";
 import { eligibleReviewProcessIds, attestedUnclearedProcessIds, ownRejectedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
 import { apiError } from "@/lib/api-response";
+import { reviewErrorResponse } from "@/lib/domainErrorResponse";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
-
-const STATUS_FOR: Record<ReviewError["code"], number> = {
-    not_reviewer: 403,
-    not_found: 404,
-    wrong_phase: 409,
-    same_household_applicant: 403,
-    same_household_reviewer: 403,
-    already_attested: 409,
-    not_undoable: 409,
-    invalid_subject: 400,
-};
 
 /**
  * GET /api/membership/reviews — applications this reviewer may attest, with
@@ -119,7 +109,7 @@ export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMemb
         return NextResponse.json({ outcome });
     } catch (error) {
         if (error instanceof ReviewError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: STATUS_FOR[error.code] });
+            return reviewErrorResponse(error);
         }
         logger.error("Attestation error:", error);
         return apiError("Internal Server Error", 500);

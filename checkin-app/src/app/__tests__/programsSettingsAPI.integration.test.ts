@@ -176,8 +176,7 @@ describe('Program Settings API Integration Tests', () => {
              expect(data.program.minAge).toBe(15);
         });
 
-        // #1153: the announce toggle is a lead-mentor setting — the existing gate
-        // (line ~28-33) already allows lead mentors, no new role needed.
+        // The announce toggle is a lead-mentor setting: the route's gate allows lead mentors.
         it('should allow the lead mentor to flip announceOnOpen (persists round-trip)', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
@@ -214,7 +213,7 @@ describe('Program Settings API Integration Tests', () => {
              expect(res.status).toBe(403);
              
              const data = await res.json();
-             expect(data.error).toBe('Forbidden: Only administrators can reassign lead mentors');
+             expect(data.error).toBe('Forbidden: Only administrators can reassign Program Leaders');
         });
 
         it('should allow admins to reassign the leadMentorId', async () => {
@@ -283,7 +282,7 @@ describe('Program Settings API Integration Tests', () => {
              expect(after?.maxParticipants).toBe(before?.maxParticipants);
         });
 
-        it('should allow editing maxAge after creation (regression: was non-updatable)', async () => {
+        it('should allow editing maxAge after creation', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}`, {
@@ -385,7 +384,7 @@ describe('Program Settings API Integration Tests', () => {
                 expect(res.status).toBe(200);
                 expect(mockNotify).not.toHaveBeenCalled();
                 // The skip leaves an audit breadcrumb — a silent no-send is the bug
-                // this trigger exists to avoid (#1164 review, finding 9).
+                // this trigger exists to avoid.
                 expect(infoSpy).toHaveBeenCalledWith(
                     expect.stringContaining(`Program ${program.id} reached UPCOMING+OPEN; announceOnOpen off`)
                 );
@@ -425,7 +424,7 @@ describe('Program Settings API Integration Tests', () => {
             expect(mockNotify).not.toHaveBeenCalled();
         });
 
-        // #1164 review F2/F6: the announcedAt claim is once-per-lifetime and the
+        // The announcedAt claim is once-per-lifetime and the
         // blast is audited — same helper as programs/[id], asserted here so the
         // settings surface can't regress independently.
         it('does NOT re-fire after closing and reopening enrollment, and audits the one blast (F2/F6)', async () => {

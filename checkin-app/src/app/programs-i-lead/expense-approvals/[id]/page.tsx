@@ -1,4 +1,4 @@
-// Stub (#1272): the screen lives in the expense library; checkin passes the route's id and the page it was opened from.
+// Stub: the screen lives in the expense library; checkin passes the route's id and the page it was opened from.
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 import { returnPath } from "@/lib/returnPath";
 

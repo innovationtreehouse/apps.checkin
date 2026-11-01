@@ -8,6 +8,7 @@ import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { MergedBadge } from "@/components/ui/MergedBadge";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
@@ -103,7 +104,7 @@ function usePeopleSearch(query: string, picked: boolean) {
 }
 
 export default function MergeParticipants() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const router = useRouter();
   const [searchA, setSearchA] = useState("");
   const [searchB, setSearchB] = useState("");
@@ -134,6 +135,7 @@ export default function MergeParticipants() {
   // keeper's value). Reset below whenever the keeper flips (Swap Kept/Merged) or
   // analysis lands.
   const [fieldChoices, setFieldChoices] = useState<Record<string, "keep" | "merge">>({});
+  const [emailChangeReason, setEmailChangeReason] = useState("");
 
   const mergeParticipant = keepId === analyzedA?.id ? analyzedB : analyzedA;
   const keepParticipant = keepId === analyzedA?.id ? analyzedA : analyzedB;
@@ -239,7 +241,8 @@ export default function MergeParticipants() {
         body: JSON.stringify({
           keepId,
           mergeId: keepId === pA?.id ? pB?.id : pA?.id,
-          fieldChoices
+          fieldChoices,
+          ...(emailChangeReason.trim() && { emailChangeReason }),
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -495,6 +498,14 @@ export default function MergeParticipants() {
               {bgNotice.makesHouseholdValid && " This makes the household's background check valid: an application waiting on the check may advance, and a paid one may activate the household."}
             </Alert>
           )}
+
+          <TextInput
+            mb="md"
+            label="Reason for the sign-in email change"
+            description="A board member must give one when either person holds a position of trust."
+            value={emailChangeReason}
+            onChange={(e) => setEmailChangeReason(e.currentTarget.value)}
+          />
 
           {error && (
             <Alert color="red" variant="light" mb="md" fw={700}>

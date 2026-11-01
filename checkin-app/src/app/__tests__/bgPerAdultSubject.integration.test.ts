@@ -2,11 +2,10 @@
  * @jest-environment node
  */
 /**
- * Per-adult background-check subjects (#1260). The defect these lock in: clearing a
- * household check used to stamp EVERY lead, so an adult who was never checked read as
- * cleared everywhere — and that false stamp then hid them from the machinery meant to
- * catch it. Every case here needs a TWO-lead household; the pre-existing review suites
- * all use single-lead ones, which is why none of them saw the bug.
+ * Per-adult background-check subjects. Clearing a household check stamps only the
+ * adults it names, so an adult who was never checked does not read as cleared and
+ * stays visible to the machinery meant to catch them. Every case here needs a
+ * TWO-lead household; a single-lead one cannot show the difference.
  */
 
 import { POST as ATTEST } from '@/app/api/membership/reviews/route';
@@ -113,13 +112,13 @@ describe('Per-adult background-check subjects', () => {
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
         expect(proc?.bgClearedAt).not.toBeNull();
         expect(proc?.status).toBe('PENDING_PAYMENT');
-        // householdBgIsFresh is "ANY lead fresh", which rule 1 requires — the fix must
+        // householdBgIsFresh is "ANY lead fresh", which rule 1 requires — per-adult stamping must
         // not tighten the membership gate to "every lead".
         const boundary = new Date(Date.now() + 86_400_000);
         expect(await householdBgIsFresh(hh.householdId, boundary, 12)).toBe(true);
     });
 
-    it('the unnamed adult now reads as NEEDED instead of FRESH', async () => {
+    it('the unnamed adult reads as NEEDED, not FRESH', async () => {
         const hh = await twoLeadHousehold('NagOn');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
@@ -130,8 +129,8 @@ describe('Per-adult background-check subjects', () => {
         const threshold = bgFreshThreshold(boundary, 12);
         const [alex, sam] = await prisma.person.findMany({ where: { id: { in: [hh.alex, hh.sam] } }, orderBy: { id: 'asc' }, select: { dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true } });
         expect(personBgVerdict(alex, boundary, threshold)).toBe('FRESH');
-        // Before the fix Sam read FRESH here, which is what kept them out of
-        // peopleNeedingBgCheck and out of every PERSON_BG trigger.
+        // Reading NEEDED is what keeps Sam in peopleNeedingBgCheck and in every PERSON_BG
+        // trigger.
         expect(personBgVerdict(sam, boundary, threshold)).toBe('NEEDED');
     });
 
@@ -239,8 +238,7 @@ describe('Per-adult background-check subjects', () => {
     // ── An approval that names nobody ────────────────────────────────────────
     it('an approval naming nobody counts toward nobody, and reports the count it counted', async () => {
         const hh = await twoLeadHousehold('Legacy');
-        // An approval whose subject column is null: what a review in flight across the
-        // subject migration (20260802120000, nullable, no backfill) carries.
+        // An approval whose nullable subject column is empty.
         await prisma.backgroundCheckAttestation.create({ data: { processId: hh.processId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: null } });
 
         as(rev2, { isBackgroundCheckReviewer: true });
@@ -255,9 +253,8 @@ describe('Per-adult background-check subjects', () => {
         expect(await bgDate(hh.alex)).toBeNull();
         expect(await bgDate(hh.sam)).toBeNull();
 
-        // The reported defect: attest() answered `approvals: 2` here while nothing
-        // cleared, telling the reviewer the review was done. The count it reports is now
-        // the count that decided `clears`, so the two can never disagree.
+        // attest() reports the count that decided `clears`, so it cannot answer
+        // `approvals: 2` while nothing cleared and tell the reviewer the review is done.
         expect((await res.json()).outcome.approvals).toBe(1);
     });
 
@@ -340,7 +337,7 @@ describe('Per-adult background-check subjects', () => {
     describe('blanket-stamp worklist', () => {
         const CLEARED_AT = new Date('2026-07-15T12:00:00.000Z');
 
-        /** A household as the old blanket stamp left it: every lead stamped with the
+        /** A household carrying a blanket stamp: every lead stamped with the
          *  process's own bgClearedAt, to the millisecond. */
         async function blanketStamped(label: string, opts: { consentBy?: 'lead' | 'board'; namedAttestation?: boolean } = {}) {
             const hh = await twoLeadHousehold(label);
@@ -426,10 +423,9 @@ describe('Per-adult background-check subjects', () => {
         expect(data.mergeInheritedBgChecks.map((r: { personId: number }) => r.personId)).toContain(hh.alex);
     });
 
-    // #1456 phase 2b. §6's own comment says this list is permanent, not a cleanup
-    // queue — but both its predicate and its `fromName` came from the tombstone
-    // Person row, which 2b-3 deletes. The PersonMerge snapshot is what keeps the
-    // answer: without it the board stops being told whose check a survivor holds.
+    // This list is permanent, not a cleanup queue. The merged-away Person row can be
+    // gone, so its predicate and `fromName` come from the PersonMerge snapshot: without
+    // it the board stops being told whose check a survivor holds.
     it('still names the source after the merged-away Person row is gone', async () => {
         const hh = await twoLeadHousehold('MergeArchived');
         const checkedAt = new Date('2026-06-01T00:00:00.000Z');
@@ -441,8 +437,7 @@ describe('Per-adult background-check subjects', () => {
                 snapshot: { name: 'Sam Archived', email: null, lastBackgroundCheck: checkedAt.toISOString() },
             },
         });
-        // Sam's Person row never existed as a tombstone here: this is the 2b-3 state,
-        // where the archive is the only record of the merge.
+        // Sam's Person row is deleted, so the archive is the only record of the merge.
         await prisma.person.delete({ where: { id: hh.sam } });
 
         as(board, { isBoardMember: true });
@@ -453,8 +448,8 @@ describe('Per-adult background-check subjects', () => {
         expect(row.fromName).toBe('Sam Archived');
     });
 
-    // Both records exist during 2b, and they say the same thing — so the survivor
-    // must appear once, from the archive, not twice.
+    // A tombstone and an archive row can both exist and say the same thing, so the
+    // survivor must appear once, from the archive, not twice.
     it('prefers the archive over the tombstone without double-counting', async () => {
         const hh = await twoLeadHousehold('MergeBoth');
         const checkedAt = new Date('2026-06-01T00:00:00.000Z');

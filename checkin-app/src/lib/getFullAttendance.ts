@@ -30,7 +30,7 @@ import { LATE_CLOSE_SKEW_MS } from "@/lib/visitTimes";
  *   none of them: phone and the emergency-contact modal are both gated on
  *   `!isKioskMode` in /attendance/current/page.tsx. Emergency contacts aren't
  *   even fetched on this path. Same minimization as the sibling kiosk
- *   certifications grid (#329).
+ *   certifications grid.
  *
  * `counts`/`safety` are identical either way — they are aggregates.
  *
@@ -84,8 +84,8 @@ async function computeFullAttendance(kiosk: boolean) {
                 select: {
                     id: true,
                     // email is read only to resolve the name fallback below and never
-                    // leaves this function (M1) — same pattern as the certifications
-                    // grid (#329). googleId/isSysadmin aren't rendered anywhere downstream.
+                    // leaves this function — same pattern as the certifications
+                    // grid. googleId/isSysadmin aren't rendered anywhere downstream.
                     email: true,
                     name: true,
                     // Worn on the badge and shown on the kiosk in place of the first
@@ -95,7 +95,7 @@ async function computeFullAttendance(kiosk: boolean) {
                     // dateOfBirth is read on both paths (it computes isYouth / the
                     // counts) but only SHIPS on the privileged path.
                     dateOfBirth: true,
-                    // Adults 26+ have their DoB deliberately stripped (#1165) and
+                    // Adults 26+ have their DoB deliberately stripped and
                     // carry this flag instead — the safety calc must honor it.
                     isDeclaredAdult: true,
                     householdId: true,
@@ -124,8 +124,8 @@ async function computeFullAttendance(kiosk: boolean) {
 
     // Pre-compute isYouth once per visit to avoid repeated calculations.
     // This map feeds the two-deep safety calc: a declared adult (null DoB is
-    // the NORMAL state for 26+, #1165) counts as an adult; only a truly
-    // unknown person — no DoB, not declared — fails closed as youth (#300),
+    // the NORMAL state for 26+) counts as an adult; only a truly
+    // unknown person — no DoB, not declared — fails closed as youth,
     // never as a supervising adult.
     const youthMap = new Map<number, boolean>();
     for (const v of activeVisits) {
@@ -150,7 +150,7 @@ async function computeFullAttendance(kiosk: boolean) {
         if (!sv.person.householdId) return true;
         return !adultVisits.some(av => av.person.householdId === sv.person.householdId);
     });
-    // Two deep is two SUPERVISING adults, not two bodies over 18 (#1550) — the
+    // Two deep is two SUPERVISING adults, not two bodies over 18 — the
     // same test the departure interrupt uses. ponytail: its own query rather than
     // widening the select above, so both surfaces run one shared rule. Asked only
     // when a youth is unaccompanied — the only case the flag can be true — so an
@@ -173,17 +173,16 @@ async function computeFullAttendance(kiosk: boolean) {
     // A keyholder check-in scanned by the latest close but delivered after it
     // ran is one that close should have ended, so it does not reopen the
     // building. Its scan time is before the close ran; a live arrival after the
-    // close is stamped after it, and reopens. The nightly sweep runs on an empty
-    // building, so any arrival within the skew of it is such a check-in.
+    // close is stamped after it, and reopens.
     const lastClose = keyholderVisits.length === 0 ? null : await prisma.facilityClose.findFirst({
         where: { executedAt: { not: null } },
         orderBy: { closedAt: "desc" },
-        select: { closedAt: true, executedAt: true, via: true },
+        select: { closedAt: true, executedAt: true },
     });
     const opensBuilding = (arrivedAt: Date) =>
         !lastClose
         || arrivedAt.getTime() > lastClose.closedAt.getTime() + LATE_CLOSE_SKEW_MS
-        || (lastClose.via !== "NIGHTLY_SWEEP" && arrivedAt >= lastClose.executedAt!);
+        || arrivedAt >= lastClose.executedAt!;
 
     const safety = {
         facilityOpen: keyholderVisits.some(v => opensBuilding(v.arrivedAt)),
@@ -192,11 +191,11 @@ async function computeFullAttendance(kiosk: boolean) {
             && supervisingAdultCount(await supervisingAdultVisits()) < MIN_SUPERVISING_ADULTS,
     };
 
-    // Drop email/googleId from the wire (M1): resolve the same name-or-email-prefix
+    // Drop email/googleId from the wire: resolve the same name-or-email-prefix
     // fallback the UI already falls back to (`name || email.split("@")[0]`) here,
     // server-side, so `name` is always populated and the raw address never ships.
     // Strip the raw included `person` (carries email) out of the spread and re-emit
-    // a sanitized DTO under the unchanged wire key `participant` (API contract).
+    // a sanitized DTO under the wire key `participant` (API contract).
     const kioskLabels = kiosk ? getKioskDisplayNames(activeVisits.map(v => v.person)) : null;
     const attendance = activeVisits.map(({ person, ...v }) => {
         const displayName = person.name?.trim() || person.email?.split("@")[0] || null;

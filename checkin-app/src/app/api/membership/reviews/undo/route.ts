@@ -1,4 +1,5 @@
 import { handler, ApiResponseError, badRequest, unauthorized } from "@/security/handler";
+import { REVIEW_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { undoOwnApproval, ReviewError } from "@/lib/membership/review";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export const POST = handler("POST /api/membership/reviews/undo", async ({ req, a
     try {
         await undoOwnApproval(auth.user.id, processId, reason);
     } catch (e) {
-        if (e instanceof ReviewError) throw new ApiResponseError(e.code === "not_found" ? 404 : 409, e.message);
+        if (e instanceof ReviewError) throw new ApiResponseError(REVIEW_ERROR_STATUS[e.code], e.message);
         throw e;
     }
     return {};

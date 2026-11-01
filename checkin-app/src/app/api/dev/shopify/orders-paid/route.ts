@@ -6,6 +6,7 @@ import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { checkoutVariantId } from "@/lib/programs/variants";
+import { signCheckout } from "@/lib/programs/checkoutSignature";
 
 export const dynamic = "force-dynamic";
 
@@ -71,7 +72,7 @@ async function fireMembership(processId: number): Promise<NextResponse> {
 
     // A real paid order carries the membership variant id in its line_items; the
     // inbound handler matches it against BoardSettings to confirm the order is for
-    // the membership product (#624/H2). The mock must echo a configured variant id
+    // the membership product. The mock must echo a configured variant id
     // or the webhook lands as a no-membership-item anomaly, not an activation.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     // Mock stands in for the manual BoardSettings variant a local seed never sets;
@@ -112,12 +113,14 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
     // stale/forged request, not a real checkout.
     const pending = await prisma.programParticipant.findMany({
         where: { programId, personId: { in: participantIds }, status: "PENDING" },
-        select: { personId: true },
+        select: { personId: true, person: { select: { householdId: true } } },
     });
     if (pending.length === 0) {
         return apiError("No matching participants awaiting payment", 404);
     }
     const pendingIds = pending.map((p) => p.personId);
+    // Signed for the household the program page's checkout would have signed for.
+    const checkoutSig = signCheckout(programId, pendingIds, pending[0].person.householdId);
 
     // Mirror the membership variant echo: the program branch of the inbound
     // handler fails CLOSED unless the paid order's line_items contain one of the
@@ -141,6 +144,7 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
         note_attributes: [
             { name: "CheckMeIn_Account_ID", value: pendingIds.join(",") },
             { name: "Program_ID", value: String(programId) },
+            { name: "CheckMeIn_Checkout_Sig", value: checkoutSig },
         ],
         line_items: [{ variant_id: variantId, quantity: pendingIds.length }],
     });

@@ -7,7 +7,6 @@ let mockLoads: Record<string, unknown> = {};
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
-  useBuckets: () => [],
   paged: (path: string, page: number) => `${path}?page=${page}`,
   PAGE_SIZE: 50,
   send: jest.fn(),

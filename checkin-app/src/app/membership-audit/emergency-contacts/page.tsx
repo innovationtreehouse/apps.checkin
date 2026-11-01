@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Badge, Button, Card, Center, Group, Paper, Stack, Text, Title } from "@mantine/core";
+import { useState } from "react";
+import { Badge, Button, Card, Group, Paper, Stack, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
+import { useLoad } from "@/lib/api";
 import { formatPhone } from "@/lib/phone";
-import { notifications } from "@mantine/notifications";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type Lead = { id: number; name: string | null; phone: string | null; email: string | null };
@@ -15,42 +16,13 @@ type Household = { id: number; name: string | null; leads: Lead[] };
  * emergency contact. Each row links to the admin household editor to fix it.
  */
 export default function MissingEmergencyContactsPage() {
-  const [households, setHouseholds] = useState<Household[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { data, error, reload } = useLoad<{ households?: Household[] }>("/api/membership-audit/households-missing-contact");
   const [editHouseholdId, setEditHouseholdId] = useState<number | null>(null);
 
-  const fetchHouseholds = useCallback(() => fetch("/api/membership-audit/households-missing-contact")
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHouseholds(data.households ?? []);
-      } else {
-        setError("Failed to load households. Ensure you have the proper authorizations.");
-      }
-    })
-    .catch((e) => {
-      console.error("Failed to load households missing contacts:", e);
-      notifications.show({ color: "red", message: "Network error loading households.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  if (error) return <LoadError what="households missing a contact" message={error} onRetry={reload} />;
+  if (!data) return <PageLoader />;
 
-  useEffect(() => {
-    fetchHouseholds();
-  }, [fetchHouseholds]);
-
-  if (loading) return <PageLoader />;
-
-  if (error) {
-    return (
-      <Center mih="60vh">
-        <Title order={3} c="red">{error}</Title>
-      </Center>
-    );
-  }
+  const households = data.households ?? [];
 
   return (
     <Stack>
@@ -102,7 +74,7 @@ export default function MissingEmergencyContactsPage() {
         householdId={editHouseholdId}
         opened={editHouseholdId !== null}
         onClose={() => setEditHouseholdId(null)}
-        onSaved={() => fetchHouseholds()}
+        onSaved={reload}
       />
     </Stack>
   );

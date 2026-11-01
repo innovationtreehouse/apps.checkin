@@ -9,7 +9,12 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
-    }
+    },
+    "./lockGate": {
+      "types": "./src/lockGate.ts",
+      "import": "./src/lockGate.ts"
+    },
+    "./vitest-plugin": "./src/vitestPlugin.mjs"
   },
   "scripts": {
     "build": "tsc",

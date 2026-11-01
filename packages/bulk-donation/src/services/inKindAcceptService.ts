@@ -1,10 +1,10 @@
-// The in-kind accept step (design #2182): every gift, with or without a receipt, is accepted,
+// The in-kind accept step (docs/rules/revenue.md, Donations): every gift, with or without a receipt, is accepted,
 // refused or returned by a finance holder who is outside the uploader's or recorder's household,
 // or by a Board member when every finance holder is conflicted. The screen's warnings never block.
 import { z } from "zod";
 import { db, type DbOrTx } from "../db";
 import { getInKindCapital, getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
-import { recordDonorDataReads, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordEvent } from "../repositories/audit";
 import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
@@ -25,6 +25,8 @@ export const InKindDecisionInputSchema = z.object({
     .optional(),
   /** The decider's attestation that they are outside the donor's household; the app cannot check it. */
   confirmOutsideDonorHousehold: z.literal(true),
+  /** The decider's attestation that the goods exist and arrived, not only the receipt; a first accept requires it. */
+  confirmGoodsReceived: z.literal(true).optional(),
 });
 export type InKindDecisionInput = z.infer<typeof InKindDecisionInputSchema>;
 
@@ -514,6 +516,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
     const decided: DecisionData = { decisionOutcome: outcome, decidedByUserId: callerId, decidedAt: now, donorHouseholdAttestedAt: now };
     let lines = gift.lines;
     if (outcome === "ACCEPTED") {
+      if (!input.confirmGoodsReceived) throw new ServiceError(400, "Accepting a gift confirms the goods exist and arrived");
       Object.assign(decided, { budgetOwnerId: await assignableBucket(input.bucketId), bucketAssignedByUserId: callerId, bucketAssignedAt: now });
       if (source === "receipt") {
         if (input.lineValues) throw new ServiceError(400, "A gift with a receipt keeps the receipt's values");
@@ -546,7 +549,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       ...entity(gift),
       eventType: "IN_KIND_DECIDED",
       ...audit,
-      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...warn },
+      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}), ...warn },
     });
     return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
   });
@@ -617,11 +620,10 @@ function readHistory(orgId: string, entityType: "in_kind" | "manual_in_kind", en
 }
 
 /**
- * One gift for its own page: header, donor, lines, state, history and where it went. The donor
- * read is audited. A gift without a receipt loads its goods under its own inventory source key;
+ * One gift for its own page: header, donor, lines, state, history and where it went. A gift without a receipt loads its goods under its own inventory source key;
  * a receipt gift's goods are received through its receipt, so it has none.
  */
-async function getGift(orgId: string, source: InKindSource, id: number, reader: DonorReadContext) {
+async function getGift(orgId: string, source: InKindSource, id: number) {
   const gift = await loadGift(db, orgId, source, id);
   if (!gift) throw new ServiceError(404, "In-kind gift not found");
   const entityType = source === "receipt" ? "in_kind" : "manual_in_kind";
@@ -634,7 +636,6 @@ async function getGift(orgId: string, source: InKindSource, id: number, reader: 
     readHistory(orgId, entityType, entityId),
     getInKindCapital().awaitingReview(orgId),
   ]);
-  await recordDonorDataReads(db, orgId, entityType, reader, [entityId]);
   const sides = bookings.get(bookingKey(source, id)) ?? [];
   const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), postings.get(bookingKey(source, id)));
   const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);

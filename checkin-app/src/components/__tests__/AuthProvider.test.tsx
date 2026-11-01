@@ -1,6 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react';
-import AuthProvider, { viewerFromSession } from '../AuthProvider';
+import AuthProvider, { expireSession, viewerFromSession } from '../AuthProvider';
 
 const { useViewer } = jest.requireActual<typeof import('@checkin/component-ui')>('@checkin/component-ui');
 
@@ -44,5 +44,14 @@ describe('AuthProvider', () => {
 
   it('maps a signed-out session to no viewer', () => {
     expect(viewerFromSession(null)).toBeNull();
+  });
+
+  it('sends an expired session to / with a full page load, unless already there', () => {
+    const assign = jest.fn();
+    expireSession({ pathname: '/expense', assign });
+    expect(assign).toHaveBeenCalledWith('/');
+    assign.mockClear();
+    expireSession({ pathname: '/', assign });
+    expect(assign).not.toHaveBeenCalled();
   });
 });

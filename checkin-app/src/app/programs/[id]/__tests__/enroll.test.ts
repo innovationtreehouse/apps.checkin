@@ -51,33 +51,33 @@ describe('aggregateEnrollOutcomes', () => {
 });
 
 describe('buildShopifyCheckoutUrl', () => {
-    it('charges qty=N of the single variant with comma-joined account ids', () => {
-        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11, 22, 33], 7);
+    it('charges qty=N of the single variant with comma-joined account ids and the encoded checkout signature', () => {
+        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11, 22, 33], 7, 'sig+/=');
         expect(url).toBe(
-            'https://shop.example.com/cart/gid123:3?attributes[CheckMeIn_Account_ID]=11,22,33&attributes[Program_ID]=7'
+            'https://shop.example.com/cart/gid123:3?attributes[CheckMeIn_Account_ID]=11,22,33&attributes[Program_ID]=7&attributes[CheckMeIn_Checkout_Sig]=sig%2B%2F%3D'
         );
     });
 
     it('uses qty=1 and a single account id for a lone enrollee', () => {
-        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11], '7');
+        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11], '7', 'sig+/=');
         expect(url).toBe(
-            'https://shop.example.com/cart/gid123:1?attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7'
+            'https://shop.example.com/cart/gid123:1?attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7&attributes[CheckMeIn_Checkout_Sig]=sig%2B%2F%3D'
         );
     });
 
     // Single-pool model: a member's checkout carries a server-minted discount
     // code (mintMemberDiscountCode) prepended, mirroring buildMembershipCheckoutUrl.
     it('prepends discount=<code> when a discount code is given', () => {
-        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11], '7', 'PRG7-ABCD');
+        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11], '7', 'sig+/=', 'PRG7-ABCD');
         expect(url).toBe(
-            'https://shop.example.com/cart/gid123:1?discount=PRG7-ABCD&attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7'
+            'https://shop.example.com/cart/gid123:1?discount=PRG7-ABCD&attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7&attributes[CheckMeIn_Checkout_Sig]=sig%2B%2F%3D'
         );
     });
 
     it('omits the discount param entirely when the code is null/undefined', () => {
-        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11], '7', null);
+        const url = buildShopifyCheckoutUrl('shop.example.com', 'gid123', [11], '7', 'sig+/=', null);
         expect(url).toBe(
-            'https://shop.example.com/cart/gid123:1?attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7'
+            'https://shop.example.com/cart/gid123:1?attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7&attributes[CheckMeIn_Checkout_Sig]=sig%2B%2F%3D'
         );
     });
 });

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Admission for the mail-alias routes (1265_RECEIPT_MAIL_ALIASES.md §8, A2),
+ * Admission for the mail-alias routes (docs/rules/people-households.md, Identity and age),
  * asserted on the registry entries in registry/receipt.ts: FINANCE and the
  * BOARD, with the same `everyones:pii` view, and nobody else.
  */

@@ -8,9 +8,10 @@
  *     no_household/not_lead/wrong_phase), the mock-mode PDF short-circuit, and
  *     the already-claimed-ids short-circuit.
  *   - advanceExternalIfComplete: the volunteer-designation allowlist is matched
- *     at the PENDING_PAYMENT transition (#874) — and only by the race winner.
+ *     at the PENDING_PAYMENT transition — and only by the race winner.
  */
-import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
+import { backgroundCheckProvider } from '@/lib/membership/background-check/manual-adapter';
+import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, getOwnBackgroundCheck, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -104,7 +105,7 @@ describe('setZohoEnvelope', () => {
         const result = await setZohoEnvelope(1, 'req-1', 5);
 
         // zohoActionId is nulled so re-pointing the envelope can't leave the old
-        // action paired with the new request — restores the claimable state (#877).
+        // action paired with the new request — restores the claimable state.
         const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
         expect(call.data).toEqual({ zohoEnvelopeId: 'req-1', zohoActionId: null, zohoSignerPersonId: null });
         expect(call.where.id).toBe(1);
@@ -224,6 +225,96 @@ describe('selfRecordBgConsent', () => {
         expect(status.bgConsented).toBe(true);
         expect(status.contractSigned).toBe(false);
     });
+
+    describe('own PERSON_BG obligation', () => {
+        const personBg = { id: 30, kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', subjectPersonId: 1, bgConsentAt: null };
+        const adultMember = { ...leadUser, isHouseholdLead: false, household: { orgMembership: { processes: [] } } };
+
+        beforeEach(() => {
+            prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+        });
+
+        it('lets a non-lead record consent on their own obligation, as the audit actor, and pings reviewers', async () => {
+            prisma.person.findUnique.mockResolvedValue(adultMember);
+            prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            prisma.orgMembershipProcess.findUnique
+                .mockResolvedValueOnce(personBg) // markBgConsent guard
+                .mockResolvedValueOnce({ ...personBg, bgConsentAt: new Date() }); // advanceExternalIfComplete read
+
+            const status = await selfRecordBgConsent(1);
+
+            expect(prisma.orgMembershipProcess.findFirst).toHaveBeenCalledWith(
+                expect.objectContaining({ where: { kind: 'PERSON_BG', subjectPersonId: 1, status: 'PENDING_BG_REVIEW' } }),
+            );
+            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
+                expect.objectContaining({ where: expect.objectContaining({ id: 30, bgConsentAt: null, kind: { in: ['PERSON_BG'] } }) }),
+            );
+            expect(prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: 1, affectedEntityId: 30 }) });
+            expect(notifyReviewers).toHaveBeenCalledTimes(1);
+            expect(status.bgConsented).toBe(true);
+        });
+
+        it('takes the obligation of a person with no household', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...adultMember, householdId: null, household: null });
+            prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            prisma.orgMembershipProcess.findUnique
+                .mockResolvedValueOnce(personBg)
+                .mockResolvedValueOnce({ ...personBg, bgConsentAt: new Date() });
+
+            await expect(selfRecordBgConsent(1)).resolves.toMatchObject({ bgConsented: true });
+        });
+
+        it('a second attestation writes nothing and pings nobody', async () => {
+            const consented = { ...personBg, bgConsentAt: new Date() };
+            prisma.person.findUnique.mockResolvedValue(adultMember);
+            prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: consented.bgConsentAt });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+            prisma.orgMembershipProcess.findUnique.mockResolvedValue(consented);
+
+            const status = await selfRecordBgConsent(1);
+
+            expect(prisma.auditLog.create).not.toHaveBeenCalled();
+            expect(notifyReviewers).not.toHaveBeenCalled();
+            expect(status.bgConsented).toBe(true);
+        });
+
+        it('refuses a non-lead with no obligation, writing nothing', async () => {
+            prisma.person.findUnique.mockResolvedValue(adultMember);
+            prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
+
+            await expect(selfRecordBgConsent(1)).rejects.toMatchObject({ code: 'not_lead' });
+            expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+            expect(prisma.auditLog.create).not.toHaveBeenCalled();
+        });
+
+        it('a lead with an application awaiting consent attests the household, never their own obligation', async () => {
+            prisma.person.findUnique.mockResolvedValue(leadUser);
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            prisma.orgMembershipProcess.findUnique
+                .mockResolvedValueOnce(pendingProcess)
+                .mockResolvedValueOnce({ ...pendingProcess, bgConsentAt: new Date() });
+
+            await selfRecordBgConsent(1);
+
+            expect(prisma.orgMembershipProcess.findFirst).not.toHaveBeenCalled();
+            expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].where).toMatchObject({ id: 20 });
+        });
+
+        it('a lead with no application awaiting consent attests their own obligation', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...leadUser, household: { orgMembership: { processes: [] } } });
+            prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            prisma.orgMembershipProcess.findUnique
+                .mockResolvedValueOnce(personBg)
+                .mockResolvedValueOnce({ ...personBg, bgConsentAt: new Date() });
+
+            await selfRecordBgConsent(1);
+
+            expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].where).toMatchObject({ id: 30, kind: { in: ['PERSON_BG'] } });
+        });
+    });
 });
 
 describe('advanceExternalIfComplete', () => {
@@ -241,7 +332,7 @@ describe('advanceExternalIfComplete', () => {
         prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 7 });
     });
 
-    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition (#874) and pings reviewers', async () => {
+    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition and pings reviewers', async () => {
         const advanced = { ...readyProcess, status: 'PENDING_PAYMENT' };
         prisma.orgMembershipProcess.findUnique
             .mockResolvedValueOnce(readyProcess) // pre-tx eligibility read
@@ -435,7 +526,7 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(url).toBe('https://sign.example/embed-existing');
     });
 
-    it('dead stored request (declined/expired) → clears the ids and creates a fresh one (#876)', async () => {
+    it('dead stored request (declined/expired) → clears the ids and creates a fresh one', async () => {
         prisma.person.findUnique.mockResolvedValue({
             ...leadUser,
             household: { orgMembership: { processes: [{ ...pendingProcess, zohoEnvelopeId: 'req-dead', zohoActionId: 'act-dead' }] } },
@@ -679,5 +770,47 @@ describe('resetSigning', () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, zohoEnvelopeId: null, zohoSignerPersonId: null });
         await expect(resetSigning(20, 9, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(zohoSign.recallRequest).not.toHaveBeenCalled();
+    });
+});
+
+describe('getOwnBackgroundCheck', () => {
+    const householdProcess = { id: 20, status: 'PENDING_EXTERNAL_ACTION' as const };
+    const adult = { id: 1, householdId: 7, isHouseholdLead: false, isSysadmin: false, household: { orgMembership: { processes: [householdProcess] } } };
+
+    beforeEach(() => {
+        jest.spyOn(backgroundCheckProvider, 'getConsentDeepLink').mockResolvedValue('https://averity.example/consent');
+    });
+
+    it('offers a non-lead their own check awaiting review, with the consent link', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+
+        await expect(getOwnBackgroundCheck(adult)).resolves.toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+        expect(prisma.orgMembershipProcess.findFirst).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { kind: 'PERSON_BG', subjectPersonId: 1, status: 'PENDING_BG_REVIEW' }, select: { id: true, bgConsentAt: true } }),
+        );
+    });
+
+    it('reports consent already on file', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: new Date() });
+
+        await expect(getOwnBackgroundCheck(adult)).resolves.toMatchObject({ consented: true });
+    });
+
+    it('is null when the person has no check awaiting review', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
+
+        await expect(getOwnBackgroundCheck(adult)).resolves.toBeNull();
+    });
+
+    it("is null for a lead whose consent goes to the household's application", async () => {
+        await expect(getOwnBackgroundCheck({ ...adult, isHouseholdLead: true })).resolves.toBeNull();
+        expect(prisma.orgMembershipProcess.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("offers a lead their own check once the household's application no longer awaits consent", async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 30, bgConsentAt: null });
+        const lead = { ...adult, isHouseholdLead: true, household: { orgMembership: { processes: [{ ...householdProcess, status: 'PENDING_PAYMENT' as const }] } } };
+
+        await expect(getOwnBackgroundCheck(lead)).resolves.toMatchObject({ consented: false });
     });
 });

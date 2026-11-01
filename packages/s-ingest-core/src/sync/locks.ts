@@ -1,5 +1,5 @@
 /**
- * Advisory-lock guard for the ingestion fleet (F19). The fleet is intended to run at Lambda
+ * Advisory-lock guard for the ingestion fleet. The fleet is intended to run at Lambda
  * reserved concurrency = 1, but raw-log dedup, watermark advance and the bulk state machine
  * must not rest on that deployment flag alone: two overlapping runs for one key fail fast
  * with {@link ConcurrentRunError} instead of corrupting state.

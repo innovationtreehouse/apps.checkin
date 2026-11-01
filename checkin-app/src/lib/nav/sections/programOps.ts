@@ -6,6 +6,8 @@
 import type { NavSection } from "@/lib/nav/types";
 import { SYSADMIN_OR_BOARD, anyRole } from "@/lib/nav/gates";
 
+export const PROGRAM_OPS_ROLES = SYSADMIN_OR_BOARD;
+
 export const PROGRAM_OPS: NavSection = {
   id: "program-ops",
   label: "Program Ops",
@@ -16,5 +18,5 @@ export const PROGRAM_OPS: NavSection = {
     { name: "One Time Events", href: "/program-ops/events", icon: "📋" },
     { name: "New One Time Event", href: "/program-ops/sessions", icon: "📅" },
   ],
-  visible: anyRole(SYSADMIN_OR_BOARD),
+  visible: anyRole(PROGRAM_OPS_ROLES),
 };

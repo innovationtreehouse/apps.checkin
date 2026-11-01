@@ -14,6 +14,7 @@ import { Client } from "pg";
 import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
+import { signCheckout } from "@/lib/programs/checkoutSignature";
 
 jest.mock("@/lib/email", () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -21,6 +22,7 @@ jest.mock("@/lib/email", () => ({
 }));
 
 const TAG = "reconcile-mirror-source-test";
+process.env.NEXTAUTH_SECRET ||= "integration-test-nextauth-secret";
 // One mirror per integration worker DB, so parallel workers never share it.
 const MIRROR_DB = `${new URL(process.env.DATABASE_URL!).pathname.slice(1)}_mirror`;
 const MIGRATIONS = path.resolve(__dirname, "../../../../../packages/s-ingest-core/prisma/migrations");
@@ -28,6 +30,7 @@ const MIGRATIONS = path.resolve(__dirname, "../../../../../packages/s-ingest-cor
 let mirror: Client;
 let restoreBoardSettings: () => Promise<void> = async () => {};
 let nextOrder = 1;
+const MEMBERSHIP_VARIANT = `${TAG}-membership`;
 
 function urlFor(db: string): string {
     const url = new URL(process.env.DATABASE_URL!);
@@ -101,7 +104,7 @@ async function enrollment(email: string) {
         data: { appliesToYear: 2026, name: `Program ${TAG} ${email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
     });
     await prisma.programParticipant.create({ data: { programId: program.id, personId: person.id, status: "PENDING" } });
-    return { programId: program.id, personId: person.id, variantId };
+    return { programId: program.id, personId: person.id, variantId, checkoutSig: signCheckout(program.id, [person.id], hh.id) };
 }
 
 const processStatus = async (id: number) => (await prisma.orgMembershipProcess.findUnique({ where: { id } }))?.status;
@@ -120,7 +123,7 @@ beforeAll(async () => {
     process.env.SHOPIFY_READ_DATABASE_URL = urlFor(MIRROR_DB);
 
     restoreBoardSettings = await snapshotBoardSettings();
-    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
+    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
     await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...settings }, update: settings });
 }, 60_000);
 
@@ -152,10 +155,10 @@ describe("reconcile reads only API-synced mirror rows", () => {
         const handPrg = await enrollment(`hand-prg-${TAG}@ex.com`);
         const apiPrg = await enrollment(`api-prg-${TAG}@ex.com`);
 
-        const handOrder = await mirrorOrder({ source: "HAND_LOADED", attrs: { Membership_Process_ID: String(handProc) } });
-        const testOrder = await mirrorOrder({ source: "TEST_LOADED", attrs: { Membership_Process_ID: String(testProc) } });
-        await mirrorOrder({ source: "BACKFILL", attrs: { Membership_Process_ID: String(backfillProc) } });
-        await mirrorOrder({ source: null, attrs: { Membership_Process_ID: String(nullProc) } });
+        const handOrder = await mirrorOrder({ source: "HAND_LOADED", attrs: { Membership_Process_ID: String(handProc) }, variantId: MEMBERSHIP_VARIANT });
+        const testOrder = await mirrorOrder({ source: "TEST_LOADED", attrs: { Membership_Process_ID: String(testProc) }, variantId: MEMBERSHIP_VARIANT });
+        await mirrorOrder({ source: "BACKFILL", attrs: { Membership_Process_ID: String(backfillProc) }, variantId: MEMBERSHIP_VARIANT });
+        await mirrorOrder({ source: null, attrs: { Membership_Process_ID: String(nullProc) }, variantId: MEMBERSHIP_VARIANT });
         const handPrgOrder = await mirrorOrder({
             source: "HAND_LOADED",
             attrs: { Program_ID: String(handPrg.programId), CheckMeIn_Account_ID: String(handPrg.personId) },
@@ -163,7 +166,7 @@ describe("reconcile reads only API-synced mirror rows", () => {
         });
         await mirrorOrder({
             source: "INCREMENTAL",
-            attrs: { Program_ID: String(apiPrg.programId), CheckMeIn_Account_ID: String(apiPrg.personId) },
+            attrs: { Program_ID: String(apiPrg.programId), CheckMeIn_Account_ID: String(apiPrg.personId), CheckMeIn_Checkout_Sig: apiPrg.checkoutSig },
             variantId: apiPrg.variantId,
         });
 

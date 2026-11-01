@@ -104,15 +104,15 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/live') },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/manage') },
 
-  // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
+  // Inventory (global catalog) — any catalog viewer. The index redirects
   // to the Global Catalog. Write controls within each screen are INVENTORY_MANAGER-gated.
   { href: '/catalog', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
   { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
-  // Org inventory (#1287) — same viewer gate; the receiving screens are
-  // INVENTORY_MANAGER, FINANCE or BOARD (#2384) and the work-queue screens
+  // Org inventory — same viewer gate; the receiving screens are
+  // INVENTORY_MANAGER, FINANCE or BOARD and the work-queue screens
   // INVENTORY_MANAGER-only, like their routes.
   { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: ORG_INVENTORY },
   { href: '/inventory/unlocated', label: 'Needs a Location', section: 'Inventory', keywords: 'unlocated no location shelf', visible: INVENTORY_UNLOCATED },
@@ -122,7 +122,7 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
-  // Part mapping (#1289) — receipt mapping. Mirrors the routes' read gate:
+  // Part mapping — receipt mapping. Mirrors the routes' read gate:
   // INVENTORY_MANAGER, FINANCE or BOARD; writes inside are manager-only.
   { href: '/inventory/receiving', label: 'Part Mapping', section: 'Inventory', keywords: 'receiving receipt mapping proceed apply failed', visible: PART_MAPPING },
   { href: '/inventory/receiving/audit-log', label: 'Part Mapping Audit Log', section: 'Inventory', keywords: 'receiving receipt mapping history', visible: PART_MAPPING },
@@ -185,7 +185,7 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops/sessions', label: 'Sessions', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: PROGRAM_OPS.visible },
 
-  // Revenue Ops (path /finance-ops) — the finance tools are board-only
+  // Revenue Ops (path /finance-ops) — finance reads the payment plans; the other finance tools are board-only
   { href: '/finance-ops', label: 'Revenue Ops', section: 'Revenue Ops', visible: FINANCE_TOOLS },
   { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE_TOOLS },
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE_TOOLS },

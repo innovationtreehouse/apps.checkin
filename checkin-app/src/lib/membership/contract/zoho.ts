@@ -1,5 +1,5 @@
-import crypto from "crypto";
 import { config } from "@/lib/config";
+import { constantTimeEqual } from "@/lib/signatureCompare";
 
 /**
  * Zoho Sign contract webhook helpers.
@@ -19,12 +19,7 @@ export const ZOHO_WEBHOOK_HEADER = "x-zoho-webhook-token";
 export function verifyZohoToken(headerToken: string | null | undefined): boolean {
     const secret = config.zohoWebhookSecret();
     if (!secret || !headerToken) return false;
-
-    // Hash both values to ensure fixed length before comparison to avoid leaking the secret length
-    const a = crypto.createHash('sha256').update(headerToken).digest();
-    const b = crypto.createHash('sha256').update(secret).digest();
-
-    return crypto.timingSafeEqual(a, b);
+    return constantTimeEqual(headerToken, secret);
 }
 
 export interface ZohoWebhookResult {

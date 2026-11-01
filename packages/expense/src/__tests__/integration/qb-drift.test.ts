@@ -1,5 +1,5 @@
 /**
- * QB-3 drift: the cron step re-reads each app-created or matched QuickBooks entry through the windowed
+ * QuickBooks drift: the cron step re-reads each app-created or matched QuickBooks entry through the windowed
  * readers, over an in-memory QBO company, and flags finance on edits. It only ever reads.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";

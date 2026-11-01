@@ -91,14 +91,6 @@ export const classifications = {
         disbursementId: 'internal',
         payload: 'internal',
         createdAt: 'internal',
-        qbMatchState: 'internal',
-        qbTxnId: 'internal',
-        qbDepositTotalCents: 'internal',
-        qbDepositTxnDate: 'internal',
-        qbDriftedTxnId: 'internal',
-        qbDriftCause: 'internal',
-        qbCreateAttemptedAt: 'internal',
-        qbNote: 'internal',
     },
     DisbursementSnapshot: {
         orgId: 'internal',
@@ -121,19 +113,11 @@ export const classifications = {
         payload: 'internal',
         occurredAt: 'internal',
     },
-    DonationQbMatchExclusion: {
-        id: 'internal',
-        orgId: 'internal',
-        qbTxnId: 'internal',
-        reason: 'internal',
-        excludedByUserId: 'internal',
-        excludedAt: 'internal',
-    },
     DonationOrgSettings: {
         orgId: 'internal',
-        qbPostingOnAt: 'internal',
         inKindQbPostingOnAt: 'internal',
-        depositsHandedOverAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -224,6 +208,7 @@ export const classifications = {
         matchState: 'internal',
         claimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
+        qbPostAttempts: 'internal',
         qbNote: 'internal',
         bookedTotalCents: 'internal',
         bookedTxnDate: 'internal',
@@ -250,8 +235,6 @@ export const relations = {
     DisbursementSnapshot: {
     },
     WorkflowEvent: {
-    },
-    DonationQbMatchExclusion: {
     },
     DonationOrgSettings: {
     },

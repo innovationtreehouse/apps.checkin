@@ -120,9 +120,9 @@ export function createInventoryService({
     },
 
     /**
-     * Write only the fields sent, against the row locked in this transaction. A count
-     * (existingQuantity) must carry the quantity the caller loaded; if stock moved since,
-     * the save is refused so neither the count nor the concurrent change is lost.
+     * Write only the fields sent, against the row locked in this transaction. Each field written
+     * must carry the value the caller loaded; if it moved since, the save is refused so neither
+     * the edit nor the concurrent change is lost.
      */
     async updateItem(
       orgId: string,
@@ -131,29 +131,37 @@ export function createInventoryService({
         existingQuantity?: number;
         expectedQuantity?: number;
         desiredQuantity?: number;
+        expectedDesiredQuantity?: number;
         locationId?: number | null;
+        expectedLocationId?: number | null;
         backstockLocationId?: number | null;
+        expectedBackstockLocationId?: number | null;
       },
       userId: number,
       username?: string,
     ) {
       // Prisma skips undefined fields, so `updates` writes only what the caller sent.
-      const { expectedQuantity, ...updates } = data;
-      if (updates.existingQuantity !== undefined && expectedQuantity === undefined) {
-        throw new ServiceError(400, "expectedQuantity is required with existingQuantity");
-      }
+      const { expectedQuantity, expectedDesiredQuantity, expectedLocationId, expectedBackstockLocationId, ...updates } = data;
+      const expected = {
+        existingQuantity: expectedQuantity,
+        desiredQuantity: expectedDesiredQuantity,
+        locationId: expectedLocationId,
+        backstockLocationId: expectedBackstockLocationId,
+      };
+      const written = (Object.keys(updates) as Array<keyof typeof updates>).filter((field) => updates[field] !== undefined);
+      const unguarded = written.find((field) => expected[field] === undefined);
+      if (unguarded) throw new ServiceError(400, `${unguarded} requires the value it was loaded with`);
 
       const now = new Date();
       await db.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${orgId} AND gtin13 = ${gtin13} FOR UPDATE`;
         const existing = await tx.orgItem.findFirst({ where: { orgId, gtin13 } });
         if (!existing) throw new ServiceError(404, "Organization item not found");
-        if (updates.existingQuantity !== undefined && existing.existingQuantity !== expectedQuantity) {
-          throw new ServiceError(409, "Stock changed since you loaded this page; recount.");
-        }
+        const moved = written.filter((field) => existing[field] !== expected[field]);
+        if (moved.includes("existingQuantity")) throw new ServiceError(409, "Stock changed since you loaded this page; recount.");
+        if (moved.length > 0) throw new ServiceError(409, "This item changed since you loaded it; check its values and save again.");
 
-        const changedFields = (Object.keys(updates) as Array<keyof typeof updates>)
-          .filter((field) => updates[field] !== undefined && String(existing[field]) !== String(updates[field]));
+        const changedFields = written.filter((field) => existing[field] !== updates[field]);
         if (changedFields.length === 0) return;
 
         await tx.orgItem.update({ where: { orgGtin: { orgId, gtin13 } }, data: updates });

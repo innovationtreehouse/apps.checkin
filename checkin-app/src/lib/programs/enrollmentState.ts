@@ -27,7 +27,7 @@ import type { Prisma, ProgramParticipantStatus as PrismaStatus } from '@/generat
  *  not a status value; it appears only in the transition table. */
 export type ProgramParticipantStatus = 'PENDING' | 'ACTIVE' | 'WITHDRAWN';
 
-// Parity: fails to compile if the schema enum and this union diverge (§3.4).
+// Parity: fails to compile if the schema enum and this union diverge.
 // The runtime twin (assertEnumParity) lives in the unit test.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 type _Parity = Expect<Equal<ProgramParticipantStatus, PrismaStatus>>;
@@ -36,7 +36,7 @@ type Where = Prisma.ProgramParticipantWhereInput;
 
 /**
  * The row shape the client-safe predicates see: nullable timestamps collapsed to
- * PRESENCE booleans (§3.4 — keep `Date | null` out of the predicate). Map a DB
+ * PRESENCE booleans (keep `Date | null` out of the predicate). Map a DB
  * row with `toRow` below.
  */
 export type EnrollmentRow = {
@@ -62,7 +62,7 @@ export function toRow(db: {
     };
 }
 
-// ---- STATES (§3 table) ------------------------------------------------------
+// ---- STATES table ------------------------------------------------------
 // held = inventoryHeldAt (nullable TIMESTAMP → `flags`/presence);
 // req  = isPaymentPlanRequested (genuine BOOLEAN column → `equals`/value);
 // den  = paymentPlanDeniedAt (nullable TIMESTAMP → `flags`/presence).
@@ -96,7 +96,7 @@ export const STATES = {
         flags: { inventoryHeldAt: true, paymentPlanDeniedAt: true },
         equals: { isPaymentPlanRequested: false },
     }),
-    /** ACTIVE, held=null. req/den are vestigial don't-cares once ACTIVE (§3 note);
+    /** ACTIVE, held=null. req/den are vestigial don't-cares once ACTIVE;
      *  the validator asserts only held=null (I1). */
     ACTIVE: mk({
         statuses: ['ACTIVE'] as const,
@@ -110,7 +110,7 @@ export const STATES = {
     }),
 } as const;
 
-// ---- fromWhere (§5 CAS from-state, #1080) -----------------------------------
+// ---- fromWhere (CAS from-state) -----------------------------------
 
 /** The named present-row states — the keys of STATES, i.e. every state a CAS
  *  guard can transition FROM. */
@@ -118,10 +118,10 @@ export type FromStateName = keyof typeof STATES;
 
 /**
  * Emit the `status` clause a CAS transition guard names for its from-state, sourced
- * from STATES so a status rename/split flows into every guard that spreads it
- * (#1080). All enrollment PENDING_* states share `status:'PENDING'`; ACTIVE is its
- * own status — the scalar shape matches what the guards hand-write, so the migrated
- * query is byte-for-byte identical.
+ * from STATES so a status rename/split flows into every guard that spreads it.
+ * All enrollment PENDING_* states share `status:'PENDING'`; ACTIVE is its
+ * own status — the scalar shape matches what the guards hand-write, so the
+ * query is the same either way.
  *
  * It emits ONLY the status: the guard keeps its transition-specific flag narrowing
  * (`inventoryHeldAt`, `isPaymentPlanRequested`, `paymentPlanDeniedAt`) literal — those
@@ -134,7 +134,7 @@ export function fromWhere(from: FromStateName): Where {
     return fromStatusWhere<Where>(STATES[from].statuses);
 }
 
-// ---- classify (§3 table, total switch) --------------------------------------
+// ---- classify (total switch) --------------------------------------
 
 /** The named present-row states (UNENROLLED is the no-row state, so `classify`
  *  never returns it — it only sees existing rows). */
@@ -175,7 +175,7 @@ export function classify(row: EnrollmentRow): EnrollmentStateName | null {
     }
 }
 
-// ---- validate (§4 invariants I1–I4) -----------------------------------------
+// ---- validate (invariants I1–I4) -----------------------------------------
 
 const INVARIANTS: readonly Invariant<EnrollmentRow>[] = [
     // I1 — ACTIVE ⟹ held = null. The money invariant (a −1 that never comes back).
@@ -203,15 +203,15 @@ const INVARIANTS: readonly Invariant<EnrollmentRow>[] = [
 /** Return `{ invariant }` for the first violated invariant, or null when clean. */
 export const validate = defineValidator(INVARIANTS);
 
-// ---- TRANSITIONS (§5 table, as data — documentation + test oracle) ----------
+// ---- TRANSITIONS (as data — documentation + test oracle) ----------
 
 /** Every declared state, including the no-row `UNENROLLED` (∅). */
 export type LifecycleState = EnrollmentStateName | 'UNENROLLED';
 
 /**
- * The §5 transition table as data. Drives the coverage matrix / reachability /
+ * The transition table as data. Drives the coverage matrix / reachability /
  * BFS checks. NEVER executed: the guard `where`/`delete()`/`FOR UPDATE` at each
- * `guardSite` stays byte-for-byte. `event` carries the T-id from the doc.
+ * `guardSite` is the enforcement. `event` carries the transition's T-id.
  */
 export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T1 enroll(paid)', from: 'UNENROLLED', to: 'PENDING_UNPAID', actor: 'user/admin', guardSite: 'participants/route.ts POST — FOR UPDATE capacity lock' },
@@ -223,6 +223,7 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T4 activate(payment)', from: 'PENDING_UNPAID', to: 'ACTIVE', actor: 'shopify-webhook', guardSite: 'activateEnrollment.ts — CAS status:PENDING; release CAS held:{not:null}→null (fires on any PENDING)' },
     { event: 'T5 approve', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'admin', guardSite: 'finance-ops/payment-plans/route.ts — CAS req:true,status:PENDING; held→null WITHOUT +1, stamping seatTakenWithoutSaleAt only when a hold was held (T11); COI guard' },
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard' },
+    { event: 'T6f deny(no hold)', from: 'PENDING_HOLD_FAILED', to: 'PENDING_UNPAID', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,held:null,status:PENDING; clears req, stamps nothing, denial kept in the audit row; COI guard' },
     { event: 'T7 non-payment kick', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/pending-participants/route.ts — delete(); query filters req:false,den:null' },
     { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 remove', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete() = atomicity boundary; +1 iff held' },

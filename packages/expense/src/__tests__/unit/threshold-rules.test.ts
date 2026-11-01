@@ -1,4 +1,4 @@
-/** Which threshold changes are the Board's: the direction each field loosens in, and its policy value. */
+/** Which threshold changes are the Board's: raising a field past its policy value, or any change to a Board-only field. */
 import { describe, it, expect } from "vitest";
 import { DEFAULT_EXPENSE_SETTINGS, THRESHOLD_RULES, boardOnlyChanges } from "../../services/settingsService";
 import { financeCeilingCents } from "../../lib/threshold-rules";
@@ -6,7 +6,7 @@ import { financeCeilingCents } from "../../lib/threshold-rules";
 const current = { ...DEFAULT_EXPENSE_SETTINGS, capitalTotalThresholdCents: 500_000 };
 
 describe("boardOnlyChanges", () => {
-  it("declares a direction for every threshold", () => {
+  it("lists a rule for every threshold", () => {
     expect(Object.keys(THRESHOLD_RULES).sort()).toEqual(Object.keys(DEFAULT_EXPENSE_SETTINGS).sort());
   });
 
@@ -57,5 +57,17 @@ describe("financeCeilingCents", () => {
   it.each(Object.keys(THRESHOLD_RULES) as (keyof typeof THRESHOLD_RULES)[])("%s: setting it to the ceiling is FINANCE's", (field) => {
     const ceiling = financeCeilingCents(field, current[field]);
     if (ceiling !== null) expect(boardOnlyChanges(current, { [field]: ceiling })).toEqual([]);
+  });
+});
+
+describe("QuickBooks settings", () => {
+  it("leaves the match window to finance in either direction", () => {
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { qbMatchWindowDays: 14 })).toEqual([]);
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { qbMatchWindowDays: 3 })).toEqual([]);
+  });
+
+  it.each(["qbMaxCreatesPerRun", "qbMaxCreatesPerDay"] as const)("%s: lowering is finance's, raising the Board's", (field) => {
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { [field]: 5 })).toEqual([]);
+    expect(boardOnlyChanges(DEFAULT_EXPENSE_SETTINGS, { [field]: 500 })).toEqual([field]);
   });
 });

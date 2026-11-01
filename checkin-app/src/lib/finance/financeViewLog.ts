@@ -35,25 +35,36 @@ export function financeViewKey(view: Pick<FinanceView, "endpoint" | "params" | "
     return createHash("sha256").update(JSON.stringify([view.endpoint, params, recordIds])).digest("hex");
 }
 
+function financeViewRow(view: FinanceView) {
+    const viewedAt = view.viewedAt ?? new Date();
+    return {
+        viewedAt,
+        actorId: view.actorId,
+        role: view.role,
+        endpoint: view.endpoint,
+        params: view.params,
+        recordIds: view.recordIds,
+        rowCount: view.rowCount,
+        window: financeViewWindow(viewedAt),
+        viewKey: financeViewKey(view),
+    };
+}
+
 /**
- * Record one finance view. A repeat of the same view by the same person in the
- * same window is dropped by the unique index, in the one insert statement.
+ * Record finance views in one insert statement. A repeat of the same view by the
+ * same person in the same window is dropped by the unique index. Returns how many
+ * rows were inserted.
+ */
+export async function recordFinanceViews(views: FinanceView[], db: DbClient = prisma): Promise<number> {
+    if (views.length === 0) return 0;
+    const { count } = await db.financeViewLog.createMany({ data: views.map(financeViewRow), skipDuplicates: true });
+    return count;
+}
+
+/**
+ * Record one finance view.
  * Throws on a database failure: the caller refuses the view rather than serve it unrecorded.
  */
 export async function recordFinanceView(view: FinanceView, db: DbClient = prisma): Promise<void> {
-    const viewedAt = view.viewedAt ?? new Date();
-    await db.financeViewLog.createMany({
-        data: [{
-            viewedAt,
-            actorId: view.actorId,
-            role: view.role,
-            endpoint: view.endpoint,
-            params: view.params,
-            recordIds: view.recordIds,
-            rowCount: view.rowCount,
-            window: financeViewWindow(viewedAt),
-            viewKey: financeViewKey(view),
-        }],
-        skipDuplicates: true,
-    });
+    await recordFinanceViews([view], db);
 }

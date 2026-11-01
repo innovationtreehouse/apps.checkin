@@ -2,6 +2,13 @@ import { dollarsToCents } from "@checkin/money";
 import { qboDate } from "./client";
 import type { QboBill, QboDeposit, QboJournalEntry, QboPurchase } from "./types";
 
+/** A YYYY-MM-DD day moved by whole days, in UTC so it never crosses a zone. */
+export function shiftDate(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 /** One QuickBooks entry offered for a match, reduced to what matching compares. */
 export interface MatchCandidate {
   id: string;

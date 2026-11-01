@@ -1,11 +1,12 @@
 import type {
   DonorSink,
   OcrProvider,
-  OrgIdentity,
+  OutcomeMail,
   ReceiptConfig,
   ReceiptFileStore,
   MailboxReader,
   ReceiptHouseholds,
+  ReceiptPersonIds,
   ReceiptAlerts,
   ReceiptPeople,
   ReceiptReplies,
@@ -53,11 +54,18 @@ export const inertSubmitterConfirmations: SubmitterConfirmations = {
   confirm: async () => {
     throw new NotWiredError("SubmitterConfirmations.confirm");
   },
+  confirmable: async () => [],
 };
 
 /** Knows no households: only the uploader and the reimbursee themselves are refused. */
 export const inertHouseholds: ReceiptHouseholds = {
   householdOf: async () => [],
+};
+
+/** Knows no merges: every id names itself. */
+export const inertPersonIds: ReceiptPersonIds = {
+  liveIds: async (personIds) => new Map(personIds.map((id) => [id, id])),
+  storedIdsOf: async (personId) => [personId],
 };
 
 /** Knows nobody: every mailed receipt is held for finance. */
@@ -109,15 +117,13 @@ const requireRuntime = receiptRuntime.require;
 
 export const configureReceipt = receiptRuntime.configure;
 
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
+export const getOrgId = receiptRuntime.getOrgId;
 
 export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -126,6 +132,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     submitterConfirmations: r.submitterConfirmations ?? inertSubmitterConfirmations,
     purchaseOutcomes: r.purchaseOutcomes ?? inertPurchaseOutcomes,
     households: r.households ?? inertHouseholds,
+    personIds: r.personIds ?? inertPersonIds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
     reimbursees: r.reimbursees ?? inertReimbursees,
@@ -149,6 +156,11 @@ export function mailbox(): MailboxReader | null {
 /** The host's mail out for acknowledgements, or null when unbound. */
 export function replies(): ReceiptReplies | null {
   return requireRuntime().replies ?? null;
+}
+
+/** The host's mail out for purchase outcomes, or null when unbound. */
+export function outcomeMail(): OutcomeMail | null {
+  return requireRuntime().outcomeMail ?? null;
 }
 
 export { callerId };

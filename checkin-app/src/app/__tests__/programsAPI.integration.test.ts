@@ -158,7 +158,7 @@ describe('Programs API Integration Tests', () => {
              expect(orgMemberOnly).toBeDefined(); // Revealed because admin
         });
 
-        // #1397: membership fee paid, background check still with the board — the catalog
+        // Membership fee paid, background check still with the board — the catalog
         // shows them members-only programs, same as an ACTIVE household.
         it('reveals member-only programs to a household that has paid but is awaiting background clearance', async () => {
              const paidPending = await prisma.person.create({
@@ -204,7 +204,7 @@ describe('Programs API Integration Tests', () => {
         // Expected keys are DERIVED from the generated classifications rather than
         // listed here: the route's PUBLIC_PROGRAM_SELECT is a hand-maintained copy of
         // policy data, so a hardcoded list would rot in lockstep with it. Adding a
-        // non-public column to Program now fails this test instead of leaking.
+        // non-public column to Program fails this test instead of leaking.
         it.each([
             ['anonymous', null],
             ['admin session', { user: { id: undefined as number | undefined, isSysadmin: true } }],
@@ -230,7 +230,7 @@ describe('Programs API Integration Tests', () => {
         });
     });
 
-    // ── ops-stg ACCESS GATE regression (Finding 1, 2026-07-20) ──────────────────
+    // ── ops-stg ACCESS GATE ─────────────────────────────────────────────────────
     // This route is a bare `export async function GET` — no withAuth, no
     // handler()/registry entry — that calls getOptionalSessionUser directly and
     // treats "no session" as the public-catalog happy path (correct in prod/dev).
@@ -250,7 +250,7 @@ describe('Programs API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES an anonymous caller — the regression case for Finding 1', async () => {
+        it('DENIES an anonymous caller', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
 
             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });

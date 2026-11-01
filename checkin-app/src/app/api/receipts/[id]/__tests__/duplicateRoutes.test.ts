@@ -12,8 +12,7 @@ import { POST as differentPurchases } from "../different-purchases/route";
 import { POST as keepThisOne } from "../keep-this-one/route";
 
 jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
-jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
-jest.mock("@checkin/receipt", () => ({
+jest.mock("@checkin/receipt/services/receiptService", () => ({
   receiptService: {
     get: jest.fn(),
     duplicateGroup: jest.fn(),
@@ -27,7 +26,7 @@ jest.mock("@checkin/receipt", () => ({
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>("next/server");
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 type Service = Record<"get" | "duplicateGroup" | "notThisOne" | "undoNotThisOne" | "differentPurchases" | "keepThisOne", jest.Mock>;
-const service = jest.requireMock<{ receiptService: Service }>("@checkin/receipt").receiptService;
+const service = jest.requireMock<{ receiptService: Service }>("@checkin/receipt/services/receiptService").receiptService;
 
 function signIn(flags: Record<string, boolean | string | number> = {}) {
   mockSession.mockResolvedValue({

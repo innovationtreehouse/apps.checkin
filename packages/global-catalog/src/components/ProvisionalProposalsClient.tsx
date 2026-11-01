@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ActionIcon, Badge, Button, Checkbox, Divider, Group, Modal,
   Select, Stack, Table, Text, Textarea, TextInput, Title, Tooltip,
@@ -8,7 +8,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api, errorMessage } from "./api";
+import { api, useLoad } from "./api";
 import { LoadError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
@@ -17,32 +17,21 @@ const PAGE_LIMIT = 200;
 const STATUS_COLORS: Record<string, string> = { pending: "yellow", approved: "green", rejected: "red", mapped_to_existing: "blue" };
 
 export default function ProvisionalProposalsClient() {
-  const [proposals, setProposals] = useState<ProvisionalItemRow[]>([]);
-  const [categories, setCategories] = useState<CategoryRow[]>([]);
-  const [subcategories, setSubcategories] = useState<SubcategoryRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [onlyPending, setOnlyPending] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   // Category names label the rows and feed the approve form, so they load with the list.
-  function fetchAll() {
-    return Promise.all([
-      api<ProvisionalItemRow[]>(`/provisional-items?page=1&limit=${PAGE_LIMIT}`),
-      api<CategoryRow[]>("/categories"),
-      api<SubcategoryRow[]>("/subcategories"),
-    ])
-      .then(([rows, cats, subs]) => {
-        setProposals(rows);
-        setCategories(cats);
-        setSubcategories(subs);
-        setError(null);
-      }, (e) => setError(errorMessage(e)))
-      .finally(() => setLoading(false));
-  }
-  useEffect(() => { fetchAll(); }, []);
-  async function load() {
-    setLoading(true);
-    await fetchAll();
+  const proposalsLoad = useLoad<ProvisionalItemRow[]>(`/provisional-items?page=1&limit=${PAGE_LIMIT}`);
+  const categoriesLoad = useLoad<CategoryRow[]>("/categories");
+  const subcategoriesLoad = useLoad<SubcategoryRow[]>("/subcategories");
+  const proposals = proposalsLoad.data ?? [];
+  const categories = categoriesLoad.data ?? [];
+  const subcategories = subcategoriesLoad.data ?? [];
+  const loading = !proposalsLoad.data || !categoriesLoad.data || !subcategoriesLoad.data;
+  const error = proposalsLoad.error ?? categoriesLoad.error ?? subcategoriesLoad.error;
+  function reloadAll() {
+    proposalsLoad.reload();
+    categoriesLoad.reload();
+    subcategoriesLoad.reload();
   }
 
   const pending = proposals.filter((p) => p.status === "pending");
@@ -95,7 +84,6 @@ export default function ProvisionalProposalsClient() {
       });
       notifications.show({ message: "Proposal approved, new catalog item created", color: "green" });
       closeApprove();
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setApproving(false); }
   }
@@ -107,7 +95,6 @@ export default function ProvisionalProposalsClient() {
       await api(`/provisional-items/${rejectTarget.id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason: rejectReason }) });
       notifications.show({ message: "Proposal rejected", color: "orange" });
       closeReject(); setRejectReason(""); setRejectTarget(null);
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setRejecting(false); }
   }
@@ -119,7 +106,6 @@ export default function ProvisionalProposalsClient() {
       await api(`/provisional-items/${mapTarget.id}/map-to-existing`, { method: "POST", body: JSON.stringify({ realGtin13: mapGtin.trim() }) });
       notifications.show({ message: "Provisional item mapped to existing catalog entry", color: "blue" });
       closeMap(); setMapGtin(""); setMapTarget(null);
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setMapping(false); }
   }
@@ -170,7 +156,7 @@ export default function ProvisionalProposalsClient() {
       </Group>
       <Text size="sm" c="dimmed" mb="md">Items proposed by orgs using provisional GTINs. Approve to create a real catalog entry, map to an existing item, or reject.</Text>
 
-      {error ? <LoadError what="provisional proposals" message={error} onRetry={load} />
+      {error ? <LoadError what="provisional proposals" message={error} onRetry={reloadAll} />
         : loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? <Text c="dimmed">No provisional proposals.</Text> : (
         <Stack gap="lg">
           {pending.length > 0 && <div><Text fw={500} mb="xs">Pending ({pending.length})</Text>{proposalTable(pending)}</div>}

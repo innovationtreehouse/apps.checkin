@@ -19,7 +19,7 @@ import { checkOffFlag, listOpenFlags } from "../services/flagService";
 import { financeQueueCounts as queueCounts, financeQueueRows } from "../services/financeQueueService";
 import { financeQueueTab } from "../financeQueue";
 import { resubmitHeldExpense, setHeldLineAccount } from "../services/holdService";
-import { excludeQbTxn, matchExpenseToQb, qbCandidates } from "../services/qbMatchService";
+import { excludeQbTxn, matchExpenseToQb, qbCandidates, skipExpenseQb } from "../services/qbMatchService";
 import { getExpenseSettings, updateExpenseSettings } from "../services/settingsService";
 import { pageArgs } from "./_shared";
 
@@ -308,5 +308,13 @@ export const candidates: ExpenseRouteHandler = async ({ params, principal }) => 
 export const match: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { qbTxnId } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1) }));
   await mapServiceErrors(() => matchExpenseToQb(principal, params.id, qbTxnId));
+  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+};
+
+const QbResolveSchema = z.object({ action: z.literal("skip"), reason: z.string().trim().min(1, "A reason is required to skip").max(500) }).strict();
+
+export const qbResolve: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const { reason } = await parseBody(req, QbResolveSchema);
+  await mapServiceErrors(() => skipExpenseQb(principal, params.id, reason));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
 };
