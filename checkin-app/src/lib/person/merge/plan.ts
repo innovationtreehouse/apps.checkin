@@ -76,7 +76,7 @@ export function hasIdentity(p: { email: string | null; googleId: string | null }
 /**
  * Pre-image of every field a merge can rewrite on EITHER side — the tombstone's
  * mangled identity and the keeper's overwritten name/email/DOB alike. Captured
- * before the transaction, because afterwards neither is readable.
+ * before the updates run, because afterwards neither is readable.
  *
  * The four legacy role mirrors are in here because the merge rewrites them on
  * both sides too (zeroed on the tombstone, re-derived on the keeper). Nothing is
