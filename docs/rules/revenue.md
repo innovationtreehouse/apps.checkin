@@ -361,6 +361,13 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - Gifts of goods follow the closed-books rules in Income, with their own switch-on.
   A gift counts from when its money arrived or it was recorded.  [Decision — owner]
 
+- The window for matching a gift of goods to finance's bookings, one to 30 days
+  either side of its date, is a setting, seven by default. Finance or the board may
+  change it in either direction. How many entries the app may create for gifts of
+  goods in one run is a setting too: finance may lower it, and raising it takes the
+  board. Each change is recorded. Gifts of goods have no daily or dollar limit.
+  [Decision — owner]
+
 - A gift of goods withdrawn after its money arrived is raised for finance, booked
   or not. Finance reverses it by hand only if it booked; the app changes nothing
   in the books. When finance settles a withdrawal, the donor's details are cleared

@@ -26,6 +26,7 @@ export * from "./lib/qb-match";
 export * from "./lib/in-kind-poster";
 export * from "./lib/deposit-handover";
 export { recordEvent, type EntityType, type WorkflowEventInput } from "./repositories/audit";
+export * from "./services/settingsService";
 export { accountMapService } from "./services/accountMapService";
 export { commentRuleService } from "./services/commentRuleService";
 export { disbursementService } from "./services/disbursementService";

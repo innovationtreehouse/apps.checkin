@@ -572,7 +572,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     logWarn("qb_daily_cap", { cap: settings.qbMaxCreatesPerDay, remaining: stop.remaining });
   } else if (stop?.by === "count") {
     counts.capped = "count";
-    logWarn("qb_drain_capped", { cap: counts.capped, remaining: stop.remaining });
+    logWarn("qb_drain_capped", { cap: settings.qbMaxCreatesPerRun, remaining: stop.remaining });
   } else if (stop?.by === "failures") {
     counts.stoppedAfterFailures = true;
     logWarn("qb_drain_failure_streak", { failures: MAX_CONSECUTIVE_FAILURES, remaining: stop.remaining });

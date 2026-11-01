@@ -94,6 +94,8 @@ GET /api/donations/in-kind/queue
 GET /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual/[id]/load-inventory
+GET /api/donations/settings
+PATCH /api/donations/settings
 # Expense (#1272 L3 W) — library route factories via handler().
 GET /api/expense/local-owners
 POST /api/expense/flags/[id]/check-off
