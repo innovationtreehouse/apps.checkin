@@ -442,6 +442,52 @@ describe("ProgramEnrollmentPage", () => {
         expect(await screen.findByText(/failed to alert the Scholarship Review Team/)).toBeInTheDocument();
     });
 
+    describe("payment plan for a child who already has an enrollment row", () => {
+        async function requestPlanAfterConflict(plan: { status: number; body: Record<string, unknown> }) {
+            setSession({ id: 101 });
+            const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+                const url = typeof input === "string" ? input : input.toString();
+                if (url.includes("/api/programs/10/request-payment-plan")) return { ok: plan.status < 400, status: plan.status, json: async () => plan.body } as Response;
+                if (url.includes("/api/programs/10/participants")) return { ok: false, status: 409, json: async () => ({ error: "Participant is already enrolled in this program." }) } as Response;
+                if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
+                if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) } as Response;
+                return { ok: false, status: 404, json: async () => ({}) } as Response;
+            });
+            global.fetch = fetchMock;
+            renderPage();
+            await screen.findByText("Robotics Club");
+            fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+            await screen.findByText("Which of your household wants to enroll?");
+
+            await toggleMember("Kid One");
+            await requestPlan();
+            return fetchMock;
+        }
+
+        it("records the request for an unpaid child", async () => {
+            const fetchMock = await requestPlanAfterConflict({ status: 200, body: { success: true } });
+            await waitFor(() =>
+                expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested! Please check your email/) })),
+            );
+            const planCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("request-payment-plan"));
+            expect(planCall).toBeDefined();
+            expect(screen.queryByText(/already enrolled/)).not.toBeInTheDocument();
+        });
+
+        it("names the child and shows the plan route's refusal for a child not awaiting payment", async () => {
+            await requestPlanAfterConflict({ status: 409, body: { error: "This enrollment is not awaiting payment" } });
+            expect(await screen.findByText("Kid One: This enrollment is not awaiting payment")).toBeInTheDocument();
+            expect(screen.queryByText(/Enrolled as pending/)).not.toBeInTheDocument();
+            expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested!/) }));
+        });
+
+        it("does not claim a new enrollment when the plan route fails", async () => {
+            await requestPlanAfterConflict({ status: 500, body: { error: "Failed to request payment plan" } });
+            expect(await screen.findByText(/Kid One: We couldn't send your request to the Scholarship Review Team/)).toBeInTheDocument();
+            expect(screen.queryByText(/Enrolled as pending/)).not.toBeInTheDocument();
+        });
+    });
+
     it("shows a network-error message when requesting a payment plan throws", async () => {
         setSession({ id: 101 });
         mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
