@@ -79,8 +79,8 @@ describe("isDbResumeError — acquisition-phase signatures only", () => {
         expect(isDbResumeError({ code: "P2024" })).toBe(true);
         // pg pool: no free connection within connectionTimeoutMillis
         expect(isDbResumeError(new Error("timeout exceeded when trying to connect"))).toBe(true);
-        // pg client: socket still connecting when connectionTimeoutMillis fired —
-        // the regression that logged users out after idle (JWT_SESSION_ERROR).
+        // pg client: socket still connecting when connectionTimeoutMillis fired.
+        // Not retrying this logs users out after idle (JWT_SESSION_ERROR).
         expect(isDbResumeError(new Error("Connection terminated due to connection timeout"))).toBe(true);
     });
     it("rejects mid-query drops and unrelated errors (write-safety)", () => {

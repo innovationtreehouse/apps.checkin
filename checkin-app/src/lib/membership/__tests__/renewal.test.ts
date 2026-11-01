@@ -276,7 +276,7 @@ describe('beginRenewal', () => {
                 data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', bgClearedAt: expect.any(Date) }),
             });
             // The advance's PENDING_PAYMENT transition matches the volunteer
-            // allowlist (#874) and pings reviewers — beginRenewal does neither.
+            // allowlist and pings reviewers — beginRenewal does neither.
             expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
         });

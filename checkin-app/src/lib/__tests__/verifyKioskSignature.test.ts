@@ -1,8 +1,8 @@
 /**
  * Unit tests for verifyKioskSignature — the Ed25519 auth boundary between the
- * kiosk client and the server. Previously ONLY the key parser was tested; the
- * actual crypto verify, timestamp-freshness, tamper, and key-rotation paths
- * were mocked away everywhere. These exercise the real primitive end to end.
+ * kiosk client and the server. Other tests mock away the crypto verify,
+ * timestamp-freshness, tamper, and key-rotation paths; these exercise the real
+ * primitive end to end.
  *
  * The signing here mirrors client.py / badge.py exactly:
  *   message = `${timestamp}:${nonce}:${method}:${path}:${body}`  (Ed25519, hex signature)

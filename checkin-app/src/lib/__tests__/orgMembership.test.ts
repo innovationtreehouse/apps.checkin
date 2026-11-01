@@ -172,7 +172,7 @@ describe('isActiveOrgMemberThrough', () => {
     });
 });
 
-// #1397: a household that has paid its membership fee but is still waiting on background
+// A household that has paid its membership fee but is still waiting on background
 // clearance gets the MEMBER rate and members-only programs. The widening is
 // program-scoped — every other "is this a member?" question stays ACTIVE-only.
 describe('program access for a paid, not-yet-cleared household', () => {
