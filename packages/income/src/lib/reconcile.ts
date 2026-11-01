@@ -185,7 +185,7 @@ function driftCause(
  * Match every paid payout to exactly one QuickBooks deposit, or raise it for finance.
  * Idempotent; a no-op until a deposit source is bound. Reads the ledger only.
  */
-export async function runReconcile(orgId: string, now: Date = new Date(), benevityWindowDays?: number): Promise<ReconcileResult> {
+export async function runReconcile(orgId: string, now: Date = new Date()): Promise<ReconcileResult> {
   const { deposits: depositSource, mirror } = getIncomeConfig();
   if (!depositSource) return { status: "unbound" };
   // Without its bank account a deposit in any account could match, so a source without one is not read.
@@ -195,7 +195,7 @@ export async function runReconcile(orgId: string, now: Date = new Date(), benevi
   const bankOf = (source: string) => (source === DEPOSIT_SOURCE.BENEVITY ? banks.benevity : banks.shopify);
   const sources = (Object.keys(banks) as (keyof typeof banks)[]).filter((s) => banks[s]);
 
-  const benevityDays = benevityWindowDays ?? (await readIncomeSettings(db, orgId)).benevityMatchWindowDays;
+  const benevityDays = (await readIncomeSettings(db, orgId)).benevityMatchWindowDays;
   const today = isoDay(now);
   // Another lane's expected deposits are facts as income holds them; settled ones are past matching.
   const expected = await db.payoutReconciliation.findMany({

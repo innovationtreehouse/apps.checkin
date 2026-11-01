@@ -548,8 +548,7 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * try/catch; it returns counts only.
  */
 export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): Promise<DrainResult> {
-  const caps = await readIncomeSettings(db, orgId);
-  const reconcile = await runReconcile(orgId, now, caps.benevityMatchWindowDays);
+  const reconcile = await runReconcile(orgId, now);
   if (reconcile.status !== "ran") return { reconcile, post: reconcile.status };
   const { mirror, posting, alerts } = getIncomeConfig();
   // A cap hit must reach finance, so the drain never creates without the alert bound.
@@ -582,6 +581,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   }
 
   const problem = await checkBuckets(orgId);
+  const caps = await readIncomeSettings(db, orgId);
   const accounts = await roleAccounts();
   const today = isoDay(now);
   const due = (

@@ -167,6 +167,8 @@ PUT /api/income/items/[variantId]/category
 DELETE /api/income/items/[variantId]/category
 GET /api/income/qb-exclusions
 POST /api/income/qb-exclusions
+GET /api/income/settings
+PATCH /api/income/settings
 
 # Receipt (#1265 W): library service calls via handler().
 POST /api/receipts/upload
