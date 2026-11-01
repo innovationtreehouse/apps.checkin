@@ -106,6 +106,8 @@ flowchart TD
 - **Keeps one server-time sample** for scan times, signing, its clock warning and
   clearing its own view at 23:00 when it has not heard from the server. The clear
   sends the server nothing; the server's 23:00 run stays the one close of record.
+  Roster replies and scan acknowledgements name the latest nightly close whose run
+  has ended.
   Owner ruling 2026-10-31.
 - **Asks for the second scan itself.** The close confirmation happens at the
   kiosk, not the server.

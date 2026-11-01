@@ -336,7 +336,9 @@ hours at a time — is a normal operating mode here, not an incident.
   so it applies at its time and is flagged. A kiosk keeps one server-time sample,
   for its scan times, its signatures, its clock warning and its own 23:00 clear.
   That clear changes only the kiosk's view and sends the server nothing; the
-  server's 23:00 run stays the one close of record.  [Decision — Board ruling B7/B14, 2026-10-27; owner ruling 2026-10-31]
+  server's 23:00 run stays the one close of record. The roster and each scan
+  acknowledgement name the latest nightly close whose run has ended, so the kiosk
+  can tell a reply from before tonight's close from one after it.  [Decision — Board ruling B7/B14, 2026-10-27; owner ruling 2026-10-31]
 
 - A replay that lands behind later activity belongs to the visit the person was
   in at its own time — their latest arrival at or before it — and never touches a

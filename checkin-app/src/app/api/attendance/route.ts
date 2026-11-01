@@ -3,6 +3,7 @@ import { getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import { buildingLink } from "@/lib/kioskSeen";
+import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { getFullAttendance } from "@/lib/getFullAttendance";
 import { logBackendError } from "@/lib/logger";
 import { config } from "@/lib/config";
@@ -75,6 +76,8 @@ export async function GET(req: NextRequest) {
         // (personal), no phone (pii), no emergency contacts (personal) — none of
         // which it renders. A signed-in keyholder on a non-kiosk browser still
         // gets the full payload (pickup/emergency lookups).
+        // Read before the roster, so the roster reflects the close this names.
+        const nightlyClose = isKiosk ? { lastNightlyCloseAt: await lastNightlyCloseAt() } : {};
         const { attendance, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
         // Web surfaces state occupancy/open/supervision as fact only while the
         // kiosk is reachable (docs/rules/attendance-checkin.md).
@@ -97,6 +100,7 @@ export async function GET(req: NextRequest) {
                 safety,
                 building,
                 signedRequest: isKiosk,
+                ...nightlyClose,
             });
         }
 

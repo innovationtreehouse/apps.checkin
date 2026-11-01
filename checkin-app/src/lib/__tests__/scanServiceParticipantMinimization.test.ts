@@ -14,6 +14,7 @@ const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, 
 
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
+jest.mock("@/lib/attendance/nightlyClose", () => ({ lastNightlyCloseAt: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/notifications", () => ({
     sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
 }));
