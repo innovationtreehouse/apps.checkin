@@ -40,6 +40,13 @@ const incomeDeposits: IncomeDeposits = {
   async depositStatus(orgId, disbursementIds) {
     return (await import("@checkin/income")).depositStatus(orgId, "benevity", disbursementIds);
   },
+  async handOverFailing(failures) {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.donationDepositHandOver", {
+      batches: failures.map((f) => `${f.disbursementId}: ${f.reason}`).join("; "),
+      actionLink: `${config.baseUrl()}/donations/events`,
+    }, "Donation hand-over alert failed:");
+  },
 };
 
 /** What gift-of-goods posting lacks, in plain words; empty when the drain would run. Reads the books map as each run does. */
