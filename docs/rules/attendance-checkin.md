@@ -445,6 +445,8 @@ hours at a time — is a normal operating mode here, not an incident.
   hours, and it stays closed — and whose record it is. Integrity is after the fact rather than a
   gate: every change is audited, and a significant one is flagged to the board.  [Decision — *Principle: self-scope and repair*]
 
+- A visit correction and its audit record commit together; there is never a correction without its record.  [Decision]
+
 - An audited change to a visit records two people: who made the change, and whose
   attendance it was. The second is always the person, never the event they
   attended. Telling a correction of one's own record from one person editing
