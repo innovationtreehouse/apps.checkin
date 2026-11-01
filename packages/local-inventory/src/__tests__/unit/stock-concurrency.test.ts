@@ -150,6 +150,29 @@ describeDb("stock write concurrency", () => {
     expect(await db.inventoryLog.count({ where: { gtin13: REAL } })).toBe(1);
   });
 
+  it.each(["use_existing", "use_provisional", "sum"] as const)("%s logs a copy of the removed provisional row", async (quantityMethod) => {
+    const { provisional } = services();
+    const shelf = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "shelf" } });
+    const backstock = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "backstock" } });
+    await db.orgItem.createMany({
+      data: [
+        { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 12, desiredQuantity: 8, locationId: shelf.id, backstockLocationId: backstock.id },
+        { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 5 },
+      ],
+    });
+    const conflict = await db.inventoryMergeConflict.create({
+      data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch", sourceEventId: 12 },
+    });
+
+    await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod }, 42, "manager");
+
+    const log = await db.inventoryLog.findFirst({ where: { gtin13: PROVISIONAL, fieldChanged: "deleted" } });
+    expect(log).toMatchObject({ orgId: TEST_ORG_ID, userId: 42, username: "manager", changeType: "manual", valueAfter: null });
+    expect(JSON.parse(log?.valueBefore ?? "{}")).toEqual({
+      existingQuantity: 12, desiredQuantity: 8, locationId: shelf.id, backstockLocationId: backstock.id,
+    });
+  });
+
   describe("when the provisional holds no stock", () => {
     const openConflict = () =>
       db.inventoryMergeConflict.create({
