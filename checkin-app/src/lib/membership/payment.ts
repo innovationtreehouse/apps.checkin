@@ -148,7 +148,8 @@ async function settle(
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         if (opts.via === "manual") {
-            if (process.status !== "PENDING_PAYMENT" || process.paidAt) {
+            if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
+            if (process.status !== "PENDING_PAYMENT") {
                 throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
             }
             if (membership.status === "DENIED") {

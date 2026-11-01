@@ -5,10 +5,10 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
-import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears, MAX_DATE } from "@/lib/membership/renewal";
+import { grantableApplicationWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
-import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
+import { grantMembership } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { notifyBoardOfDenial } from "@/lib/membership/denial";
 import { personActor } from "@/lib/auditActor";
@@ -162,9 +162,7 @@ export const GET = withAuth(
                 ]
             } : {};
 
-            // Renewal season drives the coming-year grant button; the live cycle drives
-            // the settled arm of the process include below (no boundary ⇒ matches nothing).
-            const window = await renewalSeasonWindow(new Date());
+            // The live cycle drives the settled arm of the process include below (no boundary ⇒ matches nothing).
             const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
             const cycle = settings?.orgMembershipYearBoundary
                 ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
@@ -180,27 +178,21 @@ export const GET = withAuth(
                         // JSON at the same trust level as the rest of the row.
                         select: { id: true, name: true, email: true, isBoardMember: true, emailUndeliverableAt: true, isHouseholdLead: true, lastBackgroundCheck: true }
                     },
-                    // ONE probe serves both flags computed below, from the shared lifecycle
-                    // definitions: grantableRenewalWhere (payable renewal → grantability)
-                    // and settledThisCycleWhere (ANY fee-paid process — INITIAL or
-                    // RENEWAL — stamped since the live year's window opened → settled for
-                    // it, the same test membershipValidThrough uses; ARCHIVED never paid,
-                    // so it is the sweep's business only). No boundary ⇒ "never" (matches
-                    // no row), keeping one query shape and one inferred type.
+                    // ONE probe serves both flags computed below: grantableApplicationWhere
+                    // (an application a grant can pay) and settledThisCycleWhere (a fee-paid
+                    // process stamped since the live year's window opened; ARCHIVED never
+                    // paid). No boundary ⇒ "never" (matches no row), keeping one query shape.
                     // orgMembership's own scalars (status, memberSince) still ride along.
                     orgMembership: {
                         include: {
                             processes: {
                                 where: {
                                     OR: [
-                                        grantableRenewalWhere,
-                                        // An application awaiting payment: a current-year grant
-                                        // certifies it, which only the Board may do.
-                                        { kind: "INITIAL", status: "PENDING_PAYMENT" },
+                                        grantableApplicationWhere,
                                         settledThisCycleWhere(cycle?.settledSince ?? MAX_DATE),
                                     ],
                                 },
-                                select: { id: true, status: true, kind: true },
+                                select: { id: true, status: true },
                             },
                         },
                     },
@@ -221,15 +213,10 @@ export const GET = withAuth(
             const bgSettings = { orgMembershipYearBoundary: settings?.orgMembershipYearBoundary ?? null, bgRecheckMonths: recheckMonths };
 
             const withGrantable = households.map((h) => {
-                // Split the single OR probe by status: PENDING_PAYMENT = grantable renewal
-                // (grantableRenewalWhere — kind RENEWAL, so an in-flight INITIAL at
-                // payment never reads as grantable); any other row is a fee-paid process
-                // of EITHER kind = the live year is settled (settledThisCycleWhere:
-                // finished renewal, admin override, or a family that joined inside
-                // the window).
+                // Split the single OR probe by status: PENDING_PAYMENT awaits a grant;
+                // any other row is a fee-paid process, so the live year is settled.
                 const { processes = [], ...orgMembership } = h.orgMembership ?? {};
                 const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
-                const renewalGrantable = processes.some((p) => p.status === "PENDING_PAYMENT" && p.kind === "RENEWAL");
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
                 // who passed; no per-member values in the list response.
@@ -240,7 +227,6 @@ export const GET = withAuth(
                 return {
                     ...withFlatContact(withIntakeNotesFor(h, viewer)),
                     orgMembership: h.orgMembership ? orgMembership : null,
-                    renewalGrantable,
                     awaitingPayment,
                     settledForComingYear,
                     bgValidUntil,
@@ -250,7 +236,7 @@ export const GET = withAuth(
 
             return NextResponse.json({
                 households: withGrantable,
-                renewalSeason: window !== null,
+                grantYears: grantableYears(settings?.orgMembershipYearBoundary, new Date()),
             });
         } catch (error) {
             logger.error("Failed to fetch households:", error);
@@ -265,7 +251,7 @@ export const POST = withAuth(
         try {
             if (auth.type !== "session") return apiError("Unauthorized", 401);
             const body = await req.json();
-            const { householdId, active, deny, comingYear, reason } = body;
+            const { householdId, active, deny, year, reason } = body;
 
             if (!householdId) {
                 return apiError("Household ID is required", 400);
@@ -325,16 +311,15 @@ export const POST = withAuth(
                 return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: outcome } }) });
             }
 
-            // Grants pay an application (money only); neither sets the household's status.
-            if (comingYear || active) {
+            // A grant pays an application (money only) and records the year on the button pressed.
+            if (year !== undefined) {
                 if (!trimmedReason) return apiError("A reason is required to certify a payment", 400);
+                const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+                if (!grantableYears(settings?.orgMembershipYearBoundary, new Date()).some((y) => y.year === year)) {
+                    return apiError("That membership year can't be granted now. Reload the page and try again.", 400);
+                }
                 try {
-                    const grantActor = { actorId: auth.user.id, reason: trimmedReason };
-                    await refuseGrantIfDenied(householdId, auth.user.id);
-                    if (comingYear) {
-                        return NextResponse.json({ success: true, process: await grantRenewalPayment(householdId, grantActor) });
-                    }
-                    const result = await grantCurrentYear(householdId, grantActor);
+                    const result = await grantMembership(householdId, { actorId: auth.user.id, reason: trimmedReason }, year);
                     return NextResponse.json({
                         success: true,
                         ...result,
@@ -349,6 +334,9 @@ export const POST = withAuth(
                     throw e; // unexpected → outer catch → 500
                 }
             }
+
+            // Revoke is asked for by name, so a grant from a page without a year never lands here.
+            if (active !== false) return apiError("Reload the page and try again.", 400);
 
             // Revoke: only a household that is still ACTIVE at write time.
             const existingMembership = await prisma.orgMembership.findUnique({ where: { householdId } });

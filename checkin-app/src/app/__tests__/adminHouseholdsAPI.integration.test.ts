@@ -11,6 +11,7 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { bgValidUntilBoundary } from '@/lib/membership/renewal';
+import { membershipYearOf } from '@/lib/programYear';
 
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
@@ -317,7 +318,7 @@ describe('Admin Households API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/membership-ops/households', {
                  method: 'POST',
-                 body: JSON.stringify({ householdId: testHousehold1Id, active: true })
+                 body: JSON.stringify({ householdId: testHousehold1Id, year: membershipYearOf(bgBoundary, new Date()) })
              });
 
              const res = await POST(req as unknown as import("next/server").NextRequest);
@@ -331,7 +332,7 @@ describe('Admin Households API Integration Tests', () => {
 
             const req = new Request('http://localhost:4000/api/membership-ops/households', {
                 method: 'POST',
-                body: JSON.stringify({ active: true })
+                body: JSON.stringify({ year: membershipYearOf(bgBoundary, new Date()) })
             });
 
             const res = await POST(req as unknown as import("next/server").NextRequest);
@@ -345,7 +346,7 @@ describe('Admin Households API Integration Tests', () => {
 
             const req = new Request('http://localhost:4000/api/membership-ops/households', {
                 method: 'POST',
-                body: JSON.stringify({ householdId: testHousehold1Id, active: true, reason: 'Paid by check' })
+                body: JSON.stringify({ householdId: testHousehold1Id, year: membershipYearOf(bgBoundary, new Date()), reason: 'Paid by check' })
             });
 
             const res = await POST(req as unknown as import("next/server").NextRequest);
@@ -381,7 +382,7 @@ describe('Admin Households API Integration Tests', () => {
             expect(activeMembership).toBeNull(); // Should be deactivated
         });
 
-        it('refuses a coming-year grant from a sysadmin who is not on the Board (403, nothing certified)', async () => {
+        it('refuses a certifying grant from a sysadmin who is not on the Board (403, nothing certified)', async () => {
             const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: testHousehold2Id } });
             const renewal = await prisma.orgMembershipProcess.create({
                 data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
@@ -392,7 +393,7 @@ describe('Admin Households API Integration Tests', () => {
 
             const req = new Request('http://localhost:4000/api/membership-ops/households', {
                 method: 'POST',
-                body: JSON.stringify({ householdId: testHousehold2Id, comingYear: true, reason: 'Paid by check' })
+                body: JSON.stringify({ householdId: testHousehold2Id, year: membershipYearOf(bgBoundary, new Date()), reason: 'Paid by check' })
             });
 
             const res = await POST(req as unknown as import("next/server").NextRequest);

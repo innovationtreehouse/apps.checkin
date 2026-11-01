@@ -305,11 +305,11 @@ Procedure below is built on them.
 - From there payment and review run in parallel, and membership activates on
   whichever finishes last. Neither alone activates.  [Decision]
 
-- Granting the coming year completes the payment step on a renewal already under
-  way. It stamps no other gate.  [Decision]
+- A board grant completes the payment step on an application already under way,
+  joining or renewing. It stamps no other gate.  [Decision]
 
 - Only an application completing — paid and background check cleared — makes a
-  household a member. Granting the current year is money only: it pays the
+  household a member. A board grant is money only: it pays the
   household's application under way, or opens one for the family to complete,
   and never sets membership directly or skips the check. A household already
   active stays active.  [Decision]
@@ -383,6 +383,10 @@ Procedure below is built on them.
 - The board can activate a household with no payment by certifying a payment
   plan. Only the board certifies a payment; a sysadmin cannot.
   [Decision — *Policy: Membership Policy, Art. XIII*]
+
+- A board grant records the membership year the Board chooses: the year in
+  progress, or, inside the renewal window, the coming year. Each grant control
+  names the year it records.  [Decision]
 
 - A membership order the app cannot apply settles nothing and is raised for the
   board: a second order on an application already paid, one arriving after the

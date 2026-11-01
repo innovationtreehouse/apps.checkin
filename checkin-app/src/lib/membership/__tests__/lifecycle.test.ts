@@ -6,7 +6,7 @@
  * Pure — no DB. Proves the anti-drift guarantees the four fixes rely on:
  *   - awaitingBgReview.has (client predicate) ≡ awaitingBgReview.where (server
  *     Prisma fragment) across the full status × flags matrix (fix #1);
- *   - grantableRenewalWhere / settledThisCycleWhere emit the exact fragments the
+ *   - grantableApplicationWhere / settledThisCycleWhere emit the exact fragments the
  *     route + guard + sweep consume (fix #3/#4);
  *   - isLegalTransition covers the machine’s edges; reachability flags the legacy
  *     RENEWAL_PENDING_BG as unreachable;
@@ -19,7 +19,7 @@ import {
 } from '@/generated/prisma/client';
 import {
     awaitingBgReview,
-    grantableRenewalWhere,
+    grantableApplicationWhere,
     settledThisCycleWhere, handledThisCycleWhere,
     IN_FLIGHT_INITIAL,
     IN_FLIGHT_RENEWAL,
@@ -99,11 +99,9 @@ describe('awaitingBgReview', () => {
 
 // ── fix #3 / #4: renewal where builders ────────────────────────────────────────
 
-describe('grantableRenewalWhere / settledThisCycleWhere', () => {
-    test('grantableRenewalWhere = payable renewal, NOT bg-gated (fix #3, behavior (a))', () => {
-        // Grant comps payment only; BG stays an independent gate on ACTIVE. So any
-        // PENDING_PAYMENT renewal qualifies — no bgClearedAt clause.
-        expect(grantableRenewalWhere).toEqual({ kind: 'RENEWAL', status: 'PENDING_PAYMENT' });
+describe('grantableApplicationWhere / settledThisCycleWhere', () => {
+    test('grantableApplicationWhere = joining or renewing at payment, NOT bg-gated', () => {
+        expect(grantableApplicationWhere).toEqual({ kind: { in: ['INITIAL', 'RENEWAL'] }, status: 'PENDING_PAYMENT' });
     });
 
     test('settledThisCycleWhere (money) is kind-agnostic: ACTIVE or paid-awaiting-clearance', () => {
@@ -270,11 +268,10 @@ describe('isLegalTransition covers §5', () => {
         expect(isLegalTransition('ARCHIVED', 'ACTIVE')).toBe(false);
     });
 
-    test('filters by kind: grantRenewalPayment PENDING_PAYMENT→ACTIVE is RENEWAL-only', () => {
-        // The renewal-grant edge is tagged kind: RENEWAL; the generic activate edge
-        // (kind undefined) also matches PENDING_PAYMENT→ACTIVE, so both kinds pass —
-        // assert the RENEWAL edge exists explicitly in the table.
-        expect(TRANSITIONS.some((t) => t.from === 'PENDING_PAYMENT' && t.to === 'ACTIVE' && t.kind === 'RENEWAL')).toBe(true);
+    test('the grant edge serves joining and renewing alike', () => {
+        const edge = TRANSITIONS.find((t) => t.event === 'grantMembership');
+        expect(edge).toMatchObject({ from: 'PENDING_PAYMENT', to: 'ACTIVE' });
+        expect(edge?.kind).toBeUndefined();
     });
 });
 
