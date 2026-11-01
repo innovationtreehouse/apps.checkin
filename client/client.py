@@ -97,6 +97,10 @@ NO_ROSTER = {
 # Roster label for a badge the kiosk has never seen on a server roster.
 UNKNOWN_PERSON_NAME = "Checked in offline"
 
+# The saved view's format. A kiosk ignores a version it does not know and starts
+# as if nothing was saved. Adding a key does not change it.
+SNAPSHOT_VERSION = 1
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -345,8 +349,8 @@ class AttendanceState:
         # Offline these decide whether a keyholder's OUT is a last-out-with-others
         # close, and whether to show a (yellow-only) supervision caution.
         self.keyholder_ids = set()
-        # Every keyholder any roster has shown since start: a keyholder whose
-        # check-in is still queued is not on the roster but may still close.
+        # Every keyholder any roster has shown: a keyholder whose check-in is
+        # still queued is not on the roster but may still close.
         self.known_keyholders = set()
         # Server time of the last roster fetched; None until one arrives.
         self.roster_as_of = None
@@ -360,6 +364,71 @@ class AttendanceState:
         self.local_arrivals = {}
         # When the kiosk last received a server roster (ISO), or None.
         self.roster_at = None
+        # Where the view is saved, and what orders saves: each one reads the
+        # state inside this lock, so a later save never holds an older view.
+        self.snapshot_store = None
+        self.save_lock = threading.Lock()
+
+    def saved_view(self):
+        """The view as saved JSON. Readers take what they know from it and
+        ignore the rest, so a new key needs no new version."""
+        with self.lock:
+            present = set(self.present_ids)
+            view = {
+                "version": SNAPSHOT_VERSION,
+                "presentIds": sorted(present),
+                "knownKeyholders": sorted(self.known_keyholders),
+                "twoDeepViolation": self.last_two_deep_violation,
+                "roster": json.loads(self.last_roster_body) if self.last_roster_body else None,
+                "rosterAt": self.roster_at,
+                "rosterAsOf": self.roster_as_of,
+                "knownPeople": {str(pid): person for pid, person in self.known_people.items()},
+                "arrivals": {str(pid): at for pid, at in self.local_arrivals.items() if pid in present},
+            }
+        return json.dumps(view, sort_keys=True)
+
+    def restore_from(self, outbox):
+        """Start from the saved view with the queued scans on top. Occupancy
+        stays unknown until a real roster, which then replaces all of it."""
+        self.snapshot_store = outbox
+        self._restore_view(outbox.load_snapshot())
+        self.apply_pending(outbox.pending_rows())
+
+    def _restore_view(self, saved):
+        if saved is None:
+            return
+        try:
+            view = json.loads(saved)
+            if view["version"] != SNAPSHOT_VERSION:
+                log.warning(f"Ignoring saved view with version {view['version']}")
+                return
+            present = {int(pid) for pid in view["presentIds"]}
+            keyholders = {int(pid) for pid in view["knownKeyholders"]}
+            roster = json.dumps(view["roster"]) if view["roster"] else None
+            people = {int(pid): person for pid, person in view["knownPeople"].items()}
+            arrivals = {int(pid): at for pid, at in view["arrivals"].items()}
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
+            log.warning(f"Ignoring unreadable saved view: {e}")
+            return
+        with self.lock:
+            self.present_ids = present
+            self.known_keyholders = keyholders
+            self.last_two_deep_violation = bool(view.get("twoDeepViolation"))
+            self.last_roster_body = roster
+            self.roster_at = view.get("rosterAt")
+            self.roster_as_of = view.get("rosterAsOf")
+            self.known_people = people
+            self.local_arrivals = arrivals
+
+    def save_view_if_changed(self):
+        """Limits SD card wear: an unchanged view writes nothing, however often
+        the roster is fetched."""
+        if self.snapshot_store is None:
+            return
+        with self.save_lock:
+            view = self.saved_view()
+            if _view_content(view) != _view_content(self.snapshot_store.load_snapshot()):
+                self.snapshot_store.save_snapshot(view)
 
     def arm_local_close(self, participant_id, seconds, banner_html=None):
         """Arm the close prompt for this keyholder. The next scan of the SAME
@@ -440,6 +509,7 @@ class AttendanceState:
         with self.lock:
             self.known_keyholders.discard(pid)
             self.keyholder_ids.discard(pid)
+        self.save_view_if_changed()
 
     def clear_present(self):
         """A close empties the kiosk's view of the building."""
@@ -553,6 +623,7 @@ class AttendanceState:
             self.roster_generation += 1
             self.last_roster_body = json.dumps(att_data)
             self.roster_at = now_iso()
+        self.save_view_if_changed()
         return True
 
     def roster_snapshot(self, outbox):
@@ -596,6 +667,25 @@ class AttendanceState:
             view.pop("safety", None)
         view["kioskAsOf"] = roster_at
         return view
+
+
+def _view_content(saved):
+    """A saved view without its fetch times, which change on every roster. The
+    saved times can lag behind an unchanged roster: an older rosterAsOf only
+    makes a close more cautious, and an older kioskAsOf reads as less fresh."""
+    if saved is None:
+        return None
+    try:
+        view = json.loads(saved)
+        view.pop("rosterAt", None)
+        view.pop("rosterAsOf", None)
+        if view.get("roster"):
+            view["roster"].pop("rosterAsOf", None)
+            # Carries the server's last-seen stamp of this kiosk, new on every fetch.
+            view["roster"].pop("building", None)
+    except (ValueError, AttributeError):
+        return None
+    return view
 
 
 def _visit_pid(visit):
@@ -1411,11 +1501,12 @@ def handle_scan(backend, state, outbox, participant_id):
     # the live POST leaves it for the drain, and the server dedups on
     # clientEventId if the live send did land. A live row is claimed in flight,
     # so the drain skips it until the live outcome settles it.
-    outbox.enqueue(
-        client_event_id, participant_id, scanned_at,
-        intent=intent, clock_suspect=clock_suspect, inflight=not queue_only,
-        close=close, roster_as_of=roster_as_of,
-    )
+    with state.save_lock:
+        outbox.enqueue(
+            client_event_id, participant_id, scanned_at,
+            intent=intent, clock_suspect=clock_suspect, inflight=not queue_only,
+            close=close, roster_as_of=roster_as_of, snapshot=state.saved_view(),
+        )
 
     if spec_trace.on():
         spec_trace.emit("KioskBadge", p=str(participant_id), cid=client_event_id, intent=intent, close=close,
@@ -1702,22 +1793,20 @@ def main():
     outbox = Outbox(config.get("outbox_path", DEFAULT_OUTBOX_PATH))
     log.info(f"Outbox:  {outbox.path} ({outbox.pending_count()} pending on start)")
 
+    state.restore_from(outbox)
+
     # Fetch initial attendance state (only if attendance_path is configured).
-    # Unseeded (offline, no path), queued scans still set intent.
+    # Unseeded (offline, no path), the saved view and queued scans set intent.
     pending = outbox.pending_rows()
-    seeded = False
     if attendance_path:
         log.info("Fetching initial attendance state...")
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
             state.current_counts = att_data["counts"]
             state.seed_from_attendance(att_data, pending)
-            seeded = True
             log.info(f"Initial state: {state.current_counts['total']} people present")
         else:
             log.warning("Could not fetch initial attendance state")
-    if not seeded:
-        state.apply_pending(pending)
 
     if attendance_path:
         # Start background poller for blackout updates

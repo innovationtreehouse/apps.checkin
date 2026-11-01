@@ -4,6 +4,7 @@ banner (#1257)."""
 
 import os
 import tempfile
+import threading
 import unittest
 from unittest.mock import MagicMock
 
@@ -23,6 +24,10 @@ class FakeState:
         self.present_ids = set()
         self.scan_protocol = SCAN_PROTOCOL_VERSION
         self.known_people = {}
+        self.save_lock = threading.Lock()
+
+    def saved_view(self):
+        return None
 
     def push_event(self, data):
         self.events.append(data)
