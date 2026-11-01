@@ -477,6 +477,14 @@ Things the app takes as true because they are handled outside it.
   reason.
   [Decision — owner]
 
+- A Board member's stand-in approval is an override, not an action waiting on
+  them. While a bucket approver can approve the line, it does not count in the
+  Board member's pill and Approve All does not take it. Where none can, the
+  Board is the only one who can act, so it counts in the pill, and Approve All
+  takes it unless it needs a reason; one that needs a reason is approved on its
+  own.
+  [Decision — owner]
+
 - Reimbursing someone who is not a Treehouse Member takes the program approver
   chosen as for any line, and then a Board member's approval. A Board member
   without a conflict signs a Board seat on each line once the line is approved
