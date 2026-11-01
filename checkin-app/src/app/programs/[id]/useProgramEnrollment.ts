@@ -212,19 +212,20 @@ export function useProgramEnrollment(id: string) {
 
     try {
       for (const participantId of selectedParticipantIds) {
-        let res = await fetch(`/api/programs/${id}/participants`, {
+        const enrollRes = await fetch(`/api/programs/${id}/participants`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ participantId })
         });
 
-        if (!res.ok) {
-          const data = await res.json();
+        // A 409 means the row already exists; the plan route decides whether it can take a request.
+        if (!enrollRes.ok && enrollRes.status !== 409) {
+          const data = await enrollRes.json();
           errors.push(data.error || "Failed to start enrollment.");
           continue;
         }
 
-        res = await fetch(`/api/programs/${id}/request-payment-plan`, {
+        const res = await fetch(`/api/programs/${id}/request-payment-plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           // One choice covers the whole selected batch: the ask is the household's
@@ -234,8 +235,13 @@ export function useProgramEnrollment(id: string) {
 
         if (res.ok) {
           anyRequested = true;
-        } else {
+        } else if (enrollRes.ok && res.status >= 500) {
           errors.push("Enrolled as pending, but failed to alert the Scholarship Review Team for one member. Please email them directly.");
+        } else {
+          const name = householdMembers.find((m) => m.id === participantId)?.name ?? "One member";
+          errors.push(res.status < 500
+            ? `${name}: ${(await res.json()).error ?? "This request can't go ahead."}`
+            : `${name}: We couldn't send your request to the Scholarship Review Team. Please email them directly.`);
         }
       }
 
