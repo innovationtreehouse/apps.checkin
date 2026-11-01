@@ -3,9 +3,9 @@ import { join } from 'node:path';
 
 import {
     TRANSITIONS as ENROLL_TX,
-    STATES as ENROLL_STATES,
-    fromWhere as enrollFromWhere,
-    type FromStateName as EnrollFrom,
+    ENROLLMENT_GUARDS,
+    type EnrollmentGuard,
+    type EnrollmentWriteName,
 } from '../../programs/enrollmentState';
 import {
     TRANSITIONS as MEMB_TX,
@@ -23,7 +23,9 @@ import {
 } from '../../membership/householdStatus';
 
 /**
- * CAS guard ↔ TRANSITIONS from-state parity.
+ * CAS guard ↔ TRANSITIONS from-state parity, for the machines whose guards are not yet
+ * declared as data. Enrollment guards are data: this file ties them to the table and to
+ * their sites, and enrollmentGuards.integration.test.ts runs them.
  *
  * Every spreading guard uses `...fromWhere(<fromState>)`, sourcing its
  * from-state `status` clause from the ONE definition. This test pins that link:
@@ -45,7 +47,7 @@ const SRC = join(__dirname, '../../..'); // .../src
 type GuardSite = {
     /** Source file, relative to src/. */
     file: string;
-    machine: 'enrollment' | 'membership' | 'household';
+    machine: 'membership' | 'household';
     /** The from-state the guard's CAS names (a state in that machine). */
     from: string;
     /** Transition the guard drives, as [from, to]; omit for a guard that changes no
@@ -58,15 +60,6 @@ type GuardSite = {
 };
 
 const GUARDS: GuardSite[] = [
-    // ── enrollment (ProgramParticipant) ──
-    { file: 'lib/programs/activateEnrollment.ts', machine: 'enrollment', from: 'PENDING_UNPAID', edge: ['PENDING_UNPAID', 'ACTIVE'], mode: 'spread' },
-    { file: 'app/api/programs/[id]/request-payment-plan/route.ts', machine: 'enrollment', from: 'PENDING_UNPAID', edge: ['PENDING_UNPAID', 'PENDING_HELD'], mode: 'spread' },
-    { file: 'app/api/programs/[id]/request-payment-plan/route.ts', machine: 'enrollment', from: 'PENDING_HELD_DENIED', edge: ['PENDING_HELD_DENIED', 'PENDING_HELD'], mode: 'spread' },
-    { file: 'app/api/finance-ops/payment-plans/route.ts', machine: 'enrollment', from: 'PENDING_HELD', edge: ['PENDING_HELD', 'ACTIVE'], mode: 'spread' },
-    { file: 'app/api/finance-ops/payment-plans/refuse/route.ts', machine: 'enrollment', from: 'PENDING_HELD', edge: ['PENDING_HELD', 'PENDING_HELD_DENIED'], mode: 'spread' },
-    { file: 'app/api/finance-ops/payment-plans/refuse/route.ts', machine: 'enrollment', from: 'PENDING_HOLD_FAILED', edge: ['PENDING_HOLD_FAILED', 'PENDING_UNPAID'], mode: 'spread' },
-    { file: 'app/api/finance-ops/payment-plans/manual-hold/route.ts', machine: 'enrollment', from: 'PENDING_HOLD_FAILED', edge: ['PENDING_HOLD_FAILED', 'PENDING_HELD'], mode: 'spread' },
-
     // ── membership (OrgMembershipProcess) ──
     { file: 'lib/membership/external.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', edge: ['PENDING_EXTERNAL_ACTION', 'PENDING_PAYMENT'], mode: 'spread' },
     { file: 'lib/membership/external.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', edge: ['PENDING_EXTERNAL_ACTION', 'ACTIVE'], mode: 'spread' },
@@ -110,20 +103,15 @@ const read = (file: string) => readFileSync(join(SRC, file), 'utf8');
 
 function fromWhereOf(g: GuardSite) {
     if (g.machine === 'household') return householdFromWhere(g.from as HouseholdStatus);
-    return g.machine === 'enrollment' ? enrollFromWhere(g.from as EnrollFrom) : membFromWhere(g.from as ProcessStatus);
+    return membFromWhere(g.from as ProcessStatus);
 }
 
 const statesOf = (g: GuardSite): readonly string[] =>
-    g.machine === 'enrollment' ? Object.keys(ENROLL_STATES) : g.machine === 'household' ? HOUSEHOLD_STATES : MEMB_STATES;
-const txOf = (g: GuardSite) => (g.machine === 'enrollment' ? ENROLL_TX : g.machine === 'household' ? HOUSEHOLD_TX : MEMB_TX);
+    g.machine === 'household' ? HOUSEHOLD_STATES : MEMB_STATES;
+const txOf = (g: GuardSite) => (g.machine === 'household' ? HOUSEHOLD_TX : MEMB_TX);
 
-/** Recompute the expected identifying status clause independently of fromWhere, so a
- *  bug in fromWhere itself can't make the test tautological. Enrollment maps a
- *  from-state name to its status via STATES; membership's name IS the status. */
-function expectedStatusWhere(g: GuardSite) {
-    const statuses = g.machine === 'enrollment' ? ENROLL_STATES[g.from as EnrollFrom].statuses : [g.from];
-    return statuses.length === 1 ? { status: statuses[0] } : { status: { in: [...statuses] } };
-}
+/** The expected identifying status clause, independent of fromWhere: a state's name IS its status. */
+const expectedStatusWhere = (g: GuardSite) => ({ status: g.from });
 
 describe('CAS guard ↔ TRANSITIONS from-state parity', () => {
     it('fromWhere emits exactly the from-state identifying status clause', () => {
@@ -197,5 +185,56 @@ describe('CAS guard ↔ TRANSITIONS from-state parity', () => {
         expect(read('lib/membership/personBgTriggers.ts')).not.toMatch(/fromWhere\(/);
         expect([...personBgOpen.statuses].sort()).toEqual(['BLOCKED', 'PENDING_BG_REVIEW']);
         for (const s of personBgOpen.statuses) expect(MEMB_STATES).toContain(s);
+    });
+});
+
+/** Every site that performs a declared enrollment write. */
+const ENROLLMENT_WRITE_SITES: Record<EnrollmentWriteName, string> = {
+    requestFlag: 'app/api/programs/[id]/request-payment-plan/route.ts',
+    takeHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
+    reapply: 'app/api/programs/[id]/request-payment-plan/route.ts',
+    requestWithoutHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
+    retryWithoutHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
+    manualHold: 'app/api/finance-ops/payment-plans/manual-hold/route.ts',
+    activateHeld: 'lib/programs/activateEnrollment.ts',
+    activateUnheld: 'lib/programs/activateEnrollment.ts',
+    approveHeld: 'app/api/finance-ops/payment-plans/route.ts',
+    approveUnheld: 'app/api/finance-ops/payment-plans/route.ts',
+    denyHeld: 'app/api/finance-ops/payment-plans/refuse/route.ts',
+    denyUnheld: 'app/api/finance-ops/payment-plans/refuse/route.ts',
+    withdraw: 'lib/program/capacity.ts',
+    releaseWithdrawnHold: 'lib/program/capacity.ts',
+    reenrollPaid: 'app/api/programs/[id]/participants/route.ts',
+    reenrollComp: 'app/api/programs/[id]/participants/route.ts',
+};
+
+describe('enrollment guards ↔ TRANSITIONS', () => {
+    const guards: Record<string, EnrollmentGuard> = ENROLLMENT_GUARDS;
+
+    it('every row between two present states names a guard, and that guard covers the edge', () => {
+        for (const row of ENROLL_TX) {
+            const present = row.from !== 'UNENROLLED' && row.to !== 'UNENROLLED';
+            expect({ event: row.event, named: row.guard !== undefined }).toEqual({ event: row.event, named: present });
+            if (!row.guard) continue;
+            const guard = guards[row.guard];
+            expect({ event: row.event, to: guard.to }).toEqual({ event: row.event, to: row.to });
+            expect(guard.from).toContain(row.from);
+        }
+    });
+
+    it('every edge a guard takes has a row naming that guard', () => {
+        for (const [name, guard] of Object.entries(guards)) {
+            for (const from of guard.from) {
+                if (from === guard.to) continue;
+                const found = ENROLL_TX.some((t) => t.from === from && t.to === guard.to && t.guard === name);
+                expect({ name, from, found }).toEqual({ name, from, found: true });
+            }
+        }
+    });
+
+    it('every declared write is consumed at its site', () => {
+        for (const [name, file] of Object.entries(ENROLLMENT_WRITE_SITES)) {
+            expect({ name, used: read(file).includes(`ENROLLMENT_WRITES.${name}.data(`) }).toEqual({ name, used: true });
+        }
     });
 });

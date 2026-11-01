@@ -17,7 +17,7 @@ export const QB_MATCH_STATE = {
   NOT_TEST_DATA: "NOT_TEST_DATA",
   /** In prod, a TEST- disbursement: never sent. Re-checked each run. */
   TEST_DATA_REFUSED: "TEST_DATA_REFUSED",
-  /** The held deposit is gone or changed in QuickBooks: finance's to resolve, never matched again automatically. */
+  /** A held entry is gone or changed in QuickBooks: finance matches it again or skips it, never automatically. */
   DRIFT: "DRIFT",
   /** Finance settled it outside the app, with a reason: never posted or matched again. */
   DISMISSED: "DISMISSED",

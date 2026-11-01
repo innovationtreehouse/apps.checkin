@@ -386,6 +386,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   so it can't hold back newer gifts. When a run stops because several gifts in a
   row failed, finance is alerted.  [Decision]
 
+- A gift of goods whose entry in the books is removed, voided or changed after it
+  booked goes back to finance, which matches it again or skips it with a reason.
+  The app never books or matches it again on its own. A withdrawn gift is not
+  checked, because finance reverses its entry by hand.  [Decision]
+
 - A gift of goods withdrawn after its money arrived is raised for finance, booked
   or not. Finance reverses it by hand only if it booked; the app changes nothing
   in the books. When finance settles a withdrawal, the donor's details are cleared

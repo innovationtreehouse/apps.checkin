@@ -402,6 +402,9 @@ Procedure below is built on them.
   to owing its membership fee by the normal route. The decision is recorded; carrying it to
   the family is not the app's job.  [Decision — deliberate limit; *Principle: people decide about people*]
 
+- A payment-plan request is decided once: an approval and a denial racing each
+  other cannot both take effect.  [Decision]
+
 - A household that has settled its membership fee but is still waiting on its background
   check, and is not denied, is a member for program pricing and for reaching
   members-only programs, and for nothing else. Mailing audiences, outreach, the store's member list,

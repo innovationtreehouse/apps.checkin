@@ -5,23 +5,26 @@
  * `scanLifecycleViolations` runs each machine's OWN `validate` over every live
  * row and returns the off-diagram set — read-only, shared by the System Status
  * surface (§6.2) and the reconciler cron. `runLifecycleReconcile` adds the one
- * safe auto-heal (enrollment I1) and reports the rest to the existing
- * sysadmin/board channel.
+ * safe auto-heal (enrollment I1) and sends sysadmins and the board one digest of
+ * the rest.
  *
  * This module NEVER re-derives an invariant: it calls the machines' `validate`,
  * so picture, panel, and reconciler cannot disagree with the guards.
  */
 import prisma from "@/lib/prisma";
-import { logger } from "@/lib/logger";
+import { config } from "@/lib/config";
+import { emailSysadminsAndBoard } from "@/lib/emailRecipients";
+import { logger, logIntegrationError } from "@/lib/logger";
 import {
     toRow as toEnrollmentRow,
     validate as validateEnrollment,
 } from "@/lib/programs/enrollmentState";
 import { validate as validateMembership } from "@/lib/membership/lifecycle";
 import { systemActor } from "@/lib/auditActor";
-import { reportShopifyFailure } from "@/lib/shopify/client";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
+
+const DRIFT_SOURCE = "lifecycle-drift";
 
 export type LifecycleModel = "ProgramParticipant" | "OrgMembershipProcess";
 
@@ -108,7 +111,12 @@ export type ReconcileSummary = {
     scanned: number;
     violations: number;
     healed: number;
+    /** Off-diagram rows in a digest that reached someone. */
     reported: number;
+    /** Off-diagram rows not in any earlier delivered digest. */
+    newViolations: number;
+    /** Heals that threw, plus one if a digest reached nobody. Read by `withCron`. */
+    failed: number;
 };
 
 /**
@@ -116,10 +124,11 @@ export type ReconcileSummary = {
  * a `-1` the webhook took but never released. Per row, a guarded `updateMany`
  * clears the stranded hold (CAS — a concurrent release wins and this no-ops),
  * and the missed +1 release commit together (changeProgramStockWith). §9 of the
- * enrollment doc. Audit-logs each heal (actorId 0 = system). Returns the number
- * healed. Per-row isolated; the Shopify leg is non-fatal.
+ * enrollment doc. Audit-logs each heal (actorId 0 = system). Returns the rows
+ * healed and the rows whose heal threw. Per-row isolated; a Shopify leg that did
+ * not land is owed in the stock carry, so it is not a failed heal.
  */
-async function healEnrollmentI1(): Promise<number> {
+async function healEnrollmentI1(): Promise<{ healed: number; failed: number }> {
     // status=ACTIVE ∧ inventoryHeldAt≠null IS the I1 set — no re-derivation.
     const stranded = await prisma.programParticipant.findMany({
         where: { status: "ACTIVE", inventoryHeldAt: { not: null } },
@@ -132,6 +141,7 @@ async function healEnrollmentI1(): Promise<number> {
     });
 
     let healed = 0;
+    let failed = 0;
     for (const row of stranded) {
         try {
             // Guarded CAS: only the caller that flips held→null gets count 1 and
@@ -179,51 +189,78 @@ async function healEnrollmentI1(): Promise<number> {
             healed++;
         } catch (error) {
             // Per-row isolation: one bad row never aborts the sweep.
+            failed++;
             logger.error(
                 `[lifecycle-reconcile] I1 heal failed for program ${row.programId} / person ${row.personId}:`,
                 error,
             );
         }
     }
-    return healed;
+    return { healed, failed };
 }
 
+type DriftIdentity = Pick<LifecycleViolation, "key" | "invariant"> & { model: string };
+
+const driftIdentity = (row: DriftIdentity) => `${row.model}|${row.key}|${row.invariant}`;
+
+const driftLines = (rows: LifecycleViolation[]) =>
+    rows.map((v) => `${v.model} ${v.key}: invariant ${v.invariant} (status ${v.status})`).join("\n") || "None";
+
 /**
- * Report one off-diagram row to the existing sysadmin/board channel — the SAME
- * path Shopify write failures use (IntegrationErrorLog → System Status "Link
- * Status" + admin/board email). Never throws.
+ * Send one digest of the off-diagram rows, split by LifecycleDriftReport into new
+ * and still present, and sync that record. A row that leaves the set loses its
+ * record, so its return counts as new. A row joins the record only once a digest
+ * reached someone, so a digest nobody received leaves it new for the next run.
  */
-async function reportViolation(v: LifecycleViolation): Promise<void> {
-    await reportShopifyFailure(
-        "lifecycleReconcile",
-        new Error(`${v.model} ${v.key}: off-diagram — invariant ${v.invariant} violated (status ${v.status})`),
-        { model: v.model, key: v.key, status: v.status, invariant: v.invariant },
-        `A ${v.model} row is off its lifecycle diagram (invariant ${v.invariant}) and needs a human to resolve — nothing was changed automatically.`,
-    );
+async function reportDrift(violations: LifecycleViolation[]): Promise<{ newViolations: number; delivered: boolean }> {
+    const known = await prisma.lifecycleDriftReport.findMany({ select: { id: true, model: true, key: true, invariant: true } });
+    const knownIdentities = new Set(known.map(driftIdentity));
+    const currentIdentities = new Set(violations.map(driftIdentity));
+
+    const left = known.filter((r) => !currentIdentities.has(driftIdentity(r))).map((r) => r.id);
+    if (left.length > 0) await prisma.lifecycleDriftReport.deleteMany({ where: { id: { in: left } } });
+    if (violations.length === 0) return { newViolations: 0, delivered: true };
+
+    const fresh = violations.filter((v) => !knownIdentities.has(driftIdentity(v)));
+    const stillPresent = violations.filter((v) => knownIdentities.has(driftIdentity(v)));
+
+    if (fresh.length > 0) {
+        await logIntegrationError(DRIFT_SOURCE, `${fresh.length} new off-diagram lifecycle row(s)`, { rows: fresh });
+    }
+    const delivered = await emailSysadminsAndBoard("lifecycle.driftDigest", {
+        newCount: String(fresh.length),
+        stillPresentCount: String(stillPresent.length),
+        newList: driftLines(fresh),
+        stillPresentList: driftLines(stillPresent),
+        actionLink: `${config.baseUrl()}/system-status/lifecycle`,
+    });
+    if (delivered && fresh.length > 0) {
+        await prisma.lifecycleDriftReport.createMany({
+            data: fresh.map(({ model, key, invariant }) => ({ model, key, invariant })),
+            skipDuplicates: true,
+        });
+    }
+    return { newViolations: fresh.length, delivered };
 }
 
 /**
- * The reconciler sweep: heal the one safe,
- * unambiguous case (enrollment I1), report every remaining violation, return a
- * summary. Complementary to the order-driven `lib/finance/reconcile/` — this
- * one is invariant-driven.
+ * The reconciler sweep: heal the one safe, unambiguous case (enrollment I1),
+ * report every remaining violation in one digest, return a summary. Complementary
+ * to the order-driven `lib/finance/reconcile/` — this one is invariant-driven.
  */
 export async function runLifecycleReconcile(): Promise<ReconcileSummary> {
     // Heal first, so the post-heal scan doesn't re-report a row we just fixed.
-    const healed = await healEnrollmentI1();
+    const { healed, failed: healFailures } = await healEnrollmentI1();
 
     const { violations, scanned } = await scanLifecycleViolations();
+    const { newViolations, delivered } = await reportDrift(violations);
 
-    let reported = 0;
-    for (const v of violations) {
-        try {
-            await reportViolation(v);
-            reported++;
-        } catch (error) {
-            // reportShopifyFailure never throws, but keep the sweep isolated regardless.
-            logger.error(`[lifecycle-reconcile] failed to report ${v.model} ${v.key}:`, error);
-        }
-    }
-
-    return { scanned, violations: healed + violations.length, healed, reported };
+    return {
+        scanned,
+        violations: healed + violations.length,
+        healed,
+        reported: delivered ? violations.length : 0,
+        newViolations,
+        failed: healFailures + (delivered ? 0 : 1),
+    };
 }

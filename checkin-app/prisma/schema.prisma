@@ -1716,6 +1716,24 @@ model CronRunLog {
   @@index([job, success, finishedAt])
 }
 
+/// An off-diagram lifecycle row some digest has already reported. Deleted when the
+/// row leaves the off-diagram set, so its return is reported as new.
+model LifecycleDriftReport {
+  /// @sensitivity:internal
+  id              Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  model           String
+  /// Row key from lib/lifecycleDrift.ts: ids only, never names.
+  /// @sensitivity:internal
+  key             String
+  /// @sensitivity:internal
+  invariant       String
+  /// @sensitivity:internal
+  firstReportedAt DateTime @default(now())
+
+  @@unique([model, key, invariant])
+}
+
 /// Permanent record of a participant merge, written by
 /// membership-ops/participants/merge in the merge transaction.
 ///

@@ -200,13 +200,11 @@ describe('Membership payment-plan routes', () => {
                 orderBy: { id: 'asc' },
             });
             expect(audits.length).toBeGreaterThan(0);
-            // Written inside activate() (via certifyPaymentPlan) — carries the reason.
+            // One row, written inside activate() (via certifyPaymentPlan): the reason and the approval.
             const certifyAudit = audits.find(a => (a.newData as { via?: string })?.via === 'manual');
             expect(certifyAudit).toBeTruthy();
             expect((certifyAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Board approved scholarship');
-            // Supplementary marker written by the route itself.
-            const approvedAudit = audits.find(a => (a.newData as { paymentPlanApproved?: boolean })?.paymentPlanApproved === true);
-            expect(approvedAudit).toBeTruthy();
+            expect((certifyAudit!.newData as { paymentPlanApproved?: boolean }).paymentPlanApproved).toBe(true);
         });
     });
 
