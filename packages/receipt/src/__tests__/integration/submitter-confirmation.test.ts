@@ -221,6 +221,62 @@ describeDb("the person reimbursed confirms, not the uploader", () => {
   });
 });
 
+describeDb("the uploader edits after someone else confirmed", () => {
+  /** A reimbursement `confirmer` confirmed for `reimburseePersonId`, whose total Alice left unbalanced, so it waits in validation_failed. */
+  async function confirmedByOther(reimburseePersonId: number, confirmer: typeof BOB | typeof BOARD, reason?: string) {
+    const id = await uploadFor(reimburseePersonId);
+    await receiptService.edit(id, "submitter", { receiptTotal: 25 });
+    actAs(confirmer);
+    await receiptService.confirmAsReimbursee(id, reason);
+    expect(await stateOf(id)).toBe("validation_failed");
+    expect(await reviewedAt(id)).not.toBeNull();
+    actAs(ALICE);
+    const [line] = await db.receiptLineItem.findMany({ where: { receiptId: id } });
+    return { id, lineId: line.id };
+  }
+
+  it.each([
+    ["receiptTotalCents", (id: string) => receiptService.edit(id, "submitter", { receiptTotal: 20 })],
+    ["lineItems", (id: string) => receiptService.addLine(id, "submitter", { description: "Washer", quantity: 1, unitPrice: 5 })],
+    ["lineItems", (id: string, lineId: number) => receiptService.editLine(id, "submitter", lineId, { quantity: 3 })],
+    ["lineItems", (id: string, lineId: number) => receiptService.deleteLine(id, "submitter", lineId)],
+  ])("a change to %s voids it, audited naming the uploader and the field", async (field, change) => {
+    const { id, lineId } = await confirmedByOther(BOB.id, BOB);
+    await change(id, lineId);
+    const detail = await db.receiptDetail.findUniqueOrThrow({ where: { id } });
+    expect(detail).toMatchObject({ reviewedAt: null, reviewedByUserId: null, reviewedOnBehalfReason: null });
+    expect(await voids(id)).toEqual([expect.objectContaining({ userId: ALICE.id, fieldChanged: field })]);
+  });
+
+  it("correcting the retailer does not void it", async () => {
+    const { id } = await confirmedByOther(BOB.id, BOB);
+    await receiptService.edit(id, "submitter", { retailer: "Other Store" });
+    expect(await reviewedAt(id)).not.toBeNull();
+    expect(await voids(id)).toEqual([]);
+  });
+
+  it("voids a Board member's confirmation on the reimbursee's behalf too", async () => {
+    const { id } = await confirmedByOther(NO_ACCOUNT.id, BOARD, "no account");
+    await receiptService.edit(id, "submitter", { receiptTotal: 20 });
+    expect(await db.receiptDetail.findUniqueOrThrow({ where: { id } })).toMatchObject({ reviewedAt: null, reviewedByUserId: null, reviewedOnBehalfReason: null });
+    expect(await voids(id)).toEqual([expect.objectContaining({ userId: ALICE.id })]);
+  });
+
+  it("the receipt returns to the reimbursee's review, delivers nothing unsigned, and travels with their new confirmation", async () => {
+    const { id } = await confirmedByOther(BOB.id, BOB);
+    await receiptService.edit(id, "submitter", { receiptTotal: 20 });
+    await receiptService.resubmit(id, "submitter");
+    expect(await stateOf(id)).toBe("submitter_review");
+    expect(ports.calls.pushes).toHaveLength(0);
+    await expect(receiptService.submitterConfirm(id)).rejects.toMatchObject({ status: 403 });
+    actAs(BOB);
+    expect(await receiptService.listConfirmations()).toEqual([expect.objectContaining({ id, receiptTotalCents: 2000 })]);
+    await receiptService.confirmAsReimbursee(id);
+    expect(await stateOf(id)).toBe("receipt_finalized");
+    expect(ports.calls.pushes[0].submitterConfirmation).toMatchObject({ confirmedByPersonId: BOB.id, onBehalfByPersonId: undefined });
+  });
+});
+
 describeDb("a Board member confirms for a reimbursee with no account", () => {
   it("lists it, and the confirmation records that it was on their behalf, by whom, and why", async () => {
     const id = await uploadFor(NO_ACCOUNT.id);

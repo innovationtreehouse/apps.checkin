@@ -391,6 +391,12 @@ Things the app takes as true because they are handled outside it.
   The void and the new confirmation are both recorded.
   [Decision — owner]
 
+- The same change voids the signature when the uploader makes it on a
+  reimbursement for someone else, whether the person reimbursed confirmed it or
+  a Board member did on their behalf. The person reimbursed changing their own
+  confirmed receipt does not void it.
+  [Decision — owner]
+
 - A line's program approver signs it by approving it: the approval records who
   approved and when, and no separate signature is taken. Whoever may not hold a
   seat on the expense may not approve the line.
