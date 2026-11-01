@@ -418,6 +418,30 @@ describeDb("getGift", () => {
     expect(asked).toEqual([`donation:${id}`]);
   });
 
+  it("still shows the gift as not loaded when the failure reason cannot be read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    configure(
+      RECORDER,
+      async () => {
+        throw new Error("inventory down");
+      },
+      async () => {
+        throw new Error("inventory down");
+      },
+    );
+    const { id } = await recordInKindWithoutReceipt({
+      donor: { firstName: "Sam", lastName: "Giver", companyName: null },
+      donationDate: "2026-10-02",
+      lines: [{ gtin13: DRILL, quantity: 1 }],
+    });
+    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({
+      donorFirstName: "Sam",
+      inventoryLoadedAt: null,
+      inventoryLoadFailureReason: null,
+    });
+    warn.mockRestore();
+  });
+
   it("asks for no failure reason once the goods loaded", async () => {
     const { id } = await manualGift();
     const failureReason = vi.fn(async () => "stale");

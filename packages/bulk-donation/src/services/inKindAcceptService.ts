@@ -608,8 +608,18 @@ async function readPageExtras(orgId: string, source: InKindSource, id: number) {
     where: { id, orgId },
     select: { ...DONOR_SELECT, recordedAt: true, recordedByUsername: true, inventoryLoadedAt: true },
   });
-  const inventoryLoadFailureReason = row.inventoryLoadedAt ? null : await getInventoryApply().failureReason(inventorySourceKey(id));
+  const inventoryLoadFailureReason = row.inventoryLoadedAt ? null : await readLoadFailure(id);
   return { ...row, inventoryLoadFailureReason };
+}
+
+/** The page loads without the reason when inventory cannot answer, and keeps its "Load again". */
+async function readLoadFailure(id: number): Promise<string | null> {
+  try {
+    return await getInventoryApply().failureReason(inventorySourceKey(id));
+  } catch (err) {
+    console.warn(`[bulk-donation] reading in-kind donation ${id}'s inventory load failure failed`, err);
+    return null;
+  }
 }
 
 /** The gift's history, oldest first; donor-read audit rows are left out. */
