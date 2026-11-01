@@ -254,7 +254,7 @@ describe("ProgramDetailsPage", () => {
   });
 
   it("switches to editing the program leader, selects a new one, then cancels back", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({
       "/api/programs/1/eligible-participants": {},
       "/api/people/search": { people: [{ id: 9, name: "Andy Adult", email: "andy@example.com" }] },
@@ -284,7 +284,7 @@ describe("ProgramDetailsPage", () => {
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
 
     expect(screen.getByText("No Program Leader Assigned")).toBeInTheDocument();
-    expect(screen.getByText("*Only Administrators/Board Members can change the Program Leader.")).toBeInTheDocument();
+    expect(screen.getByText("*Only the Board can change the Program Leader.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
@@ -773,7 +773,7 @@ describe("ProgramDetailsPage", () => {
     const setup = () => {
       setSession({ id: 1, isBoardMember: true });
       return routedFetch([
-        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/settings/membership", result: { ok: true, body: { settings: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" }, MembershipYearVariant: [] } } } },
         { url: "/api/programs/1", method: "GET", result: { ok: true, body: crossingProgram } },
         { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
       ]);
@@ -814,7 +814,7 @@ describe("ProgramDetailsPage", () => {
     it("does not pre-select a derived year when single-year dates are moved across the boundary", async () => {
       setSession({ id: 1, isBoardMember: true });
       routedFetch([
-        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/settings/membership", result: { ok: true, body: { settings: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" }, MembershipYearVariant: [] } } } },
         { url: "/api/programs/1", method: "GET", result: { ok: true, body: { ...crossingProgram, endAt: "2026-08-15T00:00:00.000Z" } } },
       ]);
       renderPage();

@@ -78,6 +78,8 @@ export interface InKindQbPosting {
   booksMap: BooksMap;
   /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
+  /** Tells finance a run stopped on its failure streak, leaving `remaining` gifts unposted. */
+  drainStopped(event: { orgId: string; failures: number; remaining: number }): Promise<void>;
 }
 
 /** One line of a disbursement's deposit: kind's account role, the gift's bucket (null at organization level), signed cents. */

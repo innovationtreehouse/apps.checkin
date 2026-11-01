@@ -197,7 +197,7 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the compliance banner (#1550)', () => {
+    describe('the compliance banner', () => {
         it('is clear when two supervising adults cover an unaccompanied youth', async () => {
             await checkIn('ann');
             await checkIn('ben');
@@ -223,7 +223,7 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the departure interrupt ladder (#1436)', () => {
+    describe('the departure interrupt ladder', () => {
         it('warns without a confirm when the third supervising adult leaves', async () => {
             await checkIn('ann');
             await checkIn('ben');

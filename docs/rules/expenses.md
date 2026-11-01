@@ -151,6 +151,12 @@ Things the app takes as true because they are handled outside it.
   review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- After a merge, an expense's submitter, reimbursee and signers count as the
+  surviving person, so the conflict and one-step-per-person rules still bind
+  them. If a submitter or reimbursee names nobody the app can find, nobody may
+  act on the expense until that is repaired.
+  [Decision — owner; *Principle: fail closed*]
+
 - Choosing a line's bucket before sign-off is not a conflicted step. A
   conflicted finance holder may assign a line's bucket, resolve an unknown
   one, and settle a raised exception by moving the line to another bucket.
@@ -475,6 +481,14 @@ Things the app takes as true because they are handled outside it.
   the finance role does not bar them; a conflict does. A Board member approving
   a line in an org-level bucket, which has no bucket approvers, gives no
   reason.
+  [Decision — owner]
+
+- A Board member's stand-in approval is an override, not an action waiting on
+  them. While a bucket approver can approve the line, it does not count in the
+  Board member's pill and Approve All does not take it. Where none can, the
+  Board is the only one who can act, so it counts in the pill, and Approve All
+  takes it unless it needs a reason; one that needs a reason is approved on its
+  own.
   [Decision — owner]
 
 - Reimbursing someone who is not a Treehouse Member takes the program approver

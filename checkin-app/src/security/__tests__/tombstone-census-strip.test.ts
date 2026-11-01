@@ -75,7 +75,7 @@ describe.each(['isSysadmin', 'isBoardMember'] as const)(
             });
         });
 
-        it('requires everyones:internal — guards the assumption the fix rests on', () => {
+        it('requires everyones:internal — the assumption the census strip rests on', () => {
             const tokens = tokensFor(ENDPOINT, role);
             expect(tokens).toContain('everyones:internal');
         });

@@ -1235,7 +1235,7 @@ describe("Merge Participants API", () => {
     });
 
     // Email/googleId/emailVerified resolve together, never split.
-    describe("login identity resolves as one unit (#1225)", () => {
+    describe("login identity resolves as one unit", () => {
         it("both sides Google, identity 'merge': keeper takes merge's email+googleId+emailVerified together, no cross-side split", async () => {
             const keepVerified = new Date("2026-01-01");
             const mergeVerified = new Date("2026-05-05");
@@ -2043,7 +2043,7 @@ describe("Merge Participants API", () => {
             expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status, cleared: null });
         });
 
-        it("carries the check over a household that has a live intake note (#1499)", async () => {
+        it("carries the check over a household that has a live intake note", async () => {
             // A note is shown to the reviewers and gates nothing, so it does not gate this
             // either — the same rule submitIntake's fresh-check shortcut follows.
             await prisma.household.update({ where: { id: householdId }, data: { intakeNotes: "please call us first" } });
@@ -2205,7 +2205,7 @@ describe("Merge Participants API", () => {
         expect(byOriginalEmail).toBeNull();
     });
 
-    describe("consumer exclusion (§3 LIVE_PERSON)", () => {
+    describe("consumer exclusion (LIVE_PERSON)", () => {
         it("people/search omits a merged-away tombstone even when the query matches its (unchanged) name", async () => {
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);

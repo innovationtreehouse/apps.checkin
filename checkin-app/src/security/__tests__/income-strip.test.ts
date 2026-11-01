@@ -71,7 +71,7 @@ function sampleRow(fields: string[]): Record<string, unknown> {
     return Object.fromEntries(fields.map((f, i) => [f, `v${i}`]));
 }
 
-describe('income tiering (§7)', () => {
+describe('income tiering', () => {
     it('the generated map holds exactly the four income row models and the settings model', () => {
         expect(Object.keys(incomeGenerated.classifications).sort()).toEqual([...PRISMA_MODELS, SETTINGS_MODEL].sort());
     });
@@ -136,7 +136,7 @@ describe('income field-stripping', () => {
         expect(out).toEqual({});
     });
 
-    it('finance reads the audit actor and before/after (§7: internal, intended view)', () => {
+    it('finance reads the audit actor and before/after (internal, intended view)', () => {
         const row = {
             id: 1,
             orgId: 'treehouse',

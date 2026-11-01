@@ -125,6 +125,9 @@ Things the app takes as true because they are handled outside it.
 - Nothing checks that a program leader is a member who has passed a background
   check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
 
+- Only the Board assigns or changes a program's leader, so only the Board creates a
+  program, which names its leader. Leaders already in place stay.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+
 - Nobody sets themself or anyone in their own household as a program's leader.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Nobody adds themselves or their own household as a program volunteer, or makes
@@ -374,9 +377,12 @@ Things the app takes as true because they are handled outside it.
 
 - A request whose seat hold failed waits for a board member to take the seat off
   sale by hand. It can still be approved or denied without one, deliberately: the
-  queue offers each as a named override behind a confirmation that states the
+  queue offers each as a named action behind a confirmation that states the
   oversell risk. A failed store call is the organisation's fault, and stranding
   the family is the worse outcome.  [Decision — deliberate limit]
+
+- Denying a request whose seat hold failed returns the enrollment to unpaid. The
+  family goes back to paying normally, and the denial is kept in the audit log.  [Decision — Owner ruling, 2026-11-01]
 
 ### Access to program information
 

@@ -54,6 +54,7 @@ jest.mock('@/lib/prisma', () => ({
 }));
 
 jest.mock('@/lib/household/leads', () => ({ addHouseholdLead: jest.fn() }));
+jest.mock('@/lib/household/joinQuestion', () => ({ asksHouseholdQuestion: jest.fn().mockResolvedValue(false) }));
 
 // jest.setup.js globally mocks @/lib/auth-options to `{}`; unmock to get the real adapter.
 jest.unmock('@/lib/auth-options');
@@ -101,7 +102,7 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         expect(typeof adapter.createUser).toBe('function');
     });
 
-    test('getUserByEmail (the OAuth-callback path that broke in #708) queries prisma.person', async () => {
+    test('getUserByEmail (the OAuth-callback path) queries prisma.person', async () => {
         mockPersonFindUnique.mockResolvedValue(null);
         // With a stale shim this throws `Cannot read properties of undefined
         // (reading 'findUnique')` — the exact production failure.
@@ -114,7 +115,7 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
     // Google hands NextAuth its own casing; the stored value is lowercased
     // on write, so the lookup key must be lowercased too or a mixed-case sign-in
     // misses the existing row and NextAuth mints a duplicate participant/household.
-    test('getUserByEmail lowercases the lookup key (#292 read normalization)', async () => {
+    test('getUserByEmail lowercases the lookup key (read normalization)', async () => {
         mockPersonFindUnique.mockResolvedValue(null);
         await adapter.getUserByEmail('John.Doe@Example.com');
         expect(mockPersonFindUnique).toHaveBeenCalledWith(

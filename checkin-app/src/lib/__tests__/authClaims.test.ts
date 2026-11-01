@@ -65,6 +65,23 @@ describe('assignParticipantClaims — household login gate', () => {
     );
 });
 
+describe('assignParticipantClaims — open household question', () => {
+    it('stamps nothing of the record until it is answered', () => {
+        const token = { name: 'Name Google gave' } as JWT;
+        assignParticipantClaims(token, participant({ householdJoinPending: true, name: 'Name the household typed', isHouseholdLead: true, canAccessStaging: true }));
+        expect(token).toMatchObject({
+            householdJoinPending: true, denied: false, name: null, householdId: null, householdLead: false,
+            ageBand: 'unknown', toolStatuses: [], programsLed: [], canAccessStaging: false, isSysadmin: false, isBoardMember: false,
+        });
+    });
+
+    it('gives the record back after a yes', () => {
+        const token = { name: null } as JWT;
+        assignParticipantClaims(token, participant({ name: 'Ana' }));
+        expect(token).toMatchObject({ householdJoinPending: false, name: 'Ana', householdId: 99, isBoardMember: true });
+    });
+});
+
 describe('assignParticipantClaims — claims derive from PersonRole rows', () => {
     it('no rows ⇒ every authority flag false', () => {
         const token = {} as JWT;

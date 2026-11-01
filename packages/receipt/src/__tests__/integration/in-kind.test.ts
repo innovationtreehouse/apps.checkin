@@ -182,7 +182,7 @@ describeDb("in-kind mark and donor (X13)", () => {
 });
 
 describeDb("stale donor sends (in-kind findings K2–K4)", () => {
-  it("K2: a send held across a donor edit carries the older seq, and the edit's send the newer", async () => {
+  it("a send held across a donor edit carries the older seq, and the edit's send the newer", async () => {
     ports.fail.donor = true;
     const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
     ports.fail.donor = false;
@@ -211,7 +211,7 @@ describeDb("stale donor sends (in-kind findings K2–K4)", () => {
     expect(await donorSync(r.id)).toBe("synced");
   });
 
-  it("K3: a finalized receipt is not delivered while its donor sync is pending", async () => {
+  it("a finalized receipt is not delivered while its donor sync is pending", async () => {
     ports.fail.donor = true;
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
     expect(ports.calls.pushes).toEqual([]);
@@ -224,7 +224,7 @@ describeDb("stale donor sends (in-kind findings K2–K4)", () => {
     expect(ports.calls.pushes).toHaveLength(1);
   });
 
-  it("K4: a mark change whose state check passed before the receipt was finalized is refused", async () => {
+  it("a mark change whose state check passed before the receipt was finalized is refused", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
     const find = receiptRepo.find.bind(receiptRepo);
     vi.spyOn(receiptRepo, "find").mockImplementationOnce(async (id, orgId, uploadedByUserId) => {

@@ -331,7 +331,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
         expect(result.emailVerified).toBe(true);
     });
 
-    it('lowercases a mixed-case user.email before the lookup (#292 read normalization)', async () => {
+    it('lowercases a mixed-case user.email before the lookup (read normalization)', async () => {
         mockFindUnique.mockResolvedValue(dbParticipant({ isSysadmin: false }));
 
         await jwt({

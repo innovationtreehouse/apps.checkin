@@ -249,6 +249,12 @@ export const REGISTRY = {
         defaultSubject: "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
         defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
     },
+    "finance.inKindDrainStopped": {
+        allowedTokens: { failures: text, remaining: text, actionLink: link("Open the in-kind queue") },
+        sampleCtx: { failures: "3", remaining: "12", actionLink: SAMPLE_URL },
+        defaultSubject: "Gifts of goods: today's QuickBooks run stopped early",
+        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failures in a row, leaving {{remaining}} more gifts for the next run. QuickBooks may be down, or the oldest gifts may be failing on their own. {{actionLink}}",
+    },
 
     // ── receipt ─────────────────────────────────────────────────────────────
     "receipt.mailReplyCredited": {

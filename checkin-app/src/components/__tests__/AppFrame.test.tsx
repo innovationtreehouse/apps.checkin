@@ -65,7 +65,7 @@ describe("AppFrame", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 
-  it("shows Revenue Ops (the renamed Finance Ops) to a board member", () => {
+  it("shows Revenue Ops to a board member", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
 
@@ -101,7 +101,7 @@ describe("AppFrame", () => {
     expect(screen.queryByText("Membership Audit")).not.toBeInTheDocument();
   });
 
-  it("shows Facility Ops to an operations-only user (#1633's aggregate-tools grant)", () => {
+  it("shows Facility Ops to an operations-only user (aggregate-tools grant)", () => {
     setSession({ id: 4, isOperations: true });
     renderFrame();
 

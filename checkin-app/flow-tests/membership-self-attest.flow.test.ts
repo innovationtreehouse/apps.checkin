@@ -20,7 +20,7 @@ type State = {
     external: { bgConsented: boolean; contractSigned: boolean } | null;
 };
 
-describe("flow: applicant self-attests background-check consent (#875)", () => {
+describe("flow: applicant self-attests background-check consent", () => {
     it("intake → self-attest + contract → PENDING_PAYMENT with no board consent-mark", async () => {
         const applicant = await loginAs("parent.family@example.com"); // non-member household lead
         const board = await loginAs("boardmember@example.com");       // sysadmin + board

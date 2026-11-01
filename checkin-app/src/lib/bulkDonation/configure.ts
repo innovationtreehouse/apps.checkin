@@ -73,6 +73,14 @@ function inKindQbPosting(): InKindQbPosting | undefined {
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       }, "In-kind sweep alert failed:");
     },
+    async drainStopped({ failures, remaining }) {
+      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+      await notifyFinanceAlert("finance.inKindDrainStopped", {
+        failures: String(failures),
+        remaining: String(remaining),
+        actionLink: `${config.baseUrl()}/donations/in-kind`,
+      }, "In-kind drain alert failed:");
+    },
   };
 }
 

@@ -74,7 +74,7 @@ const ctx = (auth: AuthResult): ResolverContext => ({
 });
 
 describe('income registry', () => {
-    test('registers exactly the §6 endpoints', () => {
+    test('registers exactly the finance and board endpoints', () => {
         expect([...incomeEndpoints].sort()).toEqual([...FINANCE_OR_BOARD, ...FINANCE_ONLY].sort());
     });
 

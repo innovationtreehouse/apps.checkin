@@ -527,6 +527,8 @@ model InKindPosting {
   /// @sensitivity:internal
   qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
   /// @sensitivity:internal
+  qbPostAttempts      Int       @default(0) @map("qb_post_attempts")
+  /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
   /// @sensitivity:internal
   bookedTotalCents    Int?      @map("booked_total_cents")

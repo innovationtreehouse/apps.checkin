@@ -5,6 +5,7 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import { db, type Db } from "../db";
 import type { SubmitterConfirmations } from "../contract";
 import { writeAudit } from "../lib/audit";
+import { liveIdOf } from "../lib/livePeople";
 import { drainExpense } from "../lib/financial-flow";
 import { clearFrom, filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, submitterSeatRefusal } from "../lib/signoff";
@@ -96,6 +97,7 @@ export const submitterConfirmations: SubmitterConfirmations = {
     return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));
   },
 
+  /** `reimburseePersonId` is the id the expense stores, as `awaiting` gives it. */
   async confirm(receiptId, reimburseePersonId, person, reason) {
     const signer = { userId: person.id, username: person.name };
     const result = await db.$transaction(async (tx) => {
@@ -105,7 +107,7 @@ export const submitterConfirmations: SubmitterConfirmations = {
       // Each line still waiting takes the seat's own refusals, read under the expense lock.
       const { waiting, refusal } = await waitingSeats(tx, expense, signer.userId);
       if (refusal) throw new ServiceError(403, refusal);
-      const signed = await recordSubmitterSeats(tx, expense.id, waiting, signer, { reimburseePersonId, confirmedAt: new Date().toISOString(), reason });
+      const signed = await recordSubmitterSeats(tx, expense.id, waiting, signer, { reimburseePersonId: await liveIdOf(reimburseePersonId), confirmedAt: new Date().toISOString(), reason });
       return signed > 0 ? expense : null;
     });
     if (!result) return false;

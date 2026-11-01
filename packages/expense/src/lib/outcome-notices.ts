@@ -5,6 +5,7 @@ import { db } from "../db";
 import type { OutcomeMail, OutcomeNotice } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { getExpenseRuntime, getOrgId } from "../runtime";
+import { withLiveParties } from "./livePeople";
 
 /** Notices sent per sweep; the rest wait for the next run. */
 export const OUTCOME_CAP = 50;
@@ -50,17 +51,18 @@ async function owedCopies(id: number): Promise<{ notice: OutcomeNotice; owed: Re
     where: { id: row.expenseId },
     select: { submitterId: true, reimburseePersonId: true, vendorName: true, receiptDate: true },
   });
+  const [{ submitterId, reimburseePersonId }] = await withLiveParties([expense]);
   const notice: OutcomeNotice = {
     receiptId: row.expenseId,
     outcome: row.event as OutcomeNotice["outcome"],
-    uploaderPersonId: expense.submitterId,
-    reimburseePersonId: expense.reimburseePersonId,
+    uploaderPersonId: submitterId,
+    reimburseePersonId,
     retailer: expense.vendorName,
     receiptDate: expense.receiptDate,
   };
   const owed: Recipient[] = [];
   if (!row.uploaderSentAt) owed.push("uploader");
-  const separateReimbursee = expense.reimburseePersonId !== null && expense.reimburseePersonId !== expense.submitterId;
+  const separateReimbursee = reimburseePersonId !== null && reimburseePersonId !== submitterId;
   if (separateReimbursee && !row.reimburseeSentAt) owed.push("reimbursee");
   return { notice, owed };
 }

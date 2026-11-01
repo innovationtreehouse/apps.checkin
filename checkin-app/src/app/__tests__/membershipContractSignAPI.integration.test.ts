@@ -180,7 +180,7 @@ describe('POST /api/membership/contract/sign', () => {
         expect(p?.zohoActionId).toBe('ACT-1');
     });
 
-    it('recreates a fresh request when the stored one is dead — declined or expired (#876)', async () => {
+    it('recreates a fresh request when the stored one is dead — declined or expired', async () => {
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: 'DEAD-REQ', zohoActionId: 'DEAD-ACT' } });
         (zoho.getRequestStatus as jest.Mock).mockResolvedValueOnce('terminal');
 

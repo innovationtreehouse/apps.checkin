@@ -118,7 +118,7 @@ describe('Per-adult background-check subjects', () => {
         expect(await householdBgIsFresh(hh.householdId, boundary, 12)).toBe(true);
     });
 
-    it('the unnamed adult now reads as NEEDED instead of FRESH', async () => {
+    it('the unnamed adult reads as NEEDED, not FRESH', async () => {
         const hh = await twoLeadHousehold('NagOn');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);

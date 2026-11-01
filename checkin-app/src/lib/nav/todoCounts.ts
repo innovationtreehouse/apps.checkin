@@ -15,6 +15,7 @@ import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
 import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
+import { variantSlotYears } from "@/lib/programYear";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -76,9 +77,10 @@ export type TodoCounts = {
     // (bounce/complaint) and no later delivery has cleared — see webhooks/resend.
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
     // `brokenHouseholds` = households with no lead at all (red — blocking board action).
-    // `settingsMisconfig` = how many required Shopify-checkout board settings are still
-    // unset (0–2): the membership variant ID and the volunteer discount code. Red pill on
-    // the Settings nav + Membership Settings tab — checkout is broken until both are set.
+    // `settingsMisconfig` = how many required membership settings are still unset: the
+    // membership variant ID, the volunteer discount code, the re-check interval, the
+    // boundary, and the coming year's variant. Red pill on the Settings nav + Membership
+    // Settings tab.
     // `programsMisconfig` = how many programs have a price but no matching Shopify variant
     // (paid enrollment silently can't check out). Red pill on the Program Ops Programs tab.
     // `openPaymentExceptions` = reconciler-detected payment problems (OPEN or
@@ -422,6 +424,16 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     };
 }
 
+/** True when the coming membership year has no variant row. With no boundary there is no coming year to ask about. */
+export async function comingYearVariantUnset(boundary: Date | null | undefined, now: Date): Promise<boolean> {
+    if (!boundary) return false;
+    const row = await prisma.membershipYearVariant.findUnique({
+        where: { membershipYear: variantSlotYears(boundary, now)[1] },
+        select: { membershipYear: true },
+    });
+    return row === null;
+}
+
 /** Board surface: the board's own queue plus infra health. Callers gate on sysadmin or board. */
 async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoCounts, "admin" | "configHealth">>> {
     // Finance counts are Board/Finance reads; a sysadmin off the Board gets zeros.
@@ -488,6 +500,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         countUnhealthyCronJobs(),
     ]);
     const settingsMisconfig =
+        ((await comingYearVariantUnset(boardSettings?.orgMembershipYearBoundary, new Date())) ? 1 : 0) +
         (boardSettings?.orgMembershipVariantId ? 0 : 1) +
         (boardSettings?.volunteerFamilyDiscountCode ? 0 : 1) +
         (isRecheckPolicySet(boardSettings?.bgRecheckMonths) ? 0 : 1) +

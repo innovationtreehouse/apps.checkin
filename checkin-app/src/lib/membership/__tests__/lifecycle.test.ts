@@ -203,7 +203,7 @@ describe('validate', () => {
 
 // ── transitions ───────────────────────────────────────────────────────────────────────────────────
 
-describe('isLegalTransition covers §5', () => {
+describe('isLegalTransition covers the declared edges', () => {
     test('accepts declared spine edges', () => {
         expect(isLegalTransition('INTAKE', 'PENDING_EXTERNAL_ACTION')).toBe(true);
         expect(isLegalTransition('PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION')).toBe(true);

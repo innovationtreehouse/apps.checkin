@@ -12,6 +12,7 @@ import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
+import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -138,6 +139,7 @@ async function settle(
     processId: number,
     opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null },
 ): Promise<{ outcome: ActivateOutcome; householdId?: number }> {
+    if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });

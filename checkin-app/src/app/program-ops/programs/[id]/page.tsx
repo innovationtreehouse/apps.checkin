@@ -409,7 +409,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               <Stack>
                 <Card withBorder radius="md" padding="md">
                   <Text fw={500} mb="sm">Program Leader</Text>
-                  {isSysAdminOrBoard ? (
+                  {user?.isBoardMember ? (
                     program.leadMentor && !isEditingMentor ? (
                       <Group>
                         <Text c="green">{mentorLabel(program.leadMentor.name, program.leadMentor.email)}</Text>
@@ -437,8 +437,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   ) : (
                     program.leadMentor ? <Text c="green">{mentorLabel(program.leadMentor.name, program.leadMentor.email)}</Text> : <Text c="dimmed">No Program Leader Assigned</Text>
                   )}
-                  <Text size="xs" c={isSysAdminOrBoard ? 'yellow' : 'dimmed'} mt="xs">
-                    {isSysAdminOrBoard ? '*You have permission to reassign this program.' : '*Only Administrators/Board Members can change the Program Leader.'}
+                  <Text size="xs" c={user?.isBoardMember ? 'yellow' : 'dimmed'} mt="xs">
+                    {user?.isBoardMember ? '*You have permission to reassign this program.' : '*Only the Board can change the Program Leader.'}
                   </Text>
                 </Card>
 

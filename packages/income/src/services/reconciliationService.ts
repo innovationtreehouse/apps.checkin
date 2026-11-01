@@ -44,6 +44,9 @@ async function openRow(orgId: string, id: number) {
   return row;
 }
 
+/** The kind a row keeps once finance settles it: only PAYOUT_NOT_PAID, which drift checks read. */
+const settledKind = (row: { kind: string | null }) => (row.kind === RECON_KIND.PAYOUT_NOT_PAID ? row.kind : null);
+
 /** The bank account a row's deposits land in, from the books map. */
 async function bankOf(row: { source: string }): Promise<string | undefined> {
   return (await roleAccounts())[isBenevity(row) ? BANK_ROLE.benevity : BANK_ROLE.shopify];
@@ -239,7 +242,7 @@ export const reconciliationService = {
           where: { id },
           data: {
             status: RECON_STATUS.RESOLVED,
-            kind: null,
+            kind: settledKind(current),
             resolution: RECON_RESOLUTION.MANUAL,
             origin: deposit.appKey === rowKey(current) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             reason: why,
@@ -275,7 +278,7 @@ export const reconciliationService = {
         where: { id },
         data: {
           status: RECON_STATUS.RESOLVED,
-          kind: null,
+          kind: settledKind(current),
           resolution: RECON_RESOLUTION.DISMISSED,
           reason: why,
           qbNote: null,

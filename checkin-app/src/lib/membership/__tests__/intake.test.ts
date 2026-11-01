@@ -179,7 +179,7 @@ describe('startIntake race guard', () => {
         expect(txMembershipProcess.create).not.toHaveBeenCalled();
     });
 
-    it('P2002 race loser: the FOR UPDATE lock lost to a pre-fix instance, winner found on re-query', async () => {
+    it('P2002 race loser: a concurrent insert gets past the FOR UPDATE lock, winner found on re-query', async () => {
         const winner = { id: 101, orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE' };
         const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0' });
         prisma.$transaction.mockRejectedValueOnce(p2002);
@@ -933,7 +933,7 @@ describe('submitIntake', () => {
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist (#874)', async () => {
+    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist', async () => {
         householdBgIsFresh.mockResolvedValue(true);
 
         const result = await submitIntake(1);
@@ -949,7 +949,7 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
     });
 
-    it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result (#878)', async () => {
+    it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
         householdBgIsFresh.mockResolvedValue(false);
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is
         // already met when we arrive — the advance carries the process to PENDING_PAYMENT.
@@ -961,7 +961,7 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_PAYMENT' });
     });
 
-    it('falls back to the re-read process when the external advance is a no-op (#878)', async () => {
+    it('falls back to the re-read process when the external advance is a no-op', async () => {
         householdBgIsFresh.mockResolvedValue(false);
         // Nothing pre-marked ⇒ advanceExternalIfComplete finds the gate unmet and
         // returns the still-PENDING_EXTERNAL_ACTION process (here left undefined to
