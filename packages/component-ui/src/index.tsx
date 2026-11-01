@@ -47,9 +47,12 @@ export function useViewer(): Viewer | null {
   return viewer;
 }
 
-/** A response that was not a usable answer. Its message is the route's `error` text, or names the HTTP status. */
+/**
+ * A response that was not a usable answer. Its message is the route's `error` text, or names the HTTP status.
+ * `fields` names the inputs the route refused, so a form can highlight them.
+ */
 export class HttpError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly fields: readonly string[] = []) {
     super(message);
     this.name = "HttpError";
   }
@@ -72,8 +75,12 @@ export async function request<T>(url: string, { invalidate = true, ...options }:
     throw new HttpError(res.ok ? `Unexpected non-JSON response (HTTP ${res.status})` : `HTTP ${res.status}`, res.status);
   }
   if (!res.ok) {
-    const message = (data as { error?: unknown } | null)?.error;
-    throw new HttpError(typeof message === "string" ? message : `HTTP ${res.status}`, res.status);
+    const { error: message, fields } = (data ?? {}) as { error?: unknown; fields?: unknown };
+    throw new HttpError(
+      typeof message === "string" ? message : `HTTP ${res.status}`,
+      res.status,
+      Array.isArray(fields) ? fields.filter((f): f is string => typeof f === "string") : [],
+    );
   }
   return data as T;
 }

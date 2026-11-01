@@ -54,6 +54,6 @@ touch "$AUTOSTART"
 chown "$KIOSK_USER:$KIOSK_USER" "$AUTOSTART"
 grep -qF kiosk-browser "$AUTOSTART" || echo "/usr/local/bin/kiosk-browser &" >>"$AUTOSTART"
 
-echo "Installed. Before starting, set KIOSK_HEALTH_CMD in $CONF and put client.key and config.json in /etc/kiosk."
+echo "Installed. Before starting, put client.key and config.json in /etc/kiosk."
 echo "Stop the old kiosk loop and comment out its line in $AUTOSTART; going back during the soak restores it."
 echo "Then: systemctl enable --now kiosk-client.service kiosk-update.timer kiosk-urgent.timer kiosk-reboot.timer"

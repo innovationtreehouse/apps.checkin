@@ -1,8 +1,8 @@
 /**
- * The supervising-adult test (#1436 / #1550) — the shared rule behind the
+ * The supervising-adult test — the shared rule behind the
  * departure interrupt and the two-deep compliance banner. Policy's "two deep" is
- * two unrelated cleared volunteers, so every edge here is a way the old
- * count-bare-adults check reported a room compliant when it was not.
+ * two unrelated cleared volunteers, so every edge here is a way a
+ * count-bare-adults check would report a room compliant when it is not.
  */
 const findMany = jest.fn();
 const boardSettingsFindUnique = jest.fn();

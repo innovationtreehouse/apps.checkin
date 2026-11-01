@@ -1,5 +1,5 @@
 /**
- * The reimbursement submitter's seat (#2432): recorded at intake from their confirmation of the
+ * The reimbursement submitter's seat: recorded at intake from their confirmation of the
  * receipt, absent on a card charge, and given again through the receipt once finance clears it.
  */
 import { beforeEach, it, expect } from "vitest";

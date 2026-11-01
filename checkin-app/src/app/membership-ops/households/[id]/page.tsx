@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, use } from "react";
+import { use } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatDateOnly } from "@/lib/time";
@@ -30,6 +31,12 @@ type Household = {
   bgValidUntil?: string | null;
 };
 
+type HouseholdDetail = {
+  household: Household | null;
+  validUntil?: string | null;
+  signing?: Signing | null;
+};
+
 // Every date this renders (memberSince, validUntil, bgValidUntil) is a calendar
 // date at UTC midnight, so it must be read UTC-pinned or it shows the day before.
 const fmtDate = (s?: string | null) =>
@@ -42,36 +49,26 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
   const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const router = useRouter();
 
-  const [household, setHousehold] = useState<Household | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [validUntil, setValidUntil] = useState<string | null>(null);
-  const [signing, setSigning] = useState<Signing | null>(null);
+  const { data, error, reload } = useLoad<HouseholdDetail>(ready ? `/api/membership-ops/households?id=${id}` : null);
+  const household = data?.household ?? null;
+  const validUntil = data?.validUntil ?? null;
+  const signing = data?.signing ?? null;
 
-  const fetchHousehold = useCallback(() => fetch(`/api/membership-ops/households?id=${id}`)
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHousehold(data.household);
-        setValidUntil(data.validUntil ?? null);
-        setSigning(data.signing ?? null);
-      } else {
-        notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [id]);
-
-  useEffect(() => {
-    if (ready) fetchHousehold();
-  }, [ready, fetchHousehold]);
-
-  if (authLoading || loading) return <PageLoader />;
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
+
+  if (error) {
+    return (
+      <Stack>
+        <Button variant="subtle" onClick={() => router.push("/membership-ops/households")} w="fit-content">
+          ← Back to Households
+        </Button>
+        <LoadError what="the household" message={error} onRetry={reload} />
+      </Stack>
+    );
+  }
+
+  if (!data) return <PageLoader />;
 
   if (!household) {
     return (
@@ -112,7 +109,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Text size="sm" c="dimmed">BG valid until: {fmtDate(household.bgValidUntil)}</Text>
       </Group>
 
-      <SigningStatusCard signing={signing} onChange={fetchHousehold} />
+      <SigningStatusCard signing={signing} onChange={reload} />
 
       {members.length === 0 ? (
         <Text c="dimmed" fs="italic">No people in this household.</Text>

@@ -151,7 +151,7 @@ export const mailQueueService = {
       orderBy: { id: "asc" },
     });
     const counted = await db.receipt.findMany({
-      where: { id: { in: items.flatMap((i) => (i.receiptId ? [i.receiptId] : [])) }, orgId, uploadedByUserId: personId, details: { isNot: { state: "discarded" } } },
+      where: { id: { in: items.flatMap((i) => (i.receiptId ? [i.receiptId] : [])) }, orgId, uploadedByUserId: { in: await ports().personIds.storedIdsOf(personId) }, details: { isNot: { state: "discarded" } } },
       select: { id: true },
     });
     const ids = new Set(counted.map((r) => r.id));

@@ -47,9 +47,8 @@
  * standalone runner (docker-compose.flow.yml) sets; against a hand-started server,
  * export the same DATABASE_URL in the shell running jest.
  *
- * The OTHER fan-out items an activation could eventually trigger — mailing-list add,
- * badge-print queue, and the 18+ background-check trigger — do NOT exist yet and are
- * deliberately NOT asserted here (tracked as Q4/Q6/Q7). Add assertions when they land.
+ * The OTHER fan-out items an activation could trigger — mailing-list add, badge-print
+ * queue, and the 18+ background-check trigger — are deliberately NOT asserted here.
  */
 
 import { Pool } from "pg";

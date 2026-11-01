@@ -8,15 +8,15 @@ import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type Household
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
 
 /**
- * Board "Grant Membership" for the current year: money only.
+ * Board grant of one membership year: money only.
  *
  * Pays the household's in-flight application through the same certify path a
  * board-recorded payment takes, so the household goes ACTIVE only when that
  * application converges — paid AND background check cleared. It never writes the
  * household's status itself and never skips the check.
  *
- * - An in-flight application at PENDING_PAYMENT is certified paid (with the reason).
- *   That supersedes the family's own checkout: nothing is left payable.
+ * - An in-flight application at PENDING_PAYMENT, joining or renewing, is certified
+ *   paid for `year` (with the reason). That supersedes the family's own checkout: nothing is left payable.
  * - An in-flight application at an earlier step can't be paid yet (the family still
  *   owes details, the signature or the check consent): refused with the step.
  * - No in-flight application: one is opened for the family to complete, and the
@@ -37,7 +37,7 @@ const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
     ],
 };
 
-/** Refuse any board grant, current or coming year, on a DENIED household, and raise it to the board. */
+/** Refuse any board grant on a DENIED household, and raise it to the board. */
 export async function refuseGrantIfDenied(householdId: number, actorId: number): Promise<void> {
     const membership = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
     if (membership?.status === "DENIED") await refuseDenied(householdId, actorId);
@@ -48,9 +48,10 @@ async function refuseDenied(householdId: number, actorId: number): Promise<never
     throw new PaymentError("wrong_phase", "This household is denied. Restore it before granting membership.");
 }
 
-export async function grantCurrentYear(
+export async function grantMembership(
     householdId: number,
     actor: { actorId: number; reason: string },
+    year: number,
 ): Promise<GrantResult> {
     await refuseGrantIfDenied(householdId, actor.actorId);
     const membership = await ensureHouseholdMembership(prisma, householdId);
@@ -68,7 +69,7 @@ export async function grantCurrentYear(
         if (existing.status !== "PENDING_PAYMENT") {
             throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
         }
-        await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason });
+        await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
         await prisma.auditLog.create({
             data: {
                 actorId: actor.actorId,
@@ -76,7 +77,7 @@ export async function grantCurrentYear(
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: existing.id,
                 secondaryAffectedEntity: householdId,
-                newData: { currentYearGrant: true, reason: actor.reason },
+                newData: { grantedYear: year, reason: actor.reason },
             },
         });
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };

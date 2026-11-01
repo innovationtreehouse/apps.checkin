@@ -97,6 +97,34 @@ describe("a suspected duplicate's detail page", () => {
     expect(within(row("File")).queryByText("Same")).toBeNull();
   });
 
+  it.each([
+    ["this receipt is the gift", { isInKind: true }, { needsReimbursement: true }, "Gift of goods", "For reimbursement"],
+    ["this receipt is for reimbursement", { needsReimbursement: true }, { isInKind: true }, "For reimbursement", "Gift of goods"],
+  ])("warns when %s and the other is the opposite", (_name, mine, theirs, mineLabel, theirsLabel) => {
+    mockLoads["/r1"] = { ...flagged, ...mine };
+    mockLoads["/r0"] = { ...original, ...theirs };
+    wrap();
+    const cells = within(row("Recorded as")).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent(mineLabel);
+    expect(cells[2]).toHaveTextContent(theirsLabel);
+    expect(screen.getByRole("alert")).toHaveTextContent("One is recorded as a gift of goods and the other is for reimbursement.");
+  });
+
+  it("gives no warning on two ordinary purchases, and does not count that as a match", () => {
+    wrap();
+    expect(within(row("Recorded as")).getAllByText("Purchase")).toHaveLength(2);
+    expect(within(row("Recorded as")).queryByText("Same")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("names no donor on the compare panel", () => {
+    mockLoads["/r1"] = { ...flagged, isInKind: true, donorFirstName: "Dana", donorLastName: "Donor" };
+    mockLoads["/r0"] = { ...original, needsReimbursement: true };
+    wrap();
+    expect(within(row("Recorded as")).queryByText(/Dana|Donor/)).toBeNull();
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/Dana|Donor/);
+  });
+
   it("links to the original under the review queue", () => {
     wrap();
     expect(screen.getByRole("link", { name: "Open the suspected original" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");

@@ -1,5 +1,5 @@
 /**
- * #5 (part 1) + #2 (integration) — checkAndProcessExpense end to end.
+ * checkAndProcessExpense end to end.
  *
  * The catalog port is a stub (the only external dependency); the database, rule
  * matching, allocation, hold creation, sign-off hold and state transitions are all

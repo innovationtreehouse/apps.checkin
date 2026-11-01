@@ -34,6 +34,19 @@ describe("createClient api", () => {
     await expect(api("/x")).rejects.toThrow("Unexpected non-JSON response (HTTP 200)");
   });
 
+  it("carries the field names a route refused, and none when it sends no usable list", async () => {
+    const fieldsOf = async (body: string) => {
+      stub(409, body);
+      const thrown = await api("/x").catch((e: unknown) => e);
+      return thrown instanceof HttpError ? thrown.fields : null;
+    };
+    expect(await fieldsOf(JSON.stringify({ error: "Taken", fields: ["email"] }))).toEqual(["email"]);
+    expect(await fieldsOf(JSON.stringify({ error: "Taken", fields: ["email", 7] }))).toEqual(["email"]);
+    expect(await fieldsOf(JSON.stringify({ error: "Taken", fields: "email" }))).toEqual([]);
+    expect(await fieldsOf(JSON.stringify({ error: "Taken" }))).toEqual([]);
+    expect(await fieldsOf("<html>")).toEqual([]);
+  });
+
   it("throws an HttpError, still an Error with the route's words", async () => {
     stub(404, JSON.stringify({ error: "Gone" }));
     const thrown = await api("/x").catch((e: unknown) => e);

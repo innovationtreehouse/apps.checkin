@@ -41,7 +41,7 @@ class _StopLoop(Exception):
 
 
 def scan_banner(body, status=200):
-    # handle_scan now takes an outbox and delegates the markup to this helper;
+    # handle_scan takes an outbox and delegates the markup to this helper;
     # calling it directly tests the same banner without faking a backend.
     return _scan_result_banner_html(body, status)[0]
 
@@ -200,9 +200,8 @@ class TestReleaseChannel(unittest.TestCase):
             self.assertEqual(resolve_update_target(), "tagsha")
 
     def test_a_release_that_still_pulls_main_is_not_adopted(self):
-        # The state on the day this landed: the newest release predates the
-        # channel. Adopting it would check out a tree that pulls main straight
-        # back, restarting the kiosk once per poll, forever.
+        # The newest release predates the channel. Adopting it would check out a
+        # tree that pulls main straight back, restarting the kiosk once per poll, forever.
         stub = _git_stub(tags="v1.2.1\n", kiosk_sh="git pull origin main\n")
         with patch("client.subprocess.check_output", side_effect=stub):
             self.assertEqual(resolve_update_target(), "mainsha")
@@ -215,7 +214,7 @@ class TestReleaseChannel(unittest.TestCase):
     def test_kiosk_sh_carries_the_marker_the_gate_greps_for(self):
         # The gate reads this marker out of a TAG's kiosk.sh. Drop the line here
         # and no future release is ever adopted -- silently, since the fallback
-        # is the old behaviour and nothing else changes.
+        # is main and nothing else changes.
         here = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(here, "kiosk.sh")) as f:
             self.assertIn(RELEASE_CHANNEL_MARKER, f.read())

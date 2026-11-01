@@ -5,7 +5,7 @@
  * Integration Tests for Cron Pending-Participants API
  * Tests GET /api/cron/pending-participants — the NON-DESTRUCTIVE sweep that warns
  * unpaid PENDING enrollments at day 1/3/6 and flags day-7+ rows as overdue for the
- * board. The cron never removes anyone (reviewer decision: removal is a human,
+ * board. The cron never removes anyone (removal is a human,
  * board-driven action) — it warns the household and, at day 3+/7+, digests the
  * board once per run so a person decides what happens next.
  *

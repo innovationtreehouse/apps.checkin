@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the receipt library (#1265 §3/§6):
+ * Boundary coverage for the receipt library:
  *
  *   1. File bytes are `pii`, never `secret`, file-only (a file route names
  *      them), and no JSON response view lists a file column, so the stripper

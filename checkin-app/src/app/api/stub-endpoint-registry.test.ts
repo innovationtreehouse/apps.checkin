@@ -4,12 +4,11 @@ import { getFileRoute, getRoute } from '@/security/core';
 import '@/security/registry';
 
 /**
- * Guard for the class of bug that shipped in the first catalog stub sweep: a
- * re-export stub called `handler("GET /api/items", …)` while the file lived at
- * /api/catalog/items — so getRoute() missed the registry entry and every route
- * 500'd at runtime. tsc can't see it (it's a string literal) and
- * check-route-coverage keys on the FILE path, not the handler() argument, so
- * nothing caught it until a flow test hit the route.
+ * Guard for a re-export stub whose handler() string names the wrong path:
+ * `handler("GET /api/items", …)` in a file at /api/catalog/items makes getRoute()
+ * miss the registry entry, so the route 500s at runtime. tsc can't see it (it's a
+ * string literal) and check-route-coverage keys on the FILE path, not the
+ * handler() argument.
  *
  * This asserts, for every library stub under a libraries.json route prefix, that
  * each `handler("<VERB> <path>")` or `fileHandler("<VERB> <path>")` endpoint

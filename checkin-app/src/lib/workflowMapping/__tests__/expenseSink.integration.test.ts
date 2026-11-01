@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X5 binding: workflow-mapping's ExpenseSink driven into the real
+ * Workflow-mapping's ExpenseSink driven into the real
  * expense intake, each library on its own throwaway database migrated from its
  * committed migrations. The inventory leg is a stand-in that always lands.
  */

@@ -74,7 +74,7 @@ beforeEach(async () => {
   await db.accountMap.deleteMany({});
   await makeAccountMapRule(orgId);
   income = new FakeIncome();
-  // Donation never reaches QuickBooks any more: any HTTP call fails the test.
+  // Donation never reaches QuickBooks: any HTTP call fails the test.
   vi.stubGlobal("fetch", vi.fn(async () => {
     throw new Error("donation called out");
   }));

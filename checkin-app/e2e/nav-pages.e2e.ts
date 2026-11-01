@@ -21,7 +21,7 @@ const KNOWN_FAILURES: KnownFailure[] = [];
 
 /** A red alert a fresh seed shows on purpose: a prompt to fill in data the seed leaves empty. */
 interface SeedPrompt { page: string; personas: string[]; text: string }
-/** The fail-closed prompt until the Board sets the re-check interval (#2544). */
+/** The fail-closed prompt until the Board sets the re-check interval. */
 const BG_INTERVAL_UNSET =
   "⛔ Background-check interval is not set. Until the board enters the policy value (in months), every background check counts as expired: every renewal is sent back for a fresh background review, and no one counts as a supervising adult in the two-deep check. Enter the real Treehouse re-check interval above.";
 const SEED_PROMPTS: SeedPrompt[] = [

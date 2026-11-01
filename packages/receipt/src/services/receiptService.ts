@@ -19,6 +19,7 @@ import { sendDonorSync } from "../lib/donor-sync";
 import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
+import { liveIds } from "../lib/livePeople";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
@@ -114,8 +115,8 @@ function transitionError(err: unknown): never {
 }
 
 async function load(id: string, access: Access, actor: ReceiptPrincipal): Promise<ReceiptRow> {
-  const row = await receiptRepo.find(id, await getOrgId(), access === "submitter" ? actor.id : undefined);
-  if (!row) throw new ServiceError(404, "Receipt not found");
+  const row = await receiptRepo.find(id, await getOrgId());
+  if (!row || (access === "submitter" && row.uploadedByUserId !== actor.id)) throw new ServiceError(404, "Receipt not found");
   return row;
 }
 
@@ -144,7 +145,7 @@ async function lockForEdit(
   message: string,
 ): Promise<ReceiptRow> {
   await tx.$queryRaw`SELECT id FROM receipt_details WHERE id = ${id} FOR UPDATE`;
-  const locked = await receiptRepo.find(id, orgId, undefined, tx);
+  const locked = await receiptRepo.find(id, orgId, tx);
   if (!locked || !states.has(locked.state)) throw new ServiceError(400, message);
   return locked;
 }
@@ -178,10 +179,20 @@ async function refuse(row: ReceiptRow, actor: ReceiptPrincipal, attempted: strin
 
 type Parties = Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId">;
 
-/** The uploader, the reimbursee, and everyone in either one's household. */
-async function conflictedParties(row: Parties): Promise<number[]> {
+/**
+ * The uploader, the reimbursee, and everyone in either one's household; null when a party names
+ * nobody live, since their household cannot then be known and nobody can be cleared.
+ */
+async function conflictedParties(row: Parties): Promise<number[] | null> {
   const parties = [row.uploadedByUserId, row.reimburseePersonId].filter((id): id is number => id != null);
-  return [...parties, ...(await ports().households.householdOf(parties))];
+  const live = await liveIds(parties);
+  const people = parties.flatMap((id) => live.get(id) ?? []);
+  if (people.length !== parties.length) return null;
+  return [...people, ...(await ports().households.householdOf(people))];
+}
+
+async function isConflicted(row: Parties, personId: number): Promise<boolean> {
+  return (await conflictedParties(row))?.includes(personId) ?? true;
 }
 
 /** The receipt write that records finance's decision, replacing any earlier one. */
@@ -198,7 +209,9 @@ function recordFinanceReview(
 }
 
 async function refuseSelfDecision(row: ReceiptRow, actor: ReceiptPrincipal, attempted: string): Promise<void> {
-  if (!(await conflictedParties(row)).includes(actor.id)) return;
+  const parties = await conflictedParties(row);
+  if (parties === null) return refuse(row, actor, attempted, "This receipt names someone who is no longer on file, so nobody can be cleared to decide it");
+  if (!parties.includes(actor.id)) return;
   await refuse(row, actor, attempted, "You cannot decide on a receipt that you or your household uploaded or is reimbursed for");
 }
 
@@ -233,6 +246,13 @@ async function voidConfirmation(
     fieldChanged: fields.join(","),
     valueBefore: row.reviewedAt.toISOString(),
   });
+}
+
+/** The host's refusal hook for a typed-in donor (it throws to refuse). "I am the donor" never reaches it: the person deciding the gift is the independent check. */
+export type DonorCheck = (donor: { lastName: string }) => Promise<void>;
+
+async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput }, checkDonor?: DonorCheck) {
+  if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
 }
 
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
@@ -470,7 +490,7 @@ async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"se
   if (row.reimburseePersonId == null) return null;
   if (row.reimburseePersonId === actor.id) return "self";
   if (!actor.isBoardMember || (await ports().reimbursees.hasAccount(row.reimburseePersonId))) return null;
-  return (await conflictedParties(row)).includes(actor.id) ? null : "on_behalf";
+  return (await isConflicted(row, actor.id)) ? null : "on_behalf";
 }
 
 /**
@@ -481,7 +501,7 @@ async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"se
 async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: Array<ReceiptRow & { reimburseePersonId: number }>; changed: Map<string, string[]> }> {
   if (!actor.isBoardMember) return { rows: [], changed: new Map() };
   const orgId = await getOrgId();
-  const awaited = await ports().submitterConfirmations.awaiting();
+  const awaited = await awaitedConfirmations();
   const reimburseeOnExpense = new Map(awaited.map((a) => [a.receiptId, a.reimburseePersonId]));
   const inReview = await receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { not: null }, details: { state: "submitter_review" } });
   const sent = await receiptRepo.list({ orgId, id: { in: awaited.map((a) => a.receiptId) } });
@@ -498,12 +518,20 @@ async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: A
   return { rows, changed: new Map(awaited.map((a) => [a.receiptId, a.changedFields])) };
 }
 
+/** What waits on expense, with the live reimbursee; `storedReimburseeId` is the id expense knows them by. */
+async function awaitedConfirmations() {
+  const awaited = await ports().submitterConfirmations.awaiting();
+  const live = await liveIds(awaited.map((a) => a.reimburseePersonId));
+  return awaited.map((a) => ({ ...a, storedReimburseeId: a.reimburseePersonId, reimburseePersonId: live.get(a.reimburseePersonId) ?? a.reimburseePersonId }));
+}
+
 /** Reimbursements waiting for this person's confirmation, before finance and once their expense exists. */
 async function awaitingConfirmation(personId: number): Promise<{ inReview: ReceiptRow[]; sent: Map<string, string[]> }> {
   const orgId = await getOrgId();
+  const ids = await ports().personIds.storedIdsOf(personId);
   const [inReview, awaited] = await Promise.all([
-    receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: personId, uploadedByUserId: { not: personId }, details: { state: "submitter_review" } }),
-    ports().submitterConfirmations.awaiting(),
+    receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { in: ids }, uploadedByUserId: { notIn: ids }, details: { state: "submitter_review" } }),
+    awaitedConfirmations(),
   ]);
   return { inReview, sent: new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields])) };
 }
@@ -639,12 +667,13 @@ export const receiptService = {
    * Upload a receipt. With `details` it is manual: insert at `uploaded` and run the pipeline.
    * Without, it is auto: insert at `auto_upload` and read it with OCR in this request.
    */
-  async upload(file: Buffer, declaredType: string, rawInput: unknown) {
+  async upload(file: Buffer, declaredType: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
     const input = parse(UploadInputSchema, rawInput);
     const check = checkReceiptFile(file, declaredType);
     if (!check.ok) throw new ServiceError(400, check.error);
     if (input.needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
+    await checkTypedDonor(input, checkDonor);
 
     const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input) : null;
     const reimbursement = reimbursee
@@ -1029,9 +1058,8 @@ export const receiptService = {
     const row = await receiptRepo.find(id, await getOrgId());
     if (!row || !row.needsReimbursement) throw new ServiceError(404, "Receipt not found");
     // Once the expense exists, its reimbursee is the one confirming: finance may have named them there.
-    const reimbursee = row.pushedAt
-      ? (await ports().submitterConfirmations.awaiting()).find((a) => a.receiptId === id)?.reimburseePersonId
-      : row.reimburseePersonId;
+    const onExpense = row.pushedAt ? (await awaitedConfirmations()).find((a) => a.receiptId === id) : undefined;
+    const reimbursee = row.pushedAt ? onExpense?.reimburseePersonId : row.reimburseePersonId;
     if (reimbursee == null) throw new ServiceError(409, "This receipt is not waiting for a confirmation");
     const role = await confirmerRole({ uploadedByUserId: row.uploadedByUserId, reimburseePersonId: reimbursee }, actor);
     if (!role) throw new ServiceError(403, "Only the person reimbursed, or a Board member on behalf of someone with no account, confirms this receipt");
@@ -1039,8 +1067,8 @@ export const receiptService = {
     if (role === "on_behalf" && !reason) throw new ServiceError(400, "A Board member confirming on the reimbursee's behalf gives the reason");
     const onBehalf = reason ? `on behalf of ${reimbursee}: ${reason}` : null;
 
-    if (row.pushedAt) {
-      if (!(await ports().submitterConfirmations.confirm(id, reimbursee, actor, reason))) {
+    if (onExpense) {
+      if (!(await ports().submitterConfirmations.confirm(id, onExpense.storedReimburseeId, actor, reason))) {
         throw new ServiceError(409, "This receipt is not waiting for a confirmation");
       }
       await audit(db, id, actor, { action: "submitter_reconfirmed", valueAfter: onBehalf });
@@ -1094,11 +1122,12 @@ export const receiptService = {
   },
 
   /** Set or clear the in-kind mark and its donor, then tell donations (X13). */
-  async setInKind(id: string, rawInput: unknown) {
+  async setInKind(id: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
     const input = parse(InKindInputSchema, rawInput);
     const row = await loadForChange(id, "submitter", actor);
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, EDIT_STATE_MESSAGE);
+    await checkTypedDonor(input, checkDonor);
 
     const donor = input.isInKind && input.donor
       ? donorNames(input.donor, actor)
@@ -1169,12 +1198,12 @@ export const receiptService = {
    */
   async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
-    await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, uploadedByUserId: true } });
+    const row = await load(id, access, actor);
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
     const fileBlob = await readStoredFile(file);
     if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
-    return { fileBlob, mimeType: file.mimeType, uploadedByUserId: file.uploadedByUserId };
+    return { fileBlob, mimeType: file.mimeType, uploadedByUserId: row.uploadedByUserId };
   },
 
   /**
@@ -1184,7 +1213,7 @@ export const receiptService = {
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
-    const rows = await receiptRepo.list({ orgId: await getOrgId(), uploadedByUserId: actor.id });
+    const rows = await receiptRepo.list({ orgId: await getOrgId(), uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
     const [paid, outcomes] = await Promise.all([owed.length ? paidStatus(owed) : new Map<string, PaidStatus>(), purchaseOutcomes(rows)]);
 
@@ -1207,11 +1236,12 @@ export const receiptService = {
    */
   async listReimbursedToMe() {
     const actor = await requireActor();
+    const ids = await ports().personIds.storedIdsOf(actor.id);
     const rows = await receiptRepo.list({
       orgId: await getOrgId(),
       needsReimbursement: true,
-      reimburseePersonId: actor.id,
-      uploadedByUserId: { not: actor.id },
+      reimburseePersonId: { in: ids },
+      uploadedByUserId: { notIn: ids },
       details: { state: { in: ["receipt_finalized", "rejected"] } },
     });
     const owed = rows.map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
@@ -1303,15 +1333,15 @@ export const receiptService = {
     const orgId = await getOrgId();
     const rows = await receiptRepo.list({
       orgId,
-      ...(access === "submitter" ? { uploadedByUserId: actor.id } : {}),
+      ...(access === "submitter" ? { uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } } : {}),
       details: { state: { in: NEEDS_ATTENTION } },
     });
     if (access !== "finance") return rows.map(toSubmitterView);
     const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
     const records = await pushRecords(orgId, undelivered.map((r) => r.id));
     const stopped = undelivered.filter((r) => records.get(r.id)?.pushGivenUp);
-    const parties = await Promise.all(stopped.map(conflictedParties));
-    return [...rows, ...stopped.flatMap((r, i) => (parties[i].includes(actor.id) ? [] : [{ ...r, ...records.get(r.id) }]))];
+    const conflicted = await Promise.all(stopped.map((r) => isConflicted(r, actor.id)));
+    return [...rows, ...stopped.flatMap((r, i) => (conflicted[i] ? [] : [{ ...r, ...records.get(r.id) }]))];
   },
 
   /**
@@ -1320,13 +1350,14 @@ export const receiptService = {
    * plus each rejected one they have not yet acknowledged.
    */
   async countAwaitingSubmitter(personId: number): Promise<number> {
+    const ids = await ports().personIds.storedIdsOf(personId);
     return receiptRepo.count({
       orgId: await getOrgId(),
-      uploadedByUserId: personId,
+      uploadedByUserId: { in: ids },
       OR: [
         {
           details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
-          NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+          NOT: { needsReimbursement: true, reimburseePersonId: { notIn: ids }, details: { state: "submitter_review" } },
         },
         { details: { state: "rejected", rejectionAcknowledgedAt: null } },
       ],

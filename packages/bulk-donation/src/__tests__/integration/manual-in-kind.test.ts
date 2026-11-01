@@ -1,7 +1,7 @@
 /**
- * The no-receipt in-kind entry: ops picks catalog items (X10) with a quantity and an optional
+ * The no-receipt in-kind entry: ops picks catalog items with a quantity and an optional
  * suggested value, the donation is stored with its donor, and its goods load into inventory keyed
- * `donation:<id>` (X11). Finance sets the value later, when accepting it.
+ * `donation:<id>`. Finance sets the value later, when accepting it.
  */
 import { it, expect, beforeEach, vi } from "vitest";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";

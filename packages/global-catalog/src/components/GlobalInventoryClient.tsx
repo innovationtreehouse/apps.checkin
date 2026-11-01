@@ -118,13 +118,17 @@ function ReferencesTab() {
 function ConflictsTab({ conflicts, error, onRetry }: { conflicts: ReferenceConflictRow[] | null; error: string | null; onRetry: () => void }) {
   const [resolving, setResolving] = useState(false);
 
-  async function handleResolve(id: number, resolution: "keep_existing" | "use_proposed") {
+  async function handleResolve(c: ReferenceConflictRow, resolution: "keep_existing" | "use_proposed") {
     setResolving(true);
     try {
-      await api(`/reference-conflicts/${id}/resolve`, { method: "PUT", body: JSON.stringify({ resolution }) });
+      await api(`/reference-conflicts/${c.id}/resolve`, { method: "PUT", body: JSON.stringify({ resolution, existingGtin13: c.itemReference.gtin13 }) });
       notifications.show({ message: "Conflict resolved", color: "green" });
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
-    finally { setResolving(false); }
+    finally {
+      setResolving(false);
+      // A resolve can move the part under other open conflicts, and a refusal means this one is out of date.
+      onRetry();
+    }
   }
 
   if (error) return <LoadError what="reference conflicts" message={error} onRetry={onRetry} />;
@@ -158,13 +162,25 @@ function ConflictsTab({ conflicts, error, onRetry }: { conflicts: ReferenceConfl
                   : <Tooltip label="Cannot produce automatic matches"><IconAlertTriangle size={16} color="var(--mantine-color-yellow-6)" /></Tooltip>}
               </Table.Td>
               <Table.Td><Text size="sm" ff={c.partNumber ? "monospace" : undefined}>{c.partNumber ?? c.description ?? "—"}</Text></Table.Td>
-              <Table.Td><Text size="sm" ff="monospace">{formatItemId(c.existingGtin13)}</Text></Table.Td>
+              <Table.Td>
+                <Text size="sm" ff="monospace">{formatItemId(c.itemReference.gtin13)}</Text>
+                {c.itemReference.gtin13 !== c.existingGtin13 && (
+                  <Text size="xs" c="orange">Out of date: raised against {formatItemId(c.existingGtin13)}. The part has moved since; this is where it is now.</Text>
+                )}
+              </Table.Td>
               <Table.Td><Text size="sm" ff="monospace">{formatItemId(c.proposedGtin13)}</Text></Table.Td>
               <Table.Td>
-                <Group gap={6} wrap="nowrap">
-                  <Button size="xs" variant="light" loading={resolving} onClick={() => handleResolve(c.id, "keep_existing")}>Keep existing</Button>
-                  <Button size="xs" variant="filled" color="blue" loading={resolving} onClick={() => handleResolve(c.id, "use_proposed")}>Use proposed</Button>
-                </Group>
+                {c.itemReference.gtin13 === c.proposedGtin13 ? (
+                  <Stack gap={4} align="flex-start">
+                    <Text size="xs">The part is already on the proposed item. Nothing is left to decide.</Text>
+                    <Button size="xs" variant="light" loading={resolving} onClick={() => handleResolve(c, "use_proposed")}>Close</Button>
+                  </Stack>
+                ) : (
+                  <Group gap={6} wrap="nowrap">
+                    <Button size="xs" variant="light" loading={resolving} onClick={() => handleResolve(c, "keep_existing")}>Keep existing</Button>
+                    <Button size="xs" variant="filled" color="blue" loading={resolving} onClick={() => handleResolve(c, "use_proposed")}>Use proposed</Button>
+                  </Group>
+                )}
               </Table.Td>
             </Table.Tr>
           ))}

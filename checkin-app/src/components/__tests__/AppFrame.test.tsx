@@ -59,7 +59,7 @@ describe("AppFrame", () => {
     expect(screen.getByText("Membership Ops")).toBeInTheDocument();
     expect(screen.getByText("Membership Audit")).toBeInTheDocument();
     expect(screen.getByText("Program Ops")).toBeInTheDocument();
-    // Revenue Ops admits FINANCE or BOARD — a sysadmin does NOT see it (issue #1083).
+    // Revenue Ops admits FINANCE or BOARD — a sysadmin does NOT see it.
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
     expect(screen.getByText("System Status")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();

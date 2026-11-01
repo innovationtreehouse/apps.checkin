@@ -174,7 +174,11 @@ expense whose vendor name starts `TEST-` posts; production never posts an
    sign-off seats and the line approvals, builds the entry, and sets `POSTING`. A
    post that may create stamps `qbCreateAttemptedAt` the first time, and the stamp
    never moves. A hold makes the post wait; on a closed expense it also raises
-   `QB_POST_HELD`, since only finance can clear that hold.
+   `QB_POST_HELD`, since the app takes no further sign-off on it. A closed expense
+   is held only for a missing submitter or Treasurer seat, an unapproved line or an
+   unknown reimbursee. Its Board seat and Board approval were settled at the outbox
+   commit, so later changes to the reimbursee's membership or the Board-review total
+   do not hold it.
 2. **Call.** If `qbCreateAttemptedAt` was already set, it first reads what QuickBooks
    created since then and keeps entries carrying this key, so it finds an entry even
    after finance re-dated it. Otherwise it goes straight to `findOrCreate`.

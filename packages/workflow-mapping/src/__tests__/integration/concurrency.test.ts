@@ -1,6 +1,5 @@
 /**
- * Concurrency: the PROCEED / S1 hazards S fixes (Inventory CONCURRENCY.md §1 and
- * §4), and the apply / retry-apply claims.
+ * Concurrency: the PROCEED / S1 hazards, and the apply / retry-apply claims.
  */
 import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";

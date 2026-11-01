@@ -72,7 +72,7 @@ describe("editSignificance", () => {
         expect(r.flagged).toBe(true); // 120 × 3 = 360
     });
 
-    // The repeat-correction bug (docs/rules/attendance-checkin.md, visit-record:
+    // A repeat correction (docs/rules/attendance-checkin.md, visit-record:
     // "Correcting the same time twice is weighed the second time as overwriting a
     // self-report"). The route restamps arrivedVia to TYPED after the first
     // correction, so the SECOND correction is weighed against TYPED, not the
@@ -92,7 +92,7 @@ describe("editSignificance", () => {
         );
         expect(second).toEqual({ score: 30, flagged: false }); // 30 × 1
 
-        // Proof of the bug: without the restamp the second correction would still
+        // Without the restamp the second correction would still
         // weigh SCANNER and over-flag to the board.
         const withoutRestamp = editSignificance(
             { arrivedAt: at(14, 30), departedAt: at(16), arrivedVia: "SCANNER", departedVia: "TYPED" },
@@ -128,8 +128,8 @@ describe("deleteSignificance", () => {
         expect(r.score).toBe(360);
     });
 
-    // #1630: an open visit has no recorded duration to weigh, so it must not
-    // fall back to 0 — that made deleting the live roster the *lowest*-scoring
+    // An open visit has no recorded duration to weigh, so it must not
+    // fall back to 0 — that would make deleting the live roster the *lowest*-scoring
     // delete. Score against time on site so far instead.
     it("an open visit's delete scores elapsed time, not the floor", () => {
         const r = deleteSignificance(

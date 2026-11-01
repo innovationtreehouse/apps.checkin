@@ -80,13 +80,6 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
     });
 
-    // ponytail: checked before the per-row flips, not under a lock. A refund recorded after this
-    // check but before a row is flipped matches no row; the daily reconcile raises it as a REFUND, with no take-back.
-    if (shopifyOrderId && (await isOrderReversed(prisma, shopifyOrderId))) {
-        await refuseReversedActivation(programId, personIds, shopifyOrderId);
-        return { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true };
-    }
-
     const claimantVariantId = program?.claimantShopifyVariantId;
     const claimantPaid = claimantVariantId
         ? lines.filter((l) => l.variantId === claimantVariantId).reduce((n, l) => n + l.quantity, 0)
@@ -95,6 +88,10 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
     // The flips and the stock delta they cause commit together under the program's
     // stock lock, so no hold stamp lands between a flip and its count.
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, "activation", async (tx) => {
+        // Holds the order's reversal lock to commit: a refund is either seen here, or waits and then finds the flipped rows.
+        if (shopifyOrderId && (await isOrderReversed(tx, shopifyOrderId))) {
+            return { result: { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, delta: 0, reversed: true }, delta: 0 };
+        }
         let activatedCount = 0;
         let releasedHoldCount = 0;
         for (const personId of personIds) {
@@ -120,10 +117,15 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
         // Once the sale has ended only a reduction goes through, so no seat goes back on sale.
         const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
-        return { result: { activatedCount, releasedHoldCount, claimantSeatCount, delta }, delta };
+        return { result: { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed: false }, delta };
     }, { deferred: true });
 
-    const { activatedCount, releasedHoldCount, claimantSeatCount, delta } = result;
+    const { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed } = result;
+    // After commit: the refusal records the reversal on its own connection, which needs the order's lock released.
+    if (reversed) {
+        await refuseReversedActivation(programId, personIds, shopifyOrderId);
+        return { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true };
+    }
     if (!landed) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
 
     return { activatedCount, releasedHoldCount, claimantSeatCount };

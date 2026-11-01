@@ -47,7 +47,7 @@ jest.mock("@/lib/shopify/stock", () => ({
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 
 const TAG = "reconcile-matrix-test";
-// A membership variant id the board has configured; #1048 mirrors it onto order lines.
+// A membership variant id the board has configured; the mirror copies it onto order lines.
 const MEMBERSHIP_VARIANT = "variant-normal-1";
 const ordersChangedSince = mirror.ordersChangedSince as jest.Mock;
 const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
@@ -70,14 +70,14 @@ function order(overrides: Partial<MirrorOrder> & { legacyId: string }): MirrorOr
         cancelledAt: null,
         processedAt: null,
         updatedAt: new Date(),
-        // Default null = an order synced before #1029, i.e. the email-fallback path.
+        // Default null = an order with no cart attributes, i.e. the email-fallback path.
         // Tests of the preferred path pass noteAttributes explicitly.
         noteAttributes: null,
         ...overrides,
     };
 }
 
-/** Cart attributes as the mirror stores them (#1029). */
+/** Cart attributes as the mirror stores them. */
 const attrs = (o: Record<string, string>) => Object.entries(o).map(([key, value]) => ({ key, value }));
 
 process.env.NEXTAUTH_SECRET ||= "integration-test-nextauth-secret";
@@ -356,7 +356,7 @@ describe("forward recovery", () => {
     });
 
     it("recovers a couponed order below the gross membership fee (variant match), no AMOUNT_MISMATCH", async () => {
-        // #1048: the volunteer rate / promos are Shopify coupons, so a valid order's
+        // The volunteer rate / promos are Shopify coupons, so a valid order's
         // total is below the gross membership fee. It carries a known membership variant line → recover.
         const email = `coupon-${TAG}@ex.com`;
         const oid = `${TAG}-120`;
@@ -373,7 +373,7 @@ describe("forward recovery", () => {
     });
 
     it("raises DISCOUNT_UNAUTHORIZED and does not activate when a NON-volunteer family used the volunteer code", async () => {
-        // The #1074 regression: variant gate passes (real membership product), amounts
+        // Variant gate passes (real membership product), amounts
         // are Shopify's business — but the family isn't entitled to the volunteer rate.
         const email = `volcode-${TAG}@ex.com`;
         const oid = `${TAG}-123`;
@@ -652,9 +652,8 @@ describe("reversal detection", () => {
 
 describe("program member-code entitlement (judged at the money event)", () => {
     it("does NOT flag a settled past order when the household is later deactivated — status change alone is not evidence", async () => {
-        // The scenario the reversal audit used to break: a board member REVOKEs a
-        // household through ordinary membership ops, and every past member-priced
-        // program order that household holds gets a fraud-shaped flag the next
+        // A board member REVOKEing a household through ordinary membership ops must
+        // not give its past member-priced program orders a fraud-shaped flag the next
         // morning. Entitlement is judged when the money moved and never re-derived,
         // so the daily sweep must leave an unreversed, already-ACTIVE order alone.
         const oid = `${TAG}-500`;

@@ -213,4 +213,60 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
             }
         });
     });
+
+    describe('a row that changes between the select and the delete', () => {
+        const held = daysAgo(10);
+
+        it.each<[string, Prisma.ProgramParticipantUpdateInput]>([
+            ['a payment', { status: 'ACTIVE', inventoryHeldAt: null, pendingSince: null }],
+            ['an approval', { status: 'ACTIVE', inventoryHeldAt: null, pendingSince: null, seatTakenWithoutSaleAt: new Date() }],
+            ['a re-application', { isPaymentPlanRequested: true, paymentPlanDeniedAt: null }],
+            ['a re-application denied again', { paymentPlanDeniedAt: new Date() }],
+        ])('keeps the row after %s, with no +1 and no grace-expired audit', async (_name, change) => {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipDenialGraceDays: 7 } });
+            await prisma.programParticipant.deleteMany({ where: { programId } });
+            await prisma.auditLog.deleteMany({ where: { actorId: 0, tableName: 'ProgramParticipant', secondaryAffectedEntity: programId } });
+            const where = { programId_personId: { programId, personId: ids.outside } };
+            await prisma.programParticipant.create({
+                data: { programId, personId: ids.outside, status: 'PENDING', isPaymentPlanRequested: false, inventoryHeldAt: held, paymentPlanDeniedAt: held },
+            });
+            const expected = await prisma.programParticipant.findUniqueOrThrow({ where });
+
+            const prevEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            process.env.CRON_SECRET = 'test-secret';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+            // The stock writer's transaction opens right after the sweep's select,
+            // so a write made here lands inside the race window.
+            const originalTx = prisma.$transaction.bind(prisma) as unknown as (fn: unknown) => Promise<unknown>;
+            let changed: Awaited<ReturnType<typeof prisma.programParticipant.update>> | undefined;
+            const txSpy = jest.spyOn(prisma, '$transaction').mockImplementation((async (fn: unknown) => {
+                changed ??= await prisma.programParticipant.update({ where, data: change });
+                return originalTx(fn);
+            }) as unknown as typeof prisma.$transaction);
+
+            try {
+                const res = await GET(mkReq('Bearer test-secret'));
+                const data = await res.json();
+                expect(changed).toBeDefined();
+                expect(data).toMatchObject({ processed: 1, released: 0, failed: 0 });
+
+                const row = await prisma.programParticipant.findUnique({ where });
+                expect(row).toEqual(changed);
+                expect(row).not.toEqual(expected);
+
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
+                const audit = await prisma.auditLog.findFirst({
+                    where: { actorId: 0, tableName: 'ProgramParticipant', affectedEntityId: ids.outside, secondaryAffectedEntity: programId },
+                });
+                expect(audit).toBeNull();
+            } finally {
+                txSpy.mockRestore();
+                logSpy.mockRestore();
+                if (prevEnv === undefined) delete process.env.CHECKIN_ENV;
+                else process.env.CHECKIN_ENV = prevEnv;
+            }
+        });
+    });
 });

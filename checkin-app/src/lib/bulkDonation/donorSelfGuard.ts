@@ -10,6 +10,11 @@ import { surname } from "@/lib/bulkDonation/donorSurname";
 export const OWN_HOUSEHOLD_DONOR_MESSAGE =
   "You cannot record a gift from yourself or your own household. Someone outside your household must record it.";
 
+export const OWN_HOUSEHOLD_RECEIPT_DONOR_MESSAGE =
+  'You cannot type in yourself or your own household as the donor. If you donated these goods, choose "I am the donor". If someone else in your household did, someone outside your household must upload the receipt.';
+
+const REFUSAL_MESSAGE = { ManualInKindDonation: OWN_HOUSEHOLD_DONOR_MESSAGE, Receipt: OWN_HOUSEHOLD_RECEIPT_DONOR_MESSAGE };
+
 /**
  * Throws 403 when the donor may be the recorder or someone in the recorder's
  * household. Donors are names, not linked people, so a donor whose last name
@@ -17,7 +22,12 @@ export const OWN_HOUSEHOLD_DONOR_MESSAGE =
  * recorder or a donor with no usable last name is refused too (fail closed).
  * Each refusal writes a SelfGrantRefusal audit row with no donor field in it.
  */
-export async function refuseOwnHouseholdDonor(db: DbClient, auth: AuthResult, donor: InKindDonor): Promise<void> {
+export async function refuseOwnHouseholdDonor(
+  db: DbClient,
+  auth: AuthResult,
+  donor: Pick<InKindDonor, "lastName">,
+  table: keyof typeof REFUSAL_MESSAGE,
+): Promise<void> {
   const actorId = auth.type === "session" ? auth.user.id : null;
   const householdId = actorId === null ? null : await resolveActorHouseholdId(db, actorId);
 
@@ -40,8 +50,8 @@ export async function refuseOwnHouseholdDonor(db: DbClient, auth: AuthResult, do
     await recordSelfGrantRefusal(db, {
       actorId,
       affectedEntityId: affectedEntityId ?? actorId,
-      newData: { reason, table: "ManualInKindDonation" },
+      newData: { reason, table },
     });
   }
-  throw forbidden(OWN_HOUSEHOLD_DONOR_MESSAGE);
+  throw forbidden(REFUSAL_MESSAGE[table]);
 }

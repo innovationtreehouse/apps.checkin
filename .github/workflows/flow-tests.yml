@@ -27,7 +27,7 @@ env:
   AWS_REGION: us-east-2
   # Dedicated least-privilege OIDC role (ecr-public auth only) — defined in the
   # infra repo as checkin-ci-pull-${env}. Separate from the deploy role, which is
-  # intentionally ECR-free. Requires infra PR innovationtreehouse/infra#110 applied.
+  # intentionally ECR-free.
   PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
 
 jobs:

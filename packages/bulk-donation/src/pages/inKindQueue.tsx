@@ -70,6 +70,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
     Object.fromEntries(item.lines.map((l) => [l.id, l.valueCents === null && l.suggestedValueCents === null ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
   );
   const [attested, setAttested] = useState(false);
+  const [goodsConfirmed, setGoodsConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const needsValues = item.source === "manual" && !accepted;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
@@ -89,6 +90,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
       outcome,
       confirmOutsideDonorHousehold: true,
       ...(outcome === "accept" ? { bucketId: Number(bucketId) } : {}),
+      ...(outcome === "accept" && !accepted ? { confirmGoodsReceived: true } : {}),
       ...(outcome === "accept" && needsValues ? { lineValues: item.lines.map((l) => ({ lineId: l.id, valueCents: valueCents(l.id) })) } : {}),
     };
     setBusy(true);
@@ -141,8 +143,15 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
           checked={attested}
           onChange={(e) => setAttested(e.currentTarget.checked)}
         />
+        {!accepted && (
+          <Checkbox
+            label="To accept: I have confirmed these goods exist and arrived, not only read the receipt."
+            checked={goodsConfirmed}
+            onChange={(e) => setGoodsConfirmed(e.currentTarget.checked)}
+          />
+        )}
         <Group>
-          <Button onClick={() => send("accept")} disabled={!attested || !bucketId || (needsValues && !allValued)} loading={busy}>{accepted ? "Change bucket" : "Accept"}</Button>
+          <Button onClick={() => send("accept")} disabled={!attested || (!accepted && !goodsConfirmed) || !bucketId || (needsValues && !allValued)} loading={busy}>{accepted ? "Change bucket" : "Accept"}</Button>
           {!accepted && (
             <>
               <Button variant="light" color="red" onClick={() => send("refuse")} disabled={!attested} loading={busy}>Refuse</Button>

@@ -352,6 +352,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   people, so the person deciding confirms they are outside the donor's household,
   and that is recorded.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
 
+- The person accepting a gift of goods, with a receipt or without one, confirms the
+  goods themselves exist and arrived, not only the receipt, and that is recorded.
+  Refusing or returning a gift needs no such confirmation.  [Decision — owner decision AR-13, 2026-11-01]
+
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
   [Decision — owner]
@@ -388,7 +392,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts
-  as part of that household.  [Decision — owner; *Principle: fail closed*]
+  as part of that household. This covers a gift recorded without a receipt and a
+  donor typed in on a receipt.  [Decision — owner, 2026-10-31; *Principle: fail closed*]
+
+- Someone uploading a receipt may name themselves as the donor by choosing "I am
+  the donor". The person who decides the gift is the independent check.
+  [Decision — owner, 2026-11-01]
 
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]

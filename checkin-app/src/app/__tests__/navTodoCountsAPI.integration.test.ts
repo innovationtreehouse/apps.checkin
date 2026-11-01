@@ -338,7 +338,7 @@ describe('Nav todo-counts API', () => {
 
         // Reviewer (RBAC) work — surfaced by the reviewer notifications badge, not the
         // board badge. Adding these must NOT move the board count. Anchored to a fresh
-        // membership (householdB's, previously membership-less) rather than the shared
+        // membership (householdB's first) rather than the shared
         // `orgMembershipId` — that one already holds an in-flight INITIAL and an in-flight
         // RENEWAL process from beforeAll, and membership_one_inflight_initial /
         // membership_one_inflight_renewal each allow only one per membership.

@@ -86,9 +86,8 @@ describe("checkinEnv / isProd / isDevInstance / isLocal / devToolsActive", () =>
         expect(config.devToolsActive()).toBe(true);
     });
     it("devToolsActive ignores NODE_ENV: cloud-dev runs the production image", () => {
-        // Regression for the Debug-nav 404: every deployed instance has
-        // NODE_ENV=production (Dockerfile), so a NODE_ENV fuse killed the /dev
-        // tools on cloud-dev itself. The gate must be CHECKIN_ENV alone.
+        // Every deployed instance has NODE_ENV=production (Dockerfile), so a NODE_ENV
+        // fuse would kill the /dev tools on cloud-dev. The gate must be CHECKIN_ENV alone.
         const original = process.env.NODE_ENV;
         Object.defineProperty(process.env, "NODE_ENV", { value: "production", configurable: true });
         try {

@@ -2,15 +2,12 @@
  * @jest-environment node
  */
 /**
- * Flow test for applicant-self-attested background-check consent (#875).
+ * Flow test for applicant-self-attested background-check consent.
  *
- * The consent step used to be board-gated: after clicking through to Averity the
- * applicant waited for a board member to notice Averity's email and human-mark
- * bgConsentAt before payment opened. Now the applicant self-attests ("I submitted
- * my consent on Averity") through POST /api/membership/bg-consent, and — once the
- * contract is signed — advances to PENDING_PAYMENT with no board action in the
- * middle of the sitting. The board's mark-bg-consent remains a backstop; the
- * two-reviewer check still runs in parallel with payment (PR #428).
+ * The applicant self-attests ("I submitted my consent on Averity") through
+ * POST /api/membership/bg-consent, and — once the contract is signed — advances to
+ * PENDING_PAYMENT with no board action in the middle of the sitting. The board's
+ * mark-bg-consent is a backstop; the two-reviewer check runs in parallel with payment.
  *
  * Assumes a freshly-seeded DB (parent.family is a non-member household lead; the
  * bg-nonblocking flow test uses the separate parent.family2 household).
