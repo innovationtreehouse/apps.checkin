@@ -51,7 +51,7 @@ async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
       receiptId: row.id,
       OR: [
         { action: READING_APPLIED },
-        { action: "field_edit", userId: row.uploadedByUserId, fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] } },
+        { action: "field_edit", userId: { in: await ports().personIds.storedIdsOf(row.uploadedByUserId) }, fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] } },
       ],
     },
     select: { id: true, action: true, fieldChanged: true, valueBefore: true },
