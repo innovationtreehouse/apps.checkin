@@ -12,7 +12,7 @@ import type { DbClient, TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
 import { recordPaymentException, type PaymentExceptionKind } from "@/lib/finance/reconcile/exceptions";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 
 export const DENIAL_REVOKE_REASON = "household denied";
 
@@ -90,7 +90,7 @@ async function openBoardItems(tx: TxClient, memberIds: number[]): Promise<number
     if (memberIds.length === 0) return [];
     const unfinished = { phase: { not: "FINISHED" as const } };
     const enrollments = await tx.programParticipant.findMany({
-        where: { personId: { in: memberIds }, person: LIVE_PERSON, program: unfinished, status: { in: ["PENDING", "ACTIVE"] } },
+        where: { personId: { in: memberIds }, person: LIVE_PERSON, program: unfinished, ...ENROLLED_PARTICIPANT },
         select: { personId: true, programId: true },
     });
     const volunteers = await tx.programVolunteer.findMany({

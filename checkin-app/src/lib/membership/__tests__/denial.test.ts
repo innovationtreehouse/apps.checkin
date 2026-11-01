@@ -143,7 +143,7 @@ describe('applyHouseholdDenial — board items', () => {
         const { tx, client } = fakeTx({ adults: [], reviews: [] });
         await applyHouseholdDenial(client, DENIED_HH, actor);
         expect(tx.programParticipant.findMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { personId: { in: [LEAD, CHILD] }, person: { mergedIntoId: null }, program: { phase: { not: 'FINISHED' } }, status: { in: ['PENDING', 'ACTIVE'] } },
+            where: { personId: { in: [LEAD, CHILD] }, person: { mergedIntoId: null }, program: { phase: { not: 'FINISHED' } }, status: { not: 'WITHDRAWN' } },
         }));
         expect(tx.person.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: { householdId: DENIED_HH, mergedIntoId: null },
