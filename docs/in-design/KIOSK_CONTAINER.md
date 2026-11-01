@@ -1,6 +1,6 @@
 # Run the door kiosk in a container
 
-Plan for review. No code yet.
+Plan being built. Decisions marked with a date are the owner's.
 
 ## Problem
 
@@ -94,8 +94,9 @@ even without containers.
   two cannot disagree after a power cut.
 - A roster fetch writes the snapshot only if it changed, which limits SD card
   wear. A resting kiosk writes nothing.
-- On start: load the snapshot, overlay pending scans as today, leave "known empty"
-  false, then let the first good roster replace it all as today.
+- On start: load the snapshot, overlay pending scans above the snapshot's "cleared
+  through queue id N", leave "known empty" false, then let the first good roster
+  replace it all as today.
 - A snapshot version the code does not know is ignored. The kiosk then behaves as
   it does today after a restart.
 - A corrupt database is moved aside as today, which also loses the snapshot.
@@ -105,10 +106,10 @@ even without containers.
   sample only widens its uncertainty. If the boot id matches, monotonic time is still
   valid, so the kiosk clears on restore only when the latest 23:00 falls after the
   snapshot's write time. A badge saved after that night's clear is therefore kept.
-  After a reboot the sample
-  cannot be aged, so the kiosk does nothing, as S1 states. A clear already applied is
-  in the snapshot, so the nightly reboot does not undo it. The model variant checks
-  this rule.
+  After a reboot the sample cannot be aged, so the kiosk does nothing, as S1 states.
+  A clear already applied is in the snapshot, so the nightly reboot does not undo it.
+  The model holds this rule with the fixes in S1, though the all-fixes run is not
+  complete.
 
 **Personal data.** The Pi now keeps names on disk, not only badge numbers. The
 register already limits what the kiosk receives: no whole last names, emails,
@@ -127,7 +128,9 @@ Checkin session owns that model.
 ## Updates
 
 ```
-GitHub release → prod deploy succeeds → build arm64 image → move kiosk-release tag
+GitHub release → prod deploy succeeds → build arm64 image → push by digest
+                                                                   ↓
+                              tests pass on that digest → move kiosk-release tag
                                                                    ↓
 Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health check
                                                                    ↓ fails
@@ -138,6 +141,11 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
   badge in that gap gets no acknowledgement and is not recorded. The closed window
   already exists for this kind of work. A release waits at most a day.
 - **Queue stays put.** Unsent scans wait in the file, so no drain is needed first.
+- **The tag moves only after the image passes (owner, 2026-11-01).** After the prod
+  deploy, the image is pushed by digest with no tag, and the flow and Playwright
+  tiers run against that digest with the same release's server code. A failure
+  leaves the tag where it is and fails the run visibly. A forced update skips this:
+  it is for a door already wrong, and two people approve it.
 - **The tag moves after the prod deploy.** The existing protocol hold still
   protects any skew. The server must keep accepting the protocol of a kiosk up to
   a day behind, which the presence rollout already requires.
@@ -159,14 +167,15 @@ For a real problem at the door, with no VPN or SSH needed.
 - **Trigger.** A manual GitHub Actions workflow, "Force kiosk update", takes a
   release tag or image digest, forward or back. It moves `kiosk-release` and a
   second tag, `kiosk-urgent`, to that digest. It runs behind an approval
-  environment, and the run records who forced what.
+  environment set like production (owner, 2026-11-01): one person starts it, another
+  approves, with self-review blocked. The run records who started and who approved.
 - **On the Pi.** A second timer checks `kiosk-urgent` every five minutes, all day.
   If its digest differs from the last urgent digest recorded on the Pi, the Pi
-  records it and then swaps at once, skipping the window. The check goes to GHCR
-  only, so it cannot wake the server or defer its curfew.
+  records it and then swaps at once, skipping the window. The check goes to the
+  registry only, so it cannot wake the server or defer its curfew.
 - **No loop.** The digest is recorded before the swap, so a forced image that fails
-  its health check rolls back once and is not retried. A later force with a new
-  digest still applies. Because `kiosk-release` moves too, the nightly check does
+  its health check rolls back once and is not retried. Each force run publishes its
+  own digest for the chosen image, so forcing the same image again still applies. Because `kiosk-release` moves too, the nightly check does
   not undo the force, or retry a failed one.
 - **What it costs.** Badges during the restart are missed, and a live close prompt
   is lost. The queue and saved state are safe. A forced update does not wait for a
@@ -175,6 +184,34 @@ For a real problem at the door, with no VPN or SSH needed.
 - **Limits.** A Pi with no network applies the force when it reconnects. If the
   update timer or Docker itself is broken, this cannot help, and SSH or VPN is the
   remaining route.
+
+### Where the image is published
+
+**Amazon ECR Public (owner, 2026-11-01).** The Pi runs this image with its signing
+key mounted, so publishing must take the same approval as a release. A required
+reviewer on a GitHub environment does not do that alone: it protects only what the
+environment holds. Publishing to GHCR with the repo's `GITHUB_TOKEN` needs no
+environment, so a workflow on a committer's branch could move the tag and skip the
+approval.
+
+| | Amazon ECR Public (chosen) | GHCR with a token held in the environment |
+| --- | --- | --- |
+| Publish credential | Short-lived OIDC login; nothing stored | Classic personal access token, stored and expiring |
+| Stops a branch workflow | Yes: the role trusts only the `production` and `kiosk-force` environments, by exact subject | Only if the repo's own token also loses write access, which we could not verify |
+| Reach | One role, one repository | Every package the token's user can write |
+| Failure to expect | None from expiry | An expired token blocks a force when the door is already broken; one such token stopped ECS pulls on 2026-09-19 |
+| Pi pull | Anonymous | Anonymous, once visibility is set by hand |
+| Cost of choosing it | One infra PR; a registry apart from the fleet's GHCR images | A machine account and token rotation |
+
+Published prices put this at no cost: 50 GB of storage is always free, and anonymous
+transfer is free to 500 GB a month. A release adds about one image. Old images are
+pruned by hand if storage ever nears that limit. The repository and role live in the
+infra repo (`live/mgmt/kiosk-image.tf`).
+
+**Still true with this choice:** code merged to `main` reaches the door through the
+next release, behind that release's approval. Repo admins can change environment
+settings. Whoever can create the `kiosk-force` environment can assume the role, so
+it is created with its reviewers before the role exists.
 
 ### Running the container
 
@@ -188,7 +225,7 @@ docker run --name kiosk-client --rm --network host \
   -v /etc/kiosk/config.json:/data/config.json:ro \
   -v /etc/localtime:/etc/localtime:ro \
   --log-driver journald \
-  ghcr.io/innovationtreehouse/kiosk@sha256:<digest>
+  public.ecr.aws/<alias>/kiosk@sha256:<digest>
 ```
 
 To confirm on the Pi: scanner replug, and whether holding the scanner needs write
@@ -280,6 +317,11 @@ safer channel rather than the one breaking today.
    workflow. Touches no device.
 3. **Host layer.** Install script and units, tested on any spare 64-bit Pi if one
    is available.
+   - **Container tests, required before cutover (owner, 2026-11-01).** The shipped
+     image runs in the flow stack with a throwaway signing key, on an arm64 runner.
+     A fake `evdev` mounted at test time feeds badges, so the image is unchanged.
+     Flow tests cover records, offline, restart, upgrade and rollback; Playwright
+     covers the kiosk's own page.
 4. **Cutover**, in one SSH session at night:
    1. Install Docker and the host layer, and pull the image.
    2. Stop the old loop cleanly, so the WAL file settles.
@@ -378,6 +420,12 @@ rollback.
 - Clock: a kiosk 10 minutes off still signs and delivers scans, and the panel and
   door notice show the skew; a badge during the notice behaves normally; the notice
   clears when the clocks agree; a stale request with a bad signature changes nothing on the panel.
+- Clear: a pre-23:00 queued check-in stays out of the view after a clear and an
+  offline restart, and still sends. A reply with `lastNightlyCloseAt` before 23:00
+  changes neither view nor snapshot until the wait cap. A badge at 23:00 with the
+  timer not yet run clears first. A clock-suspect row stays out of the overlay once
+  the reply says the close ran.
+- Reboot: a fallback stamp is never earlier than the snapshot's write time.
 - Bench or door, by hand: scanner replug, power pull during a scan, reboot.
 
 ## Open questions
@@ -399,7 +447,33 @@ rollback.
   - **Depends on** protocol 8's server-time stamps, so it ships with or after the
     presence kiosk release. One offset mechanism serves scan stamps, signing, the
     skew warning and this clear. The saved view must keep the sample.
-  - **Model:** re-check the fast-clock "Welcome" case against this time source.
+  - **Queued rows:** a clear drops every row already queued from the view and saves
+    "cleared through queue id N" in the snapshot; the overlay uses only rows above
+    N. The rows still send. Queue position is used because no clock can upset it. A
+    roster reply saying tonight's close has run also advances N over rows queued by
+    then, so a restart before they drain does not add those people back. That
+    advance is proposed and not yet modelled.
+  - **Hearing tonight:** the roster reply and scan acknowledgement carry
+    `lastNightlyCloseAt`. A reply counts as hearing tonight only when that is at or
+    after the latest 23:00 by kiosk time. Otherwise it is a clock sample and leaves
+    view and snapshot alone. The wait is capped, then the kiosk believes the roster.
+    The cap is 10 minutes past 23:00, proposed and not yet modelled.
+  - **After the close:** once a reply says the close ran, the overlay uses only rows
+    stamped after it, and treats clock-suspect rows as before it. The second half is
+    not yet modelled. Those rows are hidden only until the queue drains.
+  - **Reboot stamps:** a fallback stamp is never earlier than the snapshot's write
+    time, which passed at model bounds. A clock-suspect close flags any visit it
+    leaves open, which is not yet modelled.
+  - **Scan path:** a badge checks for a due clear before it reads the view, as well
+    as the timer, since the model assumes the clear comes first.
+  - **Model:** a fast Pi clock gives no wrong "Welcome" to anyone not inside at 23:00
+    (complete run). Findings: `checkin-analysis/kiosk-design/findings-2026-10-31.md`.
+    Not reached: the all-fixes run, a second night, a late or failed server run,
+    real times, timezone and daylight saving.
+- **S2. The door empties just before the web each night. Accepted by the owner
+  (2026-10-31).** An online kiosk's timer clears at 23:00, before the server's run
+  lands and the next poll arrives, so door and web briefly disagree. The clear has no
+  link condition.
 
 Rejected alternatives: Postgres on the Pi (one writer and a small table; adds a
 server); Docker socket in the container (equals root); Balena or a reflash
