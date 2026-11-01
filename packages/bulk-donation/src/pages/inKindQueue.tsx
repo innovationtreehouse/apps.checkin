@@ -169,10 +169,12 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
 const QB_HELD = ["UNBOOKED", "NEEDS_FINANCE", "POST_FAILED"];
 
 const isHeld = (q: QueueItem) => q.qbState !== null && QB_HELD.includes(q.qbState);
+const isDrifted = (q: QueueItem) => q.qbState === "DRIFT";
 
 /**
  * Finance's QuickBooks actions on one gift: book it, skip it with a reason, or match entries
  * booked by hand by id, while the drain holds it for finance; and clear its note once answered.
+ * A gift whose entry changed in QuickBooks can be matched again or skipped, never booked.
  */
 function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
   const [reason, setReason] = useState("");
@@ -200,11 +202,13 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
           </Group>
         )}
         {isHeld(item) && (
+          <Group align="end">
+            <Button onClick={() => send({ action: "book" }, "Booked in QuickBooks")} loading={busy}>Book</Button>
+            <Text size="xs" c="dimmed">The app creates the journal entry, unless it finds one already booked.</Text>
+          </Group>
+        )}
+        {(isHeld(item) || isDrifted(item)) && (
           <>
-            <Group align="end">
-              <Button onClick={() => send({ action: "book" }, "Booked in QuickBooks")} loading={busy}>Book</Button>
-              <Text size="xs" c="dimmed">The app creates the journal entry, unless it finds one already booked.</Text>
-            </Group>
             <Group align="end">
               <TextInput label="Reason" placeholder="Booked by hand, out of scope, …" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={320} />
               <Button variant="light" color="gray" onClick={() => send({ action: "skip", reason }, "Skipped")} disabled={!reason.trim()} loading={busy}>Skip</Button>
@@ -270,7 +274,7 @@ export default function InKindQueuePage() {
               return [
                 <Table.Tr key={key}>
                   <Table.Td>
-                    {q.state ? <Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge> : <Badge color="yellow">QuickBooks note</Badge>}
+                    {isDrifted(q) && q.state === "booking" ? <Badge color="red">Changed in QuickBooks</Badge> : q.state ? <Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge> : <Badge color="yellow">QuickBooks note</Badge>}
                   </Table.Td>
                   <Table.Td><Anchor href={`/donations/in-kind/${q.source}/${q.id}`}>{q.source === "receipt" ? `Receipt ${q.receiptId}` : "No receipt"}</Anchor></Table.Td>
                   <Table.Td>{q.receiptDate ?? q.donationDate ?? when(q.moneyReceivedAt)}</Table.Td>
@@ -290,7 +294,7 @@ export default function InKindQueuePage() {
                         {kind === "withdrawal" ? "Settle withdrawal" : "Keep first values"}
                       </Button>
                     )}
-                    {isFinance && (isHeld(q) || q.qbNote) && (
+                    {isFinance && (isHeld(q) || isDrifted(q) || q.qbNote) && (
                       <Button size="xs" variant="light" onClick={() => setQbOpen(qbOpen === key ? null : key)}>QuickBooks</Button>
                     )}
                   </Table.Td>
