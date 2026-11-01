@@ -49,7 +49,7 @@ function parseYearVariants(raw: unknown, boundary: Date | null | undefined): Yea
  * orgMembershipVariantId (string|null),
  * orgMembershipProductUrl (string|null), volunteerFamilyDiscountCode (string|null),
  * perYearVariantClient (true — required; any other body is refused with nothing changed),
- * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — upserted by year; 409 when
+ * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — replaced by year; 409 when
  * another year already holds the variant, and nothing in the save is kept),
  * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
  * releaseLibrary ({ library: LibraryKey, released: boolean } — board members only; the nav's UI-only
@@ -160,13 +160,9 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             create: { ...DEFAULTS, ...data },
             update: data,
         });
-        for (const { membershipYear, shopifyVariantId, productUrl } of yearVariants) {
-            await tx.membershipYearVariant.upsert({
-                where: { membershipYear },
-                create: { membershipYear, shopifyVariantId, productUrl },
-                update: { shopifyVariantId, productUrl },
-            });
-        }
+        // Delete first so two slots can swap variants without colliding on the unique index.
+        await tx.membershipYearVariant.deleteMany({ where: { membershipYear: { in: yearVariants.map((v) => v.membershipYear) } } });
+        await tx.membershipYearVariant.createMany({ data: yearVariants });
         if (release) {
             await tx.$executeRaw`UPDATE "BoardSettings" SET "releasedLibraries" =
                 CASE WHEN ${release.released} THEN array_append(array_remove("releasedLibraries", ${release.library}), ${release.library})

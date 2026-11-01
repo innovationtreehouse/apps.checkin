@@ -10,7 +10,7 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const tx = {
     boardSettings: { upsert: jest.fn(), findUniqueOrThrow: jest.fn() },
-    membershipYearVariant: { upsert: jest.fn() },
+    membershipYearVariant: { deleteMany: jest.fn(), createMany: jest.fn() },
     $executeRaw: jest.fn(),
     auditLog: { create: jest.fn() },
 };
@@ -68,19 +68,16 @@ describe('PUT /api/settings/membership membershipYearVariants', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         tx.boardSettings.findUniqueOrThrow.mockResolvedValue({ id: 1 });
-        tx.membershipYearVariant.upsert.mockReset();
+        tx.membershipYearVariant.createMany.mockReset();
         (prisma.boardSettings.findUnique as jest.Mock).mockResolvedValue({ orgMembershipYearBoundary: boundary });
         asUser({ isSysadmin: false, isBoardMember: true });
     });
 
-    it('upserts by year, trimmed, and audits the write', async () => {
+    it('replaces by year, trimmed, and audits the write', async () => {
         expect((await put({ membershipYearVariants: [row()] })).status).toBe(200);
         const written = { membershipYear: coming, shopifyVariantId: '222', productUrl: 'https://x/y' };
-        expect(tx.membershipYearVariant.upsert).toHaveBeenCalledWith({
-            where: { membershipYear: coming },
-            create: written,
-            update: { shopifyVariantId: '222', productUrl: 'https://x/y' },
-        });
+        expect(tx.membershipYearVariant.deleteMany).toHaveBeenCalledWith({ where: { membershipYear: { in: [coming] } } });
+        expect(tx.membershipYearVariant.createMany).toHaveBeenCalledWith({ data: [written] });
         expect(tx.auditLog.create.mock.calls[0][0].data.newData).toEqual({ membershipYearVariants: [written] });
     });
 
@@ -93,7 +90,7 @@ describe('PUT /api/settings/membership membershipYearVariants', () => {
         ['not a list', 'nope'],
     ])('refuses %s', async (_name, membershipYearVariants) => {
         expect((await put({ membershipYearVariants })).status).toBe(400);
-        expect(tx.membershipYearVariant.upsert).not.toHaveBeenCalled();
+        expect(tx.membershipYearVariant.createMany).not.toHaveBeenCalled();
     });
 
     it('refuses a row while no boundary is set', async () => {
@@ -102,7 +99,7 @@ describe('PUT /api/settings/membership membershipYearVariants', () => {
     });
 
     it('answers 409 when another year holds the variant', async () => {
-        tx.membershipYearVariant.upsert.mockRejectedValue({ code: 'P2002' });
+        tx.membershipYearVariant.createMany.mockRejectedValue({ code: 'P2002' });
         expect((await put({ membershipYearVariants: [row()] })).status).toBe(409);
     });
 });

@@ -139,6 +139,17 @@ describe('Membership settings + volunteer designations API', () => {
 
         const { settings } = await (await SETTINGS_GET(jsonReq('GET'))).json();
         expect(settings.MembershipYearVariant).toEqual([{ membershipYear: inProgress, shopifyVariantId: '1002', productUrl: null }]);
+
+        const swap = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, membershipYearVariants: [
+            { membershipYear: inProgress, shopifyVariantId: '1004', productUrl: null },
+            { membershipYear: coming, shopifyVariantId: '1002', productUrl: null },
+        ] }));
+        expect(swap.status).toBe(200);
+        const swapped = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, membershipYearVariants: [
+            { membershipYear: inProgress, shopifyVariantId: '1002', productUrl: null },
+            { membershipYear: coming, shopifyVariantId: '1004', productUrl: null },
+        ] }));
+        expect(swapped.status).toBe(200);
         await prisma.membershipYearVariant.deleteMany({});
     });
 
