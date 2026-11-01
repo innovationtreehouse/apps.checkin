@@ -2,6 +2,7 @@ import type { PersonRoleKind } from "@/generated/prisma/client";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { personActor, systemActor, type SystemActorName } from "@/lib/auditActor";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
+import { archiveOpenKvas, hasSignedCurrentKva, openKvaIfNeeded } from "@/lib/membership/keyVolunteerProcess";
 
 /**
  * The ONE hand-written map: session/JWT authority flag -> PersonRole table kind.
@@ -20,6 +21,7 @@ export const FLAG_TO_KIND = {
     isOperations: "OPERATIONS",
     isInventoryManager: "INVENTORY_MANAGER",
     isFinance: "FINANCE",
+    isKeyVolunteer: "KEY_VOLUNTEER",
 } as const satisfies Record<string, PersonRoleKind>;
 
 export type RoleFlag = keyof typeof FLAG_TO_KIND;
@@ -42,7 +44,29 @@ export const KIND_TO_MIRROR: Partial<Record<PersonRoleKind, RoleFlag>> = {
     BG_REVIEWER: "isBackgroundCheckReviewer",
 };
 
-/** Derive the five session booleans from a person's `PersonRole` rows. */
+/**
+ * Roles granted only to a Key Volunteer who has signed the current agreement.
+ * `KEY_VOLUNTEER` cannot be removed while the person holds any of them.
+ */
+export const KEY_VOLUNTEER_GATED_FLAGS: readonly RoleFlag[] = ["isBoardMember", "isBackgroundCheckReviewer", "isFinance"];
+
+/**
+ * The order one request's role changes are written in, so a single request can
+ * do what the Key Volunteer rules allow: revocations first, `isKeyVolunteer`
+ * last among them (after the roles it underpins); then grants, `isKeyVolunteer`
+ * first.
+ */
+export function orderRoleChanges(requested: Partial<Record<RoleFlag, boolean>>): [RoleFlag, boolean][] {
+    const changes = ROLE_FLAGS.filter((f) => requested[f] !== undefined).map((f): [RoleFlag, boolean] => [f, requested[f]!]);
+    const kvLast = (a: [RoleFlag, boolean], b: [RoleFlag, boolean]) =>
+        Number(a[0] === "isKeyVolunteer") - Number(b[0] === "isKeyVolunteer");
+    return [
+        ...changes.filter(([, on]) => !on).sort(kvLast),
+        ...changes.filter(([, on]) => on).sort((a, b) => kvLast(b, a)),
+    ];
+}
+
+/** Derive the session booleans from a person's `PersonRole` rows. */
 export function rolesToFlags(rows: { role: PersonRoleKind }[]): Record<RoleFlag, boolean> {
     const held = new Set(rows.map((r) => r.role));
     return Object.fromEntries(
@@ -120,6 +144,10 @@ export class RoleMatrixError extends Error {}
 export class LastBoardMemberError extends Error {}
 /** Thrown by `setRoleFlag` when granting BOARD to a member of a DENIED household. */
 export class DeniedHouseholdBoardError extends Error {}
+/** Thrown when granting a gated role to someone who is not a Key Volunteer signed at the current agreement version. */
+export class KeyVolunteerAgreementRequiredError extends Error {}
+/** Thrown when removing KEY_VOLUNTEER from someone who still holds a gated role. */
+export class KeyVolunteerRemovalOrderError extends Error {}
 /** Thrown when an actor changes a role or flag on themself or someone in their own household. */
 export class OwnHouseholdRoleError extends Error {
     constructor(readonly targetId: number) { super(); }
@@ -163,6 +191,23 @@ export type RoleActor =
     | { system: SystemActorName };
 
 /**
+ * `move: true` is a person merge carrying a role from the merged-away record to
+ * the keeper. It is the same person's existing grant, not a new one, so the Key
+ * Volunteer grant check does not apply to it.
+ */
+export type RoleWriteOptions = { move?: boolean };
+
+/**
+ * Whether `actor` may grant or remove KEY_VOLUNTEER: a board member; or a
+ * sysadmin while no board member exists, so a new installation can seat its
+ * first board. A system actor is not checked.
+ */
+export async function mayManageKeyVolunteers(db: DbClient, actor: { isBoardMember?: boolean; isSysadmin?: boolean }): Promise<boolean> {
+    if (actor.isBoardMember) return true;
+    return !!actor.isSysadmin && (await db.personRole.count({ where: { role: "BOARD" } })) === 0;
+}
+
+/**
  * THE write choke point for role changes. Grants/revokes one `flag` on
  * `target`, owning every invariant a role write has to hold:
  *
@@ -180,6 +225,13 @@ export type RoleActor =
  *  - the denied-household guard: BOARD can't be granted to a member of a DENIED
  *    household, the mirror of the deny-side refusal in
  *    POST /api/membership-ops/households. Also actor-independent.
+ *  - the Key Volunteer rules (docs/rules/membership.md): KEY_VOLUNTEER is granted
+ *    and removed by the Board (`mayManageKeyVolunteers`); the gated roles are
+ *    granted only to a Key Volunteer signed at the current agreement version, for
+ *    every actor; KEY_VOLUNTEER can't be removed while a gated role is held.
+ *    Granting it opens the agreement; removing it archives an open, unsigned one
+ *    and returns that agreement's Zoho request ids for the caller to recall
+ *    (`recallSigningRequests`) once its transaction commits.
  *  - the audit row: every change writes one AuditLog row (actor, target, flag,
  *    before/after) in the same transaction as the write.
  *
@@ -204,7 +256,8 @@ export async function setRoleFlag(
     flag: RoleFlag,
     on: boolean,
     actor: RoleActor,
-): Promise<{ changed: boolean; before: boolean; after: boolean }> {
+    { move = false }: RoleWriteOptions = {},
+): Promise<{ changed: boolean; before: boolean; after: boolean; recallRequestIds: string[] }> {
     return withTx(db, async (tx) => {
         // Lock the BOARD row set FIRST, then read THIS person's roles under the lock,
         // so the no-op short-circuit and the returned before/after are consistent with
@@ -213,8 +266,9 @@ export async function setRoleFlag(
         await lockBoardRoles(tx);
 
         const rows = await tx.personRole.findMany({ where: { personId }, select: { role: true } });
-        const before = rolesToFlags(rows)[flag];
-        if (before === on) return { changed: false, before, after: before };
+        const held = rolesToFlags(rows);
+        const before = held[flag];
+        if (before === on) return { changed: false, before, after: before, recallRequestIds: [] };
 
         if (!("system" in actor)) await assertNotOwnHousehold(tx, actor.id, personId);
 
@@ -229,6 +283,9 @@ export async function setRoleFlag(
                 if (flag === "isBoardMember" && on === false) {
                     throw new RoleMatrixError("Only board members can remove board membership");
                 }
+            }
+            if (flag === "isKeyVolunteer" && !(await mayManageKeyVolunteers(tx, actor))) {
+                throw new RoleMatrixError("Only board members can grant or remove the Key Volunteer role");
             }
         }
 
@@ -250,8 +307,22 @@ export async function setRoleFlag(
             if (target?.household.orgMembership?.status === "DENIED") throw new DeniedHouseholdBoardError();
         }
 
+        if (on && !move && KEY_VOLUNTEER_GATED_FLAGS.includes(flag)) {
+            if (!held.isKeyVolunteer || !(await hasSignedCurrentKva(tx, personId))) {
+                throw new KeyVolunteerAgreementRequiredError();
+            }
+        }
+        if (flag === "isKeyVolunteer" && !on && KEY_VOLUNTEER_GATED_FLAGS.some((f) => held[f])) {
+            throw new KeyVolunteerRemovalOrderError();
+        }
+
         const auditActor = "system" in actor ? systemActor(actor.system) : personActor(actor.id);
         await applyRoleFlag(tx, personId, flag, on, "system" in actor ? undefined : actor.id);
+        let recallRequestIds: string[] = [];
+        if (flag === "isKeyVolunteer") {
+            if (on) await openKvaIfNeeded(tx, personId, auditActor);
+            else recallRequestIds = await archiveOpenKvas(tx, { subjectPersonId: personId }, auditActor, "Key Volunteer role removed");
+        }
         await tx.auditLog.create({
             data: {
                 ...auditActor,
@@ -262,6 +333,6 @@ export async function setRoleFlag(
                 newData: { [flag]: on },
             },
         });
-        return { changed: true, before, after: on };
+        return { changed: true, before, after: on, recallRequestIds };
     });
 }

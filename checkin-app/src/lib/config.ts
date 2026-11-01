@@ -245,6 +245,8 @@ export const config = {
     receiptFilesBucket: (): string | null => process.env.RECEIPT_FILES_S3_BUCKET || null,
     receiptFilesS3: (): boolean => process.env.RECEIPT_FILES_S3 === 'true',
     agreementPdfKey: (): string => process.env.AGREEMENT_PDF_S3_KEY || 'membership-agreement.pdf',
+    // The Key Volunteer Agreement PDF, a second object in the same bucket.
+    kvaPdfKey: (): string => process.env.KVA_PDF_S3_KEY || 'key-volunteer-agreement.pdf',
 
     // Zoho Sign — membership-agreement e-signing. The three OAuth secrets are
     // null when unset (integration "off"); the two endpoints default to the .com

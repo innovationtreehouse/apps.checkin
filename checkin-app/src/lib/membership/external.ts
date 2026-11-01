@@ -8,7 +8,7 @@ import { backgroundCheckProvider } from "@/lib/membership/background-check/manua
 import { notifyReviewers, applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { zohoSign } from "@/lib/membership/contract/zohoProvider";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
-import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
+import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError, type LoadedAgreement } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
@@ -156,10 +156,10 @@ export async function advanceExternalIfComplete(processId: number) {
 /**
  * Record that the membership contract was signed (idempotent), then maybe advance.
  *
- * A PERSON_AGREEMENT completes on the signature alone — it has no membership,
- * no payment and no BG gate — so it flips straight to the terminal ACTIVE in the same
- * conditional write and skips advanceExternalIfComplete entirely (which would deref a
- * null orgMembershipId).
+ * A per-person agreement (PERSON_AGREEMENT, KEY_VOLUNTEER_AGREEMENT) completes on the
+ * signature alone — it has no membership, no payment and no BG gate — so it flips
+ * straight to the terminal ACTIVE in the same conditional write and skips
+ * advanceExternalIfComplete entirely (which would deref a null orgMembershipId).
  *
  * A board-recorded signature clears the signer: the request's addressee may never
  * have signed, and the record must not name someone who didn't.
@@ -167,10 +167,10 @@ export async function advanceExternalIfComplete(processId: number) {
 export async function markContractSigned(processId: number, actorId?: number, recordedByBoard = false) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
-    const isPersonAgreement = process.kind === "PERSON_AGREEMENT";
+    const isPersonAgreement = process.kind === "PERSON_AGREEMENT" || process.kind === "KEY_VOLUNTEER_AGREEMENT";
     // Conditional on contractSignedAt: null — two concurrent Zoho webhook retries
     // both see null, but only the winner's updateMany flips it (count === 1), so the
-    // audit row is written once. A PERSON_AGREEMENT also requires its from-state, so
+    // audit row is written once. A per-person agreement also requires its from-state, so
     // an archived agreement can never flip to ACTIVE. Household processes may be
     // pre-marked signed before EXTERNAL (intake), so theirs has no status clause.
     await prisma.$transaction(async (tx) => {
@@ -421,6 +421,17 @@ export async function syncContractStatus(userId: number): Promise<ExternalStatus
     const { process } = await resolveSigningProcess(user.id, user.isHouseholdLead, user.household?.orgMembership?.processes);
     if (!process) return null;
 
+    const fresh = await pullSignatureStatus(process, userId);
+    return fresh ? getExternalStatus(fresh) : null;
+}
+
+/**
+ * Asks Zoho whether `process`'s signing request is complete and records the
+ * signature if so; forgets a dead request so the next click creates a fresh one.
+ * Best-effort: a Zoho failure is logged, since the webhook is the backstop.
+ * Returns the re-read process.
+ */
+export async function pullSignatureStatus(process: OrgMembershipProcess, userId: number) {
     if (!process.contractSignedAt && process.zohoEnvelopeId && config.zohoAvailable()) {
         try {
             const token = await zohoSign.getAccessToken();
@@ -438,8 +449,7 @@ export async function syncContractStatus(userId: number): Promise<ExternalStatus
     }
 
     // Re-read: markContractSigned may have flipped contractSignedAt (and advanced the phase).
-    const fresh = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
-    return fresh ? getExternalStatus(fresh) : null;
+    return prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
 }
 
 /**
@@ -457,6 +467,27 @@ async function assertSignerIs(signerId: number | null, userId: number) {
 
 /** Days an applicant has to sign before the Zoho request expires (mirrors the script's default). */
 const CONTRACT_EXPIRATION_DAYS = 15;
+
+/** The document a signing request carries and where Zoho returns the signer. */
+export interface SigningDocument {
+    /** Reads the PDF; throws AgreementUnavailableError when it is not in place. */
+    load: () => Promise<LoadedAgreement>;
+    filename: string;
+    /** The request's name in Zoho, before the signer's name. */
+    title: string;
+    unavailableMessage: string;
+    /** App paths Zoho navigates the signer to when they finish, decline, or leave. */
+    returnTo: { signed: string; declined: string; later: string };
+}
+
+const MEMBERSHIP_AGREEMENT: SigningDocument = {
+    load: () => loadAgreementPdf(),
+    filename: AGREEMENT_FILENAME,
+    title: "Membership Agreement",
+    unavailableMessage: "The membership agreement isn't ready yet. Please check back soon.",
+    // signed=1 lets the membership page confirm + refresh.
+    returnTo: { signed: "/membership?signed=1", declined: "/membership?declined=1", later: "/membership" },
+};
 
 /**
  * Applicant-facing "Sign your membership agreement" action. Idempotent: the Zoho
@@ -497,6 +528,22 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
     }
     if (!process) throw new ExternalError("wrong_phase", "No application is awaiting your signature.");
 
+    return signingUrlForProcess(process, user, MEMBERSHIP_AGREEMENT);
+}
+
+/**
+ * The embedded sign URL for `user` on `process`, creating the Zoho request on the
+ * first call and reusing it after. Shared by every agreement the app signs.
+ */
+export async function signingUrlForProcess(
+    process: OrgMembershipProcess,
+    user: { id: number; email: string | null; name: string | null },
+    document: SigningDocument,
+): Promise<string> {
+    if (!config.zohoAvailable()) {
+        throw new ExternalError("not_configured", "Agreement signing isn't available yet. Please check back soon.");
+    }
+    const userId = user.id;
     const recipientEmail = user.email;
     const recipientName = user.name?.trim() || user.email || "Applicant";
     if (!recipientEmail) throw new ExternalError("not_found", "Your account has no email on file to sign with.");
@@ -566,10 +613,10 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
                 agreement = { pdf: Buffer.alloc(0), lastPageNo: 0, pageWidth: 0, pageHeight: 0 };
             } else {
                 try {
-                    agreement = await loadAgreementPdf();
+                    agreement = await document.load();
                 } catch (e) {
                     if (e instanceof AgreementUnavailableError) {
-                        throw new ExternalError("agreement_unavailable", "The membership agreement isn't ready yet. Please check back soon.");
+                        throw new ExternalError("agreement_unavailable", document.unavailableMessage);
                     }
                     throw e;
                 }
@@ -588,24 +635,24 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             // credential is ever wired to staging to rehearse signing.
             const isProd = config.isProd() && !config.isStaging();
             const pdf = isProd || signingMock ? agreement.pdf : await stampWatermark(agreement.pdf, "DEV TEST — NOT A LEGAL AGREEMENT");
-            const requestName = `${isProd ? "" : "[DEV TEST — NOT BINDING] "}Membership Agreement — ${recipientName}`;
+            const requestName = `${isProd ? "" : "[DEV TEST — NOT BINDING] "}${document.title} — ${recipientName}`;
 
             // Return the embedded signer to checkin when they finish (Zoho navigates
-            // the window to these). signed=1 lets the membership page confirm + refresh.
-            const membershipUrl = `${config.baseUrl()}/membership`;
-                created = await zohoSign.createRequest({
+            // the window to these).
+            const base = config.baseUrl();
+            created = await zohoSign.createRequest({
                 token,
                 pdf,
-                filename: AGREEMENT_FILENAME,
+                filename: document.filename,
                 recipientEmail,
                 recipientName,
                 requestName,
                 expirationDays: CONTRACT_EXPIRATION_DAYS,
                 redirectPages: {
-                    sign_completed: `${membershipUrl}?signed=1`,
-                    sign_success: `${membershipUrl}?signed=1`,
-                    sign_declined: `${membershipUrl}?declined=1`,
-                    sign_later: membershipUrl,
+                    sign_completed: `${base}${document.returnTo.signed}`,
+                    sign_success: `${base}${document.returnTo.signed}`,
+                    sign_declined: `${base}${document.returnTo.declined}`,
+                    sign_later: `${base}${document.returnTo.later}`,
                 },
             });
             await zohoSign.submitRequest({

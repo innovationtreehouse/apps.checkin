@@ -73,8 +73,9 @@ describe("RolesEditModal", () => {
     });
 
     it("sysadmin-only actor: Board switch is disabled only when currently on", () => {
+        const signedJane = { ...jane, isKeyVolunteer: true, kvaSignedCurrent: true };
         const { unmount } = renderWithProviders(
-            <RolesEditModal target={jane} me={{ isSysadmin: true }} onClose={jest.fn()} onSaved={jest.fn()} />,
+            <RolesEditModal target={signedJane} me={{ isSysadmin: true }} onClose={jest.fn()} onSaved={jest.fn()} />,
         );
         // Jane: board off -> enabled (sysadmin-only may grant it).
         expect(screen.getByLabelText("Board")).toBeEnabled();
@@ -85,6 +86,59 @@ describe("RolesEditModal", () => {
         );
         // Bob: board on -> disabled (sysadmin-only may never remove it).
         expect(screen.getByLabelText("Board")).toBeDisabled();
+    });
+
+    it("gated roles grant only to a Key Volunteer signed at the current version", () => {
+        const { unmount } = renderWithProviders(<RolesEditModal target={jane} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />);
+        // Not a Key Volunteer: Board, BG reviewer and Finance can't be granted; Keyholder can.
+        expect(screen.getByLabelText("Board")).toBeDisabled();
+        expect(screen.getByLabelText("BG Reviewer")).toBeDisabled();
+        expect(screen.getByLabelText("Finance")).toBeDisabled();
+        expect(screen.getByLabelText("Keyholder")).toBeEnabled();
+        unmount();
+
+        renderWithProviders(
+            <RolesEditModal target={{ ...jane, isKeyVolunteer: true, kvaSignedCurrent: false }} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />,
+        );
+        expect(screen.getByLabelText("Board")).toBeDisabled();
+        expect(screen.getByText("Has not signed the current agreement")).toBeInTheDocument();
+    });
+
+    it("Key Volunteer: board-only, and not removable while a gated role is on", () => {
+        const kv = { ...jane, isBackgroundCheckReviewer: true, isKeyVolunteer: true, kvaSignedCurrent: true, kvaSignedAt: "2026-10-01T12:00:00.000Z" };
+        const { unmount } = renderWithProviders(<RolesEditModal target={kv} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />);
+        // BG reviewer is on, so Key Volunteer can't be switched off until it is; her Keyholder role doesn't block it.
+        expect(screen.getByLabelText("Key Volunteer")).toBeDisabled();
+        fireEvent.click(screen.getByLabelText("BG Reviewer"));
+        expect(screen.getByLabelText("Key Volunteer")).toBeEnabled();
+        expect(screen.getByLabelText("Board")).toBeEnabled();
+        unmount();
+
+        const { unmount: unmount2 } = renderWithProviders(<RolesEditModal target={stagingTarget} me={{ isSysadmin: true }} onClose={jest.fn()} onSaved={jest.fn()} />);
+        expect(screen.getByLabelText("Key Volunteer")).toBeDisabled();
+        unmount2();
+
+        // A sysadmin manages Key Volunteers while no board member exists.
+        renderWithProviders(<RolesEditModal target={stagingTarget} me={{ isSysadmin: true }} noBoard onClose={jest.fn()} onSaved={jest.fn()} />);
+        expect(screen.getByLabelText("Key Volunteer")).toBeEnabled();
+    });
+
+    it("records an open agreement as signed by hand", async () => {
+        (modals.openConfirmModal as jest.Mock).mockImplementation((opts: { onConfirm: () => void }) => opts.onConfirm());
+        const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const onSaved = jest.fn();
+        const kv = { ...stagingTarget, isKeyVolunteer: true, kvaSignedCurrent: false, kvaOpenProcessId: 41 };
+        renderWithProviders(<RolesEditModal target={kv} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={onSaved} />);
+
+        fireEvent.click(screen.getByRole("button", { name: "Record signed by hand" }));
+
+        await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ kvaSignedCurrent: true, kvaOpenProcessId: null })));
+        expect(fetchMock).toHaveBeenCalledWith("/api/membership-ops/applications/external", expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ processId: 41, action: "mark-contract" }),
+        }));
+        (modals.openConfirmModal as jest.Mock).mockReset();
     });
 
     it("no-delta Save closes without opening a confirm modal or calling onSaved", () => {

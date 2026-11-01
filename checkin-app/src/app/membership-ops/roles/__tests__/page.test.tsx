@@ -15,7 +15,7 @@ import RolesPage from "../page";
 
 beforeEach(() => resetRtl());
 
-const people = [
+const people: Record<string, unknown>[] = [
     { id: 1, name: "Ann Admin", email: "ann@example.com", isYouth: false, isSysadmin: true, isBoardMember: false, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false },
     { id: 2, name: "Bob Board", email: "bob@example.com", isYouth: false, isSysadmin: false, isBoardMember: true, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false },
 ];
@@ -47,11 +47,11 @@ describe("RolesPage — holders-first roles editor", () => {
 
         // Route the PATCH before triggering it — modals.openConfirmModal is mocked to
         // auto-confirm synchronously from inside the Save click handler.
-        const patchFetch = jest.fn(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => ({ message: "ok", user: { ...cara, isKeyholder: true } }),
-        }));
+        const patchFetch = jest.fn(async () => {
+            // The page refetches /api/roles after a save; it now lists Cara.
+            people.push({ ...cara, isYouth: false, isKeyholder: true });
+            return { ok: true, status: 200, json: async () => ({ message: "ok", user: { ...cara, isKeyholder: true } }) };
+        });
         global.fetch = ((...args: Parameters<typeof fetch>) => {
             const init = args[1] as RequestInit | undefined;
             if (init?.method === "PATCH") return patchFetch();

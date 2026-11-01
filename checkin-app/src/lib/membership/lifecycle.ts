@@ -270,9 +270,9 @@ export function fromWhere(from: ProcessStatus): Where {
  */
 export type ClassifyRow = { status: ProcessStatus; kind: ProcessKind } & ProcessFlags;
 
-/** The one kind that reaches ACTIVE on a signature, owing no clearance stamp. An
+/** The kinds that reach ACTIVE on a signature, owing no clearance stamp. An
  *  exemption list, not an allowlist: a kind added later owes the stamp by default. */
-const SETTLES_ON_SIGNATURE: readonly ProcessKind[] = ["PERSON_AGREEMENT"];
+const SETTLES_ON_SIGNATURE: readonly ProcessKind[] = ["PERSON_AGREEMENT", "KEY_VOLUNTEER_AGREEMENT"];
 
 /**
  * Name a row's lifecycle state, or null when it's off-diagram. Total over the
@@ -287,7 +287,7 @@ export function classify(row: ClassifyRow): ProcessStatus | null {
             return row.paidAt ? null : "INTAKE";
         case "ACTIVE":
             // Convergence stamps bgClearedAt before flipping ACTIVE (payment.ts / review.ts).
-            // A PERSON_AGREEMENT has no convergence to stamp — see SETTLES_ON_SIGNATURE.
+            // A per-person agreement has no convergence to stamp — see SETTLES_ON_SIGNATURE.
             return row.bgClearedAt || SETTLES_ON_SIGNATURE.includes(row.kind) ? "ACTIVE" : null;
         case "PENDING_EXTERNAL_ACTION":
             return "PENDING_EXTERNAL_ACTION";
@@ -315,7 +315,7 @@ export const INVARIANTS: readonly Invariant<ClassifyRow>[] = [
     // Payment is stamped no earlier than PENDING_PAYMENT; INTAKE is pre-external.
     { name: "intake-is-unpaid", holds: (r) => r.status !== "INTAKE" || !r.paidAt },
     // ACTIVE is only reached through the two-track convergence, which stamps bgClearedAt —
-    // for the kinds that HAVE one. markContractSigned settles a PERSON_AGREEMENT outright
+    // for the kinds that HAVE one. markContractSigned settles a per-person agreement outright
     // (the kind-tagged PENDING_EXTERNAL_ACTION→ACTIVE edge below), owing no clearance.
     { name: "active-is-bg-cleared", holds: (r) => r.status !== "ACTIVE" || SETTLES_ON_SIGNATURE.includes(r.kind) || r.bgClearedAt },
 ];
@@ -367,6 +367,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "board", guardSite: "renewal.ts createRenewalProcess: OrgMembership FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
     { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers.ts openPersonBg: Person FOR UPDATE", kind: "PERSON_BG" },
     { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers.ts openPersonAgreement: Person FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
+    { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "openKvaIfNeeded", actor: "board", guardSite: "keyVolunteerProcess.ts openKvaIfNeeded (in setRoleFlag, under the BOARD role lock) / createKva (version bump)", kind: "KEY_VOLUNTEER_AGREEMENT" },
     // External step
     { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
     { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts beginRenewal: OrgMembership FOR UPDATE (refuses DENIED/BLOCKED) + updateMany CAS from PENDING_RENEWAL", kind: "RENEWAL" },
@@ -374,6 +375,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + consent or cleared)" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject/board", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "KEY_VOLUNTEER_AGREEMENT" },
     // Payment convergence
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },

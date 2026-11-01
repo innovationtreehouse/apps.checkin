@@ -5,7 +5,8 @@ import { Box, Button, Group, Modal, Stack, Switch, Text, Tooltip } from "@mantin
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { roleLabel } from "@/components/ui/RoleBadge";
-import { ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
+import { KEY_VOLUNTEER_GATED_FLAGS, ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
+import { useOrgTime } from "@/components/TimezoneProvider";
 
 export type RolesEditTarget = {
   id: number;
@@ -18,6 +19,11 @@ export type RolesEditTarget = {
   isOperations?: boolean;
   isInventoryManager?: boolean;
   isFinance?: boolean;
+  isKeyVolunteer?: boolean;
+  // Key Volunteer Agreement standing, from GET /api/roles.
+  kvaSignedCurrent?: boolean;
+  kvaSignedAt?: string | null;
+  kvaOpenProcessId?: number | null;
   // ops-stg access gate escape hatch. NOT one of the ROLE_FLAGS above —
   // sysadmin-settable only (see PATCH /api/roles), so it is edited separately
   // below rather than folded into the ROLE_FLAGS loop's board-symmetric switches.
@@ -35,6 +41,8 @@ export interface RolesEditModalProps {
   target: RolesEditTarget | null;
   /** The acting session user (for the client-side matrix — UX only, the endpoint enforces it). */
   me: RolesEditActor | undefined;
+  /** True while no one holds the board role: a sysadmin may then manage Key Volunteers. */
+  noBoard?: boolean;
   onClose: () => void;
   /** Called with the server's post-write user (five booleans + id/email/name) after a successful save. */
   onSaved: (updatedUser: RolesEditTarget) => void;
@@ -50,12 +58,13 @@ function flagsFromTarget(t: RolesEditTarget | null): Record<RoleFlag, boolean> {
  * The role editor: one switch per ROLE_FLAGS entry, its confirm-delta modal and the
  * PATCH /api/roles call. Opened only from the holders-first `/membership-ops/roles` page.
  */
-export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalProps) {
+export function RolesEditModal({ target, me, noBoard = false, onClose, onSaved }: RolesEditModalProps) {
   const [rolesForm, setRolesForm] = useState<Record<RoleFlag, boolean>>(() => flagsFromTarget(null));
   // Tracked separately from rolesForm: canAccessStaging is not a ROLE_FLAGS entry
   // (see RolesEditTarget) — it has its own sysadmin-only rule, not the board-symmetric matrix.
   const [stagingForm, setStagingForm] = useState(false);
   const [savingRoles, setSavingRoles] = useState(false);
+  const { formatDate } = useOrgTime();
 
   // Re-seed the form whenever a new target is opened.
   const [seededFor, setSeededFor] = useState<RolesEditTarget | null>(null);
@@ -74,7 +83,10 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
   // Client-side mirror of the server's authority matrix — UX only, so
   // switches the actor can't legally flip are disabled with an explanation.
   // The endpoint enforces the real rule regardless of what this renders.
+  const mayManageKeyVolunteers = !!me?.isBoardMember || (!!me?.isSysadmin && noBoard);
   const roleSwitchState = (field: RoleFlag): { disabled: boolean; reason?: string } => {
+    const kva = keyVolunteerSwitchState(field);
+    if (kva) return kva;
     if (me?.isBoardMember) return { disabled: false };
     if (me?.isSysadmin) {
       if (field === 'isBoardMember' && target?.isBoardMember) {
@@ -83,6 +95,46 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
       return { disabled: false };
     }
     return { disabled: true, reason: 'You do not have permission to edit roles' };
+  };
+
+  // The Key Volunteer rules (docs/rules/membership.md), mirrored for the same UX reason.
+  const keyVolunteerSwitchState = (field: RoleFlag): { disabled: boolean; reason?: string } | null => {
+    if (field === 'isKeyVolunteer') {
+      if (!mayManageKeyVolunteers) return { disabled: true, reason: 'Only board members can grant or remove the Key Volunteer role' };
+      if (rolesForm.isKeyVolunteer && KEY_VOLUNTEER_GATED_FLAGS.some((f) => rolesForm[f])) {
+        return { disabled: true, reason: 'Remove Board, BG reviewer and Finance first' };
+      }
+      return null;
+    }
+    if (KEY_VOLUNTEER_GATED_FLAGS.includes(field) && !target?.[field] && !(target?.isKeyVolunteer && target.kvaSignedCurrent)) {
+      return { disabled: true, reason: 'Granted only to a Key Volunteer who has signed the current Key Volunteer Agreement' };
+    }
+    return null;
+  };
+
+  const [recording, setRecording] = useState(false);
+  // Records a paper signature on the open agreement (the Board's record-by-hand action).
+  const recordSignedByHand = async (t: RolesEditTarget, processId: number) => {
+    setRecording(true);
+    try {
+      const res = await fetch('/api/membership-ops/applications/external', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ processId, action: 'mark-contract' }),
+      });
+      if (res.ok) {
+        showNotification("Key Volunteer Agreement recorded as signed.");
+        onSaved({ ...t, kvaSignedCurrent: true, kvaSignedAt: new Date().toISOString(), kvaOpenProcessId: null });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || "Failed to record the signature", "error");
+      }
+    } catch (err) {
+      console.error("Failed to record the signature:", err);
+      showNotification("Network error recording the signature", "error");
+    } finally {
+      setRecording(false);
+    }
   };
 
   type Delta = Partial<Record<RoleFlag, boolean>> & { canAccessStaging?: boolean };
@@ -155,6 +207,7 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
       <Stack>
         {ROLE_FLAGS.map((field) => {
           const { disabled, reason } = roleSwitchState(field);
+          const processId = target?.kvaOpenProcessId ?? null;
           const switchEl = (
             <Switch
               label={roleLabel(field)}
@@ -173,6 +226,30 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
                   <Box>{switchEl}</Box>
                 </Tooltip>
               ) : switchEl}
+              {field === 'isKeyVolunteer' && target?.isKeyVolunteer && (
+                <Group gap="xs" mt={4} ml={52}>
+                  <Text size="xs" c={target.kvaSignedCurrent ? 'dimmed' : 'orange'}>
+                    {target.kvaSignedCurrent
+                      ? `Signed the current agreement${target.kvaSignedAt ? ` on ${formatDate(target.kvaSignedAt)}` : ''}`
+                      : 'Has not signed the current agreement'}
+                  </Text>
+                  {processId !== null && mayManageKeyVolunteers && (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      loading={recording}
+                      onClick={() => modals.openConfirmModal({
+                        title: "Record a paper signature?",
+                        children: <Text size="sm">Record that {target.name || target.email} signed the Key Volunteer Agreement on paper.</Text>,
+                        labels: { confirm: 'Record', cancel: 'Cancel' },
+                        onConfirm: () => recordSignedByHand(target, processId),
+                      })}
+                    >
+                      Record signed by hand
+                    </Button>
+                  )}
+                </Group>
+              )}
             </div>
           );
         })}

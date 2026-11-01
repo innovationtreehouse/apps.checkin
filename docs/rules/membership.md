@@ -142,10 +142,14 @@ Things the app takes as true because they are handled outside it. They sit
 between the two tiers because the Policy rules above rest on them and the
 Procedure below is built on them.
 
-- Every board member has signed the key volunteer agreement and is a designated
-  background-check reviewer. Board membership alone therefore qualifies someone
-  wherever a reviewer is required — the queue, the attestation, and the sensitive
-  fields that go with it.
+- Every board member is a designated background-check reviewer. Board membership
+  alone therefore qualifies someone wherever a reviewer is required — the queue,
+  the attestation, and the sensitive fields that go with it. That they have signed
+  the key volunteer agreement is procedure, under Key Volunteers below.
+
+- A person grandfathered as a Key Volunteer when the agreement gate went live had
+  signed the key volunteer agreement on paper before then; the record dated at
+  that migration stands for that signature.
 
 - A non-board reviewer was authorised in writing by the board before the reviewer
   role was granted. Granting the role is what represents that authorisation, so
@@ -547,3 +551,59 @@ Procedure below is built on them.
 - It gates nothing. An unsigned individual agreement never blocks participation,
   check-in, or the household's own membership.  [Decision — deliberate limit;
   *Principle: people decide about people*]
+
+### Key Volunteers
+
+- BOARD and BG reviewer, the two roles the policy names, are granted only to a
+  person who holds the Key Volunteer role and has signed the current version of the
+  key volunteer agreement. The check is at the grant, for every actor, system paths
+  included; it is not repeated when the role is used. A person merge carries a role
+  the merged-away record already held, which is not a new grant.  [Decision —
+  @thpr, 2026-10-30; *Policy: Membership Policy, Art. VI §VI.2*]
+
+- Finance is granted on the same terms as BOARD and BG reviewer.  [Decision —
+  @thpr, 2026-10-31]
+
+- Keyholder is not gated on the agreement.  [Decision — deliberate limit, @thpr,
+  2026-10-31]
+
+- Using a role is not gated on the agreement. A person who holds one of those roles
+  keeps using it while a re-sign is outstanding, and the app does not block review
+  or board action on an unsigned agreement. The agreement is confirmed offline,
+  person to person, before anyone is given a reviewer or board role.  [Decision —
+  deliberate limit, @thpr, 2026-10-30, against *Membership Policy, Art. VI §VI.2*]
+
+- The Key Volunteer role is granted and removed by the Board alone. It cannot be
+  removed while the person holds BOARD, BG reviewer or Finance; that role is
+  removed first. It grants no access of its own: the Board grants it to whoever owes the
+  agreement, and the app records the role, not the reason.  [Decision — @thpr,
+  2026-10-30]
+
+- Granting the role opens the person's agreement. It settles on their signature,
+  through the same e-signature flow as the membership agreement, and the Board may
+  record a paper signature by hand. A signing request is created only when the
+  person first chooses to sign, since each request costs money.  [Decision —
+  @thpr, 2026-10-30]
+
+- Only a board member records a Key Volunteer Agreement signature by hand; a
+  sysadmin who is not on the Board cannot, outside the bootstrap case below.
+  [Decision — @thpr, 2026-10-30]
+
+- While no board member exists, a sysadmin may grant the Key Volunteer role and
+  record its signature by hand, so a new installation can seat its first board.
+  [Decision — @thpr, 2026-10-30]
+
+- Removing the Key Volunteer role while its agreement is open and unsigned closes
+  that agreement and recalls its signing request, with an audit record. It is a
+  Board act; nothing removes the role automatically.  [Decision — @thpr,
+  2026-10-30]
+
+- The agreement is signed once and signed again only when the Board marks it
+  materially changed by starting a new version. A new version asks every Key
+  Volunteer to sign again, closes any agreement still open at an older version, and
+  removes no one's role. A wording fix that is not material leaves the version
+  alone.  [Decision — @thpr, 2026-10-30]
+
+- Everyone who held BOARD, BG reviewer or Finance when the gate went live was
+  recorded as a Key Volunteer who had signed version 1, on the date of that migration, without a
+  signing request.  [Decision — @thpr, 2026-10-30]

@@ -10,6 +10,7 @@ import { useMembershipPage } from "./useMembershipPage";
 import IntakePanel from "./IntakePanel";
 import ExternalActionPanel from "./ExternalActionPanel";
 import PaymentPanel from "./PaymentPanel";
+import KeyVolunteerAgreementPanel from "./KeyVolunteerAgreementPanel";
 import OwnBackgroundCheckPanel from "./OwnBackgroundCheckPanel";
 
 export default function MembershipPage() {
@@ -62,6 +63,8 @@ export default function MembershipPage() {
           </Stack>
         </Alert>
       )}
+
+      <KeyVolunteerAgreementPanel />
 
       {/* Your own agreement, not your household's — an adult can't be bound by a
           parent's signature. Rendered above the household flow and independent of it:
