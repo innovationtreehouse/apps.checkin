@@ -32,14 +32,14 @@ export const GET = withCron(async () => {
     }
 
     const cutoff = new Date(Date.now() - graceDays * DAY_MS);
-    // This sweep owns exactly the PENDING_HELD_DENIED state (enrollmentState
-    // §3); consume its `where` and add the grace cutoff onto the denial stamp.
-    const graceExpired = {
-        ...STATES.PENDING_HELD_DENIED.where,
-        paymentPlanDeniedAt: { not: null, lte: cutoff },
-    };
+    const pastGrace = { paymentPlanDeniedAt: { not: null, lte: cutoff } };
     const expired = await prisma.programParticipant.findMany({
-        where: graceExpired,
+        where: {
+            // This sweep owns exactly the PENDING_HELD_DENIED state (enrollmentState
+            // §3); consume its `where` and add the grace cutoff onto the denial stamp.
+            ...STATES.PENDING_HELD_DENIED.where,
+            ...pastGrace,
+        },
         include: { program: true, person: true },
     });
 
@@ -47,7 +47,7 @@ export const GET = withCron(async () => {
     let failed = 0;
     for (const record of expired) {
         try {
-            const { released: didRelease } = await deleteAndReleaseHold(record.programId, record.personId, record.program, graceExpired);
+            const { released: didRelease } = await deleteAndReleaseHold(record.programId, record.personId, record.program, { ...STATES.PENDING_HELD_DENIED.where, ...pastGrace });
             if (didRelease) released++;
 
             await prisma.auditLog.create({
