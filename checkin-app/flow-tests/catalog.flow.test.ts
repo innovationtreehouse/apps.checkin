@@ -1,6 +1,6 @@
 /**
- * Global catalog journey (#1286 track 5): view the catalog as a viewer, curate
- * it as an INVENTORY_MANAGER, and confirm the read/write gates (§6). Real HTTP
+ * Global catalog journey: view the catalog as a viewer, curate
+ * it as an INVENTORY_MANAGER, and confirm the read/write gates. Real HTTP
  * against the running dev server, seeded catalog DB (see docker-compose.flow.yml
  * + packages/global-catalog/prisma/seed.ts). No app imports, no DB access.
  */
@@ -18,20 +18,20 @@ type SubcategoryRow = { id: number; number: number };
 
 describe("global catalog", () => {
   it("serves the seeded catalog to a viewer with nested category relations", async () => {
-    // boardmember is a catalog viewer (any RBAC role admits reads, §6).
+    // boardmember is a catalog viewer (any RBAC role admits reads).
     const viewer = await loginAs("boardmember@example.com");
     const { status, json } = await api<ItemRow[]>(viewer, "/api/catalog/items");
     expect(status).toBe(200);
     expect(Array.isArray(json)).toBe(true);
     const roborio = json.find((i) => i.name === "Roborio v2");
     expect(roborio).toBeDefined();
-    // Model-bag shape (track 4): nested relations, not flattened strings.
+    // Model-bag shape: nested relations, not flattened strings.
     expect(roborio!.category.name).toBe("Electronics");
     expect(roborio!.subcategory.number).toBe(10);
   });
 
   it("serves an item count for pagination and pages the list", async () => {
-    // The list can't carry a total (the stripper drops non-model scalars, §7),
+    // The list can't carry a total (the stripper drops non-model scalars),
     // so the count rides the synthetic CatalogItemCount model at a dedicated
     // endpoint. Two items seeded → total 2; limit=1 pages one row at a time.
     const viewer = await loginAs("boardmember@example.com");
@@ -98,8 +98,8 @@ describe("global catalog", () => {
   });
 
   it("serves the (empty) proposal queue to a viewer", async () => {
-    // No proposals exist without the receipt/S4 producer (deferred), but the
-    // read path + its viewer gate must work — the Proposals screen relies on it.
+    // This journey makes no proposals, but the read path + its viewer gate must
+    // work — the Proposals screen relies on it.
     const viewer = await loginAs("boardmember@example.com");
     const { status, json } = await api<unknown[]>(viewer, "/api/catalog/proposals/item-references");
     expect(status).toBe(200);

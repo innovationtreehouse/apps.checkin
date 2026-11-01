@@ -1,10 +1,10 @@
 /**
- * Receipts (#1265): the route + auth matrix (submitter vs FINANCE vs BOARD vs a non-viewer vs
+ * Receipts: the route + auth matrix (submitter vs FINANCE vs BOARD vs a non-viewer vs
  * anonymous), the file route's delivery headers, and the submitter journey on the local OCR
  * mock: an auto upload stops for its uploader to confirm, then finalizes and shows in "My
  * receipts"; an owed receipt reads "not yet
  * paid" and stays when completed ones are hidden. Real HTTP against the running dev server and
- * the empty receipt DB (docker-compose.flow.yml). The S1 push into workflow-mapping (X6) is
+ * the empty receipt DB (docker-compose.flow.yml). The S1 push into workflow-mapping is
  * covered by receipt-pipeline.flow.test.ts.
  */
 import { api, BASE, loginAs, type Session } from "./helpers";

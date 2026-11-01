@@ -1,5 +1,5 @@
 /**
- * Expense (#1272): the persona matrix over all 46 routes (anonymous, plain member, bucket
+ * Expense: the persona matrix over all 46 routes (anonymous, plain member, bucket
  * approver, Board, FINANCE), field stripping on the approver view, one FINANCE journey and one
  * approver sign-off journey. Real HTTP against the running dev server and the seeded expense DB
  * (docker-compose.flow.yml + packages/expense/prisma/seed.ts).

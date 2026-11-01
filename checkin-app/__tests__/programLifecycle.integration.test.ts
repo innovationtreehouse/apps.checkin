@@ -253,7 +253,7 @@ describe('Program Lifecycle Integration Tests', () => {
         let data = await res.json();
         
         expect(res.status).toBe(200);
-        // The cron NEVER removes (reviewer decision, PR #1094): the row is flagged
+        // The cron NEVER removes (reviewer decision): the row is flagged
         // overdue and left for the board. >= because the sweep is global and other
         // suites' rows may share the DB in a full CI run.
         expect(data.kicked).toBeUndefined();
