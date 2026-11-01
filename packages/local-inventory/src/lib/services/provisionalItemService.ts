@@ -105,7 +105,9 @@ export function createProvisionalItemService({
             },
             update: { existingQuantity: { increment: provisionalQty } },
           }));
-          await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          // A real row that already existed, or that a racing receipt inserted, keeps its own settings.
+          if (existingRow || realQty !== provisionalQty) await logRemovedOrgItem(tx, removed, null);
         }
         await tx.inventoryLog.create({
           data: realQty === provisionalQty
@@ -162,7 +164,8 @@ export function createProvisionalItemService({
         data: { existingQuantity: newQty },
       });
       if (provisionalRow) {
-        await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        await logRemovedOrgItem(tx, removed, null);
       }
       await tx.inventoryLog.create({
         data: {

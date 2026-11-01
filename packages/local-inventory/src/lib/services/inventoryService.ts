@@ -58,12 +58,13 @@ export async function applyQtyChangeIn(
 export async function logRemovedOrgItem(
   tx: Prisma.TransactionClient,
   removed: OrgItem,
-  userId: number,
+  userId: number | null,
   username?: string,
 ): Promise<void> {
   await tx.inventoryLog.create({
     data: {
-      orgId: removed.orgId, userId, username: username ?? null, changedAt: new Date(), changeType: "manual", gtin13: removed.gtin13,
+      orgId: removed.orgId, userId, username: username ?? null, changedAt: new Date(),
+      changeType: userId === null ? "automatic" : "manual", gtin13: removed.gtin13,
       fieldChanged: "deleted",
       valueBefore: JSON.stringify({
         existingQuantity: removed.existingQuantity,
