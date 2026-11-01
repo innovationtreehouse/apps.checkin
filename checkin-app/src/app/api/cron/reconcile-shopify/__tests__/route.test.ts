@@ -86,6 +86,23 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake']);
     });
 
+    it('runs every step in order when each one throws, logging each and reporting it as an error', async () => {
+        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, repushUnpushed, resendDonorSync, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
+        for (const step of steps) step.mockRejectedValue(new Error('step down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        const failed = { status: 'error' };
+        expect(body).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: failed, expense: failed, programStock: failed, inventoryEvents: failed, workflowEvents: failed, receivingApply: failed, receipt: failed, receiptStuck: failed, receiptPush: failed, donorSync: failed, receiptMail: failed, receiptOutcomes: failed });
+        const order = steps.map((step) => step.mock.invocationCallOrder[0]);
+        expect(order).toEqual([...order].sort((a, b) => a - b));
+        expect(logged).toHaveBeenCalledTimes(steps.length);
+        logged.mockRestore();
+    });
+
     it('a throwing expense step still answers 200 with the reconcile result', async () => {
         jest.mocked(runExpenseCatchUp).mockRejectedValue(new Error('expense db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});

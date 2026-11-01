@@ -35,6 +35,11 @@ import '@/security/registry';
 import libraries from '../../libraries.json';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
+// This tier has no expense database, and the qbo-posting admission case asserts only the gate.
+jest.mock('@checkin/expense', () => ({
+    ...jest.requireActual('@checkin/expense'),
+    runExpenseQbPosting: jest.fn().mockResolvedValue({ failedParts: [] }),
+}));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
 
