@@ -4,7 +4,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
@@ -66,6 +66,58 @@ function mockRoutes(overrides: Record<string, unknown | (() => unknown)> = {}) {
     ...overrides,
   });
 }
+
+describe("HouseholdPage add member submit", () => {
+  const readRules = [
+    { url: "/api/household/emergency-contacts", result: { body: { contacts: [] } } },
+    { url: "/api/household", method: "GET", result: { body: { household: householdData } } },
+  ];
+
+  async function openAddForm() {
+    setSession({ id: 10, email: "sam@example.com" });
+    renderWithProviders(<HouseholdPage />);
+    await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Household Member" }));
+    fireEvent.change(screen.getByLabelText("Full Name"), { target: { value: "Robin Smith" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
+    return screen.getByRole("button", { name: "Save / Invite" });
+  }
+
+  it("sends one add while the first is in flight, from a second click or Enter", async () => {
+    let release: (res: Response) => void = () => {};
+    const writes = jest.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const reads = routedFetch(readRules);
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PATCH" ? writes() : reads(input, init)) as unknown as typeof fetch;
+
+    const save = await openAddForm();
+    fireEvent.click(save);
+    fireEvent.click(save);
+    fireEvent.submit(save.closest("form") as HTMLFormElement);
+
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(save).toBeDisabled();
+
+    await act(async () => { release({ ok: true, status: 200, json: async () => ({}) } as Response); });
+    await waitFor(() => expect(screen.queryByLabelText("Full Name")).not.toBeInTheDocument());
+  });
+
+  it.each([
+    ["the server refuses", { ok: false, status: 500, body: { error: "Refused" } }],
+    ["the network fails", { throws: true }],
+  ])("lets the lead submit again when %s", async (_name, result) => {
+    const fetchMock = routedFetch([...readRules, { url: "/api/household", method: "PATCH", result }]);
+    const writeCount = () => fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH").length;
+
+    const save = await openAddForm();
+    fireEvent.click(save);
+    await waitFor(() => expect(writeCount()).toBe(1));
+    await waitFor(() => expect(save).toBeEnabled());
+
+    fireEvent.click(save);
+    await waitFor(() => expect(writeCount()).toBe(2));
+  });
+});
 
 describe("HouseholdPage", () => {
   pinTimezone();

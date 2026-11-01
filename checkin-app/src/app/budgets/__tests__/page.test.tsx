@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl")
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
 
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import BudgetsPage from "../page";
@@ -58,6 +58,36 @@ beforeEach(() => {
   (notifications.show as jest.Mock).mockClear();
   (notifications.hide as jest.Mock).mockClear();
   setSession({ id: 1, isFinance: true, isBoardMember: true });
+});
+
+describe("budgets page create submit", () => {
+  const writeCount = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method).length;
+
+  it("sends one create while the first is in flight", async () => {
+    let release: (res: Response) => void = () => {};
+    mockServer(() => new Promise<Response>((resolve) => { release = resolve; }));
+    await createBucket();
+
+    const button = screen.getByRole("button", { name: "Create" });
+    fireEvent.click(button);
+
+    expect(writeCount()).toBe(1);
+    expect(button).toBeDisabled();
+
+    await act(async () => { release(jsonResponse(200, {})); });
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue(""));
+  });
+
+  it("lets finance create again after a failure", async () => {
+    mockServer(async () => jsonResponse(500, { error: "Refused" }));
+    await createBucket();
+
+    const button = screen.getByRole("button", { name: "Create" });
+    await waitFor(() => expect(button).toBeEnabled());
+
+    fireEvent.click(button);
+    await waitFor(() => expect(writeCount()).toBe(2));
+  });
 });
 
 describe("budgets page write errors", () => {

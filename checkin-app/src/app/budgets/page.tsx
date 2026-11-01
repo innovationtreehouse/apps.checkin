@@ -110,6 +110,7 @@ export default function BudgetsPage() {
   const [newName, setNewName] = useState("");
   const [newOrgLevel, setNewOrgLevel] = useState(false);
   const [newClassId, setNewClassId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const [editing, setEditing] = useState<Bucket | null>(null);
   const [editName, setEditName] = useState("");
@@ -141,12 +142,18 @@ export default function BudgetsPage() {
   };
 
   const create = async () => {
-    const ok = await run("/api/budget-owners", "POST", {
-      name: newName,
-      isOrgLevel: newOrgLevel,
-      quickBooksClassId: newClassId,
-    }, "Bucket created.", "Bucket not created");
-    if (ok) { setNewName(""); setNewOrgLevel(false); setNewClassId(null); }
+    if (creating) return;
+    setCreating(true);
+    try {
+      const ok = await run("/api/budget-owners", "POST", {
+        name: newName,
+        isOrgLevel: newOrgLevel,
+        quickBooksClassId: newClassId,
+      }, "Bucket created.", "Bucket not created");
+      if (ok) { setNewName(""); setNewOrgLevel(false); setNewClassId(null); }
+    } finally {
+      setCreating(false);
+    }
   };
 
   const saveEdit = async () => {
@@ -216,7 +223,7 @@ export default function BudgetsPage() {
                 onChange={setNewClassId}
                 w={280}
               />
-              <Button onClick={create} disabled={!newName.trim()}>Create</Button>
+              <Button onClick={create} disabled={creating || !newName.trim()} loading={creating}>Create</Button>
             </Group>
           </Card>
         )}
