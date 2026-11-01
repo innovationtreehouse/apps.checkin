@@ -41,7 +41,7 @@ async function runBackfill(): Promise<void> {
     }
 }
 
-describe('ProgramInstance phase-1 backfill (MB)', () => {
+describe('ProgramInstance backfill', () => {
     let householdId: number;
     let leadId: number;
     let progFullId: number; // program with a lead + full offering columns

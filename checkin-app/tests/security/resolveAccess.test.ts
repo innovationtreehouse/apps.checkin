@@ -314,7 +314,7 @@ describe("resolveAccess — ops-stg access gate (checked ahead of every `authori
         },
     });
 
-    test("'public' + anonymous (unauthenticated) → DENIED — the regression case", async () => {
+    test("'public' + anonymous (unauthenticated) → DENIED", async () => {
         expect((await resolveAccess('public', rctx({ type: 'unauthenticated' }))).allowed).toBe(false);
     });
 

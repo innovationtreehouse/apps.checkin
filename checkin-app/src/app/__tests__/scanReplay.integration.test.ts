@@ -143,7 +143,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     // writes a departedAt at resolution time on a visit that arrived
     // earlier than another visit's own arrival. The guard must compare the
     // true max across all of the participant's visit activity.
-    it('parks on an older-arrived visit\'s newer departedAt, not just the latest-arrived visit (F7)', async () => {
+    it('parks on an older-arrived visit\'s newer departedAt, not just the latest-arrived visit', async () => {
         const now = Date.now();
         // Visit A: arrived earliest, but departed most recently (e.g. resolved late).
         await prisma.visit.create({
@@ -172,7 +172,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     // it back out. The route's own filter/admission are unit-tested; what only
     // Postgres can settle is that `reviewReason != null AND reviewedAt = null`
     // actually selects what /api/scan just wrote.
-    it('a parked replay surfaces in the unsynced-scans list query until it is dismissed (D7)', async () => {
+    it('a parked replay surfaces in the unsynced-scans list query until it is dismissed', async () => {
         const scannedAt = new Date(Date.now() - 40 * 60_000); // 40 min ago > 10 min W
         const res = await POST(scanReq({ participantId: member.id, clientEventId: 'evt-d7-surfaces', scannedAt: scannedAt.toISOString(), replay: true }));
         expect((await res.json()).type).toBe('parked');

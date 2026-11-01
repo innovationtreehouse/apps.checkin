@@ -250,7 +250,7 @@ describe('Programs API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES an anonymous caller — the regression case for Finding 1', async () => {
+        it('DENIES an anonymous caller', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
 
             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });

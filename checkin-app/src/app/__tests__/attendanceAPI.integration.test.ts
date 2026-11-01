@@ -168,7 +168,7 @@ describe('General Attendance API Integration Tests', () => {
              expect(names).toContain('Household Child');
         });
 
-        it('carries the parked-scan review count in counts.needReview (D7 corner count)', async () => {
+        it('carries the parked-scan review count in counts.needReview (corner count)', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
              const before = await (async () => {
@@ -214,7 +214,7 @@ describe('General Attendance API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES a caller presenting a VALID kiosk signature — the regression case for Finding 2', async () => {
+        it('DENIES a caller presenting a VALID kiosk signature', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
             (verifyKiosk.getKioskPublicKeys as jest.Mock).mockReturnValue([Buffer.from('mock-public-key')]);
             (verifyKiosk.verifyKioskSignature as jest.Mock).mockReturnValue({ ok: true });

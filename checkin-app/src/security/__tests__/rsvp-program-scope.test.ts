@@ -68,7 +68,7 @@ describe('RSVP their_program_participants via eventId', () => {
         expect(held.has('their_own')).toBe(false);
     });
 
-    it('the stale programId read no longer grants — a row carrying only programId is inert', () => {
+    it('a row carrying only programId is inert: the binding reads eventId', () => {
         // A lead of program 100 with a row {programId: 100}: the binding reads eventId,
         // so this grants nothing.
         const held = scopesHeld('RSVP', { programId: 100, personId:99 }, lead);

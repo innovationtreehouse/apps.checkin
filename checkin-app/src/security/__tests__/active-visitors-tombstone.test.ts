@@ -106,7 +106,7 @@ describe('Visit.all_current_visitors — the per-row predicate', () => {
     });
 });
 
-describe('Person.all_current_visitors — fixed transitively by the prefetch', () => {
+describe('Person.all_current_visitors — scoped by the prefetch', () => {
     it('holds only for people the prefetch put in activeVisitorIds', () => {
         // The Person binding reads ctx.activeVisitorIds and nothing else, so a
         // person whose only open visit was tombstoned is absent from the set

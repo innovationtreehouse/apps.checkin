@@ -21,7 +21,7 @@ import { loginAs, api } from "./helpers";
 
 type State = { process: { id: number; status: string } | null; membershipStatus: string | null };
 
-describe("flow: membership background check is non-blocking (PR #428)", () => {
+describe("flow: membership background check is non-blocking", () => {
     it("intake → external → PENDING_PAYMENT, and paying before BG clears holds inactive", async () => {
         const applicant = await loginAs("parent.family2@example.com"); // non-member household lead
         const board = await loginAs("boardmember@example.com");        // sysadmin + board

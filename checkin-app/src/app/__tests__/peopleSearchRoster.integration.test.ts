@@ -182,7 +182,7 @@ describe('GET /api/people/search?roster=active', () => {
         expect(names).not.toContain('Sysadmin Sue');
     });
 
-    describe('the membership year (#1628)', () => {
+    describe('the membership year', () => {
         it('goes only to households that settled this renewal cycle', async () => {
             const y = await years();
             expect(y['Renewed Rita']).toMatch(/^\d{4}-\d{4}$/);

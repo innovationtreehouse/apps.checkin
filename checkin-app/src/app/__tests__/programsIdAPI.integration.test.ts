@@ -336,7 +336,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(JSON.stringify(data)).not.toContain(PARENT_NAME);
         });
 
-        it('returns the roster to the program lead mentor (staff tier unchanged)', async () => {
+        it('returns the roster to the program lead mentor (staff tier)', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
              const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, { method: 'GET' });
@@ -449,7 +449,7 @@ describe('Individual Program API Integration Tests', () => {
     // (resolveAccess in security/access-resolvers.ts), not only in authenticateRequest —
     // this describe pins that, run against the REAL route (handler() ->
     // registry -> resolveAccess -> stripBag), not a mock of the gate.
-    describe('GET /api/programs/[id] — ops-stg access gate (regression: authorize:"public" must not bypass staging)', () => {
+    describe('GET /api/programs/[id] — ops-stg access gate (authorize:"public" does not bypass staging)', () => {
         const CHECKIN_ENV_BEFORE = process.env.CHECKIN_ENV;
 
         beforeEach(() => {
@@ -461,7 +461,7 @@ describe('Individual Program API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES an anonymous caller — the regression case for the defect that shipped real minors\' data to curl', async () => {
+        it('DENIES an anonymous caller', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
 
             const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, { method: 'GET' });

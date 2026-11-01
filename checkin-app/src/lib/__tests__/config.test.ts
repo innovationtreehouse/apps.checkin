@@ -234,7 +234,7 @@ describe("zohoMockActive / zohoAvailable / zohoWebhookSecret", () => {
         expect(config.zohoMockActive()).toBe(false);
         expect(config.zohoAvailable()).toBe(false);
     });
-    it("mock STAYS active under a production build (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("mock STAYS active under a production build (NODE_ENV is not a fuse)", () => {
         // Deployed instances all run NODE_ENV=production; CHECKIN_ENV alone decides.
         clearZoho();
         process.env.CHECKIN_ENV = "local";
@@ -283,7 +283,7 @@ describe("shopifyMockActive / shopifyWebhookSecret", () => {
         expect(config.shopifyMockActive()).toBe(false);
         expect(config.shopifyWebhookSecret()).toBeNull();
     });
-    it("mock STAYS active under a production build (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("mock STAYS active under a production build (NODE_ENV is not a fuse)", () => {
         clearShopify();
         process.env.CHECKIN_ENV = "local";
         (process.env as Record<string, string>).NODE_ENV = "production";
@@ -317,7 +317,7 @@ describe("bgMockActive", () => {
         (process.env as Record<string, string>).NODE_ENV = "test";
         expect(config.bgMockActive()).toBe(false);
     });
-    it("mock STAYS active under a production build (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("mock STAYS active under a production build (NODE_ENV is not a fuse)", () => {
         delete process.env.AVERITY_CONSENT_URL;
         process.env.CHECKIN_ENV = "local";
         (process.env as Record<string, string>).NODE_ENV = "production";
