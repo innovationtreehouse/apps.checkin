@@ -6,7 +6,7 @@
  * their own yes. Drives the real adapter link and answer route against real Postgres.
  */
 import { GET, POST } from '@/app/api/profile/household-question/route';
-import { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/server';
 import { GET as householdGET } from '@/app/api/household/route';
 import { GET as profileGET } from '@/app/api/profile/route';
 import { PUT as boardEdit } from '@/app/api/membership-ops/participants/[id]/route';
@@ -36,8 +36,9 @@ const adapter = authOptions.adapter as unknown as { linkAccount: (account: Recor
 const TAG = 'household-question-test';
 const idToken = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
 const url = 'http://localhost/api/profile/household-question';
-const answer = (join: unknown) => POST(new NextRequest(url, { method: 'POST', body: JSON.stringify({ join }) }));
-const ask = () => GET(new NextRequest(url));
+const request = (path: string, init?: RequestInit) => new Request(path, init) as unknown as NextRequest;
+const answer = (join: unknown) => POST(request(url, { method: 'POST', body: JSON.stringify({ join }) }));
+const ask = () => GET(request(url));
 const youthDob = () => new Date(Date.now() - 10 * 365 * 864e5);
 
 let seq = 0;
@@ -133,7 +134,7 @@ describe('while the question is open', () => {
         const { added } = await addedAdult();
         signedInAs(added.id, { householdJoinPending: true });
         expect((await householdGET(new Request('http://localhost/api/household'))).status).toBe(401);
-        expect((await profileGET(new NextRequest('http://localhost/api/profile'))).status).toBe(401);
+        expect((await profileGET(request('http://localhost/api/profile'))).status).toBe(401);
     });
 
     it('shows the household name and nothing of the record', async () => {
