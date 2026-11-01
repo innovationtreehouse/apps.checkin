@@ -80,6 +80,7 @@ export default function HouseholdPage() {
   const err = (text: string) => setMessage({ text, tone: "error" });
   const warn = (text: string) => setMessage({ text, tone: "warning" });
   const [addingHouseholdMember, setAddingHouseholdMember] = useState(false);
+  const [savingHouseholdMember, setSavingHouseholdMember] = useState(false);
 
   const [householdMemberForm, setHouseholdMemberForm] = useState({ name: "", email: "", dob: "", phone: "", over25: false, allergies: "" });
   const [householdMemberErrors, setHouseholdMemberErrors] = useState<{ name?: string; email?: string; dob?: string; phone?: string }>({});
@@ -264,10 +265,12 @@ export default function HouseholdPage() {
 
   const handleAddHouseholdMember = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingHouseholdMember) return;
     setMessage(null);
     const errs = validateHouseholdMemberFields(householdMemberForm);
     setHouseholdMemberErrors(errs);
     if (Object.keys(errs).length > 0) return;
+    setSavingHouseholdMember(true);
     try {
       const res = await fetch('/api/household', {
         method: 'PATCH',
@@ -286,6 +289,8 @@ export default function HouseholdPage() {
       }
     } catch {
       notifications.show({ color: "red", message: "Network error adding household member.", autoClose: false });
+    } finally {
+      setSavingHouseholdMember(false);
     }
   };
 
@@ -341,8 +346,8 @@ export default function HouseholdPage() {
 
   // ponytail: guard ONLY the deferred Address card (committed by the "Update
   // Address" button). The member add/edit forms, emergency-contact form, and the
-  // receipts toggle all submit instantly with no pending state — intentionally
-  // excluded so they never raise a spurious unsaved-changes prompt.
+  // receipts toggle all submit instantly — intentionally excluded so they never
+  // raise a spurious unsaved-changes prompt.
   const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
   useUnsavedGuard(isDirty);
 
@@ -501,7 +506,7 @@ export default function HouseholdPage() {
                       <TextInput type="tel" label="Phone (optional)" value={householdMemberForm.phone} error={householdMemberErrors.phone} onChange={(e) => { setHouseholdMemberForm({ ...householdMemberForm, phone: e.currentTarget.value }); setHouseholdMemberErrors({ ...householdMemberErrors, phone: undefined }); }} />
                       <TextInput label="Allergies (optional)" value={householdMemberForm.allergies} onChange={(e) => setHouseholdMemberForm({ ...householdMemberForm, allergies: e.currentTarget.value })} />
                       <Group grow>
-                        <Button type="submit">Save / Invite</Button>
+                        <Button type="submit" disabled={savingHouseholdMember} loading={savingHouseholdMember}>Save / Invite</Button>
                         <Button type="button" variant="default" onClick={() => { setAddingHouseholdMember(false); setHouseholdMemberErrors({}); }}>Cancel</Button>
                       </Group>
                     </Stack>
