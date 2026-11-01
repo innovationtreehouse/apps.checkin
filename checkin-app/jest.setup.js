@@ -57,7 +57,8 @@ process.env.CHECKIN_ENV = 'dev';
   // cronNightlyLock holds a departure open on one connection while the sweep runs on another.
   // programStockLockConcurrency runs two stock writers on separate connections.
   // certificationsConcurrency holds a level change open on one connection while a certifier writes on another.
-  if (testPath && /(scanConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  // membershipRefundGate holds a payment open on one connection while a refund waits on the order's reversal lock on another.
+  if (testPath && /(scanConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency|membershipRefundGate)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }
