@@ -1,6 +1,6 @@
 # Run the door kiosk in a container
 
-Plan for review. No code yet.
+Plan being built. Decisions marked with a date are the owner's.
 
 ## Problem
 
@@ -128,7 +128,9 @@ Checkin session owns that model.
 ## Updates
 
 ```
-GitHub release → prod deploy succeeds → build arm64 image → move kiosk-release tag
+GitHub release → prod deploy succeeds → build arm64 image → push by digest
+                                                                   ↓
+                              tests pass on that digest → move kiosk-release tag
                                                                    ↓
 Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health check
                                                                    ↓ fails
@@ -139,10 +141,6 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
   badge in that gap gets no acknowledgement and is not recorded. The closed window
   already exists for this kind of work. A release waits at most a day.
 - **Queue stays put.** Unsent scans wait in the file, so no drain is needed first.
-- **Registry: Amazon ECR Public (owner, 2026-11-01).** Publishing uses a short-lived
-  OIDC login for a role that trusts only the `production` and `kiosk-force`
-  environments, so a workflow on a committer's branch cannot publish and no token is
-  stored. The Pi pulls anonymously.
 - **The tag moves only after the image passes (owner, 2026-11-01).** After the prod
   deploy, the image is pushed by digest with no tag, and the flow and Playwright
   tiers run against that digest with the same release's server code. A failure
@@ -176,8 +174,8 @@ For a real problem at the door, with no VPN or SSH needed.
   records it and then swaps at once, skipping the window. The check goes to the
   registry only, so it cannot wake the server or defer its curfew.
 - **No loop.** The digest is recorded before the swap, so a forced image that fails
-  its health check rolls back once and is not retried. A later force with a new
-  digest still applies. Because `kiosk-release` moves too, the nightly check does
+  its health check rolls back once and is not retried. Each force run publishes its
+  own digest for the chosen image, so forcing the same image again still applies. Because `kiosk-release` moves too, the nightly check does
   not undo the force, or retry a failed one.
 - **What it costs.** Badges during the restart are missed, and a live close prompt
   is lost. The queue and saved state are safe. A forced update does not wait for a
@@ -186,6 +184,34 @@ For a real problem at the door, with no VPN or SSH needed.
 - **Limits.** A Pi with no network applies the force when it reconnects. If the
   update timer or Docker itself is broken, this cannot help, and SSH or VPN is the
   remaining route.
+
+### Where the image is published
+
+**Amazon ECR Public (owner, 2026-11-01).** The Pi runs this image with its signing
+key mounted, so publishing must take the same approval as a release. A required
+reviewer on a GitHub environment does not do that alone: it protects only what the
+environment holds. Publishing to GHCR with the repo's `GITHUB_TOKEN` needs no
+environment, so a workflow on a committer's branch could move the tag and skip the
+approval.
+
+| | Amazon ECR Public (chosen) | GHCR with a token held in the environment |
+| --- | --- | --- |
+| Publish credential | Short-lived OIDC login; nothing stored | Classic personal access token, stored and expiring |
+| Stops a branch workflow | Yes: the role trusts only the `production` and `kiosk-force` environments, by exact subject | Only if the repo's own token also loses write access, which we could not verify |
+| Reach | One role, one repository | Every package the token's user can write |
+| Failure to expect | None from expiry | An expired token blocks a force when the door is already broken; one such token stopped ECS pulls on 2026-09-19 |
+| Pi pull | Anonymous | Anonymous, once visibility is set by hand |
+| Cost of choosing it | One infra PR; a registry apart from the fleet's GHCR images | A machine account and token rotation |
+
+Published prices put this at no cost: 50 GB of storage is always free, and anonymous
+transfer is free to 500 GB a month. A release adds about one image. Old images are
+pruned by hand if storage ever nears that limit. The repository and role live in the
+infra repo (`live/mgmt/kiosk-image.tf`).
+
+**Still true with this choice:** code merged to `main` reaches the door through the
+next release, behind that release's approval. Repo admins can change environment
+settings. Whoever can create the `kiosk-force` environment can assume the role, so
+it is created with its reviewers before the role exists.
 
 ### Running the container
 
