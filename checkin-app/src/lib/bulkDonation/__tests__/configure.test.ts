@@ -166,6 +166,10 @@ describe("bulk-donation wiring", () => {
 
     expect(expectDeposit).toHaveBeenCalledWith(ORG.id, "benevity", "D1", expected);
     expect(depositStatus).toHaveBeenCalledWith(ORG.id, "benevity", ["D1"]);
+
+    await deposits!.handOverFailing([{ disbursementId: "D1", reason: "it has no disbursement date" }, { disbursementId: "D2", reason: "it nets to zero or less, so no deposit is due" }]);
+    expect(notifyFinanceAlert.mock.calls[0][0]).toBe("finance.donationDepositHandOver");
+    expect(notifyFinanceAlert.mock.calls[0][1].batches).toBe("D1: it has no disbursement date; D2: it nets to zero or less, so no deposit is due");
   });
 
   it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {

@@ -193,6 +193,11 @@ describe('date normalisation', () => {
     expect(row.donationDate).toBe('');
   });
 
+  it('fails the whole file on a gift with no disbursement date, naming the line and the column', () => {
+    expect(() => parse('T1,,,')).toThrow(/line 2 \(T1\), "Disbursement Date": no disbursement date/);
+    expect(() => parseBenevityCsv(Buffer.from('Transaction ID,Donation Date\nT1,2025-09-01'))).toThrow(/"Disbursement Date": no disbursement date/);
+  });
+
   it('fails the file on a non-ISO or impossible date', () => {
     expect(() => parse('T1,9/1/2025,,')).toThrow(CsvValidationError);
     expect(() => parse('T1,2025-02-30,,')).toThrow(CsvValidationError);

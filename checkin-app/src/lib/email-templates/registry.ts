@@ -237,6 +237,12 @@ export const REGISTRY = {
         defaultSubject: "Expenses: the daily check for stray QuickBooks entries could not see them all",
         defaultBody: "QuickBooks returned more purchases or bills created since {{since}} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. {{actionLink}}",
     },
+    "finance.donationDepositHandOver": {
+        allowedTokens: { batches: text, actionLink: link("Open booking batches") },
+        sampleCtx: { batches: "D-1001: it has no disbursement date", actionLink: SAMPLE_URL },
+        defaultSubject: "Donations: a finished giving-platform batch has no deposit",
+        defaultBody: "These finished batches could not be handed over for booking, so no deposit is on its way for them: {{batches}}. Settle each one in QuickBooks by hand and record why. This message comes once for each batch. {{actionLink}}",
+    },
     "finance.inKindSweepIncomplete": {
         allowedTokens: { since: text, actionLink: link("Open the in-kind queue") },
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },

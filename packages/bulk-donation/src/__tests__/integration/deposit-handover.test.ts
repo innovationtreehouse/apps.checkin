@@ -6,7 +6,7 @@ import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";
-import type { DonationDepositStatus, DonationExpectedDeposit, IncomeDeposits } from "../../contract";
+import type { DepositHandOverFailure, DonationDepositStatus, DonationExpectedDeposit, IncomeDeposits } from "../../contract";
 import { makeAccountMapRule, makeFile, makeTransaction, TEST_ORG_ID, TEST_OWNERS } from "../helpers/factories";
 import { sendDisbursementEvent } from "../../workflows/disbursement.actor";
 import { handOverDeposit, runDonationDepositHandOver } from "../../lib/deposit-handover";
@@ -19,6 +19,7 @@ class FakeIncome implements IncomeDeposits {
   statuses = new Map<string, DonationDepositStatus>();
   calls: string[] = [];
   expectFails = false;
+  raised: DepositHandOverFailure[][] = [];
 
   async expectDeposit(_orgId: string, id: string, expected: DonationExpectedDeposit) {
     this.calls.push(`expect:${id}`);
@@ -26,6 +27,9 @@ class FakeIncome implements IncomeDeposits {
     this.expected.set(id, expected);
     this.statuses.set(id, { state: "waiting" });
     return "recorded";
+  }
+  async handOverFailing(failures: DepositHandOverFailure[]) {
+    this.raised.push(failures);
   }
   async depositStatus(_orgId: string, ids: string[]) {
     this.calls.push("status");
@@ -45,14 +49,15 @@ function bind() {
 }
 
 /** A completed disbursement: its gifts and its event. */
-async function completed(disbursementId: string) {
+async function completed(disbursementId: string, overrides: { date?: string | null; feeCents?: number } = {}) {
+  const { date = "2026-09-10", feeCents = 50 } = overrides;
   const file = await makeFile(orgId);
   const tx = await makeTransaction(orgId, file.id, { disbursementId, disbursementDate: "2026-09-10", ownerId: 1 });
   const items = [
     { type: "donation", account: "4000-Donations", amountCents: 1000, transactionId: tx.transactionId },
-    { type: "fees", account: "6000-Fees", amountCents: 50, transactionId: tx.transactionId },
+    { type: "fees", account: "6000-Fees", amountCents: feeCents, transactionId: tx.transactionId },
   ];
-  const payload = { version: 1, orgId, disbursementId, disbursementDate: "2026-09-10", disbursementFrom: "Benevity", items };
+  const payload = { version: 1, orgId, disbursementId, disbursementDate: date, disbursementFrom: "Benevity", items };
   return db.disbursementEvent.create({ data: { orgId, disbursementId, payload: JSON.stringify(payload) } });
 }
 
@@ -127,5 +132,50 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
     bind();
     await runDonationDepositHandOver(orgId);
     expect([...income.expected.keys()]).toEqual(["REAL-1"]);
+  });
+
+  it("raises a stored batch with no date to finance once, however many runs fail it", async () => {
+    await completed("TEST-NODATE", { date: null });
+
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+
+    expect(income.raised).toEqual([[{ disbursementId: "TEST-NODATE", reason: "it has no disbursement date" }]]);
+    expect(income.expected.size).toBe(0);
+  });
+
+  it.each([
+    ["zero", 1000],
+    ["less", 1500],
+  ])("raises a batch netting to %s, and hands over nothing", async (_net, feeCents) => {
+    await completed("TEST-NET", { feeCents });
+
+    await runDonationDepositHandOver(orgId);
+
+    expect(income.raised).toEqual([[{ disbursementId: "TEST-NET", reason: "it nets to zero or less, so no deposit is due" }]]);
+    expect(income.expected.size).toBe(0);
+  });
+
+  it("raises income refusing a batch in plain words, and sends the batch once income recovers", async () => {
+    await completed("TEST-DOWN");
+    income.expectFails = true;
+
+    await runDonationDepositHandOver(orgId);
+    expect(income.raised).toEqual([[{ disbursementId: "TEST-DOWN", reason: "income did not take it, and the daily job keeps trying" }]]);
+
+    income.expectFails = false;
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 1, failed: 0 });
+    expect(income.raised).toHaveLength(1);
+  });
+
+  it("raises again next run when the alert itself fails", async () => {
+    await completed("TEST-ALERT", { date: null });
+    const handOverFailing = vi.spyOn(income, "handOverFailing").mockRejectedValueOnce(new Error("mail is down"));
+
+    await expect(runDonationDepositHandOver(orgId)).rejects.toThrow("mail is down");
+    await runDonationDepositHandOver(orgId);
+
+    expect(handOverFailing).toHaveBeenCalledTimes(2);
+    expect(income.raised).toHaveLength(1);
   });
 });

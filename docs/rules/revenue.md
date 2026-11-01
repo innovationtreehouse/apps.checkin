@@ -328,6 +328,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - Every finished giving-platform batch must match one deposit in the books.
   Finance settles any the app can't match and records why. [Decision]
 
+- A giving-platform gift with no disbursement date is refused at upload, with the
+  rest of its file. A finished batch that can't be handed over for booking, because
+  it has no date or nets to zero or less, goes to finance once by email to settle
+  by hand. [Decision]
+
 - A gift of goods is handled as a donation, not as spending, even when it comes
   with a receipt. In the books it is both a donation received and an expense of
   the same value, from one record, in one bucket.  [Decision]
