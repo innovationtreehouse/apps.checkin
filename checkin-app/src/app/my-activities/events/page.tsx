@@ -102,18 +102,20 @@ export default function ParticipantEventsDashboard() {
     <Stack>
       <Title order={1}>My Upcoming Events</Title>
 
-      {error ? (
-        <LoadError what="your events" message={error} onRetry={reload} />
-      ) : events.length === 0 ? (
-        <Card withBorder radius="md" padding="xl" ta="center">
-          <Title order={3}>No Upcoming Events</Title>
-          <Text c="dimmed" mt="sm">
-            You have no scheduled events for the programs you take part in.
-          </Text>
-          <Group justify="center" mt="lg">
-            <Button component={Link} href="/programs" variant="light">Browse Programs</Button>
-          </Group>
-        </Card>
+      {error && <LoadError what="your events" message={error} onRetry={reload} />}
+
+      {events.length === 0 ? (
+        !error && (
+          <Card withBorder radius="md" padding="xl" ta="center">
+            <Title order={3}>No Upcoming Events</Title>
+            <Text c="dimmed" mt="sm">
+              You have no scheduled events for the programs you take part in.
+            </Text>
+            <Group justify="center" mt="lg">
+              <Button component={Link} href="/programs" variant="light">Browse Programs</Button>
+            </Group>
+          </Card>
+        )
       ) : (
         <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }}>
           {groupByEvent(events).map((rows) => {

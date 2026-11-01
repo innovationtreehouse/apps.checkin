@@ -3,8 +3,9 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { ViewerProvider } from "@checkin/component-ui";
 import RenewalBanner from "../RenewalBanner";
 
 const TITLE = "Membership renewal due";
@@ -31,6 +32,31 @@ describe("RenewalBanner", () => {
     renderWithProviders(<RenewalBanner />);
 
     await waitFor(() => expect(screen.queryByText(TITLE)).not.toBeInTheDocument());
+  });
+
+  it("fetches nothing for a signed-out visitor", () => {
+    setSession(null);
+    const fetchSpy = mockFetchJson({});
+    renderWithProviders(<RenewalBanner />);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("a 401 stays silent: no redirect, no retry, no banner", async () => {
+    const fetchSpy = jest.fn(async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ error: "Unauthorized" }) }) as Response);
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    const expired = jest.fn();
+    renderWithProviders(
+      <ViewerProvider viewer={null} onSessionExpired={expired}>
+        <RenewalBanner />
+      </ViewerProvider>,
+    );
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(expired).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("stays hidden when dismissed for the session, even if renewalDue", async () => {

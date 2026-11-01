@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useConflicts, refreshConflicts } from "../useConflicts";
+import { useConflicts } from "../useConflicts";
 import type { AttendanceConflict } from "@/lib/attendanceConflicts";
 
 const makeConflict = (participantId: number): AttendanceConflict =>
@@ -11,9 +11,9 @@ const makeConflict = (participantId: number): AttendanceConflict =>
     visits: [],
   }) as AttendanceConflict;
 
-// Mirrors useTodoCounts's module-level store: one shared snapshot for every
-// consumer. These cases intentionally run in order, each building on the
-// store state the previous case left behind rather than starting fresh.
+const answer = (conflicts: AttendanceConflict[]) =>
+  ({ ok: true, status: 200, text: async () => JSON.stringify({ conflicts }) }) as Response;
+
 describe("useConflicts", () => {
   let fetchMock: jest.Mock;
 
@@ -30,58 +30,46 @@ describe("useConflicts", () => {
 
   it("fetches on mount and returns the resolved conflicts", async () => {
     const conflicts = [makeConflict(1)];
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ conflicts }) });
+    fetchMock.mockResolvedValue(answer(conflicts));
 
     const { result } = renderHook(() => useConflicts(true));
 
     await waitFor(() => expect(result.current.conflicts).toEqual(conflicts));
-    expect(fetchMock).toHaveBeenCalledWith("/api/my-programs/conflicts");
+    expect(fetchMock).toHaveBeenCalledWith("/api/my-programs/conflicts", expect.anything());
   });
 
-  it("keeps the last snapshot when a fetch response is not ok", async () => {
-    const priorSnapshot = [makeConflict(1)];
-    fetchMock.mockResolvedValue({ ok: false });
+  it("gives two consumers one read", async () => {
+    fetchMock.mockResolvedValue(answer([makeConflict(1)]));
 
+    const first = renderHook(() => useConflicts(true));
+    const second = renderHook(() => useConflicts(true));
+
+    await waitFor(() => expect(first.result.current.conflicts).not.toBeNull());
+    await waitFor(() => expect(second.result.current.conflicts).not.toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the last answer and reports the error when a refresh is refused", async () => {
+    const conflicts = [makeConflict(1)];
+    fetchMock.mockResolvedValue(answer(conflicts));
     const { result } = renderHook(() => useConflicts(true));
+    await waitFor(() => expect(result.current.conflicts).toEqual(conflicts));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(result.current.conflicts).toEqual(priorSnapshot);
+    fetchMock.mockResolvedValue({ ok: false, status: 403, text: async () => JSON.stringify({ error: "Forbidden" }) } as Response);
+    act(() => result.current.refresh());
+
+    await waitFor(() => expect(result.current.error).toBe("Forbidden"));
+    expect(result.current.conflicts).toEqual(conflicts);
   });
 
-  it("keeps the last snapshot when a fetch rejects", async () => {
-    const priorSnapshot = [makeConflict(1)];
-    fetchMock.mockRejectedValue(new Error("network down"));
-
+  it("refresh() re-fetches and updates the answer", async () => {
+    fetchMock.mockResolvedValue(answer([makeConflict(2)]));
     const { result } = renderHook(() => useConflicts(true));
+    await waitFor(() => expect(result.current.conflicts).toEqual([makeConflict(2)]));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(result.current.conflicts).toEqual(priorSnapshot);
-  });
+    fetchMock.mockResolvedValue(answer([makeConflict(3)]));
+    act(() => result.current.refresh());
 
-  it("exposes a refresh() that re-fetches and updates every consumer", async () => {
-    const second = [makeConflict(2)];
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ conflicts: second }) });
-
-    const { result } = renderHook(() => useConflicts(true));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-
-    const third = [makeConflict(3)];
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ conflicts: third }) });
-
-    act(() => {
-      result.current.refresh();
-    });
-
-    await waitFor(() => expect(result.current.conflicts).toEqual(third));
-  });
-
-  it("dedupes concurrent refreshConflicts() calls into a single in-flight fetch", async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ conflicts: [] }) });
-    fetchMock.mockClear();
-
-    refreshConflicts();
-    refreshConflicts();
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.conflicts).toEqual([makeConflict(3)]));
   });
 });

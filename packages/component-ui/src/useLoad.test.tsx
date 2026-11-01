@@ -124,6 +124,17 @@ describe("what the server says", () => {
     expect(result.current).toMatchObject({ status: 401, retrying: false });
   });
 
+  it("expireOn401 false reports a 401 without calling onSessionExpired", async () => {
+    const fetchMock = stubFetch(() => json({ error: "Unauthorized" }, 401));
+    const expired = vi.fn();
+    const wrapper = ({ children }: { children: ReactNode }) => <ViewerProvider viewer={person(1)} onSessionExpired={expired}>{children}</ViewerProvider>;
+    const { result } = renderHook(() => useLoad("/x", { expireOn401: false }), { wrapper });
+    await advance(30000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expired).not.toHaveBeenCalled();
+    expect(result.current).toMatchObject({ status: 401, retrying: false });
+  });
+
   it("a write answered 401 does not call onSessionExpired", async () => {
     stubFetch((_url, init) => (init?.method ? json({ error: "Unauthorized" }, 401) : json([])));
     const expired = vi.fn();

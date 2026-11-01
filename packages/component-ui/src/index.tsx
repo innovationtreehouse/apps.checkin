@@ -133,8 +133,10 @@ export function createClient(base: string) {
    * cache is shared across libraries. A network failure or 5xx retries unless `retry` is false.
    * A new path starts at null, so one parent's rows never show with another's buttons. `keepPrevious`
    * is for a pager or search box, whose rows each act on their own id; it never keeps an empty list.
+   * `expireOn401: false` is for a read mounted on every page: routes also answer 401 to a session
+   * next-auth reports as signed in, such as a denied household, so it must not move anyone.
    */
-  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false }: { retry?: boolean; keepPrevious?: boolean } = {}): Loaded<T> {
+  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false, expireOn401 = true }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean } = {}): Loaded<T> {
     const url = path === null ? null : resolve(path);
     useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
     const swr = useSWR<T, LoadFailure>(
@@ -161,8 +163,8 @@ export function createClient(base: string) {
     const status = swr.error?.status ?? null;
     const onSessionExpired = useContext(SessionExpiredContext);
     useEffect(() => {
-      if (status === 401) onSessionExpired?.();
-    }, [status, onSessionExpired]);
+      if (status === 401 && expireOn401) onSessionExpired?.();
+    }, [status, expireOn401, onSessionExpired]);
     const { mutate } = swr;
     const reload = useCallback(() => { void mutate(); }, [mutate]);
     return {
