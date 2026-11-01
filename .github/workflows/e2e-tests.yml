@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     # Seven persona sweeps and the journeys on a cold dev server. Playwright's globalTimeout
     # (55 min) ends the tests first, leaving room for the stack's start-up and the upload.
-    timeout-minutes: 75
+    timeout-minutes: 110
     permissions:
       contents: read
       id-token: write # mint the GitHub OIDC token to assume the AWS role (no stored creds)
