@@ -40,7 +40,6 @@ function lockTrustedAdult(tx: TxClient, taId: number) {
  *   PENDING_BOARD_REVIEW ──► APPROVED | DENIED
  *                        └─► PENDING_SUBJECT_ACTION (board asked for info)
  *   APPROVED ──(reviewBy passes)──► EXPIRED ──(renew)──► new PENDING_BOARD_REVIEW
- *   APPROVED ──(a later review on the adult is approved)──► SUPERSEDED
  *   any non-terminal ──(household withdraws / board override)──► REVOKED
  */
 
@@ -211,23 +210,6 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
     return review;
 }
 
-/**
- * Retire every other approval on the adult when a review is approved, so the approved
- * review alone speaks for them. Runs under the parent lock, before the approval is written.
- */
-async function supersedeOtherApprovals(tx: TxClient, actor: AuditActor, taId: number, approvedReviewId: number) {
-    const others = await tx.trustedAdultReview.findMany({
-        where: { trustedAdultId: taId, status: "APPROVED", id: { not: approvedReviewId } },
-        select: { id: true },
-        orderBy: { id: "asc" },
-    });
-    if (others.length === 0) return;
-    await tx.trustedAdultReview.updateMany({ where: { id: { in: others.map((r) => r.id) } }, data: { status: "SUPERSEDED" } });
-    for (const r of others) {
-        await audit(tx, actor, taId, { status: "APPROVED", reviewId: r.id }, { status: "SUPERSEDED", reviewId: r.id, supersededBy: approvedReviewId });
-    }
-}
-
 /** A denial of the adult's own household, or of the household they belong to. */
 async function adultHouseholdDenied(tx: TxClient, ta: { householdId: number; trustedAdultPersonId: number | null }) {
     const person = ta.trustedAdultPersonId
@@ -285,7 +267,7 @@ export async function hideTrustedAdult(id: number, actorId: number) {
 /**
  * A household lead withdraws a Trusted Adult — REVOKES every review that isn't
  * already revoked, not just the latest. A renewal opens a new review while the
- * prior approval stays live until that review is approved, so revoking only the
+ * prior approval stays live, even once that review is approved, so revoking only the
  * latest would leave the adult on the pickup list after withdrawal.
  */
 export async function withdrawTrustedAdult(id: number, actorId: number, opts?: { latestReviewOnly?: boolean }) {
@@ -421,7 +403,6 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         }
         data.status = status;
 
-        if (input.decision === "APPROVE") await supersedeOtherApprovals(tx, personActor(boardMemberId), review.trustedAdultId, reviewId);
         const updated = await tx.trustedAdultReview.update({ where: { id: reviewId }, data });
         // Approving a MODIFIED review is the moment its proposed edits become fact.
         if (input.decision === "APPROVE") await promoteProposal(tx, review);
@@ -544,7 +525,6 @@ export async function overrideReview(
                 throw new TrustedAdultError("wrong_phase", "This household has been denied membership — restore it before approving.");
             }
             const now = new Date();
-            await supersedeOtherApprovals(tx, actor, review.trustedAdultId, reviewId);
             const approved = await tx.trustedAdultReview.update({
                 where: { id: reviewId },
                 data: {

@@ -407,7 +407,8 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(revokeAudit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    // Withdraw revokes every review the adult has, the superseded approval included.
+    // A renewal after approval leaves TWO APPROVED reviews. Withdraw must revoke BOTH, or
+    // the unexpired one keeps the adult on the pickup list.
     it('withdraw revokes every APPROVED review, so a renewed-then-approved TA leaves none live', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
@@ -415,7 +416,7 @@ describe('Trusted Adults service', () => {
         // Resubmit while the first approval is still live → a second review, also approved.
         const renewed = await renewTrustedAdult(ta.id, leadId);
         await decideReview(renewed.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
-        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(1);
+        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(2);
 
         await withdrawTrustedAdult(ta.id, leadId);
 

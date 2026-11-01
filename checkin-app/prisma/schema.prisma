@@ -501,7 +501,7 @@ enum TrustedAdultReviewStatus {
   DENIED
   EXPIRED
   REVOKED
-  // A later review on the same adult was approved in its place.
+  // A later review on the same adult was approved in its place. Nothing writes it yet.
   SUPERSEDED
 }
 

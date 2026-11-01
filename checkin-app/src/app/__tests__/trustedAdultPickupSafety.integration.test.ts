@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 /**
- * Who stays on the pickup list. One live approval per adult, a Board override that
- * takes the adult off the list, a stale force-approve that cannot put them back,
+ * Who stays on the pickup list. A Board override that takes the adult off the list, a stale force-approve that cannot put them back,
  * and an expiry date that counts without waiting for the nightly sweep.
  */
 
@@ -13,7 +12,6 @@ import {
     decideReview,
     overrideReview,
     renewTrustedAdult,
-    resubmitWithChanges,
     runExpirySweep,
     withdrawTrustedAdult,
     TrustedAdultError,
@@ -106,44 +104,16 @@ describe('trusted-adult pickup list safety', () => {
     const lapse = (reviewId: number) =>
         prisma.trustedAdultReview.update({ where: { id: reviewId }, data: { reviewBy: new Date(Date.now() - DAY_MS) } });
 
-    describe('one live approval per adult', () => {
-        it('approving a renewal retires the prior approval, and audits it', async () => {
-            const { taId, firstReviewId } = await discloseApproved();
-            const renewal = await renewTrustedAdult(taId, leadId);
-            await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
-
-            expect(await statuses(taId)).toEqual(['SUPERSEDED', 'APPROVED']);
-            const audits = await prisma.auditLog.findMany({ where: { tableName: 'TrustedAdult', affectedEntityId: taId } });
-            expect(audits.some((a) => JSON.stringify(a.newData).includes('SUPERSEDED') && JSON.stringify(a.newData).includes(String(firstReviewId)))).toBe(true);
-        });
-
-        it('approving a MODIFIED review retires the prior approval', async () => {
-            const { taId } = await discloseApproved();
-            const changed = await resubmitWithChanges(taId, leadId, {
-                trustedAdultName: 'Jane Changed',
-                trustedAdultEmail: 'jane@example.com',
-                familyContext: 'Updated.',
-            });
-            await decideReview(changed.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
-            expect(await statuses(taId)).toEqual(['SUPERSEDED', 'APPROVED']);
-        });
-
-        it('a pending renewal leaves the prior approval live', async () => {
-            const { taId } = await discloseApproved();
-            await renewTrustedAdult(taId, leadId);
-            expect(await statuses(taId)).toEqual(['APPROVED', 'PENDING_BOARD_REVIEW']);
-            expect(await onPickupList(taId)).toBe(true);
-        });
-    });
-
     describe('Board override', () => {
-        it('revoking a renewed adult takes them off the pickup list', async () => {
+        it('approving a renewal leaves the earlier approval APPROVED, and revoking ends both', async () => {
             const { taId } = await discloseApproved();
             const renewal = await renewTrustedAdult(taId, leadId);
             await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+            expect(await statuses(taId)).toEqual(['APPROVED', 'APPROVED']);
 
             await overrideReview(renewal.id, boardId, 'revoke');
 
+            expect(await statuses(taId)).toEqual(['REVOKED', 'REVOKED']);
             expect(await onPickupList(taId)).toBe(false);
         });
 
@@ -194,7 +164,7 @@ describe('trusted-adult pickup list safety', () => {
             expect(await onPickupList(taId)).toBe(false);
         });
 
-        it('revoke from a stale page on a superseded review still ends the live approval', async () => {
+        it('revoke from a stale page on the older approval still ends the newer one', async () => {
             const { taId, firstReviewId } = await discloseApproved();
             const renewal = await renewTrustedAdult(taId, leadId);
             await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
@@ -202,6 +172,12 @@ describe('trusted-adult pickup list safety', () => {
             await overrideReview(firstReviewId, boardId, 'revoke');
 
             expect(await onPickupList(taId)).toBe(false);
+        });
+
+        it('a pending renewal does not disturb the live approval', async () => {
+            const { taId } = await discloseApproved();
+            await renewTrustedAdult(taId, leadId);
+            expect(await onPickupList(taId)).toBe(true);
         });
 
         it('force-approve from a stale page refuses an adult the household withdrew', async () => {
@@ -232,16 +208,6 @@ describe('trusted-adult pickup list safety', () => {
             await expect(overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED)).rejects.toMatchObject({ code: 'wrong_phase' });
 
             expect(await statuses(ta.id)).toEqual(['DENIED']);
-        });
-
-        it('force-approve retires any other live approval rather than colliding with it', async () => {
-            const { taId } = await discloseApproved();
-            const renewal = await renewTrustedAdult(taId, leadId);
-            await decideReview(renewal.id, boardId, { decision: 'DENY' });
-
-            await overrideReview(renewal.id, boardId, 'approve', SHARED);
-
-            expect(await statuses(taId)).toEqual(['SUPERSEDED', 'APPROVED']);
         });
     });
 
