@@ -473,14 +473,24 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "DRIFT", origin: null, depositId: null });
   });
 
-  it("a WAITING row is not drift-checked", async () => {
+  it("a WAITING row that left paid goes to finance once its window has run out", async () => {
     payout("P1", "2026-06-01", 97);
     setPayout("P1", { status: "failed" });
     await db.payoutReconciliation.create({
       data: { orgId: ORG_A, payoutGid: "P1", payoutDate: "2026-06-01", payoutNetCents: 97, status: "WAITING" },
     });
-    await runReconcile(ORG_A, NOW);
-    expect((await rowFor("P1")).status).toBe("WAITING");
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ opened: 1, drifted: 0 });
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "PAYOUT_NOT_PAID" });
+  });
+
+  it("a WAITING row that left paid keeps waiting inside its window", async () => {
+    payout("P1", "2026-06-28", 97);
+    setPayout("P1", { status: "in_transit" });
+    await db.payoutReconciliation.create({
+      data: { orgId: ORG_A, payoutGid: "P1", payoutDate: "2026-06-28", payoutNetCents: 97, status: "WAITING" },
+    });
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ opened: 0 });
+    expect(await rowFor("P1")).toMatchObject({ status: "WAITING", kind: null });
   });
 });
 
