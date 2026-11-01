@@ -5,6 +5,9 @@ import { Alert, Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, T
 import { BASE, STATE_LABELS } from "./api";
 import { formatCents } from "@checkin/money";
 import ReceiptFile from "./ReceiptFile";
+import { describeKept, describeShort, EXPENSE_REJECTED, REJECTED_AS_COPY } from "../lib/describeReceipt";
+import type { DuplicateGroup, DuplicateMember } from "../lib/duplicateGroup";
+import { retailerKey } from "../lib/retailer";
 
 export interface CompareLine {
   id: number;
@@ -80,6 +83,21 @@ const EMPTY = new Set(["", "—"]);
 /** Rows where both receipts hold the same non-empty value are what made them look alike. */
 const same = (a: string | null | undefined, b: string | null | undefined) => a != null && !EMPTY.has(a) && a === b;
 
+/** An order or receipt number as the duplicate check compares it. */
+const numberKey = (n: string | null | undefined) => (n ?? "").replace(/\s+/g, "").toLowerCase().replace(/^#/, "");
+
+/** Why `other` is tied to the viewed receipt, in the check's own tiers (design §3.1). */
+function matchedOn(viewed: CompareReceipt, other: CompareReceipt): string[] {
+  const tiers: string[] = [];
+  if (same(viewed.fileHash, other.fileHash)) tiers.push("Same file");
+  const key = retailerKey(viewed.retailer);
+  if (!key || key !== retailerKey(other.retailer)) return tiers;
+  if (numberKey(viewed.orderNumber) && numberKey(viewed.orderNumber) === numberKey(other.orderNumber)) tiers.push("Same order number");
+  if (numberKey(viewed.receiptNumber) && numberKey(viewed.receiptNumber) === numberKey(other.receiptNumber)) tiers.push("Same receipt number");
+  if (viewed.receiptDate && viewed.receiptDate === other.receiptDate && viewed.receiptTotalCents === other.receiptTotalCents) tiers.push("Same vendor, date and total");
+  return tiers;
+}
+
 function Lines({ title, lines }: { title: string; lines: CompareLine[] }) {
   return (
     <Stack gap={4}>
@@ -109,136 +127,237 @@ function Lines({ title, lines }: { title: string; lines: CompareLine[] }) {
   );
 }
 
+/** A member's state in words: red when it was refused, grey when withdrawn, the kept receipt linked. */
+function MemberLabel({ member, hrefOf }: { member: DuplicateMember; hrefOf: (id: string) => string }) {
+  const refused = member.state === "rejected" || member.label.startsWith(EXPENSE_REJECTED);
+  const color = refused ? "red" : member.state === "discarded" ? "dimmed" : undefined;
+  if (member.copyOfId && member.label.startsWith(REJECTED_AS_COPY)) {
+    return (
+      <Text size="xs" c={color}>
+        {REJECTED_AS_COPY}
+        <Anchor component={Link} href={hrefOf(member.copyOfId)} size="xs">{member.label.slice(REJECTED_AS_COPY.length)}</Anchor>
+      </Text>
+    );
+  }
+  return <Text size="xs" c={color}>{member.label}</Text>;
+}
+
+/** Finance's reject of one match, with the reason it requires. */
+function RejectMatch({ title, onReject }: { title: string; onReject: (reason: string) => void }) {
+  const [reason, setReason] = useState("");
+  return (
+    <Group align="end" gap={4}>
+      <TextInput size="xs" label={`Reason to reject ${title}`} value={reason} onChange={(e) => setReason(e.currentTarget.value)} />
+      <Button size="xs" variant="light" color="red" disabled={!reason.trim()} onClick={() => onReject(reason.trim())}>Reject {title}</Button>
+    </Group>
+  );
+}
+
 interface Props {
   receipt: CompareReceipt;
-  /** Null while the original loads or when it could not be read. */
-  original: CompareReceipt | null;
-  originalError: string | null;
-  onRetryOriginal: () => void;
-  originalHref: string;
+  group: DuplicateGroup;
+  /** Every other member's and dismissed match's receipt loaded so far, by id. */
+  loaded: Map<string, CompareReceipt>;
+  loadErrors: Map<string, string>;
+  onRetry: () => void;
+  /** The ids that joined the group after the panel was first drawn. */
+  fresh: ReadonlySet<string>;
+  hrefOf: (id: string) => string;
   /** FINANCE acts; BOARD reads the same compare without actions. */
   isFinance: boolean;
   /** The caller uploaded this receipt, so someone else in finance decides it. */
   own: boolean;
-  /** The two receipts shown are the whole group, so a decision on the group covers only what is shown. */
-  wholeGroup: boolean;
-  onNotThisOne: () => void;
+  onNotThisOne: (otherId: string) => void;
+  onUndo: (otherId: string) => void;
   onDifferentPurchases: () => void;
   onKeepThisOne: () => void;
-  onRejectOriginal: (reason: string) => void;
+  onRejectMatch: (otherId: string, reason: string) => void;
+  onRejectAsCopy: (reason: string) => void;
 }
 
 /**
- * A suspected duplicate beside one receipt of its group, with finance's decisions on the group
- * and on that match. Rejecting this receipt, or its uploader discarding it, sits with its other
- * actions.
+ * The viewed receipt beside every other member of its group, in upload order, with finance's
+ * decisions on each match and on the group. Rejecting this receipt, or its uploader discarding
+ * it, sits with its other actions.
  */
-export default function DuplicateCompare({ receipt, original, originalError, onRetryOriginal, originalHref, isFinance, own, wholeGroup, onNotThisOne, onDifferentPurchases, onKeepThisOne, onRejectOriginal }: Props) {
-  const [reason, setReason] = useState("");
-  const sameFile = original != null && same(receipt.fileHash, original.fileHash);
-  const giftAndReimbursement = original != null && ((receipt.isInKind && original.needsReimbursement) || (receipt.needsReimbursement && original.isInKind));
+export default function DuplicateCompare({ receipt, group, loaded, loadErrors, onRetry, fresh, hrefOf, isFinance, own, onNotThisOne, onUndo, onDifferentPurchases, onKeepThisOne, onRejectMatch, onRejectAsCopy }: Props) {
+  const others = group.members.filter((m) => m.id !== receipt.id);
+  const viewed = group.members.find((m) => m.id === receipt.id);
+  const titleOf = (m: DuplicateMember) => `match ${others.indexOf(m) + 1}`;
+  const live = others.filter((m) => m.state !== "discarded");
+  const allLoaded = live.every((m) => loaded.has(m.id));
+  const decides = isFinance && !own;
+  const held = receipt.state === "duplicate_flagged";
+  const giftAndReimbursement = live.some((m) => {
+    const o = loaded.get(m.id);
+    return o != null && ((receipt.isInKind && o.needsReimbursement) || (receipt.needsReimbursement && o.isInKind));
+  });
+  const finalized = live.find((m) => m.state === "receipt_finalized");
+  const finalizedReceipt = finalized && loaded.get(finalized.id);
+  const uploads = [receipt, ...others.flatMap((m) => loaded.get(m.id) ?? [])].map((r) => new Date(r.uploadedAt));
+  const columns = Math.min(others.length + 1, 3);
+
   return (
     <Paper withBorder p="sm">
       <Stack gap="sm">
-        <Group justify="space-between">
-          <Title order={5}>Possible duplicate</Title>
-          <Anchor component={Link} href={originalHref} size="sm">Open the suspected original</Anchor>
-        </Group>
-        {original && (
-          <Text size="sm">
-            {sameFile ? "Both receipts are the same file." : "The files differ; the receipts match on their details."}
-          </Text>
-        )}
-        {giftAndReimbursement && (
-          <Alert color="yellow">One is recorded as a gift of goods and the other is for reimbursement. If they are the same purchase, reimbursing it would pay for goods recorded as given.</Alert>
-        )}
-        <Table>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th />
-              <Table.Th>This receipt <Badge size="xs" variant="light">{STATE_LABELS[receipt.state] ?? receipt.state}</Badge></Table.Th>
-              <Table.Th>
-                Suspected original{original && <> <Badge size="xs" variant="light">{STATE_LABELS[original.state] ?? original.state}</Badge></>}
-              </Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {ROWS.map((row) => {
-              const mine = row.value(receipt);
-              const theirs = original ? row.value(original) : null;
-              const matched = original != null && !NEVER_MATCHED.has(row.label) && same(mine, theirs);
+        <Title order={5}>Possible duplicate</Title>
+        {group.dismissed.length > 0 && (
+          <Group gap="xs" aria-label="Dismissed matches">
+            <Text size="sm">Dismissed:</Text>
+            {group.dismissed.map((id) => {
+              const r = loaded.get(id);
               return (
-                <Table.Tr key={row.label} bg={matched ? "var(--mantine-color-blue-light)" : undefined}>
-                  <Table.Td>
-                    {row.label}
-                    {matched && <Badge ml="xs" size="xs" color="blue">Same</Badge>}
-                  </Table.Td>
-                  <Table.Td>{mine || "—"}</Table.Td>
-                  <Table.Td>{original ? theirs || "—" : "—"}</Table.Td>
-                </Table.Tr>
+                <Group key={id} gap={4}>
+                  <Anchor component={Link} href={hrefOf(id)} size="sm">{r ? describeShort(r) : "another receipt"}</Anchor>
+                  {decides && held && <Button size="compact-xs" variant="subtle" onClick={() => onUndo(id)}>Undo</Button>}
+                </Group>
               );
             })}
-            <Table.Tr bg={sameFile ? "var(--mantine-color-blue-light)" : undefined}>
-              <Table.Td>
-                File
-                {sameFile && <Badge ml="xs" size="xs" color="blue">Same</Badge>}
-              </Table.Td>
-              <Table.Td>
-                <Text size="xs" ff="monospace" title={receipt.fileHash}>{receipt.fileHash?.slice(0, 12) ?? "—"}</Text>
-              </Table.Td>
-              <Table.Td>
-                {original && <Text size="xs" ff="monospace" title={original.fileHash}>{original.fileHash?.slice(0, 12) ?? "—"}</Text>}
-              </Table.Td>
-            </Table.Tr>
-          </Table.Tbody>
-        </Table>
-
-        <SimpleGrid cols={{ base: 1, md: 2 }}>
-          <FileView title="This receipt's file" receipt={receipt} />
-          {original ? <FileView title="The original's file" receipt={original} /> : <Text size="sm" c="dimmed">{"The original's file is not loaded."}</Text>}
-        </SimpleGrid>
-
-        <SimpleGrid cols={{ base: 1, md: 2 }}>
-          <Lines title="This receipt's lines" lines={receipt.lineItems} />
-          {original ? <Lines title="The original's lines" lines={original.lineItems} /> : <Text size="sm" c="dimmed">The suspected original is not loaded.</Text>}
-        </SimpleGrid>
-
-        {isFinance ? (
-          <Group gap="xs">
-            {receipt.state === "duplicate_flagged" && !own && (
-              original ? (
-                <>
-                  <Button size="xs" variant="light" onClick={onNotThisOne}>Not this one</Button>
-                  {wholeGroup ? (
-                    <>
-                      <Button size="xs" onClick={onDifferentPurchases}>Different purchases</Button>
-                      {original.state !== "receipt_finalized" && (
-                        <Button size="xs" variant="light" onClick={onKeepThisOne}>Keep this one</Button>
-                      )}
-                    </>
-                  ) : (
-                    <Text size="sm" c="dimmed">This receipt matches more receipts than are shown here. Dismiss the ones that are different purchases with Not this one.</Text>
-                  )}
-                </>
-              ) : originalError ? (
-                <>
-                  <Text size="sm" c="red">{"Couldn't load the suspected original: "}{originalError}</Text>
-                  <Button size="xs" variant="light" onClick={onRetryOriginal}>Retry</Button>
-                </>
-              ) : (
-                <Text size="sm" c="dimmed">Loading the suspected original…</Text>
-              )
-            )}
-            {original && !own && !TERMINAL.has(original.state) && !original.pushedAt && (
-              <Group align="end" gap="xs">
-                <TextInput size="xs" label="Reason to reject the original" value={reason} onChange={(e) => setReason(e.currentTarget.value)} />
-                <Button size="xs" variant="light" color="red" disabled={!reason.trim()} onClick={() => onRejectOriginal(reason.trim())}>Reject the original</Button>
-              </Group>
-            )}
-            {own && <Text size="sm" c="dimmed">Someone else in finance decides whether your own receipt is a duplicate.</Text>}
           </Group>
-        ) : (
+        )}
+        {giftAndReimbursement && (
+          <Alert color="yellow">One is recorded as a gift of goods and another is for reimbursement. If they are the same purchase, reimbursing it would pay for goods recorded as given.</Alert>
+        )}
+        {decides && finalizedReceipt && (
+          <Alert color="yellow">
+            <Group justify="space-between">
+              <Text size="sm">A finalized copy exists: keep it and reject this one as a copy?</Text>
+              <Button
+                size="xs"
+                color="red"
+                variant="light"
+                onClick={() => onRejectAsCopy(`Copy of ${describeKept({ retailer: finalizedReceipt.retailer, uploadedAt: new Date(finalizedReceipt.uploadedAt) }, uploads)}`)}
+              >
+                Reject as a copy
+              </Button>
+            </Group>
+          </Alert>
+        )}
+        <Table.ScrollContainer minWidth={220 * (others.length + 2)}>
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th />
+                <Table.Th>
+                  This receipt <Badge size="xs" variant="light">{STATE_LABELS[receipt.state] ?? receipt.state}</Badge>
+                </Table.Th>
+                {others.map((m) => (
+                  <Table.Th key={m.id} style={m.state === "discarded" ? { opacity: 0.6 } : undefined}>
+                    <Anchor component={Link} href={hrefOf(m.id)} size="sm">Open {titleOf(m)}</Anchor>
+                    {fresh.has(m.id) && <Badge ml="xs" size="xs" color="blue">New</Badge>}
+                    <MemberLabel member={m} hrefOf={hrefOf} />
+                  </Table.Th>
+                ))}
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              <Table.Tr>
+                <Table.Td>Uploaded by</Table.Td>
+                <Table.Td>{viewed?.uploaderName ?? "—"}</Table.Td>
+                {others.map((m) => <Table.Td key={m.id}>{m.uploaderName ?? "—"}</Table.Td>)}
+              </Table.Tr>
+              <Table.Tr>
+                <Table.Td>Matched on</Table.Td>
+                <Table.Td>—</Table.Td>
+                {others.map((m) => {
+                  const o = loaded.get(m.id);
+                  const tiers = o ? matchedOn(receipt, o) : [];
+                  return <Table.Td key={m.id}>{o ? (tiers.join(", ") || "Linked through another receipt") : "—"}</Table.Td>;
+                })}
+              </Table.Tr>
+              {ROWS.map((row) => {
+                const mine = row.value(receipt);
+                return (
+                  <Table.Tr key={row.label}>
+                    <Table.Td>{row.label}</Table.Td>
+                    <Table.Td>{mine || "—"}</Table.Td>
+                    {others.map((m) => {
+                      const o = loaded.get(m.id);
+                      const theirs = o ? row.value(o) : null;
+                      const matched = !NEVER_MATCHED.has(row.label) && same(mine, theirs);
+                      return (
+                        <Table.Td key={m.id} bg={matched ? "var(--mantine-color-blue-light)" : undefined}>
+                          {theirs || "—"}
+                          {matched && <Badge ml="xs" size="xs" color="blue">Same</Badge>}
+                        </Table.Td>
+                      );
+                    })}
+                  </Table.Tr>
+                );
+              })}
+              <Table.Tr>
+                <Table.Td>File</Table.Td>
+                <Table.Td><Text size="xs" ff="monospace" title={receipt.fileHash}>{receipt.fileHash?.slice(0, 12) ?? "—"}</Text></Table.Td>
+                {others.map((m) => {
+                  const o = loaded.get(m.id);
+                  const matched = o != null && same(receipt.fileHash, o.fileHash);
+                  return (
+                    <Table.Td key={m.id} bg={matched ? "var(--mantine-color-blue-light)" : undefined}>
+                      <Text size="xs" ff="monospace" span title={o?.fileHash}>{o?.fileHash?.slice(0, 12) ?? "—"}</Text>
+                      {matched && <Badge ml="xs" size="xs" color="blue">Same</Badge>}
+                    </Table.Td>
+                  );
+                })}
+              </Table.Tr>
+              {decides && (
+                <Table.Tr>
+                  <Table.Td>Decide</Table.Td>
+                  <Table.Td />
+                  {others.map((m) => {
+                    const o = loaded.get(m.id);
+                    const error = loadErrors.get(m.id);
+                    if (m.state === "discarded") return <Table.Td key={m.id} />;
+                    return (
+                      <Table.Td key={m.id}>
+                        {o ? (
+                          <Stack gap={4}>
+                            <Button size="xs" variant="light" w="fit-content" aria-label={`Not this one: ${titleOf(m)}`} onClick={() => onNotThisOne(m.id)}>Not this one</Button>
+                            {!TERMINAL.has(o.state) && !o.pushedAt && <RejectMatch title={titleOf(m)} onReject={(reason) => onRejectMatch(m.id, reason)} />}
+                          </Stack>
+                        ) : error ? (
+                          <Stack gap={4}>
+                            <Text size="sm" c="red">{"Couldn't load this receipt: "}{error}</Text>
+                            <Button size="xs" variant="light" w="fit-content" onClick={onRetry}>Retry</Button>
+                          </Stack>
+                        ) : (
+                          <Text size="sm" c="dimmed">Loading…</Text>
+                        )}
+                      </Table.Td>
+                    );
+                  })}
+                </Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+
+        <SimpleGrid cols={{ base: 1, md: columns }}>
+          <FileView title="This receipt's file" receipt={receipt} />
+          {others.map((m) => {
+            const o = loaded.get(m.id);
+            return o ? <FileView key={m.id} title={`File of ${titleOf(m)}`} receipt={o} /> : <Text key={m.id} size="sm" c="dimmed">The file of {titleOf(m)} is not loaded.</Text>;
+          })}
+        </SimpleGrid>
+
+        <SimpleGrid cols={{ base: 1, md: columns }}>
+          <Lines title="This receipt's lines" lines={receipt.lineItems} />
+          {others.map((m) => {
+            const o = loaded.get(m.id);
+            return o ? <Lines key={m.id} title={`Lines of ${titleOf(m)}`} lines={o.lineItems} /> : <Text key={m.id} size="sm" c="dimmed">The lines of {titleOf(m)} are not loaded.</Text>;
+          })}
+        </SimpleGrid>
+
+        {!isFinance ? (
           <Text size="sm" c="dimmed">Finance decides whether this is a duplicate.</Text>
+        ) : own ? (
+          <Text size="sm" c="dimmed">Someone else in finance decides whether your own receipt is a duplicate.</Text>
+        ) : (
+          allLoaded && (
+            <Group gap="xs">
+              <Button size="xs" onClick={onDifferentPurchases}>Different purchases</Button>
+              {!finalized && <Button size="xs" variant="light" onClick={onKeepThisOne}>Keep this one</Button>}
+            </Group>
+          )
         )}
       </Stack>
     </Paper>

@@ -1,11 +1,11 @@
-import { formatCents } from "@checkin/money";
 import { db, type Db } from "../db";
 import { Prisma } from "../generated/prisma/client";
+import { day, describeKept, describeReceipt, REJECTED_AS_COPY } from "./describeReceipt";
 import { BODY_COPY_DISCARDED } from "./receipt-flow";
 import { STATE_LABELS } from "./stateLabels";
 
 /** `copyOfId` names the receipt kept in place of a member rejected as a copy. */
-export type DuplicateMember = { id: string; state: string; label: string; copyOfId: string | null };
+export type DuplicateMember = { id: string; state: string; label: string; copyOfId: string | null; uploaderName?: string | null };
 /** The viewed receipt and every member not dismissed against it, in upload order, and the ones dismissed. */
 export type DuplicateGroup = { members: DuplicateMember[]; dismissed: string[] };
 
@@ -79,28 +79,7 @@ async function component(client: Client, orgId: string, start: Node): Promise<{ 
   return { live, discarded };
 }
 
-const day = (at: Date) => at.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
-
-type Described = { retailer: string | null; receiptDate: string | null; receiptTotalCents: number | null };
-
-/** A receipt in a line of text: its vendor, receipt date and total, as "Home Depot, 3 Oct, $84.12". */
-export function describeReceipt(r: Described): string {
-  const date = r.receiptDate && /^\d{4}-\d{2}-\d{2}$/.test(r.receiptDate) ? day(new Date(`${r.receiptDate}T00:00:00Z`)) : r.receiptDate;
-  const total = r.receiptTotalCents == null ? null : formatCents(r.receiptTotalCents);
-  return [r.retailer?.trim() || "Receipt", date, total].filter(Boolean).join(", ");
-}
-
-const time = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
-
-/**
- * The receipt kept in place of a copy, told apart from its copies, which share its vendor, date
- * and total: "Home Depot, uploaded 3 Oct", with the time when another of `alongside` was
- * uploaded the same day.
- */
-export function describeKept(kept: { retailer: string | null; uploadedAt: Date }, alongside: Date[]): string {
-  const sameDay = alongside.some((at) => at.getTime() !== kept.uploadedAt.getTime() && day(at) === day(kept.uploadedAt));
-  return `${kept.retailer?.trim() || "Receipt"}, uploaded ${day(kept.uploadedAt)}${sameDay ? `, ${time(kept.uploadedAt)}` : ""}`;
-}
+export { describeKept, describeReceipt };
 
 /** The kept receipt's upload time and vendor, by id. */
 export async function keptReceipts(client: Client, ids: string[]): Promise<Map<string, { retailer: string | null; uploadedAt: Date }>> {
@@ -135,7 +114,7 @@ async function labels(client: Client, nodes: Node[]): Promise<Map<string, Omit<D
       const keptRow = kept.get(keptOf.get(n.id) ?? "");
       // A member already rejected when Keep this one recorded it as a copy keeps its own reason.
       const recorded = last.get(`${n.id}:duplicate_pair_copy_of`);
-      if (keptRow && (!log || !recorded || log.id > recorded.id)) return `Rejected as a copy of ${describeKept(keptRow, uploads)}`;
+      if (keptRow && (!log || !recorded || log.id > recorded.id)) return `${REJECTED_AS_COPY}${describeKept(keptRow, uploads)}`;
       return log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected";
     }
     if (n.state === "discarded") {
@@ -147,6 +126,16 @@ async function labels(client: Client, nodes: Node[]): Promise<Map<string, Omit<D
     return STATE_LABELS[n.state] ?? n.state;
   };
   return new Map(nodes.map((n) => [n.id, { label: text(n), copyOfId: (n.state === "rejected" && keptOf.get(n.id)) || null }]));
+}
+
+/** The live receipts joined to `id` by matches, dismissals against it included: the whole group a queue row stands for. */
+export async function liveGroup(orgId: string, id: string, client: Client = db): Promise<Array<{ id: string; state: string }>> {
+  const [start] = await client.$queryRaw<Node[]>`
+    SELECT d.id, d.state, r.uploaded_at AS "uploadedAt", r.pushed_at AS "pushedAt"
+    FROM receipt_details d JOIN receipts r ON r.id = d.id
+    WHERE d.id = ${id} AND d.org_id = ${orgId}`;
+  if (!start) return [];
+  return [...(await component(client, orgId, start)).live.values()].map((n) => ({ id: n.id, state: n.state }));
 }
 
 /**
