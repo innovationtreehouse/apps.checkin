@@ -407,9 +407,7 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(revokeAudit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    // A renewal after approval leaves TWO APPROVED reviews (renew doesn't
-    // retire the prior approval). Withdraw must revoke BOTH — the pickup list shows a
-    // TA while ANY review is APPROVED, so revoking only the latest would keep it on the list.
+    // Withdraw revokes every review the adult has, the superseded approval included.
     it('withdraw revokes every APPROVED review, so a renewed-then-approved TA leaves none live', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
@@ -417,7 +415,7 @@ describe('Trusted Adults service', () => {
         // Resubmit while the first approval is still live → a second review, also approved.
         const renewed = await renewTrustedAdult(ta.id, leadId);
         await decideReview(renewed.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
-        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(2);
+        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(1);
 
         await withdrawTrustedAdult(ta.id, leadId);
 
@@ -477,17 +475,14 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
     });
 
-    it('re-overrides an already-overridden terminal review with no phase guard', async () => {
+    it('force-approve refuses a review the board already revoked; the family resubmits', async () => {
         const ta = await discloseOne();
         await overrideReview(ta.reviews[0].id, boardId, 'revoke'); // terminal: REVOKED
 
-        // No wrong_phase / throw — board can flip a terminal review again.
-        const reapproved = await overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED);
-        expect(reapproved.status).toBe('APPROVED');
+        await expect(overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED)).rejects.toMatchObject({ code: 'wrong_phase' });
 
         const audit = await latestAudit(ta.id);
-        expect(normalizeAuditData(audit?.oldData)).toMatchObject({ status: 'REVOKED' });
-        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
+        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
     // Conflict of interest on the OVERRIDE path — mirrors decideReview's rule, and no
