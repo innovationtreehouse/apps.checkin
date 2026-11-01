@@ -165,7 +165,8 @@ For a real problem at the door, with no VPN or SSH needed.
 - **Trigger.** A manual GitHub Actions workflow, "Force kiosk update", takes a
   release tag or image digest, forward or back. It moves `kiosk-release` and a
   second tag, `kiosk-urgent`, to that digest. It runs behind an approval
-  environment, and the run records who forced what.
+  environment set like production (owner, 2026-11-01): one person starts it, another
+  approves, with self-review blocked. The run records who started and who approved.
 - **On the Pi.** A second timer checks `kiosk-urgent` every five minutes, all day.
   If its digest differs from the last urgent digest recorded on the Pi, the Pi
   records it and then swaps at once, skipping the window. The check goes to GHCR
