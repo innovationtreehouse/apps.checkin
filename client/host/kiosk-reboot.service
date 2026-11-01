@@ -3,4 +3,4 @@ Description=Nightly kiosk reboot
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/systemctl reboot
+ExecStart=/usr/local/bin/kioskctl reboot

@@ -138,16 +138,16 @@ status() {
   fi
 }
 
-usage() { die "usage: kioskctl status | deploy sha256:<digest> | back | check-release | check-urgent"; }
+usage() { die "usage: kioskctl status | deploy sha256:<digest> | back | check-release | check-urgent | reboot"; }
 
 command=${1:-}
 case "$command" in
   status) status; exit 0 ;;
-  check-release | check-urgent | deploy | back) ;;
+  check-release | check-urgent | deploy | back | reboot) ;;
   *) usage ;;
 esac
 
-[ -n "$KIOSK_HEALTH_CMD" ] || die "KIOSK_HEALTH_CMD is not set in $KIOSK_CONF; nothing moves without a health check"
+[ "$command" = reboot ] || [ -n "$KIOSK_HEALTH_CMD" ] || die "KIOSK_HEALTH_CMD is not set in $KIOSK_CONF; nothing moves without a health check"
 
 exec 9>"$STATE/lock" || die "cannot open $STATE/lock; run as root"
 case "$command" in
@@ -169,5 +169,11 @@ case "$command" in
     previous=$(get previous)
     [ -n "$previous" ] || die "no previous digest recorded"
     move_by_hand "$previous"
+    ;;
+  reboot)
+    # A reboot mid-swap leaves the new digest with no rollback. A swap takes
+    # minutes, so a lock held for 30 is a hung pull, which the reboot clears.
+    flock -w 1800 9 || log "lock still held after 30 minutes; rebooting anyway" >&2
+    systemctl reboot
     ;;
 esac
