@@ -34,13 +34,11 @@ const EXCEPTION_BLURB: Record<string, string> = {
     AMOUNT_MISMATCH: "a payment does not cover the expected membership fee/price",
     DISCOUNT_UNAUTHORIZED: "an order used a discount its household isn't entitled to (the volunteer code on a non-volunteer membership, or a program member code from another household or an unsettled one)",
     ACTIVE_WITHOUT_PAYMENT: "a membership/enrollment is active with no matching payment on file",
-    DENIED_HOUSEHOLD_ACTIVITY: "something happened to a household the board denied (a payment, an approval or an application) — its status was not changed",
+    DENIED_HOUSEHOLD_ACTIVITY: "a household the board denied needs the board: something reached it after the denial (a payment, an approval or an application) and its status was not changed, or, where a program is named, one of its members is enrolled in, volunteers on or leads that program — remove that by hand once the program's leaders know",
     PAYMENT_UNVERIFIABLE: "an active membership/enrollment records a Shopify order that isn't in the mirror — its payment can't be verified",
     DUPLICATE_PAYMENT: "a paid program order bought a seat for someone already enrolled (paid, comped or approved) — a refund may be needed",
     UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
     MIXED_HOUSEHOLDS: "a paid program order names children from more than one household — nobody was activated",
-    DENIED_HOUSEHOLD_ENROLLMENT: "a member of a denied household is enrolled in a program — remove the enrollment by hand once the program's leaders know",
-    DENIED_HOUSEHOLD_PROGRAM_ROLE: "a member of a denied household volunteers on or leads a program — remove the role by hand once the program's leaders know",
 };
 
 /**

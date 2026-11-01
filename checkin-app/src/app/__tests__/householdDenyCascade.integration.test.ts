@@ -141,12 +141,12 @@ describe('POST /api/membership-ops/households — deny cascade', () => {
 
     it('raises enrollments and program roles to the board without removing anything', async () => {
         const rows = await prisma.paymentException.findMany({
-            where: { personId: { in: personIds }, kind: { in: ['DENIED_HOUSEHOLD_ENROLLMENT', 'DENIED_HOUSEHOLD_PROGRAM_ROLE'] } },
+            where: { personId: { in: personIds }, kind: 'DENIED_HOUSEHOLD_ACTIVITY' },
             orderBy: { id: 'asc' },
         });
         expect(rows.map((r) => [r.kind, r.personId, r.programId, r.status])).toEqual([
-            ['DENIED_HOUSEHOLD_ENROLLMENT', deniedChildId, programId, 'OPEN'],
-            ['DENIED_HOUSEHOLD_PROGRAM_ROLE', deniedLeadId, programId, 'OPEN'],
+            ['DENIED_HOUSEHOLD_ACTIVITY', deniedChildId, programId, 'OPEN'],
+            ['DENIED_HOUSEHOLD_ACTIVITY', deniedLeadId, programId, 'OPEN'],
         ]);
 
         const enrollment = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: deniedChildId } } });

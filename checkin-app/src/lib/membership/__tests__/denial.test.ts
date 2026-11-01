@@ -3,7 +3,9 @@
  */
 import type { TxClient } from '@/lib/db-client';
 import { personActor } from '@/lib/auditActor';
-import { applyHouseholdDenial, DENIAL_REVOKE_REASON } from '@/lib/membership/denial';
+import type { DbClient } from '@/lib/db-client';
+import { applyHouseholdDenial, DENIAL_REVOKE_REASON, notifyBoardOfDenial } from '@/lib/membership/denial';
+import { notifyBoardPaymentException } from '@/lib/membership/boardAlerts';
 import { recordPaymentException } from '@/lib/finance/reconcile/exceptions';
 
 jest.mock('@/lib/finance/reconcile/exceptions', () => ({
@@ -12,6 +14,7 @@ jest.mock('@/lib/finance/reconcile/exceptions', () => ({
 jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaymentException: jest.fn() }));
 
 const recordException = recordPaymentException as jest.MockedFunction<typeof recordPaymentException>;
+const notifyBoard = notifyBoardPaymentException as jest.MockedFunction<typeof notifyBoardPaymentException>;
 
 const DENIED_HH = 10;
 const LEAD = 101;
@@ -109,7 +112,7 @@ describe('applyHouseholdDenial — trusted adults', () => {
 });
 
 describe('applyHouseholdDenial — board items', () => {
-    it('raises each enrollment and program role to the board, and removes none of them', async () => {
+    it('raises each member\'s tie to each program once, and removes none of them', async () => {
         const { tx, client } = fakeTx({
             adults: [],
             reviews: [],
@@ -122,9 +125,9 @@ describe('applyHouseholdDenial — board items', () => {
         const outcome = await applyHouseholdDenial(client, DENIED_HH, actor);
 
         expect(recordException.mock.calls.map(([db, kind, ref]) => [db, kind, ref])).toEqual([
-            [client, 'DENIED_HOUSEHOLD_ENROLLMENT', { personId: CHILD, programId: 7, severity: 'CRITICAL' }],
-            [client, 'DENIED_HOUSEHOLD_PROGRAM_ROLE', { personId: LEAD, programId: 8, severity: 'CRITICAL' }],
-            [client, 'DENIED_HOUSEHOLD_PROGRAM_ROLE', { personId: LEAD, programId: 9, severity: 'CRITICAL' }],
+            [client, 'DENIED_HOUSEHOLD_ACTIVITY', { personId: CHILD, programId: 7, severity: 'CRITICAL' }],
+            [client, 'DENIED_HOUSEHOLD_ACTIVITY', { personId: LEAD, programId: 8, severity: 'CRITICAL' }],
+            [client, 'DENIED_HOUSEHOLD_ACTIVITY', { personId: LEAD, programId: 9, severity: 'CRITICAL' }],
         ]);
         expect(outcome.boardItemIds).toHaveLength(3);
         for (const write of [
@@ -136,11 +139,14 @@ describe('applyHouseholdDenial — board items', () => {
         }
     });
 
-    it('asks only for live enrollments in programs not yet finished', async () => {
+    it('asks only for live people\'s pending or active enrollments in programs not yet finished', async () => {
         const { tx, client } = fakeTx({ adults: [], reviews: [] });
         await applyHouseholdDenial(client, DENIED_HH, actor);
         expect(tx.programParticipant.findMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { personId: { in: [LEAD, CHILD] }, status: { in: ['PENDING', 'ACTIVE'] }, program: { phase: { not: 'FINISHED' } } },
+            where: { personId: { in: [LEAD, CHILD] }, person: { mergedIntoId: null }, program: { phase: { not: 'FINISHED' } }, status: { in: ['PENDING', 'ACTIVE'] } },
+        }));
+        expect(tx.person.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { householdId: DENIED_HH, mergedIntoId: null },
         }));
     });
 
@@ -149,5 +155,31 @@ describe('applyHouseholdDenial — board items', () => {
         const { client } = fakeTx({ adults: [], reviews: [], enrollments: [{ personId: CHILD, programId: 7 }] });
         const outcome = await applyHouseholdDenial(client, DENIED_HH, actor);
         expect(outcome.boardItemIds).toEqual([]);
+    });
+});
+
+describe('notifyBoardOfDenial', () => {
+    function db(row: { id: number } | null) {
+        return {
+            person: { findMany: jest.fn().mockResolvedValue([{ id: LEAD }, { id: CHILD }]) },
+            paymentException: { findFirst: jest.fn().mockResolvedValue(row) },
+        };
+    }
+
+    beforeEach(() => notifyBoard.mockReset());
+
+    it('emails the board once when the denial left an open program tie', async () => {
+        const client = db({ id: 77 });
+        await notifyBoardOfDenial(client as unknown as DbClient, DENIED_HH);
+        expect(client.paymentException.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', programId: { not: null }, status: { not: 'RESOLVED' }, personId: { in: [LEAD, CHILD] } },
+        }));
+        expect(notifyBoard).toHaveBeenCalledTimes(1);
+        expect(notifyBoard).toHaveBeenCalledWith('DENIED_HOUSEHOLD_ACTIVITY', 'CRITICAL', 77);
+    });
+
+    it('sends nothing when the denial left the board nothing to remove', async () => {
+        await notifyBoardOfDenial(db(null) as unknown as DbClient, DENIED_HH);
+        expect(notifyBoard).not.toHaveBeenCalled();
     });
 });
