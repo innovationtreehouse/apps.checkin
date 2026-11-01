@@ -73,7 +73,9 @@ async function hideEndedProducts(now: Date): Promise<number> {
  * One week after a sale ends (saleEndedAt is stamped on the off-sale date's
  * daily run), emails the board the claims still unpaid — once
  * per program. The conditional claim on unpaidClaimsNotifiedAt makes a
- * concurrent or repeated run a no-op.
+ * concurrent or repeated run a no-op. The claim is released when no Board
+ * member's send was accepted, so the next run retries; one accepted send
+ * counts as told, because a retry would mail the others again every day.
  */
 async function notifyUnpaidClaims(now: Date): Promise<number> {
     const weekAgo = new Date(now.getTime() - NOTIFY_AFTER_MS);
@@ -96,11 +98,18 @@ async function notifyUnpaidClaims(now: Date): Promise<number> {
             data: { unpaidClaimsNotifiedAt: now },
         });
         if (count === 0 || program.participants.length === 0) continue;
-        await emailBoardMembers("board.unpaidClaims", {
+        const delivered = await emailBoardMembers("board.unpaidClaims", {
             programName: program.name,
             names: program.participants.map((p) => p.person.name ?? "Unnamed").join("\n"),
             actionLink: `${config.baseUrl()}/program-ops/programs/${program.id}`,
         }, "Unpaid-claims board ping failed:");
+        if (delivered === 0) {
+            await prisma.program.updateMany({
+                where: { id: program.id, unpaidClaimsNotifiedAt: now },
+                data: { unpaidClaimsNotifiedAt: null },
+            });
+            continue;
+        }
         notified++;
     }
     return notified;
