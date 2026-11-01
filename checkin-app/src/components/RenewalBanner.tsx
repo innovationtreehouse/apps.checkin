@@ -1,46 +1,32 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Alert, Button, Group, Text } from "@mantine/core";
+import { useLoad } from "@/lib/api";
 
 /**
  * Non-blocking login-time nudge for household leads whose membership is up for
  * renewal. Distinct from OnboardingGate (a hard modal) — renewal is a reminder,
- * not a gate. Dismissable for the session.
+ * not a gate. Dismissable for the session. Best-effort on every page: a failed read
+ * shows nothing, retries nothing and moves nobody.
  */
 export default function RenewalBanner() {
   const { status } = useSession();
-  const [dueDate, setDueDate] = useState<string | null>(null);
-  const [show, setShow] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const { data } = useLoad<{ renewalDue: boolean; dueDate?: string | null }>(
+    status === "authenticated" ? "/api/membership/renewal-status" : null,
+    { retry: false, expireOn401: false },
+  );
 
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    let active = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/membership/renewal-status");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (active && data.renewalDue && sessionStorage.getItem("renewal_banner_dismissed") !== "true") {
-          setDueDate(data.dueDate ?? null);
-          setShow(true);
-        }
-      } catch {
-        /* banner is best-effort */
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [status]);
+  if (!data?.renewalDue || dismissed || sessionStorage.getItem("renewal_banner_dismissed") === "true") return null;
 
-  if (!show) return null;
+  const dueDate = data.dueDate ?? null;
 
   const dismiss = () => {
     sessionStorage.setItem("renewal_banner_dismissed", "true");
-    setShow(false);
+    setDismissed(true);
   };
 
   return (

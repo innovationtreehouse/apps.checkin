@@ -6,6 +6,7 @@ import { Badge, Button, Card, Group, Stack, Table, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconTrash } from "@tabler/icons-react";
+import { LoadError } from "@checkin/component-ui";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { useConflicts } from "@/hooks/useConflicts";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -19,7 +20,7 @@ import type { AttendanceConflict, ConflictVisit } from "@/lib/attendanceConflict
  */
 export default function ConflictsPage() {
   const { status } = useSession();
-  const { conflicts, refresh } = useConflicts(status === "authenticated");
+  const { conflicts, error, refresh } = useConflicts(status === "authenticated");
   const [deleting, setDeleting] = useState<number | null>(null);
 
   async function resolve(visitId: number) {
@@ -55,13 +56,17 @@ export default function ConflictsPage() {
     });
   }
 
-  if (conflicts === null) return <Text c="dimmed">Loading conflicts…</Text>;
+  const loadError = error && <LoadError what="attendance conflicts" message={error} onRetry={refresh} />;
+
+  if (conflicts === null) return loadError || <Text c="dimmed">Loading conflicts…</Text>;
   if (conflicts.length === 0) {
+    if (loadError) return loadError;
     return <Text c="dimmed">No attendance conflicts. Duplicate or overlapping check-ins would show here.</Text>;
   }
 
   return (
     <Stack>
+      {loadError}
       <Text size="sm" c="dimmed">
         {conflicts.length} participant{conflicts.length === 1 ? "" : "s"} with overlapping visits. Delete the duplicate to leave one clean visit.
       </Text>

@@ -25,6 +25,25 @@ describe("ParticipantEventsDashboard", () => {
         await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/events/10/rsvp", expect.objectContaining({ method: "PATCH" })));
     });
 
+    it("keeps the cards mounted with LoadError above them when a reload fails", async () => {
+        setSession({ id: 1, householdLead: true });
+        const event = { id: 10, name: "Robotics Meet", description: null, startAt: "2026-07-10T18:00:00.000Z", endAt: "2026-07-10T20:00:00.000Z", program: { name: "Robotics Club" }, participant: { id: 100, name: "Kid One" }, rsvp: null };
+        let failReads = false;
+        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+            const isRead = String(input).includes("/api/events/mine");
+            const failed = isRead && failReads;
+            return { ok: !failed, status: failed ? 403 : 200, text: async () => JSON.stringify(failed ? { error: "Forbidden" } : isRead ? [event] : {}), json: async () => ({}) } as Response;
+        }) as unknown as typeof fetch;
+        renderWithProviders(<ParticipantEventsDashboard />);
+
+        expect(await screen.findByText("Robotics Meet")).toBeInTheDocument();
+        failReads = true;
+        fireEvent.click(screen.getByRole("button", { name: "Yes" }));
+
+        expect(await screen.findByText("Couldn't load your events")).toBeInTheDocument();
+        expect(screen.getByText("Robotics Meet")).toBeInTheDocument();
+    });
+
     it("reverts the optimistic RSVP and shows an error toast on a non-OK response", async () => {
         setSession({ id: 1, householdLead: true });
         const event = { id: 10, name: "Robotics Meet", description: null, startAt: "2026-07-10T18:00:00.000Z", endAt: "2026-07-10T20:00:00.000Z", program: { name: "Robotics Club" }, participant: { id: 100, name: "Kid One" }, rsvp: null };
