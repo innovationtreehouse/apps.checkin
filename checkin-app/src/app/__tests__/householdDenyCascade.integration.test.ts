@@ -3,9 +3,9 @@
  */
 /**
  * What a board deny on POST /api/membership-ops/households does beyond the status:
- * trusted-adult access is revoked both ways and audited, program ties and mailing
- * lists go to the board's queue and stay in place, and a restore brings no
- * revoked trusted adult back.
+ * trusted-adult access is revoked both ways and audited, program ties go to the
+ * board's queue and stay in place, and a restore brings no revoked trusted adult
+ * back. A revoke does none of it.
  */
 
 import { POST } from '@/app/api/membership-ops/households/route';
@@ -139,15 +139,14 @@ describe('POST /api/membership-ops/households — deny cascade', () => {
         expect(await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: unrelatedTaId, actorId: boardId } })).toBe(0);
     });
 
-    it('raises enrollments, program roles and mailing lists to the board without removing anything', async () => {
+    it('raises enrollments and program roles to the board without removing anything', async () => {
         const rows = await prisma.paymentException.findMany({
-            where: { personId: { in: personIds }, kind: { in: ['DENIED_HOUSEHOLD_ENROLLMENT', 'DENIED_HOUSEHOLD_PROGRAM_ROLE', 'DENIED_HOUSEHOLD_MAILING_LISTS'] } },
+            where: { personId: { in: personIds }, kind: { in: ['DENIED_HOUSEHOLD_ENROLLMENT', 'DENIED_HOUSEHOLD_PROGRAM_ROLE'] } },
             orderBy: { id: 'asc' },
         });
         expect(rows.map((r) => [r.kind, r.personId, r.programId, r.status])).toEqual([
             ['DENIED_HOUSEHOLD_ENROLLMENT', deniedChildId, programId, 'OPEN'],
             ['DENIED_HOUSEHOLD_PROGRAM_ROLE', deniedLeadId, programId, 'OPEN'],
-            ['DENIED_HOUSEHOLD_MAILING_LISTS', deniedLeadId, null, 'OPEN'],
         ]);
 
         const enrollment = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: deniedChildId } } });
@@ -163,5 +162,25 @@ describe('POST /api/membership-ops/households — deny cascade', () => {
 
         expect(await statuses(ownTaId)).toEqual(['REVOKED']);
         expect(await statuses(elsewhereTaId)).toEqual(['REVOKED']);
+    });
+
+    it('revoking a household\'s membership leaves trusted adults on both sides untouched and raises nothing', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const lead = await person('Revoked Lead', { isHouseholdLead: true });
+        const truster = await person('Revoked Truster', { isHouseholdLead: true });
+        personIds.push(lead.id, truster.id);
+        await prisma.orgMembership.create({ data: { householdId: lead.householdId, status: 'ACTIVE' } });
+        const own = await approvedTrustedAdult(lead.householdId, lead.id, null, 'Grandpa');
+        const elsewhere = await approvedTrustedAdult(truster.householdId, truster.id, lead.id, 'Revoked Lead');
+        await prisma.programParticipant.create({ data: { programId, personId: lead.id, status: 'ACTIVE' } });
+
+        const res = await post({ householdId: lead.householdId, active: false, reason: 'did not pay' });
+        expect(res.status).toBe(200);
+        expect((await prisma.orgMembership.findUnique({ where: { householdId: lead.householdId } }))?.status).toBe('REVOKED');
+
+        expect(await statuses(own.id)).toEqual(['APPROVED']);
+        expect(await statuses(elsewhere.id)).toEqual(['APPROVED']);
+        expect(await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: { in: [own.id, elsewhere.id] } } })).toBe(0);
+        expect(await prisma.paymentException.count({ where: { personId: lead.id } })).toBe(0);
     });
 });

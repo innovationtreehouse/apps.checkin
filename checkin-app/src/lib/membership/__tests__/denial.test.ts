@@ -30,7 +30,6 @@ function fakeTx(opts: {
     const tx = {
         person: {
             findMany: jest.fn().mockResolvedValue([{ id: LEAD }, { id: CHILD }]),
-            findFirst: jest.fn().mockResolvedValue({ id: LEAD }),
         },
         trustedAdult: { findMany: jest.fn().mockResolvedValue(opts.adults) },
         trustedAdultReview: {
@@ -110,7 +109,7 @@ describe('applyHouseholdDenial — trusted adults', () => {
 });
 
 describe('applyHouseholdDenial — board items', () => {
-    it('raises each enrollment, program role and the mailing lists to the board, and removes none of them', async () => {
+    it('raises each enrollment and program role to the board, and removes none of them', async () => {
         const { tx, client } = fakeTx({
             adults: [],
             reviews: [],
@@ -126,9 +125,8 @@ describe('applyHouseholdDenial — board items', () => {
             [client, 'DENIED_HOUSEHOLD_ENROLLMENT', { personId: CHILD, programId: 7, severity: 'CRITICAL' }],
             [client, 'DENIED_HOUSEHOLD_PROGRAM_ROLE', { personId: LEAD, programId: 8, severity: 'CRITICAL' }],
             [client, 'DENIED_HOUSEHOLD_PROGRAM_ROLE', { personId: LEAD, programId: 9, severity: 'CRITICAL' }],
-            [client, 'DENIED_HOUSEHOLD_MAILING_LISTS', { personId: LEAD, programId: null, severity: 'CRITICAL' }],
         ]);
-        expect(outcome.boardItemIds).toHaveLength(4);
+        expect(outcome.boardItemIds).toHaveLength(3);
         for (const write of [
             tx.programParticipant.update, tx.programParticipant.updateMany, tx.programParticipant.delete, tx.programParticipant.deleteMany,
             tx.programVolunteer.delete, tx.programVolunteer.deleteMany,

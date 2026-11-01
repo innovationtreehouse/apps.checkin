@@ -1843,9 +1843,6 @@ enum PaymentExceptionKind {
   DENIED_HOUSEHOLD_ENROLLMENT
   // A denied household's member volunteers on or leads a program. Removed by hand.
   DENIED_HOUSEHOLD_PROGRAM_ROLE
-  // A denied household's people are to come off every mailing list. The app holds
-  // no list membership, so the board does it by hand.
-  DENIED_HOUSEHOLD_MAILING_LISTS
 }
 
 enum PaymentExceptionSeverity {

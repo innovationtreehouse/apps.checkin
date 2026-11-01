@@ -13,8 +13,8 @@
  *   - DENIED never becomes ACTIVE; its only exit is the board's restore to NONE;
  *   - activity that reaches a DENIED household changes nothing and goes to the board
  *     (`raiseDeniedHouseholdActivity`);
- *   - entering DENIED revokes trusted-adult access and lists program ties and mailing
- *     lists for the board (`applyHouseholdDenial`).
+ *   - entering DENIED revokes trusted-adult access and lists program ties for the
+ *     board (`applyHouseholdDenial`); entering REVOKED does neither.
  *
  * Client-safe apart from the lazily-imported raise and denial: Prisma is `import type` only,
  * and the writers take the client as a parameter.

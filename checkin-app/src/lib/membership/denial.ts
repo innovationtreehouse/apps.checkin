@@ -2,8 +2,8 @@
  * What a household's denial does beyond its status, inside the deny's transaction
  * (docs/rules/membership.md, "Activation"):
  *   - trusted-adult access is revoked at once, both directions;
- *   - program ties and mailing lists go to the board's payment-problems queue for
- *     removal by hand. Nothing in that group is removed here.
+ *   - program ties go to the board's payment-problems queue for removal by hand.
+ *     Nothing in that group is removed here.
  *
  * Called only by `setHouseholdStatus`, the one writer of a DENIED status.
  */
@@ -12,7 +12,6 @@ import type { DbClient, TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
 import { recordPaymentException, type PaymentExceptionKind } from "@/lib/finance/reconcile/exceptions";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const DENIAL_REVOKE_REASON = "household denied";
 
@@ -30,7 +29,7 @@ export async function applyHouseholdDenial(tx: TxClient, householdId: number, ac
     const members = await tx.person.findMany({ where: { householdId }, select: { id: true } });
     const memberIds = members.map((m) => m.id);
     const revokedReviewIds = await revokeTrustedAdults(tx, householdId, memberIds, actor);
-    const boardItemIds = await openBoardItems(tx, householdId, memberIds);
+    const boardItemIds = await openBoardItems(tx, memberIds);
     return { revokedReviewIds, boardItemIds };
 }
 
@@ -78,13 +77,15 @@ async function revokeTrustedAdults(tx: TxClient, householdId: number, memberIds:
     return revoked;
 }
 
+const DENIAL_KINDS: PaymentExceptionKind[] = ["DENIED_HOUSEHOLD_ENROLLMENT", "DENIED_HOUSEHOLD_PROGRAM_ROLE"];
+
 type BoardItem = { kind: PaymentExceptionKind; personId: number | null; programId: number | null };
 
 /**
- * One queue row per enrollment, per program role, and one for the household's
- * mailing lists. Programs already finished are left out.
+ * One queue row per enrollment and per program role. Programs already finished
+ * are left out.
  */
-async function openBoardItems(tx: TxClient, householdId: number, memberIds: number[]): Promise<number[]> {
+async function openBoardItems(tx: TxClient, memberIds: number[]): Promise<number[]> {
     const items: BoardItem[] = [];
     if (memberIds.length) {
         const unfinished = { phase: { not: "FINISHED" as const } };
@@ -107,9 +108,6 @@ async function openBoardItems(tx: TxClient, householdId: number, memberIds: numb
         for (const p of programsLed) role(p.leadMentorId, p.id);
         for (const i of instancesLed) role(i.leadMentorId, i.programId);
     }
-    // A household-wide row with no person would dedupe against every other household's.
-    const anchor = await anchorPerson(tx, householdId);
-    if (anchor !== null) items.push({ kind: "DENIED_HOUSEHOLD_MAILING_LISTS", personId: anchor, programId: null });
 
     const opened: number[] = [];
     for (const item of items) {
@@ -119,25 +117,16 @@ async function openBoardItems(tx: TxClient, householdId: number, memberIds: numb
     return opened;
 }
 
-/** The household member a household-wide row is filed under: a live lead first, then any member. */
-async function anchorPerson(tx: TxClient, householdId: number): Promise<number | null> {
-    const order = [{ isHouseholdLead: "desc" as const }, { id: "asc" as const }];
-    const live = await tx.person.findFirst({ where: { householdId, ...LIVE_PERSON }, orderBy: order, select: { id: true } });
-    if (live) return live.id;
-    const any = await tx.person.findFirst({ where: { householdId }, orderBy: order, select: { id: true } });
-    return any?.id ?? null;
-}
-
 /**
- * One board email per denial, pointing at the household's mailing-list row. Call
+ * One board email per denial that left the board program ties to remove. Call
  * after the deny commits; the queue rows are already written by then.
  */
 export async function notifyBoardOfDenial(db: DbClient, householdId: number): Promise<void> {
     const members = await db.person.findMany({ where: { householdId }, select: { id: true } });
     const row = await db.paymentException.findFirst({
-        where: { kind: "DENIED_HOUSEHOLD_MAILING_LISTS", status: { not: "RESOLVED" }, personId: { in: members.map((m) => m.id) } },
+        where: { kind: { in: DENIAL_KINDS }, status: { not: "RESOLVED" }, personId: { in: members.map((m) => m.id) } },
         orderBy: { id: "desc" },
-        select: { id: true },
+        select: { id: true, kind: true },
     });
-    if (row) await notifyBoardPaymentException("DENIED_HOUSEHOLD_MAILING_LISTS", "CRITICAL", row.id);
+    if (row) await notifyBoardPaymentException(row.kind, "CRITICAL", row.id);
 }
