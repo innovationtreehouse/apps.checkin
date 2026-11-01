@@ -52,6 +52,7 @@ interface Gift {
   expenseBooking: string | null;
   inventorySourceKey: string | null;
   inventoryLoadedAt: string | null;
+  inventoryLoadFailureReason: string | null;
   lines: GiftLine[];
   events: GiftEvent[];
 }
@@ -117,7 +118,11 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
   ) : (
     <Alert color="red" title="Goods not loaded into inventory">
       <Group justify="space-between" wrap="nowrap">
-        <Text size="sm">The load for {gift.inventorySourceKey} failed or has not run.</Text>
+        <Text size="sm">
+          {gift.inventoryLoadFailureReason
+            ? `The load for ${gift.inventorySourceKey} failed: ${gift.inventoryLoadFailureReason}`
+            : `The load for ${gift.inventorySourceKey} failed or has not run.`}
+        </Text>
         {canWrite && <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void retry()}>Load again</Button>}
       </Group>
     </Alert>

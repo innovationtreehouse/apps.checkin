@@ -107,6 +107,10 @@ Things the app takes as true because they are handled outside it.
   from the refund case below it undoes nothing by itself.
   [Decision — *Principle: people decide about people*]
 
+- A resolved payment exception reopens only on new evidence, such as a further
+  refund or a new dispute, never because the same condition is seen again.
+  [Decision]
+
 - When the store's refund notice says a program refund put seats back on sale,
   the app removes the enrollment of each person the refund identifies: everyone
   on the order when it returns every seat the order bought, or the person named
@@ -311,6 +315,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   never what the records said.
   A person looking at their own receipts is not recorded, and neither is a
   count. Only the Board reads the record.  [Decision — owner]
+
+- A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
+
+- Looks at a donor from before the finance-view record began are not in it. They
+  stay in the bulk-donation library's own event history, which keeps them, and
+  are not copied across.  [Decision — owner]
 
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
 

@@ -24,7 +24,10 @@ jest.mock('@/lib/membership/review', () => ({
     applicantHousehold: jest.fn().mockResolvedValue(5),
 }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
-jest.mock('@/lib/membership/external', () => ({ advanceExternalIfComplete: jest.fn().mockResolvedValue(null) }));
+jest.mock('@/lib/membership/external', () => ({
+    advanceExternalIfComplete: jest.fn().mockResolvedValue(null),
+    pickUpMissedSignature: jest.fn().mockResolvedValue(undefined),
+}));
 
 const findUnique = jest.mocked(prisma.orgMembershipProcess.findUnique);
 jest.mocked(prisma.$transaction).mockImplementation(((cb: (t: typeof tx) => unknown) => cb(tx)) as unknown as typeof prisma.$transaction);

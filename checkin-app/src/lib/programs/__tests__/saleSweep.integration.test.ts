@@ -16,7 +16,7 @@ jest.mock('@/lib/shopify/stock', () => ({
 jest.mock('@/lib/shopify/client', () => ({
     reportShopifyFailure: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn().mockResolvedValue(1) }));
 
 const TAG = 'Sale Sweep Test';
 const HH = 'Sale Sweep Test HH';
@@ -145,6 +145,79 @@ describe('program sale sweep', () => {
         expect(key).toBe('board.unpaidClaims');
         expect(values).toMatchObject({ programName: expect.stringContaining(`${TAG} unpaid`), names: 'Unpaid Kid' });
         expect((await prisma.program.findUniqueOrThrow({ where: { id: recent.id } })).unpaidClaimsNotifiedAt).toBeNull();
+    });
+
+    describe('unpaid-claims email delivery', () => {
+        const LATER = new Date(NOW.getTime() + DAY_MS);
+
+        async function mkUnpaidProgram(name: string) {
+            const program = await mkProgram(name, { startAt: day('2026-10-01'), saleEndedAt: new Date(NOW.getTime() - 7 * DAY_MS) });
+            const kid = await prisma.person.create({ data: { name: 'Unpaid Kid', email: `${name}-sale-sweep-test@example.com`, household: { create: { name: HH } } } });
+            await prisma.programParticipant.create({ data: { programId: program.id, personId: kid.id, status: 'PENDING' } });
+            return program;
+        }
+        const stampOf = async (id: number) => (await prisma.program.findUniqueOrThrow({ where: { id } })).unpaidClaimsNotifiedAt;
+
+        /** Starts a sweep and returns once its email is in flight, with the call that settles that email. */
+        async function sweepWithEmailInFlight() {
+            let settle!: (delivered: number) => void;
+            emailBoard.mockImplementationOnce(() => new Promise<number>((resolve) => { settle = resolve; }));
+            const sweep = runSaleSweep(NOW);
+            while (emailBoard.mock.calls.length === 0) await new Promise((r) => setTimeout(r, 10));
+            return { sweep, settle };
+        }
+
+        it('leaves the program to retry when no Board member received the email', async () => {
+            const program = await mkUnpaidProgram('failedsend');
+            emailBoard.mockResolvedValueOnce(0);
+
+            const result = await runSaleSweep(NOW);
+
+            expect(result).toMatchObject({ unpaidNotified: 0 });
+            expect(await stampOf(program.id)).toBeNull();
+        });
+
+        it('sends again after a failure, then stamps once and stops', async () => {
+            const program = await mkUnpaidProgram('retrysend');
+            emailBoard.mockResolvedValueOnce(0);
+            await runSaleSweep(NOW);
+
+            const retried = await runSaleSweep(LATER);
+            await runSaleSweep(new Date(LATER.getTime() + DAY_MS));
+
+            expect(emailBoard).toHaveBeenCalledTimes(2);
+            expect(retried).toMatchObject({ unpaidNotified: 1 });
+            expect(await stampOf(program.id)).toEqual(LATER);
+        });
+
+        it('sends once when two sweeps overlap and the send succeeds', async () => {
+            const program = await mkUnpaidProgram('overlapok');
+            const { sweep, settle } = await sweepWithEmailInFlight();
+
+            await runSaleSweep(NOW);
+            expect(emailBoard).toHaveBeenCalledTimes(1);
+
+            settle(1);
+            await sweep;
+            expect(emailBoard).toHaveBeenCalledTimes(1);
+            expect(await stampOf(program.id)).toEqual(NOW);
+        });
+
+        it('sends once when two sweeps overlap and the send fails, and the next sweep retries', async () => {
+            const program = await mkUnpaidProgram('overlapfail');
+            const { sweep, settle } = await sweepWithEmailInFlight();
+
+            await runSaleSweep(NOW);
+            expect(emailBoard).toHaveBeenCalledTimes(1);
+
+            settle(0);
+            await sweep;
+            expect(emailBoard).toHaveBeenCalledTimes(1);
+
+            await runSaleSweep(LATER);
+            expect(emailBoard).toHaveBeenCalledTimes(2);
+            expect(await stampOf(program.id)).toEqual(LATER);
+        });
     });
 
     it('does not put a withdrawn held seat back on sale after the sale ended', async () => {

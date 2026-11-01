@@ -67,10 +67,11 @@ export function getServices(): ReturnType<typeof buildServices> {
   return services;
 }
 
-/** What the host binds its inventory crossings to: stock applied once per receipt or donation. */
-export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonation"> = {
+/** What the host binds its inventory crossings to: stock applied once per receipt or donation, and why a donation's apply failed. */
+export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonation" | "donationFailureReason"> = {
   applyReceipt: (...args) => getServices().receiptService.applyReceipt(...args),
   applyDonation: (...args) => getServices().receiptService.applyDonation(...args),
+  donationFailureReason: (...args) => getServices().receiptService.donationFailureReason(...args),
 };
 
 /** The host nav's pill counts for the current org: open receive-queue lines. */

@@ -101,6 +101,7 @@ export const classifications = {
         zohoEnvelopeId: 'internal',
         zohoActionId: 'internal',
         zohoSignerPersonId: 'internal',
+        zohoClaimedAt: 'internal',
         contractSignedAt: 'internal',
         agreementVersion: 'internal',
         bgConsentAt: 'internal',
@@ -499,6 +500,7 @@ export const classifications = {
         resolvedAt: 'internal',
         resolutionNote: 'personal',
         detectedAt: 'internal',
+        evidence: 'internal',
     },
     BulkSend: {
         id: 'internal',

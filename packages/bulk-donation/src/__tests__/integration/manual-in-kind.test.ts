@@ -45,6 +45,7 @@ beforeEach(async () => {
         if (applyFails) throw new Error("inventory down");
         applied.push(delta);
       },
+      failureReason: async () => null,
     },
   });
 });

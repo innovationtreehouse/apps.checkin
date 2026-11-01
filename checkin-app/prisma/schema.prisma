@@ -162,10 +162,10 @@ model Person {
   /// leads/household enforced at write, not in schema. @sensitivity:public
   isHouseholdLead Boolean @default(false)
 
-  /// Provenance: when this record was merged into another Person, the surviving
-  /// Person.id. Null == a live record. Set once by the merge route; the row is
-  /// tombstoned, never deleted. Drives the double-merge CAS guard and the
-  /// live-person filter (lib/person/filters.ts). @sensitivity:internal
+  /// Provenance: the surviving Person.id of a merged-away record. Null == a live
+  /// record. A merge sets it and then deletes the row, leaving a PersonMerge
+  /// archive; only older merged-away rows still carry it. Drives the double-merge
+  /// CAS guard and the live-person filter (lib/person/filters.ts). @sensitivity:internal
   mergedIntoId Int?
   // Label is "PersonTombstone" because "PersonMerge" would collide with the model
   // of that name. Code-only: a named self-relation emits no SQL artifact — the
@@ -501,6 +501,8 @@ enum TrustedAdultReviewStatus {
   DENIED
   EXPIRED
   REVOKED
+  // A later review on the same adult was approved in its place. Nothing writes it yet.
+  SUPERSEDED
 }
 
 enum TrustedAdultDecisionKind {
@@ -568,6 +570,11 @@ model OrgMembershipProcess {
   /// @sensitivity:internal
   zohoSignerPersonId    Int?
   zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
+  /// When zohoSignerPersonId last claimed this process to create a Zoho request.
+  /// Identifies the claim: only its holder stores ids, and it can be taken over
+  /// once old enough that its holder must be gone.
+  /// @sensitivity:internal
+  zohoClaimedAt         DateTime?
   /// @sensitivity:internal
   contractSignedAt      DateTime?
   /// The BoardSettings.keyVolunteerAgreementVersion a KEY_VOLUNTEER_AGREEMENT
@@ -1902,6 +1909,10 @@ model PaymentException {
   resolutionNote       String?
   /// @sensitivity:internal
   detectedAt           DateTime                 @default(now())
+  /// What the daily pass last saw on the order, e.g. refunded total. A resolved row
+  /// reopens only when this changes.
+  /// @sensitivity:internal
+  evidence             String?
 
   // Idempotent re-detection: one row per (kind, order, person), so every person on
   // a multi-person order gets their own row. Two partial unique indexes in raw SQL

@@ -18,6 +18,11 @@ function classifyReversal(o: MirrorOrder, disputed: boolean): PaymentExceptionKi
     return null;
 }
 
+/** The same string for every reversal kind, so a further refund on a cancelled or disputed order still reads as new. */
+function reversalEvidence(o: MirrorOrder, disputes: number): string {
+    return `refunded=${o.totalRefundedCents};disputes=${disputes};cancelled=${o.cancelledAt?.toISOString() ?? ""}`;
+}
+
 /** A refunded order line Shopify put back in stock (refund_line_items with a restock_type other than no_restock). */
 export interface RestockedLine {
     variantId: string;
@@ -365,7 +370,7 @@ export async function reconcileReversals(): Promise<number> {
 
     const orders = await mirror.ordersByLegacyIds([...new Set(orderIds)]);
     const byLegacy = new Map(orders.map((o) => [o.legacyId ?? "", o]));
-    const disputed = await mirror.disputedOrderGids(orders.map((o) => o.orderGid));
+    const disputes = await mirror.orderDisputeCounts(orders.map((o) => o.orderGid));
 
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
@@ -378,7 +383,7 @@ export async function reconcileReversals(): Promise<number> {
     const isVolunteerFamilyById = new Map(members.map((m) => [m.id, m.isVolunteerFamily]));
     const unreversedMembershipGids = procs
         .map((p) => byLegacy.get(p.shopifyOrderId!))
-        .filter((o): o is MirrorOrder => !!o && !classifyReversal(o, disputed.has(o.orderGid)))
+        .filter((o): o is MirrorOrder => !!o && !classifyReversal(o, disputes.has(o.orderGid)))
         .map((o) => o.orderGid);
     const membershipVariants = new Set((await membershipVariantYears(settings ?? null, new Date())).keys());
     const droppedMembership = await ordersDroppingMembershipLine([...new Set(unreversedMembershipGids)], membershipVariants);
@@ -387,7 +392,7 @@ export async function reconcileReversals(): Promise<number> {
     for (const proc of procs) {
         const o = byLegacy.get(proc.shopifyOrderId!);
         if (!o) continue; // pre-cutover / not yet mirrored — can't judge.
-        let kind = classifyReversal(o, disputed.has(o.orderGid));
+        let kind = classifyReversal(o, disputes.has(o.orderGid));
         // Judged by item, never by total (docs/rules/revenue.md).
         if (!kind && droppedMembership.has(o.orderGid)) {
             logger.warn(`[reconcile] activated order ${proc.shopifyOrderId} no longer carries the membership item (process ${proc.id})`);
@@ -406,7 +411,8 @@ export async function reconcileReversals(): Promise<number> {
             const reversed = kind !== "AMOUNT_MISMATCH" && kind !== "DISCOUNT_UNAUTHORIZED";
             if (reversed) await recordReversal(proc.shopifyOrderId!, kind);
             const waiting = reversed && proc.status === "PENDING_BG_CLEARANCE";
-            await raisePaymentException(kind, { shopifyOrderId: proc.shopifyOrderId, processId: proc.id, ...(waiting ? { severity: "CRITICAL" as const } : {}) });
+            const evidence = reversed ? reversalEvidence(o, disputes.get(o.orderGid) ?? 0) : undefined;
+            await raisePaymentException(kind, { shopifyOrderId: proc.shopifyOrderId, processId: proc.id, evidence, ...(waiting ? { severity: "CRITICAL" as const } : {}) });
             raised++;
         }
     }
@@ -418,9 +424,9 @@ export async function reconcileReversals(): Promise<number> {
         // when the money moved (webhook / forward pass), and this loop has no bound on
         // time — re-deriving it from live household state would raise a fresh flag on
         // every past member-priced order the morning after an ordinary deactivation.
-        const kind = classifyReversal(o, disputed.has(o.orderGid));
+        const kind = classifyReversal(o, disputes.has(o.orderGid));
         if (kind) {
-            await raisePaymentException(kind, { shopifyOrderId: e.shopifyOrderId, programId: e.programId, personId: e.personId });
+            await raisePaymentException(kind, { shopifyOrderId: e.shopifyOrderId, programId: e.programId, personId: e.personId, evidence: reversalEvidence(o, disputes.get(o.orderGid) ?? 0) });
             raised++;
         } else {
             unreversed.set(e.shopifyOrderId!, o);
@@ -490,7 +496,7 @@ async function raiseUnderSeatedOrders(
         const seats = orderLines.filter((l) => variants.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
         if (seats >= personIds.length) continue;
         logger.warn(`[reconcile] program order ${orderId} pays for ${seats} seat(s) of program ${programId} but ${personIds.length} people hold them — raised, nobody removed`);
-        await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: orderId, programId, personId: Math.min(...personIds) });
+        await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: orderId, programId, personId: Math.min(...personIds), evidence: `seats=${seats}` });
         raised++;
     }
     return raised;
