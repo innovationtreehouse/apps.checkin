@@ -10,6 +10,7 @@ import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/l
 import { PaymentError } from "@/lib/membership/payment";
 import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { notifyBoardOfDenial } from "@/lib/membership/denial";
 import { personActor } from "@/lib/auditActor";
 import { closeForRestore, lockOpenApplications } from "@/lib/membership/archive";
 import { ReviewError } from "@/lib/membership/review";
@@ -320,6 +321,7 @@ export const POST = withAuth(
                 if (outcome === "notApplied") {
                     return apiError(deny ? "This household is already denied." : "Only a denied household can be restored.", 409);
                 }
+                if (deny) await notifyBoardOfDenial(prisma, householdId);
                 return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: outcome } }) });
             }
 

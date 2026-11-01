@@ -327,6 +327,19 @@ Procedure below is built on them.
   payment-problems queue with an email. Any other board action on a denied
   household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
 
+- Denying a household revokes trusted-adult access in the same act, both ways;
+  `people-households.md` (Trusted adults) states it. Nothing else the household
+  holds is removed by the denial. Each program enrollment, pending or active, and
+  each program role, volunteer or lead, held by one of its members in a program
+  not yet finished goes to the board's payment-problems queue for removal by hand,
+  so the board can speak to the program's leaders first. The board gets one email
+  per denial that leaves it something to remove.  [Decision — *Principle: people decide about people*]
+
+- Revoking a household's membership does none of this: its trusted adults, its
+  members' trusted-adult authorisations and its program ties are left as they
+  are, and nothing goes to the board. A revocation is usually a lapse, not a
+  safeguarding matter.  [Decision]
+
 - A denied household is sent no outreach. Denial is checked again as each
   message goes out.  [Decision]
 

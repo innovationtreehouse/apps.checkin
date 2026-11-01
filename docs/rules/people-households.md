@@ -324,6 +324,15 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
+- Denying a household's membership revokes, at once and in the same act, every
+  review not already revoked or denied — approved, open or expired — on the
+  household's own trusted adults, and on any other household's trusted adult who
+  is a member of the denied household. A review the board already denied stays
+  denied. Each revocation is audited
+  with the person who denied and the reason "household denied". Restoring the
+  household brings none back. Revoking a household's membership revokes no
+  trusted adult.  [Decision]
+
 - An approval lasts a year. The family is warned a month out and resubmits
   without re-entering what the board already holds.  [Decision]
 
