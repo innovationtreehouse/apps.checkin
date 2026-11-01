@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -52,6 +52,10 @@ class FakeQbo {
   duringByIdRead: (() => Promise<void>) | null = null;
   /** Runs after a created-since read has its answer, so what lands meanwhile is not in it. */
   afterSinceRead: (() => Promise<void>) | null = null;
+  /** Runs after a dated JournalEntry read has its answer, while the post is between its claim and its settle. */
+  afterJournalRead: (() => Promise<void>) | null = null;
+  /** Runs after a create lands and before its answer, while the post is between its claim and its settle. */
+  afterCreate: (() => Promise<void>) | null = null;
   private nextId = 9000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -79,6 +83,7 @@ class FakeQbo {
       if (!m) throw new Error(`unexpected query ${query}`);
       const all: { TxnDate: string }[] = m[1] === "JournalEntry" ? this.journals : m[1] === "Deposit" ? this.deposits : this.purchases;
       const list = all.filter((e) => e.TxnDate >= m[2] && e.TxnDate <= m[3]);
+      if (m[1] === "JournalEntry") await this.afterJournalRead?.();
       return json({ QueryResponse: list.length ? { [m[1]]: list } : {} });
     }
     if (!url.pathname.endsWith("/journalentry")) throw new Error(`unexpected write ${url.pathname}`);
@@ -89,6 +94,7 @@ class FakeQbo {
     const TotalAmt = body.Line.filter((l) => l.JournalEntryLineDetail.PostingType === "Debit").reduce((s, l) => s + Math.round(l.Amount * 100), 0) / 100;
     this.journals.push({ Id, TxnDate: body.TxnDate, TotalAmt, PrivateNote: body.PrivateNote });
     this.createTimes.set(Id, new Date());
+    await this.afterCreate?.();
     if (this.dropAfterCreate) throw new Error("socket hang up");
     return json({ JournalEntry: { Id } });
   };
@@ -390,6 +396,54 @@ describeDb("in-kind drain", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
     expect(qbo.posts).toHaveLength(1);
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+  });
+
+  describe("a post that loses its claim", () => {
+    const loseClaim = (id: number, claimedAt: Date) => db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } }, data: { claimedAt } });
+
+    it("leaves no note when the post that took over linked the same entry", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.afterCreate = async () => {
+        qbo.afterCreate = null;
+        await loseClaim(id, new Date(Date.now() - STALE_CLAIM_MS - 1000));
+        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, waiting: 1 });
+
+      expect(qbo.posts).toHaveLength(1);
+      expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+      expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbNote: null });
+    });
+
+    it("leaves no note for an entry it found rather than created", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.journals.push({ Id: "9100", TxnDate: "2026-10-20", TotalAmt: 33, PrivateNote: `[checkin:${inKindKey(orgId, "receipt", id)}]` });
+      qbo.afterJournalRead = async () => {
+        qbo.afterJournalRead = null;
+        await loseClaim(id, new Date(0));
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1 });
+
+      expect(qbo.posts).toHaveLength(0);
+      expect((await posting(id)).qbNote).toBeNull();
+    });
+
+    it("notes an entry it created that the gift does not hold", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.afterCreate = async () => {
+        await loseClaim(id, new Date(0));
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1 });
+
+      expect(await bookings(id)).toEqual([]);
+      expect((await posting(id)).qbNote).toMatch(/JournalEntry 9000 was created by a post that lost its claim/);
+    });
   });
 
   it("the daily sweep notes an app entry its gift does not hold", async () => {
