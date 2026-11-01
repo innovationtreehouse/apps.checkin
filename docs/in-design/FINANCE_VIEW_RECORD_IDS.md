@@ -61,8 +61,14 @@ mechanism lands, it needs these entries:
   `id`, on the same condition. Member ids are receipts too, so they could link
   to `/receipts/<id>` as a list does.
 - `GET /api/income/items` → falls under the `payouts` kind by its `/api/income`
-  prefix, so the tab reads "viewed 40 payout records". A variant has no page of
-  its own.
+  prefix, so the tab reads "viewed 40 payout records". "Payout record" means a
+  Shopify payout only (decided below), so items need a kind of their own. A
+  variant has no page of its own. The same prefix also labels two other
+  non-payout audited reads as payout records: `GET /api/income/qb-exclusions`
+  (QuickBooks transactions excluded from matching) and
+  `GET /api/income/reconciliation/[id]/candidates` (QuickBooks deposits offered
+  as a match). The payout routes are `GET /api/income/payouts`,
+  `GET /api/income/payouts/[gid]` and `GET /api/income/reconciliation`.
 - `GET /api/finance-ops/payment-plans` → the `payments` kind. Its ids are
   `programId:personId` (decided below), so the tab and the search take that
   format, and the tab needs a page to link it to, if any.
@@ -165,6 +171,9 @@ ids are nested in one group row. Which one is Q1.
   `dismissed`, as well as the receipt in the path.  [Decision — owner]
 - **Signoffs record the expense in the path, not its lines.** One id, the
   expense's; the line ids the response carries are not recorded.  [Decision — owner]
+- **Income items stay an audited read.**  [Decision — owner]
+- **"Payout record" means a payout from Shopify, and nothing else.** No other
+  income read is labelled a payout record on the Board's tab.  [Decision — owner]
 
 ## Open questions for @thpr
 
@@ -176,9 +185,10 @@ ids are nested in one group row. Which one is Q1.
   `params`, app code only, unindexed)?
 - **Q2.** **Payment plans' `BoardSettings`.** Should it stop counting as a row and
   being recorded as id `"1"`?
-- **Q5.** **Income items.** A variant's bucket mapping is not a payout. Should
-  `GET /api/income/items` stay an audited read, and if so, under which kind
-  label in the Board's tab?
+- **Q5.** **Income kind labels.** Which label does the Board's tab give
+  `GET /api/income/items` (a Shopify variant and its bucket), and the two
+  QuickBooks reads under `/api/income` (`qb-exclusions` and reconciliation
+  `candidates`)?
 - **Q6.** **Sibling keys on other audited routes.** Should the count exclude rows that
   are not records (such as `ExpenseQueueReason` on the expense detail), or is
   that a separate change?
