@@ -312,6 +312,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   A person looking at their own receipts is not recorded, and neither is a
   count. Only the Board reads the record.  [Decision — owner]
 
+- A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
+
+- Looks at a donor from before the finance-view record began are not in it. They
+  stay in the bulk-donation library's own event history, which keeps them, and
+  are not copied across.  [Decision — owner]
+
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
 
 - A gift of money goes to a program or fund, or is general Treehouse money. One
