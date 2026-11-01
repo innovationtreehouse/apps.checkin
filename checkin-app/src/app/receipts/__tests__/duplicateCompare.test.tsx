@@ -235,7 +235,24 @@ describe("a suspected duplicate's detail page", () => {
     expect(screen.getByText("The suspected original is not loaded.")).toBeInTheDocument();
     expect(screen.getByText("The original's file is not loaded.")).toBeInTheDocument();
     expect(screen.getByRole("figure", { name: "This receipt's file" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Not this one" })).toBeInTheDocument();
+  });
+
+  it("offers a retry and no group decision when the original cannot be loaded", () => {
+    mockLoads["/r0"] = null;
+    mockErrors["/r0"] = "Receipt not found";
+    wrap();
+    for (const name of ["Not this one", "Different purchases", "Keep this one"]) expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(screen.getByText(/Receipt not found/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(mockReload).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+  });
+
+  it("offers no decision on the match until the original has loaded", () => {
+    mockLoads["/r0"] = null;
+    wrap();
+    for (const name of ["Not this one", "Different purchases", "Keep this one", "Retry"]) expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(screen.getByText("Loading the suspected original…")).toBeInTheDocument();
   });
 
   it("links the original once the flag is cleared", () => {
