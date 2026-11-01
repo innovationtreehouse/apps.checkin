@@ -137,7 +137,6 @@ export function withAuth<Ctx = unknown>(
     options: {
         roles?: BusinessRole[];
         allowKiosk?: boolean;
-        allowJoinPending?: boolean;
     },
     handler: (req: NextRequest, auth: AuthResult, ctx: Ctx) => Promise<NextResponse>
 ) {
@@ -152,7 +151,7 @@ export function withAuth<Ctx = unknown>(
     // (a subtype) at runtime, and the inner handler keeps its NextRequest typing.
     return async (req: Request, ctx?: Ctx) => {
         const nreq = req as NextRequest;
-        const auth = await authenticateRequest(nreq, undefined, { allowJoinPending: options.allowJoinPending });
+        const auth = await authenticateRequest(nreq);
 
         if (auth.type === 'unauthenticated') {
             return apiError('Unauthorized', 401);
