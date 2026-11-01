@@ -3,7 +3,7 @@
  */
 import { it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
-import { reapStaleRuns, DEFAULT_STALE_RUN_MS } from "../../src/sync/run.js";
+import { reapStaleRuns } from "../../src/sync/run.js";
 import { SyncKind, SyncStatus } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
 
@@ -29,7 +29,7 @@ describeDb("reapStaleRuns", () => {
     const recent = await mkRun(SyncStatus.RUNNING, new Date()); // just now
     const done = await mkRun(SyncStatus.COMPLETED, new Date(Date.now() - 60 * 60 * 1000));
 
-    const count = await reapStaleRuns(prisma, DEFAULT_STALE_RUN_MS);
+    const count = await reapStaleRuns(prisma);
     expect(count).toBe(1);
 
     const oldRow = await prisma.syncRun.findUnique({ where: { id: old.id } });
@@ -44,6 +44,6 @@ describeDb("reapStaleRuns", () => {
 
   it("is a no-op when nothing is stale", async () => {
     await mkRun(SyncStatus.RUNNING, new Date());
-    expect(await reapStaleRuns(prisma, DEFAULT_STALE_RUN_MS)).toBe(0);
+    expect(await reapStaleRuns(prisma)).toBe(0);
   });
 });

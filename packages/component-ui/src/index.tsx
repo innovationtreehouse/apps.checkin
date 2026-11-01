@@ -1,9 +1,9 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
-import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, scheduleRetry } from "./loadCache";
+import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
 
 export { invalidateLoads };
 
@@ -78,15 +78,16 @@ export async function request<T>(url: string, { invalidate = true, ...options }:
   return data as T;
 }
 
+/** The text a person sees for a failure: the route's words, or fixed text for anything else, never exception text. */
 export function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : "Error";
+  return e instanceof HttpError ? e.message : "Something went wrong. Try again.";
 }
 
 export interface Loaded<T> {
   data: T | null;
   /** Null while the first answer for this path is awaited or a retry is pending. */
   error: string | null;
-  /** The first answer for this path is awaited; `data` may still hold the previous path's rows. */
+  /** The first answer for this path is awaited; with `keepPrevious`, `data` may still hold the previous path's rows. */
   loading: boolean;
   /** The last read failed and another attempt is coming. */
   retrying: boolean;
@@ -123,8 +124,10 @@ export function createClient(base: string) {
   /**
    * Load `path` on mount and on reload(); null loads nothing. The key is the resolved URL because the
    * cache is shared across libraries. A network failure or 5xx retries unless `retry` is false.
+   * A new path starts at null, so one parent's rows never show with another's buttons. `keepPrevious`
+   * is for a pager or search box, whose rows each act on their own id; it never keeps an empty list.
    */
-  function useLoad<T>(path: string | null, { retry = true }: { retry?: boolean } = {}): Loaded<T> {
+  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false }: { retry?: boolean; keepPrevious?: boolean } = {}): Loaded<T> {
     const url = path === null ? null : resolve(path);
     useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
     const swr = useSWR<T, LoadFailure>(
@@ -138,12 +141,15 @@ export function createClient(base: string) {
         revalidateOnFocus: false,
         revalidateOnReconnect: true,
         dedupingInterval: 5000,
-        keepPreviousData: true,
         onErrorRetry: (failure, key, _config, revalidate, options) => {
           if (failure.retrying) scheduleRetry(key, 2000 * 2 ** (failure.attempt - 1), () => revalidate(options));
         },
       },
     );
+    const generation = loadGeneration();
+    const [kept, setKept] = useState<{ data: T; generation: number } | null>(null);
+    if (keepPrevious && swr.data !== undefined && kept?.data !== swr.data) setKept({ data: swr.data, generation });
+    const previous = keepPrevious && url !== null && kept?.generation === generation && !(Array.isArray(kept.data) && kept.data.length === 0) ? kept.data : null;
     const retrying = swr.error?.retrying ?? false;
     const status = swr.error?.status ?? null;
     const onSessionExpired = useContext(SessionExpiredContext);
@@ -153,7 +159,7 @@ export function createClient(base: string) {
     const { mutate } = swr;
     const reload = useCallback(() => { void mutate(); }, [mutate]);
     return {
-      data: swr.data ?? null,
+      data: swr.data !== undefined ? swr.data : previous,
       error: swr.error && !retrying ? swr.error.message : null,
       loading: swr.isLoading && !retrying,
       retrying,

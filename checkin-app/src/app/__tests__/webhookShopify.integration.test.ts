@@ -79,7 +79,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         p2 = b.id;
 
-        // Route now checks the order's line items against BoardSettings'
+        // The route checks the order's line items against BoardSettings'
         // configured membership variant id(s) — seed one so the routing test
         // below can prove a matching order activates.
         restoreBoardSettings = await snapshotBoardSettings();
@@ -251,7 +251,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     });
 
     it('does NOT activate a PENDING participant when the paid order does not contain the program\'s Shopify variant (fails closed)', async () => {
-        // The core regression test: note_attributes alone (CheckMeIn_Account_ID /
+        // The core guard: note_attributes alone (CheckMeIn_Account_ID /
         // Program_ID) are customer-controlled and must NOT be enough to activate —
         // the order's line_items have to actually contain the program's variant.
         // Here they carry an unrelated (cheaper) variant instead.
@@ -609,7 +609,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
-        // H2: whether the order actually contains the configured membership variant
+        // Whether the order actually contains the configured membership variant
         // is forwarded so activate() can enforce it.
         expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', { appliesToYear: null });
     });

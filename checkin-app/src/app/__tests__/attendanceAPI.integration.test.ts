@@ -161,7 +161,7 @@ describe('General Attendance API Integration Tests', () => {
              expect(data.access).toBe('full');
              expect(data.counts).toBeDefined();
              expect(data.counts.total).toBeGreaterThanOrEqual(2);
-             // email is deliberately not returned on this route (M1 PII minimization) —
+             // email is deliberately not returned on this route (PII minimization) —
              // assert on name, the field the response actually carries.
              const names = data.attendance.map((v: { participant: { name: string } }) => v.participant.name);
              expect(names).toContain('Common');
@@ -195,7 +195,7 @@ describe('General Attendance API Integration Tests', () => {
         });
     });
 
-    // ── ops-stg ACCESS GATE regression (Finding 2, 2026-07-20) ──────────────────
+    // ── ops-stg ACCESS GATE ─────────────────────────────────────────────────────
     // This route re-verifies kiosk auth DIRECTLY via verifyKioskSignature rather
     // than through authenticateRequest — the one place that happens outside the
     // chokepoint. Without the explicit gate check ahead of that branch, a caller

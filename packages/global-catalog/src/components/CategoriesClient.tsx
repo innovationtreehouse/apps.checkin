@@ -52,8 +52,7 @@ export default function CategoriesClient() {
   if (showArchivedSubs) subParams.set("includeArchived", "true");
   const subsLoad = useLoad<SubcategoryRow[]>(selectedCat ? `/subcategories?${subParams}` : null);
   const subcategories = subsLoad.data ?? [];
-  // A retry keeps the previous category's rows in `data`, and their buttons would act on that category.
-  const subsLoading = subsLoad.loading || subsLoad.retrying || subsLoad.data === null;
+  const subsLoading = subsLoad.data === null;
 
   async function handleCatSubmit(e: React.FormEvent) {
     e.preventDefault();

@@ -3,7 +3,7 @@
  */
 /**
  * Integration tests for the person-scoped PERSON_BG_NEEDED / DOB_MISSING buckets
- * of GET /api/membership-audit/compliance (Phase 1, warn-only). Asserts a ≥18
+ * of GET /api/membership-audit/compliance (warn-only). Asserts a ≥18
  * non-fresh program participant / volunteer / lead surfaces, under-18 and fresh
  * people are omitted, a program volunteer with no membership still appears in the
  * person-level list, and a missing-DOB person lands in the data-hygiene bucket.

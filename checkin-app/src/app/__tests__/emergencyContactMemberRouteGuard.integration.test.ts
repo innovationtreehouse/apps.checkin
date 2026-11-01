@@ -153,7 +153,7 @@ describe("PATCH /api/household — Direction B: adding a member that collides wi
 
     it("surfaces the reconcile warning in the 200 body and flags the contact invalid", async () => {
         asUser(leadId);
-        // memberOver25 is required (#606, require member age) or the route 400s
+        // memberOver25 is required or the route 400s
         // before ever reaching the reconcile-warning path under test here.
         const res = await PATCH_HOUSEHOLD(householdReq({ memberName: "Grandma Ext", memberOver25: true }));
         expect(res.status).toBe(200);

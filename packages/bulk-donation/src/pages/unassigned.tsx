@@ -10,7 +10,7 @@ import type { GiftRow } from "./transactions";
 export default function UnassignedPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
-  const gifts = useLoad<GiftRow[]>(paged("/transactions/unassigned", page));
+  const gifts = useLoad<GiftRow[]>(paged("/transactions/unassigned", page), { keepPrevious: true });
   const owners = useOwners();
   const [choice, setChoice] = useState<Record<number, string | null>>({});
   const [applyRule, setApplyRule] = useState<Record<number, boolean>>({});

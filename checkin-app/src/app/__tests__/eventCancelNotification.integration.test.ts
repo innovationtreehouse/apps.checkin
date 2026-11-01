@@ -5,7 +5,7 @@
  * Characterization test for PATCH /api/events/[id] action 'cancel'.
  *
  * eventCancelRollback proves the cancel transaction is atomic, but nothing pins
- * whether cancelling an event NOTIFIES its RSVP'd attendees. As of this commit it
+ * whether cancelling an event NOTIFIES its RSVP'd attendees. It
  * does NOT: the cancel path (src/app/api/events/[id]/route.ts) only deletes the
  * RSVPs, nulls visit links, and deletes the event — the route imports no email /
  * notification helper at all. This test documents that deliberate gap: if someone

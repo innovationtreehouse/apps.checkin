@@ -176,7 +176,7 @@ describe('Program Participants API Integration Tests', () => {
         // Create mock programs
         const standardProgram = await prisma.program.create({
             // Priced programs carry a variant — a priced one without it is
-            // checkout-broken and the route now refuses payment-bound enrollment.
+            // checkout-broken and the route refuses payment-bound enrollment.
             data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Standard Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), leadMentorId: leadId, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: 'dev-mock-variant-standard-partic' }
         });
         standardProgramId = standardProgram.id;
@@ -544,7 +544,7 @@ describe('Program Participants API Integration Tests', () => {
         // Mirror the scholarship / cap-edit Shopify-failure discipline: the DB
         // change stands, the failure is surfaced as a warning (adjustProgramInventory
         // has already logged + emailed sysadmins), and the board reconciles. A comp
-        // that half-commits (enrollment rolled back) would be worse than the original gap.
+        // that half-commits (enrollment rolled back) would be worse than the stock drift.
         //
         // Real failure, no mock: with the Shopify mock OFF (env not `local`) and no
         // SHOPIFY_STORE_DOMAIN/credentials configured, adjustProgramInventory returns
@@ -598,8 +598,8 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
-        // The three read routes only HIDE an orgMemberOnly program; POSTing the id
-        // directly used to enroll a non-member outright.
+        // The three read routes only HIDE an orgMemberOnly program; the POST gate must
+        // refuse a non-member who posts the id directly.
         it('should block a non-member from self-enrolling into a members-only program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
 
@@ -635,7 +635,7 @@ describe('Program Participants API Integration Tests', () => {
              expect(data.enrollment.personId).toBe(memberId);
         });
 
-        // #1397: the write gate must admit exactly who the read gates show the
+        // The write gate must admit exactly who the read gates show the
         // program to — a household whose membership fee is paid and whose background check
         // is still with the board sees this program, so it must be able to enroll.
         it('should allow a household that has paid but is awaiting background clearance', async () => {
@@ -851,7 +851,7 @@ describe('Program Participants API Integration Tests', () => {
              const data = await res.json();
              expect(data.success).toBe(true);
              // The response must NOT echo the deleted row: it reaches the lead
-             // mentor and carries confidential hardship fields (see #930 review).
+             // mentor and carries confidential hardship fields.
              expect(data.enrollment).toBeUndefined();
              const row = await prisma.programParticipant.findUnique({
                  where: { programId_personId: { programId: standardProgramId, personId: commonId } },
@@ -1176,7 +1176,7 @@ describe('Program Participants API Integration Tests', () => {
         // Removing an ACTIVE seat frees the room but does NOT auto-restock
         // Shopify (paid/comped seats are only put back on sale by a human). The
         // route returns an advisory `notice` and fires NO +1 — the staffer
-        // decides whether to restock. Staff-only (#1519): only sysadmin/board
+        // decides whether to restock. Staff-only: only sysadmin/board
         // can actually act on the notice in Shopify.
         it('advises (notice) on ACTIVE removal from a capped Shopify program when staff removes, and does NOT +1', async () => {
             const prevCheckinEnv = process.env.CHECKIN_ENV;
@@ -1279,7 +1279,7 @@ describe('Program Participants API Integration Tests', () => {
 
         // Removing a place returns its seat (+1) only when the app recorded taking it
         // without a sale. A comp or approval with no record (its -1 failed, or it
-        // joined while the program was free) and a paid place (B8) return nothing.
+        // joined while the program was free) and a paid place return nothing.
         it.each([
             ['comped/approved with its -1 recorded', null, new Date(), true],
             ['comped/approved with no -1 recorded', null, null, false],
@@ -1324,7 +1324,7 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
-        // #1519: the lead mentor is authorized to remove the participant (same
+        // The lead mentor is authorized to remove the participant (same
         // seat-freeing outcome as staff above), but can't act on Shopify
         // inventory, so the advisory must not reach them.
         it('does NOT advise (no notice) on ACTIVE removal from a capped Shopify program when the lead mentor removes', async () => {
@@ -1366,7 +1366,7 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
-        // #1519: same for self-removal (e.g. a parent withdrawing themselves via
+        // Same for self-removal (e.g. a parent withdrawing themselves via
         // the public program page) — authorized to free the seat, but not to act
         // on Shopify inventory.
         it('does NOT advise (no notice) on ACTIVE removal from a capped Shopify program on self-removal', async () => {

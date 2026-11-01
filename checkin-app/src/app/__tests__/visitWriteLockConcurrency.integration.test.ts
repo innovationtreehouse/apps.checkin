@@ -2,17 +2,17 @@
  * @jest-environment node
  */
 /**
- * Concurrency regression tests for the visit-write paths that do a
+ * Concurrency tests for the visit-write paths that do a
  * read-then-write on Visit: PATCH /api/events/[id] (manualEditAttendance),
  * DELETE /api/facility/visits, and POST /api/my-programs/conflicts/resolve.
  *
- * With nothing serializing them a concurrent writer could invalidate the
- * pre-check before the write landed: two Present marks on different events both
- * saw "no open visit" and both created one (P2002 on
- * Visit_one_open_per_participant → 500), two deletes both saw the row live and
- * both tombstoned it, and two conflict resolutions each saw the other half of
- * the overlap still live and tombstoned both, erasing the session entirely.
- * Each now runs inside a $transaction that takes
+ * With nothing serializing them a concurrent writer can invalidate the
+ * pre-check before the write lands: two Present marks on different events both
+ * see "no open visit" and both create one (P2002 on
+ * Visit_one_open_per_participant → 500), two deletes both see the row live and
+ * both tombstone it, and two conflict resolutions each see the other half of
+ * the overlap still live and tombstone both, erasing the session entirely.
+ * Each runs inside a $transaction that takes
  * `pg_advisory_xact_lock(<the visit's personId>)` and re-checks under the lock,
  * matching /api/scan and /api/attendance/manual.
  *

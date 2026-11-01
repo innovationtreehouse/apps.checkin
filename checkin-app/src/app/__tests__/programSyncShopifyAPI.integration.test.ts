@@ -4,21 +4,20 @@
 /**
  * Integration tests for POST /api/programs/[id]/sync-shopify — the checkout
  * repair path that mints a Shopify variant for a program that was priced AFTER
- * creation (PATCH never mints variants, so it sits checkout-broken). This was
- * the one fully-built-but-untested route in the program domain; webhookShopify
+ * creation (PATCH never mints variants, so it sits checkout-broken). webhookShopify
  * covers inbound MEMBERSHIP webhooks, not this outbound program-category sync.
  *
  * Runs against the CHECKIN_ENV=local Shopify mock (config.shopifyMockActive) so
  * createShopifySingleVariantProgram returns synthetic dev-mock ids instead of
- * hitting the real Admin API — same explicit env gate PR #888 established.
+ * hitting the real Admin API.
  *
- * NOTE (Q13): this route has NO empty/mis-categorized-category detection. An
+ * NOTE: this route has NO empty/mis-categorized-category detection. An
  * IntegrationErrorLog row is written only inside the lib/shopify/products.ts creation
  * functions' catch on a REAL Shopify API failure, which the mock branch never
  * reaches; the route's own catch writes a BackendErrorLog (logBackendError),
  * not an IntegrationErrorLog. So the "empty-category warning surface" is a
  * separate, unbuilt feature — the success-path assertion below pins that no
- * IntegrationErrorLog is emitted here today.
+ * IntegrationErrorLog is emitted here.
  */
 import { POST } from '@/app/api/programs/[id]/sync-shopify/route';
 import prisma from '@/lib/prisma';
@@ -99,7 +98,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
 
     it('repairs onto the single-pool model: mints ONE variant and persists shopifyVariantId', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
-        const program = await makeBrokenProgram(); // no legacy variant set -> new-model repair
+        const program = await makeBrokenProgram(); // no variant set -> single-pool repair
         const errLogsBefore = await prisma.integrationErrorLog.count({ where: { source: 'shopify' } });
 
         const res = await POST(req(), params(program.id));
@@ -125,8 +124,8 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         });
         expect(audit).not.toBeNull();
 
-        // Q13: no empty-category detection here — the mock never errors, so no
-        // IntegrationErrorLog is emitted. Pins current behavior (see file header).
+        // No empty-category detection here — the mock never errors, so no
+        // IntegrationErrorLog is emitted. Pins this behavior (see file header).
         const errLogsAfter = await prisma.integrationErrorLog.count({ where: { source: 'shopify' } });
         expect(errLogsAfter).toBe(errLogsBefore);
     });

@@ -41,7 +41,7 @@ check that costs money is not a health check".
 | Export | Today | After |
 |---|---|---|
 | `createClient(base)` | `{ api, useLoad }` | Same |
-| `useLoad(path, options?)` | `useEffect` with a sequence guard | SWR. Second argument becomes `{ retry?: boolean }` |
+| `useLoad(path, options?)` | `useEffect` with a sequence guard | SWR. Second argument becomes `{ retry?: boolean; keepPrevious?: boolean }` |
 | `Loaded<T>` | `data`, `error`, `reload` | Adds `loading`, `retrying`, `status` |
 | `request`, `api` | Throw `Error(message)` | Throw `HttpError(message, status)`, still an `Error` with the same text |
 | `ViewerProvider` | `viewer` | Adds `onSessionExpired`; clears the cache when the person changes |
@@ -102,9 +102,12 @@ is the silent recovery path; `dedupingInterval: 5000`; no `suspense`.
    The expense finance queue's All tab has an empty path, and skipping it left
    that tab blank during #2682. Resolving to the URL first fixes this too, since
    `/api/expense` is not empty. Only `null` skips.
-3. **Keep the old rows when the path changes.** Today's hook leaves `data` in
-   place until the new answer arrives, and pagers and search boxes rely on it.
-   SWR clears unless `keepPreviousData` is set. `undefined` also maps to `null`.
+3. **A new path starts at null, and a pager or search box opts into keeping rows.**
+   Old rows under a new parent would pair one parent's values with another's
+   buttons. `useLoad(path, { keepPrevious: true })` keeps the last rows while the
+   next page or search loads, for lists whose rows act on their own id. It never
+   keeps an empty list, which would read as an empty answer, and kept rows end when
+   the cache is emptied. `undefined` also maps to `null`.
 4. **A person's data does not outlive them.** The cache is in memory for the life
    of the tab. When the viewer's id changes from one person to another or to
    nobody, `ViewerProvider` empties it before paint. The viewer is also null while

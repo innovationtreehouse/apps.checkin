@@ -2,14 +2,12 @@
  * @jest-environment node
  */
 /**
- * Focused regression for the T4 activate collapse (PROGRAM_ENROLLMENT_STATE_MACHINE §7).
+ * Focused test for the T4 activate (PROGRAM_ENROLLMENT_STATE_MACHINE §7).
  *
- * activateProgramEnrollment used to do the PENDING→ACTIVE status flip and the
- * hold release as TWO bare updateManys; between them the row was committed as
- * ACTIVE-with-held — an I1 violation, and a crash-window that stranded a −1 that
- * never came back. The flip and the release are now ONE atomic updateMany
- * (status:ACTIVE + inventoryHeldAt:null together), so that intermediate never
- * exists.
+ * activateProgramEnrollment does the PENDING→ACTIVE status flip and the hold
+ * release as ONE atomic updateMany (status:ACTIVE + inventoryHeldAt:null together).
+ * Two steps would commit the row as ACTIVE-with-held between them — an I1 violation,
+ * and a crash window that strands a −1 that never comes back.
  *
  * This asserts the post-condition (ACTIVE, held null, validates clean — no I1),
  * that the compensating Shopify +1 is exactly right for a held row, and that a
@@ -40,7 +38,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
             data: { name: 'Redelivery Self', email: `self-${TAG}@example.com`, household: { create: { name: 'HH' } } },
         });
         personId = person.id;
-        // Single-pool (shopifyVariantId present) → the legacy two-pool sibling mirror is skipped.
+        // Single-pool (shopifyVariantId present).
         const program = await prisma.program.create({
             data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Redelivery Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-redeliv' },
         });

@@ -284,7 +284,7 @@ describe('Shop API Integration Tests', () => {
              expect(auditRows[0].oldData).toBeNull();
         });
 
-        // Denied-household lockout (auth-consistency §5 risk #2 / GAP-1). Certifier
+        // Denied-household lockout. Certifier
         // status is re-queried from the DB, bypassing the denial-stripped session,
         // so a denied certifier would still pass the MAY_CERTIFY_OTHERS gate. The
         // denied check must reject before the lookup. No certification row is written.

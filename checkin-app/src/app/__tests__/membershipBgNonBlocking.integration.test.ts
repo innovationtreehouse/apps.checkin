@@ -4,7 +4,7 @@
 /**
  * Integration coverage for the non-blocking background-check flow.
  *
- * The check is now a PARALLEL track: after the contract is signed + consent is
+ * The check is a PARALLEL track: after the contract is signed + consent is
  * given (or a valid prior check exists), the application advances straight to
  * PENDING_PAYMENT. The membership only goes ACTIVE once BOTH payment and the
  * check are done — whichever finishes last. A valid prior check auto-clears the
@@ -539,7 +539,7 @@ describe('background check is non-blocking', () => {
         await beginRenewal(processId, leadId);
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(proc?.bgClearedAt).not.toBeNull(); // the bug: was null → paid renewal stuck forever
+        expect(proc?.bgClearedAt).not.toBeNull(); // null leaves a paid renewal stuck forever
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
         await activate(processId, { via: 'payment', shopifyOrderId: 'renew-pay' });

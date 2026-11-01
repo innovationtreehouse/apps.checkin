@@ -9,7 +9,7 @@
  *   2. manualEditAttendance vs. an OPEN scan visit (Present links / Absent rejects).
  *   3. PAST-EVENT edit guard (editTime on a finished event is rejected).
  *
- * BUG 2 (manual "Absent" deleting a live/open check-in) is now FIXED: an Absent
+ * A manual "Absent" must not delete a live check-in: an Absent
  * edit against an OPEN visit (departedAt = null) is rejected with 400 so the row
  * proving the participant is physically on-site survives. Only CLOSED visits are
  * removed on an Absent correction. See the manualEditAttendance block below.
@@ -191,9 +191,8 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
             const res = await patch(event.id, { action: 'manualEditAttendance', participantId, status: 'Absent' });
             expect(res.status).toBe(200);
 
-            // A lead's Absent mark is as reversible as the member's own delete
-            // (AT3 §3): the row survives with deletedAt set, and drops out of
-            // every LIVE_VISIT read.
+            // A lead's Absent mark is as reversible as the member's own delete: the row
+            // survives with deletedAt set, and drops out of every LIVE_VISIT read.
             const visits = await prisma.visit.findMany({ where: { personId: participantId, associatedEventId: event.id } });
             expect(visits.length).toBe(1);
             expect(visits[0].deletedAt).not.toBeNull();

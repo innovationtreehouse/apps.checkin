@@ -2,10 +2,10 @@
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
 // Reads admit FINANCE or BOARD (the board acts as finance's superuser); writes
-// admit FINANCE only, except the in-kind decision, which also admits BOARD. Both
-// see donor identity (`pii`) and the amounts and plumbing (`internal`), except
-// on the in-kind decision, settle, QuickBooks-resolve and bucket routes, whose
-// responses carry no donor.
+// admit FINANCE only, except the in-kind decision and the settings PATCH, which
+// also admit BOARD. Both see donor identity (`pii`) and the amounts and plumbing
+// (`internal`), except on the in-kind decision, settle, QuickBooks-resolve, bucket
+// and settings routes, whose responses carry no donor.
 // Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only to the no-receipt
 // in-kind routes, with no `pii`: it records donors but never reads them back.
 // No sysadmin view: Finance Ops excludes sysadmins (docs/rules/revenue.md). No
@@ -32,7 +32,7 @@ const BUCKET_APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', NO_PII_TOKENS],
     ['authenticated', ['everyones:internal']],
 ];
-const DECISION_VIEW: readonly OrderedViewEntry[] = [
+const FINANCE_OR_BOARD_NO_PII_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', NO_PII_TOKENS],
     ['isBoardMember', NO_PII_TOKENS],
 ];
@@ -80,8 +80,12 @@ defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/load-inventory'
 // In-kind decision (accept, refuse or return) — FINANCE or BOARD. The board
 // decides when every finance holder is conflicted; the service refuses a
 // conflicted caller. The reply carries no donor, so no view grants `pii`.
-defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: DECISION_VIEW });
-defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: DECISION_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: FINANCE_OR_BOARD_NO_PII_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: FINANCE_OR_BOARD_NO_PII_VIEW });
+
+// Donation settings — FINANCE or BOARD. Every DonationOrgSettings field is `internal`.
+defineRoute({ endpoint: 'GET /api/donations/settings', authorize: 'finance-or-board', envelope: null, returns: ['DonationOrgSettings'], orderedView: FINANCE_OR_BOARD_NO_PII_VIEW });
+defineRoute({ endpoint: 'PATCH /api/donations/settings', authorize: 'finance-or-board', envelope: null, returns: ['DonationOrgSettings'], orderedView: FINANCE_OR_BOARD_NO_PII_VIEW });
 
 // Settling a receipt gift's anomaly (a withdrawal or a replay conflict) —
 // FINANCE only. Settling a withdrawal clears the donor, so no view grants `pii`.
