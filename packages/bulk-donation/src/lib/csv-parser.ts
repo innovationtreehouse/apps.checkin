@@ -107,7 +107,8 @@ const benevityRowSchema = z.object({
   nonprofitName: str,
   nonprofitId: str,
   disbursementId: str,
-  disbursementDate: isoDate,
+  // A batch's deposit is dated from this, and a finished batch can't be changed.
+  disbursementDate: isoDate.refine((s) => s !== "", "no disbursement date"),
   bankDate: isoDate,
   bankReferenceId: str,
   paymentMethod: str,
@@ -231,7 +232,7 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
     if (key !== "" && !key.startsWith("#") && value !== "") preamble.set(key, value);
   }
   const bindings = new Map(FIELDS.map((f) => [f, bind(f, header, preamble)] as const));
-  const labelOf = (field: PropertyKey) => bindings.get(field as keyof BenevityRow)?.label ?? String(field);
+  const labelOf = (field: PropertyKey) => bindings.get(field as keyof BenevityRow)?.label ?? SOURCES[field as keyof BenevityRow]?.columns[0] ?? String(field);
 
   const rows: BenevityRow[] = [];
   const issues: string[] = [];

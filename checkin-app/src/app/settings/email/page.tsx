@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { Alert, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { useLoad } from "@/lib/api";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
@@ -40,38 +43,11 @@ export default function EmailSettingsPage() {
   const [unlocked, setUnlocked] = useState(false);
 
   const [initial, setInitial] = useState<Record<string, string> | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ from?: string; replyTo?: string; scholarshipNotify?: string }>({});
 
-  const load = useCallback(() => fetch("/api/settings/email")
-    .then(async (res) => {
-      if (res.ok) {
-        const { settings } = (await res.json()) as { settings: Settings };
-        const snap = {
-          emailFrom: settings.emailFromAddress ?? "",
-          emailReplyTo: settings.emailReplyToAddress ?? "",
-          scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
-          ackSubject: settings.scholarshipAckSubject ?? "",
-          ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
-          ackProgramBody: settings.scholarshipAckProgramBody ?? "",
-        };
-        setEmailFrom(snap.emailFrom);
-        setEmailReplyTo(snap.emailReplyTo);
-        setScholarshipNotify(snap.scholarshipNotify);
-        setAckSubject(snap.ackSubject);
-        setAckMembershipBody(snap.ackMembershipBody);
-        setAckProgramBody(snap.ackProgramBody);
-        setInitial(snap);
-      }
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => { if (ready) load(); }, [ready, load]);
+  const { data, error, reload } = useLoad<{ settings: Settings }>(ready ? "/api/settings/email" : null);
 
   const wasSet = !!(initial?.emailFrom || initial?.emailReplyTo);
   const locked = wasSet && !unlocked;
@@ -106,16 +82,32 @@ export default function EmailSettingsPage() {
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
         }),
       });
-      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); setLoading(true); await load(); }
+      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); setInitial(current); reload(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
   };
 
-  const isDirty = !!initial && !shallowEqual(initial, {
-    emailFrom, emailReplyTo, scholarshipNotify, ackSubject, ackMembershipBody, ackProgramBody,
-  });
+  const current = { emailFrom, emailReplyTo, scholarshipNotify, ackSubject, ackMembershipBody, ackProgramBody };
+  const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
+  useSeedForm(data, isDirty, ({ settings }) => {
+    const snap = {
+      emailFrom: settings.emailFromAddress ?? "",
+      emailReplyTo: settings.emailReplyToAddress ?? "",
+      scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
+      ackSubject: settings.scholarshipAckSubject ?? "",
+      ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
+      ackProgramBody: settings.scholarshipAckProgramBody ?? "",
+    };
+    setEmailFrom(snap.emailFrom);
+    setEmailReplyTo(snap.emailReplyTo);
+    setScholarshipNotify(snap.scholarshipNotify);
+    setAckSubject(snap.ackSubject);
+    setAckMembershipBody(snap.ackMembershipBody);
+    setAckProgramBody(snap.ackProgramBody);
+    setInitial(snap);
+  });
 
   if (authLoading) return <Center mih="60vh"><Loader /></Center>;
   if (!ready) return null; // redirect to / is in flight
@@ -124,8 +116,10 @@ export default function EmailSettingsPage() {
     <Stack>
       <SettingsTabs active="email" />
 
-      {loading ? (
-        <Center py="xl"><Loader /></Center>
+      {error && <LoadError what="the email settings" message={error} onRetry={reload} />}
+
+      {!data ? (
+        !error && <Center py="xl"><Loader /></Center>
       ) : (
         <Card withBorder radius="md" padding="lg">
           <Title order={3} mb="xs">Email sender identity</Title>

@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { MAX_POST_ATTEMPTS, QuickBooksClient, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -52,6 +52,10 @@ class FakeQbo {
   duringByIdRead: (() => Promise<void>) | null = null;
   /** Runs after a created-since read has its answer, so what lands meanwhile is not in it. */
   afterSinceRead: (() => Promise<void>) | null = null;
+  /** Runs after a dated JournalEntry read has its answer, while the post is between its claim and its settle. */
+  afterJournalRead: (() => Promise<void>) | null = null;
+  /** Runs after a create lands and before its answer, while the post is between its claim and its settle. */
+  afterCreate: (() => Promise<void>) | null = null;
   private nextId = 9000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -68,16 +72,18 @@ class FakeQbo {
         return json({ QueryResponse: list.length ? { JournalEntry: list } : {} });
       }
       const m = /FROM (JournalEntry|Deposit|Purchase) WHERE TxnDate >= '([\d-]+)' AND TxnDate <= '([\d-]+)'/.exec(query);
-      const byId = /FROM (JournalEntry|Deposit|Purchase) WHERE Id IN \('([^']+)'\)/.exec(query);
+      const byId = /FROM (JournalEntry|Deposit|Purchase) WHERE Id IN \(([^)]+)\)/.exec(query);
       if (byId) {
         await this.duringByIdRead?.();
         const all: { Id: string }[] = byId[1] === "JournalEntry" ? this.journals : byId[1] === "Deposit" ? this.deposits : this.purchases;
-        const list = all.filter((e) => e.Id === byId[2]);
+        const ids = byId[2].split(", ").map((quoted) => quoted.slice(1, -1));
+        const list = all.filter((e) => ids.includes(e.Id));
         return json({ QueryResponse: list.length ? { [byId[1]]: list } : {} });
       }
       if (!m) throw new Error(`unexpected query ${query}`);
       const all: { TxnDate: string }[] = m[1] === "JournalEntry" ? this.journals : m[1] === "Deposit" ? this.deposits : this.purchases;
       const list = all.filter((e) => e.TxnDate >= m[2] && e.TxnDate <= m[3]);
+      if (m[1] === "JournalEntry") await this.afterJournalRead?.();
       return json({ QueryResponse: list.length ? { [m[1]]: list } : {} });
     }
     if (!url.pathname.endsWith("/journalentry")) throw new Error(`unexpected write ${url.pathname}`);
@@ -88,6 +94,7 @@ class FakeQbo {
     const TotalAmt = body.Line.filter((l) => l.JournalEntryLineDetail.PostingType === "Debit").reduce((s, l) => s + Math.round(l.Amount * 100), 0) / 100;
     this.journals.push({ Id, TxnDate: body.TxnDate, TotalAmt, PrivateNote: body.PrivateNote });
     this.createTimes.set(Id, new Date());
+    await this.afterCreate?.();
     if (this.dropAfterCreate) throw new Error("socket hang up");
     return json({ JournalEntry: { Id } });
   };
@@ -356,6 +363,34 @@ describeDb("in-kind drain", () => {
     expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
   });
 
+  it("finance's failed book counts no attempt, and can always be asked again", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.refuseCreate = true;
+    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
+    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
+
+    for (let retry = 0; retry < 2; retry++) {
+      await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503, message: "QuickBooks failed while booking; the gift can be booked again" });
+      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
+    }
+
+    qbo.refuseCreate = false;
+    expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
+  });
+
+  it("a gift finance failed to book after the limit gets one more drain try, then returns to finance", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.refuseCreate = true;
+    for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503 });
+    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ exhausted: 1 });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS + 1 });
+  });
+
   it("a run that cannot read the closing date counts no attempt against the gift", async () => {
     await switchOn();
     const id = await acceptedGift();
@@ -389,6 +424,54 @@ describeDb("in-kind drain", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
     expect(qbo.posts).toHaveLength(1);
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+  });
+
+  describe("a post that loses its claim", () => {
+    const loseClaim = (id: number, claimedAt: Date) => db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } }, data: { claimedAt } });
+
+    it("leaves no note when the post that took over linked the same entry", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.afterCreate = async () => {
+        qbo.afterCreate = null;
+        await loseClaim(id, new Date(Date.now() - STALE_CLAIM_MS - 1000));
+        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, waiting: 1 });
+
+      expect(qbo.posts).toHaveLength(1);
+      expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+      expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbNote: null });
+    });
+
+    it("leaves no note for an entry it found rather than created", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.journals.push({ Id: "9100", TxnDate: "2026-10-20", TotalAmt: 33, PrivateNote: `[checkin:${inKindKey(orgId, "receipt", id)}]` });
+      qbo.afterJournalRead = async () => {
+        qbo.afterJournalRead = null;
+        await loseClaim(id, new Date(0));
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1 });
+
+      expect(qbo.posts).toHaveLength(0);
+      expect((await posting(id)).qbNote).toBeNull();
+    });
+
+    it("notes an entry it created that the gift does not hold", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.afterCreate = async () => {
+        await loseClaim(id, new Date(0));
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1 });
+
+      expect(await bookings(id)).toEqual([]);
+      expect((await posting(id)).qbNote).toMatch(/JournalEntry 9000 was created by a post that lost its claim/);
+    });
   });
 
   it("the daily sweep notes an app entry its gift does not hold", async () => {
@@ -660,5 +743,146 @@ describeDb("in-kind drain settings", () => {
     await expect(readDonationSettings(db, orgId)).resolves.toEqual({ qbMatchWindowDays: 3, qbMaxCreatesPerRun: 25 });
     const event = await db.workflowEvent.findFirstOrThrow({ where: { orgId, eventType: "SETTINGS_UPDATED" } });
     expect(JSON.parse(event.payload ?? "")).toEqual({ before: { qbMatchWindowDays: 7 }, after: { qbMatchWindowDays: 3 } });
+  });
+});
+
+describeDb("in-kind QuickBooks drift", () => {
+  const pair = (id: string, date = "2026-10-21") => {
+    qbo.deposits.push({ Id: id, TxnDate: date, TotalAmt: 33, DepositToAccountRef: { value: "290" } } as QboDeposit);
+    qbo.purchases.push({ Id: `${id}1`, TxnDate: date, TotalAmt: 33, AccountRef: { value: "290" } } as QboPurchase);
+  };
+  const booked = async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    return id;
+  };
+
+  it("leaves an unchanged journal entry and clearing pair booked", async () => {
+    await switchOn();
+    pair("700");
+    const matched = await acceptedGift();
+    await runInKindQbPosting(orgId);
+    expect((await posting(matched)).matchState).toBe("MATCHED");
+    await acceptedGift({ date: "2026-10-01", totalCents: 4400 });
+    await runInKindQbPosting(orgId);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 2, drifted: 0 } });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toEqual([]);
+  });
+
+  it.each([
+    ["a changed amount", (j: QboJournalEntry) => void (j.TotalAmt = 30), /amount/],
+    ["a voided entry", (j: QboJournalEntry) => void (j.TotalAmt = 0), /amount/],
+    ["a changed date", (j: QboJournalEntry) => void (j.TxnDate = "2026-10-25"), /date/],
+    ["a lost key", (j: QboJournalEntry) => void (j.PrivateNote = "edited"), /key/],
+  ])("moves a gift to DRIFT on %s, audited, on finance's queue", async (_name, edit, field) => {
+    const id = await booked();
+    edit(qbo.journals[0]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 1, drifted: 1 } });
+    expect((await posting(id)).matchState).toBe("DRIFT");
+    expect((await posting(id)).qbNote).toMatch(field);
+    expect(await bookings(id)).toMatchObject([{ side: "journal", matchState: "DRIFT" }]);
+    expect(await events("IN_KIND_QB_DRIFT")).toHaveLength(1);
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toMatchObject([{ id, qbState: "DRIFT", revenueBooking: "DRIFT", expenseBooking: "DRIFT" }]);
+  });
+
+  it("moves a gift to DRIFT when its entry is gone", async () => {
+    const id = await booked();
+    qbo.journals = [];
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, drift: { drifted: 1 } });
+    expect((await posting(id)).matchState).toBe("DRIFT");
+    expect((await posting(id)).qbNote).toMatch(/missing/);
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("sees a re-dated Purchase of a clearing pair", async () => {
+    await switchOn();
+    pair("700");
+    const id = await acceptedGift();
+    await runInKindQbPosting(orgId);
+    qbo.purchases[0].TxnDate = "2026-10-26";
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 1 } });
+    expect((await posting(id)).qbNote).toMatch(/Purchase 7001 date/);
+  });
+
+  it("takes a booking with no stored date from the read, or from its posting, raising nothing", async () => {
+    await switchOn();
+    pair("700");
+    const id = await acceptedGift();
+    await runInKindQbPosting(orgId);
+    await db.inKindBooking.updateMany({ where: { giftId: id }, data: { bookedTxnDate: null } });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 0 } });
+    const rows = await bookings(id);
+    expect(rows.find((b) => b.side === "expense")?.bookedTxnDate).toBe("2026-10-21");
+    expect(rows.find((b) => b.side === "revenue")?.bookedTxnDate).toBeNull();
+  });
+
+  it("treats a failed read as no answer, not as a missing entry", async () => {
+    const id = await booked();
+    qbo.journals = [];
+    qbo.duringByIdRead = async () => {
+      throw new Error("connection refused");
+    };
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { failed: true } });
+    expect((await posting(id)).matchState).toBe("CREATED");
+  });
+
+  it("does not check a withdrawn gift, whose entry finance reverses by hand", async () => {
+    const id = await booked();
+    await db.inKindDonation.update({ where: { id }, data: { withdrawnAfterMoneyAt: new Date() } });
+    qbo.journals = [];
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 0, drifted: 0 } });
+    expect((await posting(id)).matchState).toBe("CREATED");
+  });
+
+  it("checks at most the cap in one run", async () => {
+    await switchOn();
+    for (let i = 0; i < MAX_DRIFT_CHECKS_PER_RUN + 1; i++) await acceptedGift();
+    await runInKindQbPosting(orgId);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: MAX_DRIFT_CHECKS_PER_RUN } });
+  });
+
+  it("holds a drifted gift: no post, no book, on the queue after its note is cleared", async () => {
+    const id = await booked();
+    qbo.journals[0].TotalAmt = 30;
+    await runInKindQbPosting(orgId);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, waiting: 0, drift: { checked: 0 } });
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 409 });
+    await resolve(id, { action: "clear", reason: "Asked who edited it" });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toMatchObject([{ id, qbState: "DRIFT", qbNote: null }]);
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("skip settles a drifted gift for good with a reason", async () => {
+    const id = await booked();
+    qbo.journals[0].TotalAmt = 30;
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "skip", reason: "Finance corrected the value" })).resolves.toMatchObject({ qbState: "DISMISSED", qbNote: null });
+    expect(await inKindAcceptService.listQueue(orgId, FINANCE)).toEqual([]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 0 } });
+  });
+
+  it("match relinks a drifted gift to its own re-dated entry, with the new date as the baseline", async () => {
+    const id = await booked();
+    qbo.journals[0].TxnDate = "2026-10-25";
+    await runInKindQbPosting(orgId);
+    const entry = qbo.journals[0];
+    entry.Line = [{ JournalEntryLineDetail: { AccountRef: { value: "400" } } }];
+    await expect(resolve(id, { action: "match", journalEntryId: entry.Id })).resolves.toMatchObject({ qbState: "CREATED", revenueBooking: "CREATED", qbNote: null });
+    expect(await bookings(id)).toMatchObject([{ side: "journal", matchState: "CREATED", qbTxnId: entry.Id, bookedTxnDate: "2026-10-25" }]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 0 } });
+  });
+
+  it("match moves a drifted gift from its journal entry to finance's replacement pair, and its own deposit may be matched again", async () => {
+    const id = await booked();
+    qbo.journals = [];
+    await runInKindQbPosting(orgId);
+    pair("700");
+    await expect(resolve(id, { action: "match", depositId: "700", purchaseId: "7001" })).resolves.toMatchObject({ qbState: "MATCHED" });
+    expect((await bookings(id)).map((b) => b.side)).toEqual(["expense", "revenue"]);
+
+    qbo.purchases[0].TxnDate = "2026-10-26";
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "match", depositId: "700", purchaseId: "7001" })).resolves.toMatchObject({ qbState: "MATCHED" });
   });
 });

@@ -17,7 +17,7 @@ export function LibraryReleaseCard({ initial }: { initial: readonly string[] }) 
       const res = await fetch("/api/settings/membership", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ releaseLibrary: { library: lib, released: on } }),
+        body: JSON.stringify({ perYearVariantClient: true, releaseLibrary: { library: lib, released: on } }),
       });
       if (!res.ok) {
         const err = (await res.json().catch(() => null)) as { error?: string } | null;

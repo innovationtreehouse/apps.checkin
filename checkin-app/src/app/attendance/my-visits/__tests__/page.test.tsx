@@ -108,4 +108,13 @@ describe("attendance/my-visits page", () => {
 
     expect(fetchMock).not.toHaveBeenCalledWith("/api/attendance/manual/1", expect.objectContaining({ method: "DELETE" }));
   });
+
+  it("shows the failure, not an empty list, when the load fails", async () => {
+    setSession({ id: 1 });
+    mockFetchJson({});
+    renderWithProviders(<MyVisits />);
+
+    expect(await screen.findByText("Couldn't load your visits")).toBeInTheDocument();
+    expect(screen.queryByText("No visits in the last two weeks.")).not.toBeInTheDocument();
+  });
 });

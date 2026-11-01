@@ -237,6 +237,12 @@ export const REGISTRY = {
         defaultSubject: "Expenses: the daily check for stray QuickBooks entries could not see them all",
         defaultBody: "QuickBooks returned more purchases or bills created since {{since}} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. {{actionLink}}",
     },
+    "finance.donationDepositHandOver": {
+        allowedTokens: { batches: text, actionLink: link("Open booking batches") },
+        sampleCtx: { batches: "D-1001: it has no disbursement date", actionLink: SAMPLE_URL },
+        defaultSubject: "Donations: a finished giving-platform batch has no deposit",
+        defaultBody: "These finished batches could not be handed over for booking, so no deposit is on its way for them: {{batches}}. Settle each one in QuickBooks by hand and record why. This message comes once for each batch. {{actionLink}}",
+    },
     "finance.inKindSweepIncomplete": {
         allowedTokens: { since: text, actionLink: link("Open the in-kind queue") },
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
@@ -294,6 +300,15 @@ export const REGISTRY = {
         sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
         defaultSubject: "Reimbursement approved",
         defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
+    },
+
+    // ── lifecycle ───────────────────────────────────────────────────────────
+    "lifecycle.driftDigest": {
+        allowedTokens: { newCount: text, stillPresentCount: text, newList: text, stillPresentList: text, actionLink: link("Open the Lifecycle panel") },
+        sampleCtx: { newCount: "1", stillPresentCount: "1", newList: "OrgMembershipProcess process 12: invariant intake-is-unpaid (status INTAKE)", stillPresentList: "ProgramParticipant program 3 / person 45: invariant I2 (status PENDING)", actionLink: SAMPLE_URL },
+        defaultSubject: "Lifecycle drift: {{newCount}} new, {{stillPresentCount}} still present",
+        defaultBody: "These records are off their lifecycle diagram and need a person to resolve them. Nothing was changed automatically.\n\n"
+            + "New since the last report\n{{newList}}\n\nStill present\n{{stillPresentList}}\n\n{{actionLink}}",
     },
 
     // ── shopify ─────────────────────────────────────────────────────────────

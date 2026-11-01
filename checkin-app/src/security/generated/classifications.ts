@@ -101,6 +101,7 @@ export const classifications = {
         zohoEnvelopeId: 'internal',
         zohoActionId: 'internal',
         zohoSignerPersonId: 'internal',
+        zohoClaimedAt: 'internal',
         contractSignedAt: 'internal',
         agreementVersion: 'internal',
         bgConsentAt: 'internal',
@@ -453,6 +454,13 @@ export const classifications = {
         success: 'internal',
         error: 'internal',
     },
+    LifecycleDriftReport: {
+        id: 'internal',
+        model: 'internal',
+        key: 'internal',
+        invariant: 'internal',
+        firstReportedAt: 'internal',
+    },
     PersonMerge: {
         id: 'internal',
         fromId: 'internal',
@@ -492,6 +500,7 @@ export const classifications = {
         resolvedAt: 'internal',
         resolutionNote: 'personal',
         detectedAt: 'internal',
+        evidence: 'internal',
     },
     BulkSend: {
         id: 'internal',
@@ -704,6 +713,8 @@ export const relations = {
     IntegrationErrorLog: {
     },
     CronRunLog: {
+    },
+    LifecycleDriftReport: {
     },
     PersonMerge: {
         to: { model: 'Person', isList: false },

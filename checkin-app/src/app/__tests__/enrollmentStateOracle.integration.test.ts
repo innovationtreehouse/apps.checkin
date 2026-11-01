@@ -237,7 +237,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
 
     // T7/T8/T9 all funnel through the one shared exit (deleteAndReleaseHold);
     // their end-state is UNENROLLED (row deleted), with +1 iff the row still held.
-    it('T7 non-payment kick: PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
+    it('T7 remove(unpaid): PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await deleteAndReleaseHold(programId, selfId, program);

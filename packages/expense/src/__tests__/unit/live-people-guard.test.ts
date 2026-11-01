@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC = join(__dirname, "../..");
 const SCANNED = ["lib", "services", "routes", "repositories"];
-const PERSON_READ = /\.(submitterId|reimburseePersonId|signerUserId|decidedByUserId|boardAuthorizedByUserId)([^A-Za-z]|$)|(submitterId|reimburseePersonId|signerUserId|decidedByUserId|boardAuthorizedByUserId): (true|\{|me|mine|personId)/;
+const PERSON_READ = /\.(submitterId|reimburseePersonId|signerUserId|decidedByUserId|boardAuthorizedByUserId)([^A-Za-z]|$)|(submitterId|reimburseePersonId|signerUserId|decidedByUserId|boardAuthorizedByUserId): (true|\{|me|mine|personId)|\b(expense|approvals|signoffs): true/;
 
 /** These read people through the resolver, or are pure rules over the facts it resolved. */
 const RESOLVED_FILES = new Set(["lib/livePeople.ts", "lib/signoff-facts.ts", "lib/signoff.ts", "lib/line-actions.ts"]);
@@ -52,6 +52,10 @@ const REVIEWED = [
   // Nothing reads these: the summary list and the sibling approvals' parties.
   "repositories/expense.ts: submitterId: true,",
   "repositories/expense.ts: select: { id: true, expenseId: true, lineItemId: true, expense: { select: { submitterId: true, reimburseePersonId: true } } },",
+  // The detail response carries each signoff's stored signer, and no page reads it.
+  'routes/expenses.ts: lineItems: { where: lines, orderBy: { lineNumber: "asc" }, include: { signoffs: true } },',
+  // Not yet resolved: the holds list returns the stored submitter and reimbursee. This line goes when the route resolves them.
+  "routes/finance.ts: include: { lineItem: true, expense: true },",
 ];
 
 function sources(dir: string): string[] {

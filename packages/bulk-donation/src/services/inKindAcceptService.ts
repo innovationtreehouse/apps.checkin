@@ -3,7 +3,7 @@
 // or by a Board member when every finance holder is conflicted. The screen's warnings never block.
 import { z } from "zod";
 import { db, type DbOrTx } from "../db";
-import { getInKindCapital, getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
+import { getInKindCapital, getInKindDirectory, getInventoryApply, getOrgId, getOwnerDirectory } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
@@ -598,16 +598,31 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
 
 const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
 
-/** What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its recorder and inventory load. */
+/**
+ * What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its
+ * recorder and inventory load, with why the load failed while it has not loaded.
+ */
 async function readPageExtras(orgId: string, source: InKindSource, id: number) {
   if (source === "receipt") {
     const donor = await db.inKindDonation.findFirstOrThrow({ where: { id, orgId }, select: DONOR_SELECT });
-    return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null };
+    return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null, inventoryLoadFailureReason: null };
   }
-  return db.manualInKindDonation.findFirstOrThrow({
+  const row = await db.manualInKindDonation.findFirstOrThrow({
     where: { id, orgId },
     select: { ...DONOR_SELECT, recordedAt: true, recordedByUsername: true, inventoryLoadedAt: true },
   });
+  const inventoryLoadFailureReason = row.inventoryLoadedAt ? null : await readLoadFailure(id);
+  return { ...row, inventoryLoadFailureReason };
+}
+
+/** The page loads without the reason when inventory cannot answer, and keeps its "Load again". */
+async function readLoadFailure(id: number): Promise<string | null> {
+  try {
+    return await getInventoryApply().failureReason(inventorySourceKey(id));
+  } catch (err) {
+    console.warn(`[bulk-donation] reading in-kind donation ${id}'s inventory load failure failed`, err);
+    return null;
+  }
 }
 
 /** The gift's history, oldest first; donor-read audit rows are left out. */
@@ -670,6 +685,7 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     expenseBooking: bookedSide(sides, "expense"),
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
+    inventoryLoadFailureReason: extras.inventoryLoadFailureReason,
     lines: gift.lines,
     events,
   };
@@ -731,7 +747,8 @@ async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ read
     const gift = waits.includes("booking") ? toBook(g) : null;
     if (!gift) continue;
     open.push(gift);
-    if (waits.length === 1) ready.push(gift);
+    // A drifted gift stays open, so it can rival a hand booking, but only finance moves it.
+    if (waits.length === 1 && postings.get(key)?.matchState !== QB_MATCH_STATE.DRIFT) ready.push(gift);
   }
   return { ready, open };
 }

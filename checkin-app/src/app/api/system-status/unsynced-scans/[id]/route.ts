@@ -93,7 +93,7 @@ export const POST = handler<{ id: string }>(
 
         const associatedEventId = await findAssociatedEventAt(person.id, row.timestamp);
 
-        const visitId = await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx) => {
             // Same lock order as the manual route: participant, then facility.
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${person.id})`;
             await lockFacility(tx);
@@ -168,29 +168,27 @@ export const POST = handler<{ id: string }>(
                 visitId: visit.id,
             });
 
-            return visit.id;
+            await tx.auditLog.create({
+                data: {
+                    actorId: auth.user.id,
+                    action: "CREATE",
+                    tableName: "Visit",
+                    affectedEntityId: visit.id,
+                    secondaryAffectedEntity: person.id,
+                    newData: {
+                        arrivedAt: row.timestamp.toISOString(),
+                        departedAt: parsedDeparted.toISOString(),
+                        type: "parked_scan_resolution",
+                        rawBadgeLogId: row.id,
+                    },
+                },
+            });
         }, {
             maxWait: 5000,
             timeout: 15000,
         });
 
         invalidateAttendanceCache();
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
-                action: "CREATE",
-                tableName: "Visit",
-                affectedEntityId: visitId,
-                secondaryAffectedEntity: person.id,
-                newData: {
-                    arrivedAt: row.timestamp.toISOString(),
-                    departedAt: parsedDeparted.toISOString(),
-                    type: "parked_scan_resolution",
-                    rawBadgeLogId: row.id,
-                },
-            },
-        });
 
         // Empty bag — the panel drops the row client-side; the registry
         // declares `envelope: null` and the 200 body is `{}`.

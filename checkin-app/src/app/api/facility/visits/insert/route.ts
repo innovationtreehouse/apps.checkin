@@ -50,7 +50,7 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
 
     // Same per-person advisory lock as every other visit write, so this
     // insert can't race the kiosk or the facility-close sweep.
-    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit; overlappedIds: number[] }> => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit }> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${subjectId})`;
         const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: ar.value, departedAt: dr.value });
         if (overlaps.openSince) return { openSince: overlaps.openSince };
@@ -67,24 +67,22 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
                 associatedEventId: eventId,
             },
         });
-        return { visit, overlappedIds: overlaps.closedIds };
+        await tx.auditLog.create({
+            data: {
+                actorId: auth.user.id,
+                action: "CREATE",
+                tableName: "Visit",
+                affectedEntityId: visit.id,
+                secondaryAffectedEntity: subjectId,
+                newData: { arrivedAt: ar.value, departedAt: dr.value, type: "staff_entry", ...overlapFlag(overlaps.closedIds) },
+            },
+        });
+        return { visit };
     });
     if ('openSince' in result) throw new ApiResponseError(409, await openOverlapRefusal(result.openSince));
-    const { visit, overlappedIds } = result;
     // A closed keyholder visit can cover someone's arrival and clear their
     // "no keyholder" mark on the live roster.
     invalidateAttendanceCache();
 
-    await prisma.auditLog.create({
-        data: {
-            actorId: auth.user.id,
-            action: "CREATE",
-            tableName: "Visit",
-            affectedEntityId: visit.id,
-            secondaryAffectedEntity: subjectId,
-            newData: { arrivedAt: ar.value, departedAt: dr.value, type: "staff_entry", ...overlapFlag(overlappedIds) },
-        },
-    });
-
-    return { Visit: visit };
+    return { Visit: result.visit };
 });

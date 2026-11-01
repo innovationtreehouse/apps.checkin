@@ -343,6 +343,14 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
+- A board override that denies a change leaves the earlier approval standing.  [Decision — owner ruling 2026-11-01]
+
+- Force-approve refuses an adult the household withdrew, and refuses when the
+  family's household or the adult's own household is denied.  [Decision]
+
+- A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
+  and the family resubmits.  [Decision — owner ruling 2026-11-01]
+
 - Denying a household's membership revokes, at once and in the same act, every
   review not already revoked or denied — approved, open or expired — on the
   household's own trusted adults, and on any other household's trusted adult who
@@ -354,6 +362,9 @@ Things the app takes as true because they are handled outside it.
 
 - An approval lasts a year. The family is warned a month out and resubmits
   without re-entering what the board already holds.  [Decision]
+
+- An approval past its review date no longer authorises, whether or not the expiry
+  job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]
 
 - A withdrawn trusted adult can be hidden from the household's own view, and the
   household cannot bring it back. The record is kept, but no board surface lists

@@ -6,7 +6,7 @@ import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { isActiveOrgMember } from "@/lib/orgMembership";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { STATES, fromWhere } from "@/lib/programs/enrollmentState";
+import { ENROLLMENT_WRITES, STATES } from "@/lib/programs/enrollmentState";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 // Two DISJOINT board queues over PENDING + isPaymentPlanRequested rows, split on
@@ -101,28 +101,20 @@ export const POST = withAuth(
             // OrgMembership row. Reuses the canonical org-member check (lib/orgMembership.ts).
             const wasOrgMemberAtApproval = await isActiveOrgMember(participantId);
 
-            const data = {
-                status: 'ACTIVE' as const,
-                isPaymentPlanRequested: false, // cleared since it's approved
-                pendingSince: null, // reset
-                wasOrgMemberAtApproval,
-                // Approval consumes the hold.
-                inventoryHeldAt: null,
-            };
+            const approval = { pendingSince: null, wasOrgMemberAtApproval };
 
             // Scope to the pending request so approving a non-pending/nonexistent
             // request is a no-op error, mirroring the GET queue's filter.
-            // Approve CAS: from-state status from the definition; isPaymentPlanRequested stays literal.
-            const pending = { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') };
+            const participant = { programId, personId: participantId };
             // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
             // return it. A request whose hold failed took no seat and records none.
             const held = await prisma.programParticipant.updateMany({
-                where: { ...pending, inventoryHeldAt: { not: null } },
-                data: { ...data, seatTakenWithoutSaleAt: new Date() },
+                where: { ...participant, ...ENROLLMENT_WRITES.approveHeld.where },
+                data: { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval, seatTakenWithoutSaleAt: new Date() },
             });
             const count = held.count || (await prisma.programParticipant.updateMany({
-                where: { ...pending, inventoryHeldAt: null },
-                data,
+                where: { ...participant, ...ENROLLMENT_WRITES.approveUnheld.where },
+                data: { ...ENROLLMENT_WRITES.approveUnheld.data(), ...approval },
             })).count;
 
             if (count === 0) {
@@ -137,7 +129,7 @@ export const POST = withAuth(
                         tableName: "ProgramParticipant",
                         affectedEntityId: participantId,
                         secondaryAffectedEntity: programId,
-                        newData: data
+                        newData: { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval }
                     }
                 });
             }

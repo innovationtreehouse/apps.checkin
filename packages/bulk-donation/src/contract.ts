@@ -62,6 +62,8 @@ export interface CatalogLookup {
  */
 export interface InventoryApply {
   apply(delta: ResolvedInventoryDelta): Promise<void>;
+  /** Why the last load under this source key failed; null once it loads, or if it never failed. */
+  failureReason(sourceKey: string): Promise<string | null>;
 }
 
 /** Per-source idempotency key for X11, beside the receipt pipeline's `receipt:<id>`. */
@@ -100,6 +102,9 @@ export type DonationExpectedDeposit = {
   memo?: string;
 };
 
+/** A completed disbursement the daily job could not hand to income, and why in plain words. */
+export type DepositHandOverFailure = { disbursementId: string; reason: string };
+
 /** What income made of a disbursement's deposit. */
 export type DonationDepositStatus =
   | { state: "waiting" }
@@ -117,6 +122,8 @@ export interface IncomeDeposits {
   expectDeposit(orgId: string, disbursementId: string, expected: DonationExpectedDeposit): Promise<unknown>;
   /** Per disbursement id; an id income has no row for is absent. */
   depositStatus(orgId: string, disbursementIds: string[]): Promise<Record<string, DonationDepositStatus>>;
+  /** Tells finance about completed disbursements the daily job could not hand over. */
+  handOverFailing(failures: DepositHandOverFailure[]): Promise<void>;
   prod: boolean;
 }
 

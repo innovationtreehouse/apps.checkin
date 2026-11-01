@@ -5,6 +5,8 @@ import { apiError } from "@/lib/api-response";
 import { config } from "@/lib/config";
 import { handler } from "@/security/handler";
 import { isLibraryKey, type LibraryKey } from "@/lib/libraryRelease";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import { variantSlotYears } from "@/lib/programYear";
 
 export const dynamic = "force-dynamic";
 
@@ -12,17 +14,43 @@ const DEFAULTS = { id: 1, standardMembershipFeeCents: 0, volunteerMembershipFeeC
 
 /** GET /api/settings/membership — board settings singleton (created on first read).
  *  Registry-governed: admission anyRole sysadmin/board; envelope 'settings'.
- *  Full row (incl. internal-tier Shopify ids) — covered by the admin band. */
+ *  Full row plus the variant rows for the year in progress and the coming year
+ *  (incl. internal-tier Shopify ids) — covered by the admin band. */
 export const GET = handler('GET /api/settings/membership', async () => {
     const settings = await prisma.boardSettings.upsert({ where: { id: 1 }, create: DEFAULTS, update: {} });
-    return { BoardSettings: settings };
+    const boundary = settings.orgMembershipYearBoundary;
+    const variants = boundary
+        ? await prisma.membershipYearVariant.findMany({ where: { membershipYear: { in: variantSlotYears(boundary, new Date()) } } })
+        : [];
+    return { BoardSettings: settings, MembershipYearVariant: variants };
 });
+
+type YearVariantWrite = { membershipYear: number; shopifyVariantId: string; productUrl: string | null };
+
+/** The rows a save may write: a numeric variant for a year the settings page shows, or an error message. */
+function parseYearVariants(raw: unknown, boundary: Date | null | undefined): YearVariantWrite[] | string {
+    if (!boundary) return "Set the membership-year boundary before entering a year's variant";
+    if (!Array.isArray(raw)) return "membershipYearVariants must be a list";
+    const years: number[] = variantSlotYears(boundary, new Date());
+    const rows: YearVariantWrite[] = [];
+    for (const entry of raw as ({ membershipYear?: unknown; shopifyVariantId?: unknown; productUrl?: unknown } | null)[]) {
+        const { membershipYear, shopifyVariantId, productUrl } = entry ?? {};
+        if (typeof membershipYear !== "number" || !years.includes(membershipYear)) return "membershipYear must be the year in progress or the coming year";
+        const variantId = typeof shopifyVariantId === "string" ? shopifyVariantId.trim() : "";
+        if (!/^\d+$/.test(variantId)) return "shopifyVariantId must be a numeric Shopify variant ID";
+        rows.push({ membershipYear, shopifyVariantId: variantId, productUrl: typeof productUrl === "string" ? productUrl.trim() || null : null });
+    }
+    return rows;
+}
 
 /**
  * PUT /api/settings/membership — update board settings.
  * Body may include: standardMembershipFeeCents, volunteerMembershipFeeCents, orgMembershipYearBoundary (ISO|null),
  * orgMembershipVariantId (string|null),
  * orgMembershipProductUrl (string|null), volunteerFamilyDiscountCode (string|null),
+ * perYearVariantClient (true — required; any other body is refused with nothing changed),
+ * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — replaced by year; 409 when
+ * another year already holds the variant, and nothing in the save is kept),
  * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
  * releaseLibrary ({ library: LibraryKey, released: boolean } — board members only; the nav's UI-only
  * release gate, merged into the stored list in one statement so concurrent toggles don't clobber).
@@ -47,12 +75,16 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         scholarshipDenialGraceDays?: number | null;
         releasedLibraries?: unknown;
         releaseLibrary?: { library?: unknown; released?: unknown } | null;
+        membershipYearVariants?: unknown;
+        perYearVariantClient?: unknown;
     };
     try {
         body = await req.json();
     } catch {
         return apiError("Invalid JSON", 400);
     }
+    // A page without this marker cannot read the GET response, so its form holds defaults, not the stored settings.
+    if (body.perYearVariantClient !== true) return apiError("This page is out of date. Reload the page and try again.", 400);
 
     const data: Record<string, unknown> = {};
     const invalidFee = (v: number) => !Number.isFinite(v) || v < 0;
@@ -114,12 +146,23 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         release = { library, released };
     }
 
-    const settings = await prisma.$transaction(async (tx) => {
+    let yearVariants: YearVariantWrite[] = [];
+    if (body.membershipYearVariants !== undefined) {
+        const stored = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+        const parsed = parseYearVariants(body.membershipYearVariants, stored?.orgMembershipYearBoundary);
+        if (typeof parsed === "string") return apiError(parsed, 400);
+        yearVariants = parsed;
+    }
+
+    const save = prisma.$transaction(async (tx) => {
         await tx.boardSettings.upsert({
             where: { id: 1 },
             create: { ...DEFAULTS, ...data },
             update: data,
         });
+        // Delete first so two slots can swap variants without colliding on the unique index.
+        await tx.membershipYearVariant.deleteMany({ where: { membershipYear: { in: yearVariants.map((v) => v.membershipYear) } } });
+        await tx.membershipYearVariant.createMany({ data: yearVariants });
         if (release) {
             await tx.$executeRaw`UPDATE "BoardSettings" SET "releasedLibraries" =
                 CASE WHEN ${release.released} THEN array_append(array_remove("releasedLibraries", ${release.library}), ${release.library})
@@ -133,11 +176,20 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                 tableName: "BoardSettings",
                 affectedEntityId: 1,
                 // data holds a Date (orgMembershipYearBoundary); clone to a JSON-safe object.
-                newData: JSON.parse(JSON.stringify(release ? { ...data, releaseLibrary: release } : data)),
+                newData: JSON.parse(JSON.stringify({
+                    ...data,
+                    ...(release ? { releaseLibrary: release } : {}),
+                    ...(yearVariants.length ? { membershipYearVariants: yearVariants } : {}),
+                })),
             },
         });
         return tx.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
     });
 
-    return NextResponse.json({ settings });
+    try {
+        return NextResponse.json({ settings: await save });
+    } catch (err) {
+        if (isPrismaError(err, "P2002")) return apiError("Another membership year already holds that variant", 409);
+        throw err;
+    }
 });

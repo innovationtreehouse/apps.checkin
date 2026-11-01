@@ -22,4 +22,12 @@ describe("CreateToolPage", () => {
 
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "New tool added successfully!" })));
     });
+
+    it("says the list failed and keeps the create form", async () => {
+        mockFetchJson({});
+        renderWithProviders(<CreateToolPage />);
+
+        expect(await screen.findByText("Couldn't load the tools")).toBeInTheDocument();
+        expect(screen.getByLabelText(/equipment name/i)).toBeInTheDocument();
+    });
 });

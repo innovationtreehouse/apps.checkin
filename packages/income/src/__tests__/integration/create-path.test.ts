@@ -1359,6 +1359,20 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
       expect(await rowFor(p)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
     });
 
+    it("a payout that stops being hand-loaded goes back to waiting", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      setPayout(p, { source: "hand_loaded" });
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "HAND_LOADED" });
+
+      setPayout(p, { source: "api" });
+      await runReconcile(ORG_A, NOW);
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING", kind: null });
+      expect((await audits("reconciliation.waiting")).at(-1)).toMatchObject({ reason: "HAND_LOADED cleared" });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
     it("a waiting payout whose net changed tracks the new net and books at it", async () => {
       const p = await waitingPayout();
       bind({ posting: undefined });

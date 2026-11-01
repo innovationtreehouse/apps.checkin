@@ -1,4 +1,4 @@
-import { buildingLink, getKioskSeen, KIOSK_FRESH_MS, parseQueueDepth, resetKioskSeen, stampKioskSeen } from "@/lib/kioskSeen";
+import { buildingLink, getKioskClockSkew, getKioskSeen, KIOSK_FRESH_MS, noteKioskClockSkew, parseQueueDepth, resetKioskSeen, stampKioskSeen } from "@/lib/kioskSeen";
 
 describe("kioskSeen", () => {
     afterEach(() => resetKioskSeen());
@@ -12,6 +12,21 @@ describe("kioskSeen", () => {
         stampKioskSeen(10_000);
         expect(getKioskSeen(15_500).ageSeconds).toBe(5);
         expect(getKioskSeen(15_500).lastSeenAt?.getTime()).toBe(10_000);
+    });
+});
+
+describe("kiosk clock skew", () => {
+    afterEach(() => resetKioskSeen());
+
+    it("has no reading until one is noted", () => {
+        expect(getKioskClockSkew(1_000)).toBeNull();
+    });
+
+    it("keeps the latest reading while it is recent, and none after", () => {
+        noteKioskClockSkew(90, 10_000);
+        noteKioskClockSkew(-5, 20_000);
+        expect(getKioskClockSkew(20_000 + KIOSK_FRESH_MS)).toEqual({ seconds: -5, at: new Date(20_000) });
+        expect(getKioskClockSkew(20_001 + KIOSK_FRESH_MS)).toBeNull();
     });
 });
 

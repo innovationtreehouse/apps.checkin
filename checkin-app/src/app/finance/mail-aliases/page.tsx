@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Badge, Button, Group, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Alias {
@@ -31,24 +33,10 @@ async function send<T>(url: string, init?: RequestInit): Promise<T | null> {
 
 export default function MailAliasesPage() {
   const { loading, ready } = useRequireRole(FINANCE_ROLES);
-  const [aliases, setAliases] = useState<Alias[] | null>(null);
+  const { data, error, reload } = useLoad<{ PersonMailAlias: Alias[] }>(ready ? API : null);
+  const aliases = data?.PersonMailAlias ?? null;
   const [personEmail, setPersonEmail] = useState("");
   const [address, setAddress] = useState("");
-
-  const load = useCallback(
-    () =>
-      send<{ PersonMailAlias: Alias[] }>(API).then((data) => {
-        if (data) setAliases(data.PersonMailAlias);
-      }),
-    [],
-  );
-
-  useEffect(() => {
-    if (!ready) return;
-    send<{ PersonMailAlias: Alias[] }>(API).then((data) => {
-      if (data) setAliases(data.PersonMailAlias);
-    });
-  }, [ready]);
 
   if (loading || !ready) return <PageLoader />;
 
@@ -58,11 +46,11 @@ export default function MailAliasesPage() {
     if (done) {
       setPersonEmail("");
       setAddress("");
-      await load();
+      reload();
     }
   };
   const act = async (url: string, method: "POST" | "DELETE") => {
-    if (await send(url, { method })) await load();
+    if (await send(url, { method })) reload();
   };
 
   return (
@@ -78,6 +66,9 @@ export default function MailAliasesPage() {
           <Button type="submit">Add</Button>
         </Group>
       </form>
+      {error && <LoadError what="mail aliases" message={error} onRetry={reload} />}
+      {!aliases && !error && <PageLoader minHeight="20vh" />}
+      {aliases && !error && (
       <Table>
         <Table.Thead>
           <Table.Tr>
@@ -88,7 +79,7 @@ export default function MailAliasesPage() {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {aliases?.map((a) => (
+          {aliases.map((a) => (
             <Table.Tr key={a.id}>
               <Table.Td>{a.address}</Table.Td>
               <Table.Td>
@@ -111,7 +102,8 @@ export default function MailAliasesPage() {
           ))}
         </Table.Tbody>
       </Table>
-      {aliases?.length === 0 && <Text c="dimmed">No aliases yet.</Text>}
+      )}
+      {aliases?.length === 0 && !error && <Text c="dimmed">No aliases yet.</Text>}
     </Stack>
   );
 }

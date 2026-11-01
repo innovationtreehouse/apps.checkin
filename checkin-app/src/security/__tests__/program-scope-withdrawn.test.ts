@@ -10,7 +10,7 @@
  */
 import prisma from '@/lib/prisma';
 import { buildCallerContext } from '../access-resolvers';
-import { ENROLLED_PARTICIPANT, LIVE_PERSON } from '@/lib/person/filters';
+import { ENROLLED_PARTICIPANT } from '@/lib/person/filters';
 import type { CtxNeeds } from '../core';
 import type { AuthResult } from '@/types/auth';
 
@@ -54,7 +54,7 @@ describe('program-scope prefetch reads only enrolled participants', () => {
             select: { id: true, participants: ENROLLED_PERSON_IDS },
         });
         expect(volunteerFindMany).toHaveBeenCalledWith({
-            where: { personId: 12, isCore: true, person: LIVE_PERSON },
+            where: { personId: 12, isCore: true },
             select: { programId: true, program: { select: { participants: ENROLLED_PERSON_IDS } } },
         });
         expect(built.participantIdsInScopePrograms).toEqual(new Set([9, 10]));

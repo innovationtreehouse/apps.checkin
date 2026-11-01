@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
+import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
 import { deleteAndReleaseHold, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
@@ -210,18 +211,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // One row per (person, program): re-enrolment reactivates the withdrawn
             // row and clears the last stint's fields, so its order, plan request and
             // clocks never join the new stint.
+            const reenroll = initialStatus === 'ACTIVE' ? ENROLLMENT_WRITES.reenrollComp : ENROLLMENT_WRITES.reenrollPaid;
             const { count } = await tx.programParticipant.updateMany({
-                where: { programId, personId: participantId, status: 'WITHDRAWN' },
+                where: { programId, personId: participantId, ...reenroll.where },
                 data: {
-                    status: initialStatus,
+                    ...reenroll.data(),
                     endedAt: null,
                     pendingSince: new Date(),
-                    isPaymentPlanRequested: false,
                     scholarshipRequestKind: null,
-                    paymentPlanDeniedAt: null,
                     wasOrgMemberAtApproval: null,
                     shopifyOrderId: null,
-                    inventoryHeldAt: null,
                     seatTakenWithoutSaleAt: takesSeatWithoutSale ? new Date() : null,
                 },
             });

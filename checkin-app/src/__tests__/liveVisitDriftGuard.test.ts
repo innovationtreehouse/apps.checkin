@@ -2,8 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 /**
- * LIVE_VISIT drift guard (lib/visit/filters.ts) — the Visit analogue of
- * livePersonDriftGuard.test.ts; scanner mechanics lifted from there.
+ * LIVE_VISIT drift guard (lib/visit/filters.ts): a source scanner over every
+ * Visit query.
  *
  * A deleted Visit is a TOMBSTONE, not a removed row: `deletedAt` gets set and
  * the row survives (reviewable, reversible). Any code that lists, counts, or
@@ -44,8 +44,7 @@ function walk(dir: string, out: string[] = []): string[] {
     return out;
 }
 
-/** Capture the object literal at/after `from`, skipping strings & comments (see
- *  livePersonDriftGuard.test.ts for the provenance of this scanner). */
+/** Capture the object literal at/after `from`, skipping strings & comments. */
 function captureObject(s: string, from: number): { text: string; end: number } | null {
     let i = s.indexOf('{', from);
     if (i < 0) return null;

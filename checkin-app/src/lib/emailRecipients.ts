@@ -9,7 +9,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
  * Email fan-out helpers. Kept dependency-light (prisma + email + templates + logger only) so
  * any path can resolve-and-send without an import cycle. Callers name a template,
  * fill its tokens and pass a distinct errorLabel; these helpers only resolve
- * recipients and swallow send/query errors.
+ * recipients and swallow send/query errors, except where a helper says it throws.
  */
 
 export interface HouseholdRecipient { email: string; settings: Record<string, unknown> | null; }
@@ -79,13 +79,28 @@ async function boardMemberEmails(): Promise<string[]> {
     return board.map((b) => b.email).filter((e): e is string => !!e);
 }
 
-/** Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed. */
-export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
+/**
+ * Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed.
+ * Resolves to how many sends the provider accepted, which is 0 after any swallowed error.
+ */
+export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<number> {
     try {
-        await fanOutEmails(await boardMemberEmails(), key, ctx);
+        const sent = await fanOutEmails(await boardMemberEmails(), key, ctx);
+        return sent.filter(Boolean).length;
     } catch (e) {
         logger.error(errorLabel, e);
+        return 0;
     }
+}
+
+/** Email every sysadmin and board member with an address on file. Returns whether anyone was reached; a failed query throws. */
+export async function emailSysadminsAndBoard<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>): Promise<boolean> {
+    const people = await prisma.person.findMany({
+        where: { OR: [{ isSysadmin: true }, { isBoardMember: true }], email: { not: null }, ...LIVE_PERSON },
+        select: { email: true },
+    });
+    const sent = await fanOutEmails(people.map((p) => p.email).filter((e): e is string => !!e), key, ctx);
+    return sent.some(Boolean);
 }
 
 /** The scholarship review notice's board fallback, which builds its own HTML. */
@@ -110,8 +125,7 @@ export async function notifyFinanceAlert<K extends TemplateKey>(key: K, ctx: Tem
             select: { email: true },
         });
         const emails = finance.map((f) => f.email).filter((e): e is string => !!e);
-        if (emails.length === 0) return emailBoardMembers(key, ctx, errorLabel);
-        await fanOutEmails(emails, key, ctx);
+        await (emails.length === 0 ? emailBoardMembers(key, ctx, errorLabel) : fanOutEmails(emails, key, ctx));
     } catch (e) {
         logger.error(errorLabel, e);
     }

@@ -4,8 +4,9 @@ import { DisbursementPayloadV1 } from "@checkin/donations";
 import { sumCents } from "@checkin/money";
 import { TEST_PREFIX } from "@checkin/quickbooks";
 import { db } from "../db";
-import type { DonationDepositLine, DonationExpectedDeposit, IncomeDeposits } from "../contract";
+import type { DepositHandOverFailure, DonationDepositLine, DonationExpectedDeposit, IncomeDeposits } from "../contract";
 import type { DisbursementEvent } from "../generated/prisma/client";
+import { recordEvent } from "../repositories/audit";
 import { getIncomeDeposits } from "../runtime";
 
 /** Disbursement ids per depositStatus read. */
@@ -17,13 +18,19 @@ const DESCRIPTION = { donation: "Benevity donations", match: "Benevity matches",
 /** Outside prod only a TEST_PREFIX disbursement is handed over; prod never hands one over. */
 const sendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_PREFIX) !== deposits.prod;
 
+/** Marks a disbursement as told to finance, so a batch that never hands over is raised once. */
+const RAISED_EVENT = "DEPOSIT_HANDOVER_RAISED";
+
+/** A disbursement no re-send can hand over; its message goes to finance. */
+class DepositNotBuildable extends Error {}
+
 /**
  * The deposit a completed disbursement should land as: one line per kind and bucket,
- * fees negative, an organization-level gift without a bucket. Throws when it cannot be built.
+ * fees negative, an organization-level gift without a bucket. Throws DepositNotBuildable when it cannot be built.
  */
 export async function expectedDeposit(e: Pick<DisbursementEvent, "orgId" | "disbursementId" | "payload">): Promise<DonationExpectedDeposit> {
   const payload = DisbursementPayloadV1.parse(JSON.parse(e.payload));
-  if (!payload.disbursementDate) throw new Error("the disbursement has no date");
+  if (!payload.disbursementDate) throw new DepositNotBuildable("it has no disbursement date");
   const gifts = new Map(
     (
       await db.transaction.findMany({
@@ -35,8 +42,8 @@ export async function expectedDeposit(e: Pick<DisbursementEvent, "orgId" | "disb
   const lines = new Map<string, DonationDepositLine>();
   for (const item of payload.items) {
     const gift = gifts.get(item.transactionId);
-    if (!gift) throw new Error(`gift ${item.transactionId} is not in the disbursement`);
-    if (!gift.isOrganizationalLevel && gift.ownerId === null) throw new Error(`gift ${item.transactionId} has no owner`);
+    if (!gift) throw new DepositNotBuildable(`gift ${item.transactionId} is not in the disbursement`);
+    if (!gift.isOrganizationalLevel && gift.ownerId === null) throw new DepositNotBuildable(`gift ${item.transactionId} has no owner`);
     const budgetOwnerId = gift.isOrganizationalLevel ? null : gift.ownerId;
     const key = `${item.type}|${budgetOwnerId ?? ""}`;
     const signed = item.type === "fees" ? -item.amountCents : item.amountCents;
@@ -50,7 +57,7 @@ export async function expectedDeposit(e: Pick<DisbursementEvent, "orgId" | "disb
   }
   const nonZero = [...lines.values()].filter((l) => l.amountCents !== 0);
   const netCents = sumCents(...nonZero.map((l) => l.amountCents));
-  if (netCents <= 0) throw new Error("the disbursement nets to zero or less");
+  if (netCents <= 0) throw new DepositNotBuildable("it nets to zero or less, so no deposit is due");
   return { txnDate: payload.disbursementDate, netCents, bankRole: "BENEVITY_BANK", lines: nonZero, memo: `Benevity disbursement ${e.disbursementId}` };
 }
 
@@ -77,12 +84,32 @@ export async function handOverDeposits(orgId: string, disbursementIds: Iterable<
 
 export type HandOverCounts = { acknowledged: number; sent: number; failed: number };
 
-/** The daily hand-over job: a re-send of every completed disbursement income has not acknowledged. A repeat changes nothing in income. */
+/** Tell finance once about each failure not already raised. The mark follows the alert, so an alert that throws is sent again next run. */
+async function raiseFailures(deposits: IncomeDeposits, orgId: string, failures: DepositHandOverFailure[]): Promise<void> {
+  if (failures.length === 0) return;
+  const raised = await db.workflowEvent.findMany({
+    where: { orgId, eventType: RAISED_EVENT, disbursementId: { in: failures.map((f) => f.disbursementId) } },
+    select: { disbursementId: true },
+  });
+  const told = new Set(raised.map((r) => r.disbursementId));
+  const fresh = failures.filter((f) => !told.has(f.disbursementId));
+  if (fresh.length === 0) return;
+  await deposits.handOverFailing(fresh);
+  for (const { disbursementId, reason } of fresh) {
+    await recordEvent(db, { orgId, disbursementId, entityType: "disbursement", entityId: disbursementId, eventType: RAISED_EVENT, actorUsername: "system:deposit-handover", payload: { reason } });
+  }
+}
+
+/**
+ * The daily hand-over job: a re-send of every completed disbursement income has not acknowledged.
+ * A repeat changes nothing in income. Each one has already failed at completion, so a failure here goes to finance.
+ */
 // ponytail: reads every completed disbursement each run; page by creation time if Benevity volume grows.
 export async function runDonationDepositHandOver(orgId: string): Promise<HandOverCounts | "unbound"> {
   const deposits = getIncomeDeposits();
   if (!deposits) return "unbound";
   const counts: HandOverCounts = { acknowledged: 0, sent: 0, failed: 0 };
+  const failures: DepositHandOverFailure[] = [];
   const events = (await db.disbursementEvent.findMany({ where: { orgId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] })).filter((e) =>
     sendable(deposits, e.disbursementId),
   );
@@ -100,8 +127,13 @@ export async function runDonationDepositHandOver(orgId: string): Promise<HandOve
       } catch (err) {
         counts.failed++;
         console.warn(`[bulk-donation] re-sending disbursement ${e.disbursementId}'s deposit to income failed`, err);
+        failures.push({
+          disbursementId: e.disbursementId,
+          reason: err instanceof DepositNotBuildable ? err.message : "income did not take it, and the daily job keeps trying",
+        });
       }
     }
   }
+  await raiseFailures(deposits, orgId, failures);
   return counts;
 }

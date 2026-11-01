@@ -17,6 +17,7 @@ const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");
   },
+  failureReason: async () => null,
 };
 
 /** Nobody holds a role or is conflicted, so nobody can decide a gift. */

@@ -62,6 +62,7 @@ services:
       NEXTAUTH_SECRET: flow-test-secret
       GOOGLE_CLIENT_ID: flow-test    # present-but-dummy; persona-mint doesn't use them
       GOOGLE_CLIENT_SECRET: flow-test
+      CRON_SECRET: flow-test-cron    # throwaway; the e2e specs read it inside this container
     volumes:
       - ..:/repo
     ports:

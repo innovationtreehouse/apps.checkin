@@ -143,4 +143,39 @@ describe("KioskHeartbeatBox", () => {
     renderWithProviders(<KioskHeartbeatBox />);
     expect(await screen.findByText(/Kiosk last seen 1m ago/)).toBeInTheDocument();
   });
+
+  const renderHeartbeat = (rows: { metric: string; value: number }[]) => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: rows.map((r) => ({ ...r, timestamp: new Date().toISOString() })),
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+  };
+
+  it("says it can't confirm the clock with no reading", async () => {
+    renderHeartbeat([]);
+    expect(await screen.findByText(/Kiosk clock: can't confirm/)).toBeInTheDocument();
+  });
+
+  it.each([29, -29])("does not warn at %d seconds", async (value) => {
+    renderHeartbeat([{ metric: "kiosk_clock_skew", value }]);
+    expect(await screen.findByText(/Kiosk clock agrees with the server/)).toBeInTheDocument();
+  });
+
+  it.each([
+    [30, /30s ahead of the server/],
+    [-30, /30s behind the server/],
+    [-300, /5m behind the server/],
+  ])("warns at %d seconds", async (value, copy) => {
+    renderHeartbeat([{ metric: "kiosk_last_seen", value: 5 }, { metric: "kiosk_clock_skew", value }]);
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getByText(/Kiosk last seen 5s ago/)).toBeInTheDocument();
+  });
+
+  it("warns for a kiosk refused before it was ever accepted, with no last-seen row", async () => {
+    renderHeartbeat([{ metric: "kiosk_clock_skew", value: 90 }]);
+    expect(await screen.findByText(/90s ahead of the server/)).toBeInTheDocument();
+    expect(screen.getByText(/No kiosk request since this task started/)).toBeInTheDocument();
+  });
 });

@@ -18,6 +18,7 @@ import { modals } from "@mantine/modals";
 import { IconAlertTriangle, IconPlus } from "@tabler/icons-react";
 import { normalizePhone, isValidEmail } from "@/lib/emergencyContacts/identity";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
+import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
     PENDING_BOARD_REVIEW: { label: "Awaiting board review", color: "yellow" },
@@ -215,14 +216,15 @@ export default function TrustedAdultPanel() {
 
             {items.map((ta) => {
                 const latest = ta.reviews[0];
-                // Live approval wins: mirror /operational — while ANY review is APPROVED the
-                // adult is still authorized, even if a newer change is pending or was denied.
+                // Live approval wins: mirror /operational — while an unexpired approval stands
+                // the adult is still authorized, even if a newer change is pending or was denied.
                 // That newer review is a footnote, not the headline.
-                const liveApproval = ta.reviews.find((r) => r.status === "APPROVED") ?? null;
+                const liveApproval = ta.reviews.find((r) => isAuthorizedApproval(r, new Date())) ?? null;
                 const latestPending = !!latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION");
                 const changePending = !!liveApproval && latestPending;
                 const changeDeclined = !!liveApproval && latest?.status === "DENIED";
-                const effectiveStatus = liveApproval ? "APPROVED" : (latest?.status ?? "PENDING_BOARD_REVIEW");
+                // An approval past its date reads as expired before the nightly sweep flips it.
+                const effectiveStatus = liveApproval ? "APPROVED" : latest?.status === "APPROVED" ? "EXPIRED" : (latest?.status ?? "PENDING_BOARD_REVIEW");
                 const meta = STATUS_META[effectiveStatus] ?? { label: effectiveStatus, color: "gray" };
                 // Dates + shared note come from the operative review: the live approval when
                 // there is one, otherwise the latest.
@@ -230,7 +232,7 @@ export default function TrustedAdultPanel() {
                 const reviewBy = source?.reviewBy ? new Date(source.reviewBy) : null;
                 const expiringSoon =
                     reviewBy && effectiveStatus === "APPROVED" && reviewBy.getTime() - now < EXPIRING_SOON_DAYS * 86400000;
-                const canResubmit = !changePending && (!!liveApproval || ["EXPIRED", "DENIED", "REVOKED"].includes(latest?.status ?? ""));
+                const canResubmit = !changePending && (!!liveApproval || ["EXPIRED", "DENIED", "REVOKED"].includes(effectiveStatus));
 
                 return (
                     <Card key={ta.id} withBorder radius="md" padding="sm">

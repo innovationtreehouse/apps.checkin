@@ -773,7 +773,7 @@ describe("ProgramDetailsPage", () => {
     const setup = () => {
       setSession({ id: 1, isBoardMember: true });
       return routedFetch([
-        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/settings/membership", result: { ok: true, body: { settings: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" }, MembershipYearVariant: [] } } } },
         { url: "/api/programs/1", method: "GET", result: { ok: true, body: crossingProgram } },
         { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
       ]);
@@ -814,7 +814,7 @@ describe("ProgramDetailsPage", () => {
     it("does not pre-select a derived year when single-year dates are moved across the boundary", async () => {
       setSession({ id: 1, isBoardMember: true });
       routedFetch([
-        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/settings/membership", result: { ok: true, body: { settings: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" }, MembershipYearVariant: [] } } } },
         { url: "/api/programs/1", method: "GET", result: { ok: true, body: { ...crossingProgram, endAt: "2026-08-15T00:00:00.000Z" } } },
       ]);
       renderPage();

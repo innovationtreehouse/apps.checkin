@@ -12,7 +12,8 @@ export function useMembershipYearBoundary(enabled: boolean): Date | null {
     fetch('/api/settings/membership')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        const b = data?.BoardSettings?.orgMembershipYearBoundary;
+        // A task on the previous release returns the settings row directly.
+        const b = (data?.settings?.BoardSettings ?? data?.settings)?.orgMembershipYearBoundary;
         if (b) setBoundary(new Date(b));
       })
       .catch(() => {});

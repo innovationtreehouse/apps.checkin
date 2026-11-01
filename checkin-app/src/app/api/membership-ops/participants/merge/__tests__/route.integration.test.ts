@@ -1319,6 +1319,78 @@ describe("Merge Participants API", () => {
         expect(kept?.lastWaiverSign?.getTime()).toBe(newer.getTime());
     });
 
+    describe("a write that commits between the plan and the merge transaction", () => {
+        /** POST the merge, committing `write` after the plan is built and before the transaction opens. */
+        async function mergeAround(write: () => Promise<unknown>, fieldChoices?: Record<string, string>): Promise<Response> {
+            const realTransaction = prisma.$transaction.bind(prisma) as (fn: (tx: TxClient) => Promise<unknown>) => Promise<unknown>;
+            const spy = jest.spyOn(prisma, "$transaction").mockImplementationOnce((async (fn: (tx: TxClient) => Promise<unknown>) => {
+                await write();
+                return realTransaction(fn);
+            }) as unknown as typeof prisma.$transaction);
+            try {
+                return await POST(mergeReq(pKeepId, pMergeId, fieldChoices));
+            } finally {
+                spy.mockRestore();
+            }
+        }
+
+        const OLD = new Date("2024-01-01");
+        const PLANNED = new Date("2025-06-01");
+        const CLEARED = new Date("2026-11-01");
+
+        it.each(["lastBackgroundCheck", "lastWaiverSign"] as const)("does not move the keeper's %s backwards", async (field) => {
+            await prisma.person.update({ where: { id: pKeepId }, data: { [field]: OLD } });
+            await prisma.person.update({ where: { id: pMergeId }, data: { [field]: PLANNED } });
+
+            const res = await mergeAround(() => prisma.person.update({ where: { id: pKeepId }, data: { [field]: CLEARED } }));
+
+            expect(res.status).toBe(200);
+            const kept = await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } });
+            expect(kept[field]?.getTime()).toBe(CLEARED.getTime());
+        });
+
+        it.each(["lastBackgroundCheck", "lastWaiverSign"] as const)("carries a newer %s that landed on the merged-away record", async (field) => {
+            await prisma.person.update({ where: { id: pKeepId }, data: { [field]: PLANNED } });
+            await prisma.person.update({ where: { id: pMergeId }, data: { [field]: OLD } });
+
+            const res = await mergeAround(() => prisma.person.update({ where: { id: pMergeId }, data: { [field]: CLEARED } }));
+
+            expect(res.status).toBe(200);
+            const kept = await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } });
+            expect(kept[field]?.getTime()).toBe(CLEARED.getTime());
+        });
+
+        it("audits the keeper as the merge found it, not as the plan read it", async () => {
+            await prisma.person.update({ where: { id: pKeepId }, data: { lastBackgroundCheck: OLD } });
+            await prisma.person.update({ where: { id: pMergeId }, data: { lastBackgroundCheck: PLANNED } });
+
+            await mergeAround(() => prisma.person.update({ where: { id: pKeepId }, data: { lastBackgroundCheck: CLEARED } }));
+
+            const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: "Person", action: "DELETE", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+            expect(audit.oldData).toMatchObject({ keeper: { lastBackgroundCheck: CLEARED.toISOString() } });
+        });
+
+        it("refuses and rolls back when the write creates a conflict the admin never decided", async () => {
+            // The fixture's keeper has no phone, so the plan backfills the merged-away one with no choice.
+            const res = await mergeAround(() => prisma.person.update({ where: { id: pKeepId }, data: { phone: "555-000-1111" } }));
+
+            expect(res.status).toBe(409);
+            expect((await res.json()).error).toContain("changed while merging");
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } })).phone).toBe("555-000-1111");
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: pMergeId } })).mergedIntoId).toBeNull();
+        });
+
+        it("applies the admin's choice of side to the side's live value", async () => {
+            const res = await mergeAround(
+                () => prisma.person.update({ where: { id: pMergeId }, data: { name: "Merge User Renamed" } }),
+                { name: "merge", identity: "keep" },
+            );
+
+            expect(res.status).toBe(200);
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } })).name).toBe("Merge User Renamed");
+        });
+    });
+
     it("single-sided auto-backfill: keeper null, tombstone set -> keeper backfilled", async () => {
         // A null-name Person is unrepresentable, so a set keeper name must survive;
         // the five nullable fields prove the null-backfill behavior.
