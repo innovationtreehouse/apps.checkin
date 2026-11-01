@@ -1,4 +1,4 @@
-// Income books and matches every deposit (QB_ENTRY_OWNERSHIP). Donation hands each completed
+// Income books and matches every deposit. Donation hands each completed
 // disbursement's deposit to income and re-sends any income does not know.
 import { DisbursementPayloadV1 } from "@checkin/donations";
 import { sumCents } from "@checkin/money";

@@ -7,7 +7,7 @@ import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
 import { BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole } from "@checkin/quickbooks";
 
-// The books map (docs/in-design/QB_ENTRY_OWNERSHIP.md): bucket -> QuickBooks Class,
+// The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
 // stored on BudgetOwner, and named role -> QuickBooks account, stored in
 // BooksMapRoleAccount. FINANCE or BOARD reads it; FINANCE edits it, audited.
 
