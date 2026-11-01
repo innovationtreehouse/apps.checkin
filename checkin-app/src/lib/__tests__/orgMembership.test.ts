@@ -11,7 +11,7 @@
  *     running through a given date.
  *   - programCoverageDate: the date a program's member pricing must be valid
  *     through (the boundary closing its stated year, else endAt).
- * Prisma mocked — no DB. nextBoundary/renewalSeasonWindow run for real (from
+ * Prisma mocked — no DB. nextBoundary runs for real (from
  * @/lib/membership/renewal) so the boundary arithmetic is exercised, not stubbed.
  */
 import {

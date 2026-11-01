@@ -305,11 +305,11 @@ Procedure below is built on them.
 - From there payment and review run in parallel, and membership activates on
   whichever finishes last. Neither alone activates.  [Decision]
 
-- Granting the coming year completes the payment step on a renewal already under
-  way. It stamps no other gate.  [Decision]
+- A board grant completes the payment step on an application already under way,
+  joining or renewing. It stamps no other gate.  [Decision]
 
 - Only an application completing — paid and background check cleared — makes a
-  household a member. Granting the current year is money only: it pays the
+  household a member. A board grant is money only: it pays the
   household's application under way, or opens one for the family to complete,
   and never sets membership directly or skips the check. A household already
   active stays active.  [Decision]
@@ -384,6 +384,10 @@ Procedure below is built on them.
   plan. Only the board certifies a payment; a sysadmin cannot.
   [Decision — *Policy: Membership Policy, Art. XIII*]
 
+- A board grant records the membership year the Board chooses: the year in
+  progress, or, inside the renewal window, the coming year. Each grant control
+  names the year it records.  [Decision]
+
 - A membership order the app cannot apply settles nothing and is raised for the
   board: a second order on an application already paid, one arriving after the
   board certified or closed the application or before payment was due, and one
@@ -421,12 +425,12 @@ Procedure below is built on them.
 - Renewals open only inside the renewal window, and opening skips every
   household already handled this cycle — renewed, granted the coming year,
   joined in-window, or closed by the board — so no family is billed twice. The
-  one exception is the board granting the current year to a lapsed active
+  one exception is a board grant to a lapsed active
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
 - Renewals start only from the board's own actions: its "open renewals" button
-  opens them for every household due, and granting the current year opens one
+  opens them for every household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6, 2026-10-27*]
 

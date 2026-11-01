@@ -12,7 +12,7 @@
  *     signed each cycle), only a still-valid background check pre-stamps
  *     bgClearedAt, and the external advance is re-run.
  */
-import { householdBgIsFresh, beginRenewal, isRenewalSeason, RenewalError, bgValidUntilBoundary, membershipYearCycle, membershipYearCycleForLabel, coveredThrough, runRenewalSweep } from '@/lib/membership/renewal';
+import { householdBgIsFresh, beginRenewal, grantableYears, RenewalError, bgValidUntilBoundary, membershipYearCycle, membershipYearCycleForLabel, coveredThrough, runRenewalSweep } from '@/lib/membership/renewal';
 import { IN_FLIGHT_RENEWAL, handledThisCycleWhere } from '@/lib/membership/lifecycle';
 
 const mockTx = {
@@ -214,25 +214,25 @@ describe('membershipYearCycleForLabel', () => {
     });
 });
 
-describe('isRenewalSeason', () => {
+describe('grantableYears', () => {
     // Boundary month/day = Sep 1; lead window is 2 months → season opens Jul 1.
-    const boundaryConfig = new Date(Date.UTC(2020, 8, 1)); // year is ignored (month/day only)
+    const boundaryConfig = new Date(Date.UTC(2020, 8, 1));
+    const inProgress2026 = { year: 2026, label: '2026-2027' };
+    const coming2027 = { year: 2027, label: '2027-2028' };
 
-    it('no boundary configured → not renewal season', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
-        expect(await isRenewalSeason(new Date(Date.UTC(2026, 7, 15)))).toBe(false);
+    it.each([
+        ['off season', Date.UTC(2027, 2, 15), [inProgress2026]],
+        ['the day before the window opens', Date.UTC(2027, 5, 30), [inProgress2026]],
+        ['the day the window opens', Date.UTC(2027, 6, 1), [inProgress2026, coming2027]],
+        ['the day before the boundary', Date.UTC(2027, 7, 31), [inProgress2026, coming2027]],
+        ['the boundary day', Date.UTC(2027, 8, 1), [coming2027]],
+        ['the day after the boundary', Date.UTC(2027, 8, 2), [coming2027]],
+    ])('%s', (_label, now, expected) => {
+        expect(grantableYears(boundaryConfig, new Date(now))).toEqual(expected);
     });
 
-    it('inside the 2-month lead window → renewal season', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundaryConfig });
-        // 2026-08-01 is within [2026-07-01, 2026-09-01).
-        expect(await isRenewalSeason(new Date(Date.UTC(2026, 7, 1)))).toBe(true);
-    });
-
-    it('before the lead window opens → not renewal season', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundaryConfig });
-        // 2026-06-30 is one day before the window opens.
-        expect(await isRenewalSeason(new Date(Date.UTC(2026, 5, 30)))).toBe(false);
+    it('offers no year with no boundary set', () => {
+        expect(grantableYears(null, new Date(Date.UTC(2027, 2, 15)))).toEqual([]);
     });
 });
 
