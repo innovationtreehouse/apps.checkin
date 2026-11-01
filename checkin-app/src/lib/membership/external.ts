@@ -459,6 +459,21 @@ async function assertSignerIs(signerId: number | null, userId: number) {
 const CONTRACT_EXPIRATION_DAYS = 15;
 
 /**
+ * A claim with no request ids this old has lost its holder and can be taken over.
+ * Far longer than the holder's Zoho calls, each capped by ZOHO_FETCH_TIMEOUT_MS.
+ */
+const SIGNING_CLAIM_WINDOW_MS = 5 * 60_000;
+
+/** Recall a request no one will ever be sent to, so it can't stay live beside the stored one. */
+async function recallUnstoredRequest(token: string, requestId: string, processId: number) {
+    try {
+        await zohoSign.recallRequest(token, requestId);
+    } catch (e) {
+        logger.error(`Could not recall unstored Zoho request ${requestId} for membership process ${processId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+/**
  * Applicant-facing "Sign your membership agreement" action. Idempotent: the Zoho
  * signing request/document is created at most once (its request + action ids are
  * stored on the process), then every call mints a fresh short-lived EMBEDDED sign
@@ -534,10 +549,16 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
         // instead of paying for an orphan. The claim matches an INCOMPLETE pair
         // (either id null), not just a null envelope: setZohoEnvelope (the
         // admin/email flow) stores an envelope WITHOUT an action id, which can't be
-        // embedded, so that state must stay claimable.
+        // embedded, so that state must stay claimable. A claim whose holder died
+        // before storing ids is claimable once past the window.
+        const claimedAt = new Date();
         const claim = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, zohoSignerPersonId: null, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoSignerPersonId: userId },
+            where: {
+                id: process.id,
+                OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }],
+                AND: [{ OR: [{ zohoSignerPersonId: null }, { zohoClaimedAt: { lt: new Date(claimedAt.getTime() - SIGNING_CLAIM_WINDOW_MS) } }] }],
+            },
+            data: { zohoSignerPersonId: userId, zohoClaimedAt: claimedAt },
         });
         if (claim.count === 0) {
             const current = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
@@ -550,6 +571,13 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             logger.info(`Concurrent signing request for membership process ${process.id}; reusing stored ${requestId}.`);
             return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
         }
+
+        // Matching on claimedAt stops a holder that was taken over from touching the newer claim.
+        const ownClaim = { id: process.id, zohoSignerPersonId: userId, zohoClaimedAt: claimedAt };
+        const releaseClaim = () => prisma.orgMembershipProcess.updateMany({
+            where: { ...ownClaim, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: null },
+        });
 
         let created: Awaited<ReturnType<typeof zohoSign.createRequest>>;
         try {
@@ -622,18 +650,24 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             });
         } catch (e) {
             // Release the claim so the next click can retry.
-            await prisma.orgMembershipProcess.updateMany({
-                where: { id: process.id, zohoSignerPersonId: userId, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-                data: { zohoSignerPersonId: null },
-            });
+            await releaseClaim();
             throw e;
         }
 
-        const stored = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, zohoSignerPersonId: userId },
-            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
-        });
+        let stored: { count: number };
+        try {
+            stored = await prisma.orgMembershipProcess.updateMany({
+                where: ownClaim,
+                data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+            });
+        } catch (e) {
+            await recallUnstoredRequest(token, created.requestId, process.id);
+            // If this fails too, the window frees the claim.
+            await releaseClaim().catch((releaseError) => logger.error(`Could not release signing claim for membership process ${process.id}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`));
+            throw e;
+        }
         if (stored.count === 0) {
+            await recallUnstoredRequest(token, created.requestId, process.id);
             throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
         }
         requestId = created.requestId;
