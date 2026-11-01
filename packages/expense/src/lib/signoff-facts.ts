@@ -7,6 +7,7 @@ import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
+import { liveIds } from "./livePeople";
 
 type SignoffExpense = Pick<
   Expense,
@@ -25,10 +26,16 @@ function partiesOf(expense: { submitterId: number; reimburseePersonId: number | 
   return expense.reimburseePersonId === null ? [expense.submitterId] : [expense.submitterId, expense.reimburseePersonId];
 }
 
-/** The submitter, the reimbursee when known, and everyone in either one's household. */
-export async function conflictedParties(expense: { submitterId: number; reimburseePersonId: number | null }): Promise<number[]> {
-  const parties = partiesOf(expense);
-  return [...new Set([...parties, ...(await getExpenseRuntime().signoff.householdOf(parties))])];
+/**
+ * Whether the person is the submitter, the reimbursee when known, or in either one's household,
+ * each as the live person they name. A party naming nobody live cannot be checked, so everyone is conflicted.
+ */
+export async function isConflicted(expense: { submitterId: number; reimburseePersonId: number | null }, personId: number): Promise<boolean> {
+  const stored = partiesOf(expense);
+  const live = await liveIds(stored);
+  const parties = stored.flatMap((id) => live.get(id) ?? []);
+  if (parties.length < stored.length) return true;
+  return parties.includes(personId) || (await getExpenseRuntime().signoff.householdOf(parties)).includes(personId);
 }
 
 /**
@@ -79,14 +86,14 @@ function groupBy<T>(rows: T[], key: (row: T) => string): Map<string, T[]> {
  * bucket and one isOrgMember call per distinct reimbursee. Everyone who signs a step is seated:
  * the lines' approvers, the seats' signers and whoever recorded the Board authorization (the Board
  * step); moving a line to a bucket signs none. `readOnly` is for counts, which must not freeze the
- * Everyday check.
+ * Everyday check. Every stored person is read as the live person they name. An expense with a party
+ * naming nobody live has no approvers or role holders and no reimbursee to confirm, so nobody acts on it.
  */
 export async function signoffFactsForExpenses(db: Db, expenses: SignoffExpense[], { readOnly = false } = {}): Promise<Map<string, ExpenseSignoffFacts>> {
   if (expenses.length === 0) return new Map();
   const dir = getExpenseRuntime().signoff;
   const ids = expenses.map((e) => e.id);
-  const reimbursees = unique(expenses.flatMap((e) => (lineKind(e) === "reimbursement" && e.reimburseePersonId !== null ? [e.reimburseePersonId] : [])));
-  const [lines, approvals, seats, recorders, audits, finance, board, membership] = await Promise.all([
+  const [lines, storedApprovals, storedSeats, storedRecorders, storedAudits, finance, board] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: { in: ids } }, orderBy: { id: "asc" }, select: { id: true, expenseId: true, unitPriceCents: true } }),
     db.lineItemOwnerApproval.findMany({
       where: { expenseId: { in: ids } },
@@ -101,9 +108,24 @@ export async function signoffFactsForExpenses(db: Db, expenses: SignoffExpense[]
     }),
     dir.financeHolders(),
     dir.boardMembers(),
-    Promise.all(reimbursees.map(async (id) => [id, await dir.isOrgMember(id)] as const)),
   ]);
-  const isMember = new Map(membership);
+  const live = await liveIds([
+    ...expenses.flatMap(partiesOf),
+    ...storedSeats.map((s) => s.signerUserId),
+    ...storedApprovals.flatMap((a) => a.decidedByUserId ?? []),
+    ...storedRecorders.flatMap((r) => r.boardAuthorizedByUserId ?? []),
+    ...storedAudits.map((a) => a.userId),
+  ]);
+  const current = (id: number) => live.get(id) ?? id;
+  const currentOrNull = (id: number | null) => (id === null ? null : current(id));
+  const approvals = storedApprovals.map((a) => ({ ...a, decidedByUserId: currentOrNull(a.decidedByUserId) }));
+  const seats = storedSeats.map((s) => ({ ...s, signerUserId: current(s.signerUserId) }));
+  const recorders = storedRecorders.map((r) => ({ ...r, boardAuthorizedByUserId: currentOrNull(r.boardAuthorizedByUserId) }));
+  const audits = storedAudits.map((a) => ({ ...a, userId: current(a.userId) }));
+  const liveExpenses = expenses.map((e) => ({ ...e, submitterId: current(e.submitterId), reimburseePersonId: currentOrNull(e.reimburseePersonId) }));
+  const unresolved = new Set(expenses.filter((e) => partiesOf(e).some((id) => live.get(id) == null)).map((e) => e.id));
+  const reimbursees = unique(liveExpenses.flatMap((e) => (lineKind(e) === "reimbursement" && e.reimburseePersonId !== null ? [e.reimburseePersonId] : [])));
+  const isMember = new Map(await Promise.all(reimbursees.map(async (id) => [id, await dir.isOrgMember(id)] as const)));
   const bucketIds = unique(approvals.flatMap((a) => (a.ownerId === null ? [] : [a.ownerId])));
   const buckets = new Map(await Promise.all(bucketIds.map(async (id) => [id, await dir.bucketApprovers(id)] as const)));
 
@@ -113,7 +135,7 @@ export async function signoffFactsForExpenses(db: Db, expenses: SignoffExpense[]
   for (const a of approvals) if (a.status === "approved" && a.decidedByUserId !== null) signersOf.get(a.expenseId)!.push({ step: "APPROVAL", userId: a.decidedByUserId });
 
   const owners = [...buckets.values()].flatMap((b) => (b.owner === null ? [] : [b.owner]));
-  const people = unique([...expenses.flatMap(partiesOf), ...[...signersOf.values()].flat().map((s) => s.userId), ...owners]);
+  const people = unique([...liveExpenses.flatMap(partiesOf), ...[...signersOf.values()].flat().map((s) => s.userId), ...owners]);
   const households = await dir.householdsOf(people);
   const householdOf = (id: number) => households.get(id) ?? [];
 
@@ -128,7 +150,8 @@ export async function signoffFactsForExpenses(db: Db, expenses: SignoffExpense[]
   const auditsOf = groupBy(audits, (a) => a.expenseId);
 
   const out = new Map<string, ExpenseSignoffFacts>();
-  for (const expense of expenses) {
+  for (const expense of liveExpenses) {
+    const nobodyActs = unresolved.has(expense.id);
     const expenseLines = linesOf.get(expense.id) ?? [];
     const approvalOf = new Map((approvalsOf.get(expense.id) ?? []).map((a) => [a.lineItemId, a]));
     const signers = signersOf.get(expense.id)!;
@@ -153,13 +176,13 @@ export async function signoffFactsForExpenses(db: Db, expenses: SignoffExpense[]
         const facts: SignoffFacts = {
           kind,
           submitterId: expense.submitterId,
-          reimburseeId: expense.reimburseePersonId,
-          approvers: b?.approvers ?? [],
+          reimburseeId: nobodyActs ? null : expense.reimburseePersonId,
+          approvers: nobodyActs ? [] : (b?.approvers ?? []),
           orgLevel: b?.orgLevel ?? false,
           reimburseeIsMember,
           reimburseeUnknown: kind === "reimbursement" && expense.reimburseePersonId === null,
-          finance,
-          board,
+          finance: nobodyActs ? [] : finance,
+          board: nobodyActs ? [] : board,
           conflicted,
           ownerHousehold: !b || b.owner === null ? [] : unique([b.owner, ...householdOf(b.owner)]),
           reimburseeSetter: setter ?? (expense.reimburseePersonId === null ? null : expense.submitterId),
@@ -196,8 +219,9 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense, { read
 
 export async function filledSeatsByLine(db: Db, expenseId: string): Promise<Map<number, FilledSeat[]>> {
   const rows = await db.expenseLineSignoff.findMany({ where: { expenseId }, select: { lineItemId: true, seat: true, signerUserId: true } });
+  const live = await liveIds(rows.map((r) => r.signerUserId));
   const out = new Map<number, FilledSeat[]>();
-  for (const r of rows) out.set(r.lineItemId, [...(out.get(r.lineItemId) ?? []), { seat: r.seat as Seat, signerUserId: r.signerUserId }]);
+  for (const r of rows) out.set(r.lineItemId, [...(out.get(r.lineItemId) ?? []), { seat: r.seat as Seat, signerUserId: live.get(r.signerUserId) ?? r.signerUserId }]);
   return out;
 }
 
@@ -216,13 +240,15 @@ export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: 
 
 /**
  * Lines still missing a seat or the Board's approval. A held line keeps the whole expense out of
- * the QB outbox.
+ * the QB outbox. The outbox commit settled a closed expense's Board seat and Board approval against
+ * the facts of that moment, and no seat is signed or voided on it after, so neither holds it again.
  */
-export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, LineHold[]>> {
+export async function unsignedLines(db: Db, expense: SignoffExpense & Pick<Expense, "state">): Promise<Map<number, LineHold[]>> {
   const [facts, filled, approval] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id), boardApprovalNeeded(db, expense)]);
+  const closed = expense.state === "qb_complete";
   const out = new Map<number, LineHold[]>();
   for (const [lineId, f] of facts) {
-    const missing = lineHolds(approval, f, filled.get(lineId) ?? []);
+    const missing = lineHolds(approval, f, filled.get(lineId) ?? []).filter((hold) => !closed || (hold !== "BOARD" && hold !== "BOARD_APPROVAL"));
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;

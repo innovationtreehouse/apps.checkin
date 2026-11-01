@@ -2,7 +2,7 @@ import { clearingApprovals } from "@/lib/membership/approvals";
 
 describe("clearingApprovals", () => {
     it("counts only a household's approvals that name its settled subject", () => {
-        // A legacy unnamed approval plus one named approval: two recorded, one counted.
+        // An unnamed approval plus one named approval: two recorded, one counted.
         expect(clearingApprovals([{ result: "APPROVE", subjectPersonId: null }, { result: "APPROVE", subjectPersonId: 7 }], false)).toBe(1);
         // Two reviewers who named different adults: the first name settles it.
         expect(clearingApprovals([{ subjectPersonId: 7 }, { subjectPersonId: 8 }], false)).toBe(1);

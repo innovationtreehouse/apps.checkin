@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration coverage for the supervising-adult test (#1436 / #1550) against a
+ * Integration coverage for the supervising-adult test against a
  * real Postgres — the half the unit tests mock away is the query itself: the
  * nested membership filter, and the participant-seat probe's "programme in
  * session now" OR (an event bracketing now, or the programme's own dates).
@@ -197,7 +197,7 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the compliance banner (#1550)', () => {
+    describe('the compliance banner', () => {
         it('is clear when two supervising adults cover an unaccompanied youth', async () => {
             await checkIn('ann');
             await checkIn('ben');
@@ -223,7 +223,7 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the departure interrupt ladder (#1436)', () => {
+    describe('the departure interrupt ladder', () => {
         it('warns without a confirm when the third supervising adult leaves', async () => {
             await checkIn('ann');
             await checkIn('ben');

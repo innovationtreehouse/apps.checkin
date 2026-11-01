@@ -1,5 +1,5 @@
 /**
- * #4 (part 1) — Workflow state machine and its invariants.
+ * Workflow state machine and its invariants.
  *
  * Every state mutation in the app is gated by these invariants
  * (assertLegalTransition / assertExpectedState). Tests cover both legal branches

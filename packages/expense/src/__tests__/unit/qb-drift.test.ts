@@ -1,4 +1,4 @@
-/** QB-3 drift: which fields of a created QuickBooks entry no longer match what was posted. */
+/** QuickBooks drift: which fields of a created QuickBooks entry differ from what was posted. */
 import { describe, it, expect } from "vitest";
 import { qbKey, type QboBill } from "@checkin/quickbooks";
 import { baselineOf, driftOf, observedOf, todaysSlice, type PostedEntry } from "../../lib/expense-qb-drift";

@@ -8,7 +8,7 @@ import type { ReceiptFileRouteHandler, ReceiptRouteHandler } from "../contract";
 import { parseListFilter } from "../lib/listFilter";
 import { importReceipts } from "../services/importService";
 import { orgSettingsService } from "../services/orgSettingsService";
-import { receiptService } from "../services/receiptService";
+import { receiptService, type DonorCheck } from "../services/receiptService";
 import { MAX_UPLOAD_BODY_BYTES, ownLine, readJsonCapped, readUploadForm, stampLines } from "./_shared";
 
 /** The org-wide list; `?state=` narrows to one machine state, `?pushed=0|1` to whether it reached receiving. */
@@ -49,8 +49,9 @@ export const updateSettings: ReceiptRouteHandler = async ({ req }) => ({ Receipt
 /**
  * Multipart: `file` is the receipt, `data` an optional JSON string of the upload input. With
  * `data.details` the upload is manual; without, OCR reads the file in this request.
+ * `checkDonor` is the host's refusal hook for a typed-in donor; it runs before anything is written.
  */
-export const upload: ReceiptRouteHandler = async ({ req }) => {
+export const upload = (checkDonor: DonorCheck): ReceiptRouteHandler => async ({ req }) => {
   const form = await readUploadForm(req);
   const file = form.get("file");
   if (!(file instanceof File)) throw httpError(400, "A receipt file is required");
@@ -63,7 +64,7 @@ export const upload: ReceiptRouteHandler = async ({ req }) => {
       throw httpError(400, "data must be JSON");
     }
   }
-  return { ReceiptView: await receiptService.upload(Buffer.from(await file.arrayBuffer()), file.type, input) };
+  return { ReceiptView: await receiptService.upload(Buffer.from(await file.arrayBuffer()), file.type, input, checkDonor) };
 };
 
 /**
@@ -133,7 +134,10 @@ export const confirmation: ReceiptRouteHandler = async ({ req, params }) => {
   return { ReceiptConfirmationView: await receiptService.confirmAsReimbursee(params.id, reason) };
 };
 
-export const inKind: ReceiptRouteHandler = async ({ req, params }) => ({ ReceiptView: await receiptService.setInKind(params.id, await readJson(req)) });
+/** `checkDonor` as on `upload`. */
+export const inKind = (checkDonor: DonorCheck): ReceiptRouteHandler => async ({ req, params }) => ({
+  ReceiptView: await receiptService.setInKind(params.id, await readJson(req), checkDonor),
+});
 
 export const reimbursement: ReceiptRouteHandler = async ({ req, params }) => ({
   ReceiptView: await receiptService.setReimbursement(params.id, await readJson(req)),

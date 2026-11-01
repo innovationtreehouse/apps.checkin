@@ -1,5 +1,5 @@
 /**
- * Org inventory (#1287): the route + auth matrix (viewer vs INVENTORY_MANAGER
+ * Org inventory: the route + auth matrix (viewer vs INVENTORY_MANAGER
  * vs non-viewer) and one manager journey through every write. Real HTTP against
  * the running dev server and the seeded local-inventory DB (see
  * docker-compose.flow.yml + packages/local-inventory/prisma/seed.ts).

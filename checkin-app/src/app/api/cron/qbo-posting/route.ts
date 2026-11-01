@@ -7,7 +7,8 @@ import { runDonationDepositHandOver, runInKindQbPosting } from "@checkin/bulk-do
 import { drainIncomeOutbox, runIncomeOrphanSweep } from "@checkin/income";
 
 /**
- * Daily QuickBooks posting: expense's step (stranded recovery, the outbox drain, the drift check),
+ * Daily QuickBooks posting: expense's step (stranded recovery, the outbox drain, the drift check, the
+ * retry of outcome emails still owed),
  * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the
@@ -18,7 +19,9 @@ export const GET = handler("GET /api/cron/qbo-posting", async ({ req }) => {
     const failed: string[] = [];
 
     try {
-        logger.info(`[qbo-posting] expense ${JSON.stringify(await runExpenseQbPosting())}`);
+        const expense = await runExpenseQbPosting();
+        logger.info(`[qbo-posting] expense ${JSON.stringify(expense)}`);
+        failed.push(...expense.failedParts.map((part) => `expense ${part}`));
     } catch (err) {
         logger.error("[qbo-posting] expense QuickBooks posting failed:", err);
         failed.push("expense");

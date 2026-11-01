@@ -51,7 +51,7 @@ describe("loadShopifyConfig", () => {
     expect(() => loadShopifyConfig({ SHOPIFY_SHOP: "s", SHOPIFY_ADMIN_TOKEN: "tok" } as NodeJS.ProcessEnv)).toThrow();
   });
 
-  it("accepts SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET in place of a static admin token (#237)", () => {
+  it("accepts SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET in place of a static admin token", () => {
     const cfg = loadShopifyConfig({
       SHOPIFY_SHOP: "shop.myshopify.com",
       SHOPIFY_CLIENT_ID: "cid",

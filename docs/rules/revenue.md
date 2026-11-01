@@ -71,8 +71,8 @@ Things the app takes as true because they are handled outside it.
 
 ### Ownership
 
-- Finance Ops belongs to the board alone, except that finance reads payment
-  plans; the board approves them.  [Unsettled — which superuser]
+- Apart from the payment-plan read below, Finance Ops belongs to the board alone,
+  and the board approves payment plans.  [Unsettled — which superuser]
 
 - Only the board and finance read membership and program payment plans.  [Decision — owner]
 
@@ -165,6 +165,11 @@ Things the app takes as true because they are handled outside it.
   the enrollment itself and the store order behind it, never from a separate
   record of charges and payments.  [Decision — deliberate limit]
 
+- A store order enrolls only children in the buying household, shown by the
+  checkout link the app made for that household when it sent them to the store.
+  Any other order, including one without such a link, enrolls nobody and is
+  raised for the board.  [Decision — *Principle: fail closed*]
+
 - Reconciliation problems are raised in Finance Ops, not under membership or
   programs, because one payment can cover both.  [Decision]
 
@@ -225,6 +230,14 @@ Income checks each online-store payout against the deposits in the books.
 - The app books nothing dated on or before the closing date finance sets in the
   books. With no closing date set, it books nothing dated before income's posting
   was switched on, and when it cannot read the date it books nothing.  [Decision — owner; *Principle: fail closed*]
+
+- The window for matching a giving-platform deposit, one to 30 days either side
+  of its date, is a setting, seven by default. Finance or the board may change it
+  in either direction. Each change is recorded.  [Decision — owner]
+
+- How many deposits the app may create in one run, and how many dollars' worth for
+  each deposit source, are settings. Finance may lower them; raising one takes the
+  board. Each change is recorded.  [Decision — owner]
 
 - Until income's posting is switched on, the app only matches. A payout it cannot
   match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
@@ -339,6 +352,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   people, so the person deciding confirms they are outside the donor's household,
   and that is recorded.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
 
+- The person accepting a gift of goods, with a receipt or without one, confirms the
+  goods themselves exist and arrived, not only the receipt, and that is recorded.
+  Refusing or returning a gift needs no such confirmation.  [Decision — owner decision AR-13, 2026-11-01]
+
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
   [Decision — owner]
@@ -352,6 +369,17 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - Gifts of goods follow the closed-books rules in Income, with their own switch-on.
   A gift counts from when its money arrived or it was recorded.  [Decision — owner]
+
+- The window for matching a gift of goods to finance's bookings, one to 30 days
+  either side of its date, is a setting, seven by default. Finance or the board may
+  change it in either direction. How many entries the app may create for gifts of
+  goods in one run is a setting too: finance may lower it, and raising it takes the
+  board. Each change is recorded. Gifts of goods have no daily or dollar limit.
+  [Decision — owner]
+
+- A gift of goods that keeps failing to book stops retrying and goes to finance,
+  so it can't hold back newer gifts. When a run stops because several gifts in a
+  row failed, finance is alerted.  [Decision]
 
 - A gift of goods withdrawn after its money arrived is raised for finance, booked
   or not. Finance reverses it by hand only if it booked; the app changes nothing
@@ -368,7 +396,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts
-  as part of that household.  [Decision — owner; *Principle: fail closed*]
+  as part of that household. This covers a gift recorded without a receipt and a
+  donor typed in on a receipt.  [Decision — owner, 2026-10-31; *Principle: fail closed*]
+
+- Someone uploading a receipt may name themselves as the donor by choosing "I am
+  the donor". The person who decides the gift is the independent check.
+  [Decision — owner, 2026-11-01]
 
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]

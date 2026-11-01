@@ -81,7 +81,7 @@ describe('POST /api/finance-ops/s-read/sync', () => {
         expect(sendMock).not.toHaveBeenCalled();
     });
 
-    it('403 for a sysadmin — finance-ops is board-only (issue #1083)', async () => {
+    it('403 for a sysadmin — finance-ops is board-only', async () => {
         mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: true, isBoardMember: false } });
         const res = await POST(req());
         expect(res.status).toBe(403);

@@ -346,9 +346,11 @@ export function useProgramEnrollment(id: string) {
         // Every checkout starts at the server: it refuses a checkout naming
         // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
         // single-pool programs when the household's membership fee covers the program. A
-        // mint or network failure is non-fatal: an undiscounted link is always a
-        // safe fallback, per lib/shopify/discounts.ts's mintMemberDiscountCode contract.
+        // mint failure is non-fatal: an undiscounted link is always a safe fallback,
+        // per lib/shopify/discounts.ts's mintMemberDiscountCode contract. The checkout
+        // signature is not optional: without it the order activates nobody.
         let discountCode: string | null = null;
+        let signature: string | null = null;
         if (isPayingOnShopify) {
           let refusal: string | null = null;
           try {
@@ -357,9 +359,12 @@ export function useProgramEnrollment(id: string) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ participantIds: enrolledIds }),
             });
-            if (discRes.ok) discountCode = pricingEligible ? (await discRes.json()).code ?? null : null;
-            else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
-          } catch { /* undiscounted link is an acceptable fallback */ }
+            if (discRes.ok) {
+              const data = await discRes.json();
+              discountCode = pricingEligible ? data.code ?? null : null;
+              signature = data.signature ?? null;
+            } else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
+          } catch { /* no signature: refused below */ }
           if (refusal) {
             setMessage(refusal);
             fetchProgram();
@@ -381,10 +386,15 @@ export function useProgramEnrollment(id: string) {
           }
           fetchProgram();
         } else if (isPayingOnShopify && program && variantId && storeDomain) {
+          if (!signature) {
+            setMessage("We couldn't start the checkout. Please try again.");
+            fetchProgram();
+            return;
+          }
           setSuccessMessage("Redirecting to Shopify for secure payment...");
           navigating = true;
           // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
-          window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, discountCode);
+          window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, signature, discountCode);
           return; // spinner stays; page unloads on redirect
         } else {
           notifications.show({ message: enrolledIds.length > 1 ? `Successfully enrolled ${enrolledIds.length} members!` : "Successfully enrolled!" });

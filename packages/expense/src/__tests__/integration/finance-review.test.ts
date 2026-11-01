@@ -1,4 +1,4 @@
-/** Decisions on the expense record (#2481): reasons, the closing acts, required notes and Approve tax. */
+/** Decisions on the expense record: reasons, the closing acts, required notes and Approve tax. */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";

@@ -3,7 +3,7 @@ import path from 'path';
 import prisma from '@/lib/prisma';
 
 /**
- * The #1456 2b-3 tombstone delete against a populated schema. Runs the
+ * The tombstone delete against a populated schema. Runs the
  * migration's own DO block (everything between its DELETE markers) and asserts
  * it deletes exactly the archived, unreferenced tombstones, keeps every other
  * one, and never raises.

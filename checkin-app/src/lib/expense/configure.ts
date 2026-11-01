@@ -8,10 +8,11 @@
  * account, which finance also reads matches against. With either missing, or an account that is
  * neither a bank nor a credit card (finance is emailed), a drain answers "unbound". A daily sweep that
  * could not read every entry emails finance. Whatever the library sends out goes through checkin's outbound gateway, which
- * strips it to the surface's declared tiers.
+ * strips it to the surface's declared tiers. An expense closed with a rejected line, or a reimbursement sent to
+ * the books, is emailed to the receipt's uploader and the person reimbursed (purchaseOutcomeMail.ts).
  */
 import { configureExpense, QuickBooksNotConnectedError, reimburseeVendorId } from "@checkin/expense";
-import type { ExpensePosting, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, OutcomeMail, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
 import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
@@ -72,10 +73,12 @@ export const signoff: SignoffDirectory = {
     return (await (await db()).person.count({ where: { id: personId, ...LIVE_PERSON } })) > 0;
   },
 
-  async livePersonFor(personId) {
-    const { resolveMergedPerson } = await import("@/lib/person/mergeChain");
-    const resolved = await resolveMergedPerson(personId);
-    return resolved.kind === "live" ? resolved.person.id : null;
+  async liveIds(personIds) {
+    return (await import("@/lib/person/mergeChain")).liveIdsOf(personIds);
+  },
+
+  async storedIdsOf(personId) {
+    return (await import("@/lib/person/mergeChain")).storedIdsOf(personId);
   },
 
   async isOrgMember(personId) {
@@ -245,6 +248,13 @@ export async function expensePostingMissing(): Promise<string[]> {
   return "posting" in resolved ? [] : [resolved.missing];
 }
 
+const outcomeMail: OutcomeMail = {
+  async send(notice, to) {
+    const { sendPurchaseOutcome } = await import("@/lib/purchaseOutcomeMail");
+    return sendPurchaseOutcome(notice, to);
+  },
+};
+
 export function configureRuntime(): void {
   configureExpense({
     org: getOrg,
@@ -256,5 +266,6 @@ export function configureRuntime(): void {
     people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },
     outbound: outboundCall,
+    outcomeMail,
   });
 }

@@ -753,9 +753,8 @@ jobs:
           python-version: '3.11'
 
       # client.py / badge.py import nacl and requests at module scope, so the
-      # tests can't run without them. evdev is NOT installed: it needs real
-      # input devices, and the client imports it lazily inside the USB-scanner
-      # listener, which no test exercises.
+      # tests can't run without them. evdev installs too, but tests replace it
+      # with a fake, since it needs real input devices.
       - name: Install dependencies
         if: needs.changes.outputs.client == 'true'
         run: pip install -r client/requirements.txt
@@ -889,6 +888,11 @@ jobs:
           docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
             -c 'node checkin-app/receipt-file-backfill.mjs 2>&1 | grep -q RECEIPT_DATABASE_URL' \
             || { echo "::error::the receipt file backfill bundle does not load inside the image"; exit 1; }
+
+          # The donor-read copy's bundle loads in the image and stops at its missing --cutoff.
+          docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
+            -c 'node checkin-app/copy-donor-reads.mjs 2>&1 | grep -q -- --cutoff' \
+            || { echo "::error::the donor-read copy bundle does not load inside the image"; exit 1; }
 
       # Probe each wired library's error statuses against the production image
       # with a migrated DB and a signed-in FINANCE+BOARD+INVENTORY_MANAGER person:

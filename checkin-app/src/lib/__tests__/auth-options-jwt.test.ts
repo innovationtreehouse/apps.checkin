@@ -46,7 +46,7 @@ jest.mock('@/lib/prisma', () => ({
         personRole: { count: jest.fn().mockResolvedValue(0) },
         auditLog: { count: jest.fn().mockResolvedValue(0) },
         // createParticipantWithHousehold mints the person id through
-        // mintPersonId(tx), which is one $queryRaw on the tx client (#1693).
+        // mintPersonId(tx), which is one $queryRaw on the tx client.
         $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
         $executeRaw: jest.fn(),
         personMailAlias: { findMany: jest.fn().mockResolvedValue([]) },
@@ -105,7 +105,7 @@ function dbParticipant(overrides: Record<string, unknown> = {}) {
         canAccessStaging: false,
         ...overrides,
     } as Record<string, unknown>;
-    // Claims now derive from `roles` (PersonRole rows), not the boolean columns —
+    // Claims derive from `roles` (PersonRole rows), not the boolean columns —
     // translate this fixture's flat flags into the shape auth-options actually reads.
     const roles = (Object.keys(FLAG_TO_KIND) as RoleFlag[])
         .filter((flag) => merged[flag])
@@ -331,7 +331,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
         expect(result.emailVerified).toBe(true);
     });
 
-    it('lowercases a mixed-case user.email before the lookup (#292 read normalization)', async () => {
+    it('lowercases a mixed-case user.email before the lookup (read normalization)', async () => {
         mockFindUnique.mockResolvedValue(dbParticipant({ isSysadmin: false }));
 
         await jwt({

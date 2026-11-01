@@ -104,7 +104,7 @@ describe('Onboarding Status API Integration Tests', () => {
             expect(data.needsPhone).toBe(true);
         });
 
-        it('should NOT require a phone for a youth (issue #169)', async () => {
+        it('should NOT require a phone for a youth', async () => {
             const res = await callRoute(youthId);
             expect(res.status).toBe(200);
 

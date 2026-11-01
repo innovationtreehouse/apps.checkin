@@ -14,6 +14,7 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import * as shopify from '@/lib/shopify/discounts';
+import { verifyCheckout } from '@/lib/programs/checkoutSignature';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -27,6 +28,7 @@ jest.mock('@/lib/shopify/discounts', () => {
 });
 
 const TAG = 'discount-code-duration-test';
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function post(programId: number, participantIds: number[]) {
@@ -200,6 +202,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const data = await res.json();
         expect(data.code).toMatch(new RegExp(`^PRG${coveredProgramId}-H${unsettledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
+        expect(verifyCheckout(coveredProgramId, [unsettledPersonId], unsettledHouseholdId, data.signature)).toBe(true);
         // 5000 (non-member) - 4000 (member) = 1000: the amount actually
         // reaches the minting call, not just the response shape.
         expect(mintSpy).toHaveBeenCalledWith(
@@ -246,7 +249,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         );
     });
 
-    it('a non-member still gets { code: null } with no reason (unchanged behavior)', async () => {
+    it('a non-member still gets { code: null } with no reason', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: nonMemberPersonId } });
         const res = await post(coveredProgramId, [nonMemberPersonId]);
         expect(res.status).toBe(200);

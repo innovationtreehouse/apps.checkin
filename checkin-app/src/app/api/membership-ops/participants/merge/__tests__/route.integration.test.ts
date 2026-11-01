@@ -20,9 +20,9 @@ const mockGetServerSession = getServerSession as jest.Mock;
 // family a payment-open notice. Stub the transport, as every other membership suite does.
 jest.mock("@/lib/email", () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
-// runMatchAudit (matrix #17) gates on mirror.isConfigured() before touching the
+// runMatchAudit gates on mirror.isConfigured() before touching the
 // enrollment sweep this test cares about. The mirror itself (order-side) isn't
-// what LIVE_PERSON changed, so it's stubbed to a trivial "configured, no orders"
+// under test, so it's stubbed to a trivial "configured, no orders"
 // shape — real Prisma still runs the enrollment/membership queries against the
 // live test DB, which is what actually proves the filter.
 jest.mock("@/lib/shopifyRead/client", () => ({
@@ -91,7 +91,7 @@ describe("Merge Participants API", () => {
         householdId = hh.id;
 
         // The actor lives OUTSIDE the merge subjects' household: the route refuses any
-        // merge touching the actor's own household (conflict of interest, #1588).
+        // merge touching the actor's own household (conflict of interest).
         const actor = await prisma.person.create({
             data: {
                 name: "Board Actor", email: "actor@example.com", isBoardMember: true,
@@ -290,12 +290,12 @@ describe("Merge Participants API", () => {
         expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: process.id } })).zohoSignerPersonId).toBe(pKeepId);
     });
 
-    // #1456 phase 2b — the PersonMerge archive, the only record a merge leaves of
+    // The PersonMerge archive, the only record a merge leaves of
     // the merged-away person once its Person row is deleted.
     describe("PersonMerge archive", () => {
         it("writes exactly one archive row, snapshotting identity as it stood", async () => {
             // UTC midnight: lastBackgroundCheck is @db.Date, so that is what the
-            // column round-trips and what the snapshot must carry (1149 design).
+            // column round-trips and what the snapshot must carry.
             const bgDate = new Date("2026-03-04T00:00:00.000Z");
             await prisma.person.update({
                 where: { id: pMergeId },
@@ -310,9 +310,8 @@ describe("Merge Participants API", () => {
             expect(rows[0].toId).toBe(pKeepId);
             expect(rows[0].mergedAt).toBeInstanceOf(Date);
 
-            // Exact shape, not a subset: Decision 1 is that dateOfBirth stays OUT, and
-            // only an exhaustive key assertion catches it being added back — that is
-            // what would silently re-tier the whole Json column from pii to personal.
+            // Exact shape, not a subset: dateOfBirth stays OUT, and only an exhaustive
+            // key assertion catches it being added, which would silently re-tier the whole Json column from pii to personal.
             expect(rows[0].snapshot).toEqual({
                 name: "Merge User",
                 email: "merge@example.com",
@@ -366,7 +365,7 @@ describe("Merge Participants API", () => {
             expect(resolved.kind === "live" && resolved.person.id).toBe(pKeepId);
         });
 
-        // A legacy tombstone pointing at the record being merged away: its
+        // A tombstone pointing at the record being merged away: its
         // mergedIntoId is SET NULL, so leaving it would resurrect it as a live
         // person when the row it points at is deleted.
         it("repoints a legacy tombstone's mergedIntoId before deleting the row it names", async () => {
@@ -419,7 +418,7 @@ describe("Merge Participants API", () => {
 
         // A→B then B→C. The archive answers "where is this person now", so A's row
         // follows B to C; leaving it on B would also pin B's Person row via the
-        // RESTRICT on toId, blocking the very delete 2b-3 exists to do.
+        // RESTRICT on toId, blocking B's delete.
         it("repoints an earlier merge's archive row when its survivor is itself merged away", async () => {
             const pFinal = await prisma.person.create({
                 data: { name: "Final User", email: "final@example.com", householdId },
@@ -486,10 +485,9 @@ describe("Merge Participants API", () => {
     });
 
     it("should succeed when the MERGED side holds googleId+email and the keeper holds neither (prod P2002 repro)", async () => {
-        // This is the exact prod failure: the keeper backfill used to copy
-        // googleId/email onto the keeper BEFORE the tombstone cleared them off
-        // the merge-side row, tripping the @unique constraint and surfacing as
-        // a generic 500. Reordering (tombstone first) fixes it.
+        // The tombstone clears googleId/email off the merge-side row BEFORE the keeper
+        // backfill copies them; the other order trips the @unique constraint and
+        // surfaces as a generic 500.
         // Keeper starts with no email/googleId of its own (beforeEach gives it one
         // by default) so the backfill actually has something to copy.
         await prisma.person.update({
@@ -511,7 +509,7 @@ describe("Merge Participants API", () => {
         const res = await POST(req);
         const data = await res.json();
         // Assert on the pair together so a failure's diff shows the response
-        // body (was a console.error; folded into the assertion instead).
+        // body.
         expect({ status: res.status, data }).toEqual({ status: 200, data: { success: true } });
 
         const kept = await prisma.person.findUnique({ where: { id: pKeepId } });
@@ -521,7 +519,7 @@ describe("Merge Participants API", () => {
         await expectMergedAway(pMergeId, pKeepId);
     });
 
-    // Matrix 1a (#1456): decision-bearing collisions refuse the merge.
+    // Decision-bearing collisions refuse the merge.
     it("409s on decision-bearing collisions, naming every collision in the response", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Merge Conflict Program" } });
         createdProgramId = program.id;
@@ -556,7 +554,7 @@ describe("Merge Participants API", () => {
         expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
     });
 
-    // Matrix 1b (#1456): bare-join collisions auto-dedupe — merge succeeds, duplicates deleted.
+    // Bare-join collisions auto-dedupe — merge succeeds, duplicates deleted.
     it("auto-dedupes bare-join collisions (ProgramVolunteer, CorporationLead, CorporationMember)", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Dedupe Program" } });
         createdProgramId = program.id;
@@ -657,7 +655,7 @@ describe("Merge Participants API", () => {
             .toEqual([{ id: keeperOld.id, personId: pKeepId }]);
     });
 
-    // Matrix 1c (#1456): past RSVP collisions auto-dedupe; future RSVP collisions refuse.
+    // Past RSVP collisions auto-dedupe; future RSVP collisions refuse.
     it("auto-dedupes past RSVP collisions, refuses future RSVP collisions", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "RSVP Program" } });
         createdProgramId = program.id;
@@ -682,7 +680,7 @@ describe("Merge Participants API", () => {
         expect(newData.moved.rsvps).toEqual({ migrated: 0, deduped: 1, left: 0 });
     });
 
-    // Matrix 2: non-collision move — the row relinks to the keeper, not duplicated.
+    // Non-collision move — the row relinks to the keeper, not duplicated.
     it("moves a tombstone-only enrollment/tool/rsvp to the keeper (no collision)", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Non-Collision Program" } });
         createdProgramId = program.id;
@@ -904,7 +902,7 @@ describe("Merge Participants API", () => {
 
     // The merge takes the newer lastBackgroundCheck of the two records, so merging is a
     // way to seat a background-check date on a person — with no second actor. Both
-    // subjects are checked: the two need not share a household (#1588).
+    // subjects are checked: the two need not share a household.
     describe("conflict of interest", () => {
         it("403s when the actor shares a household with the kept record", async () => {
             const tombstoneHh = await makeHousehold("Tombstone Household");
@@ -966,7 +964,6 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // Matrix 4
     // Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27.
     describe("a trusted person's sign-in email", () => {
         const stillLive = async (id: number) => (await prisma.person.findUnique({ where: { id } }))?.mergedIntoId === null;
@@ -1033,7 +1030,6 @@ describe("Merge Participants API", () => {
         expect(data.error).toBe("Invalid participant IDs provided.");
     });
 
-    // Matrix 5
     it("409s on double-merge / merging a tombstone, both directions, and on analyze", async () => {
         const res1 = await POST(mergeReq(pKeepId, pMergeId));
         expect(res1.status).toBe(200);
@@ -1099,7 +1095,7 @@ describe("Merge Participants API", () => {
         expect(hit._count.programParticipants).toBe(0);
     });
 
-    // #1456: analyze reports collisions up front so the UI can warn before the operator commits.
+    // Analyze reports collisions up front so the UI can warn before the operator commits.
     it("analyze returns collisions for decision-bearing overlaps", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Collision Analysis Program" } });
         createdProgramId = program.id;
@@ -1119,7 +1115,6 @@ describe("Merge Participants API", () => {
         expect(data.collisions[0].message).toBeTruthy();
     });
 
-    // Matrix 6
     it("concurrent double-merge: exactly one CAS wins, the other 409s and rolls back", async () => {
         const keep2 = await prisma.person.create({ data: { name: "Keep Two", householdId } });
         extraPersonIds.push(keep2.id);
@@ -1137,7 +1132,6 @@ describe("Merge Participants API", () => {
         expect(await prisma.personMerge.count({ where: { fromId: pMergeId } })).toBe(1);
     });
 
-    // Matrix 7
     it("merge chain A→B→C: provenance and moved rows both follow to the terminal record", async () => {
         const c = await prisma.person.create({ data: { name: "Terminal C", householdId } });
         extraPersonIds.push(c.id);
@@ -1163,7 +1157,6 @@ describe("Merge Participants API", () => {
         expect(await prisma.visit.count({ where: { personId: pKeepId } })).toBe(0);
     });
 
-    // Matrix 8
     describe("fieldChoices validation", () => {
         it("400s on an unknown field key", async () => {
             const res = await POST(mergeReq(pKeepId, pMergeId, { notAField: "keep" }));
@@ -1199,7 +1192,7 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // #1225 failure #2: emailSuppressed is an opt-out tied to a specific address.
+    // emailSuppressed is an opt-out tied to a specific address.
     // The login identity resolves as one unit, so suppression must ride with
     // whichever side's address wins — not stay stuck on the keeper's own.
     it("carries emailSuppressed with the identity when 'merge' wins", async () => {
@@ -1226,12 +1219,11 @@ describe("Merge Participants API", () => {
         expect(kept?.emailSuppressed).toBe(true);
     });
 
-    // Matrix 9 — the login identity (email+googleId+emailVerified) resolves as ONE
+    // The login identity (email+googleId+emailVerified) resolves as ONE
     // unit, so a merge can never strand it: picking either side keeps a whole,
     // self-consistent identity. This proves it on the most adversarial shape — both
-    // sides carry a full email+googleId — where the OLD per-field design could have
-    // spliced keeper-email onto merge-googleId. Now `identity: "merge"` adopts the
-    // merge side wholesale.
+    // sides carry a full email+googleId, and `identity: "merge"` adopts the merge side
+    // wholesale rather than splicing keeper-email onto merge-googleId.
     it("does not strand the login identity on a full email+googleId conflict", async () => {
         await prisma.person.update({ where: { id: pKeepId }, data: { googleId: "g-keep" } });
         await prisma.person.update({ where: { id: pMergeId }, data: { googleId: "g-merge" } });
@@ -1242,8 +1234,8 @@ describe("Merge Participants API", () => {
         expect(kept?.googleId).toBe("g-merge");
     });
 
-    // #1225 identity-unit: email/googleId/emailVerified resolve together, never split.
-    describe("login identity resolves as one unit (#1225)", () => {
+    // Email/googleId/emailVerified resolve together, never split.
+    describe("login identity resolves as one unit", () => {
         it("both sides Google, identity 'merge': keeper takes merge's email+googleId+emailVerified together, no cross-side split", async () => {
             const keepVerified = new Date("2026-01-01");
             const mergeVerified = new Date("2026-05-05");
@@ -1303,7 +1295,6 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // Matrix 10
     it("auto-picks the newer lastBackgroundCheck/lastWaiverSign date (merge side newer)", async () => {
         const older = new Date("2026-01-01");
         const newer = new Date("2026-06-01");
@@ -1328,11 +1319,9 @@ describe("Merge Participants API", () => {
         expect(kept?.lastWaiverSign?.getTime()).toBe(newer.getTime());
     });
 
-    // Matrix 11
     it("single-sided auto-backfill: keeper null, tombstone set -> keeper backfilled", async () => {
-        // #1432 R3: a null-name Person is unrepresentable, so Matrix 11's name
-        // arm retires — a set keeper name must survive; the null-backfill
-        // behavior stays proven by the five still-nullable fields.
+        // A null-name Person is unrepresentable, so a set keeper name must survive;
+        // the five nullable fields prove the null-backfill behavior.
         const kA = await prisma.person.create({ data: { name: "Keeper Name", phone: null, dateOfBirth: null, image: null, googleId: null, email: null, householdId } });
         const kB = await prisma.person.create({
             data: {
@@ -1353,7 +1342,6 @@ describe("Merge Participants API", () => {
         expect(kept?.email).toBe("backfill@example.com");
     });
 
-    // Matrix 12
     it("zero-rows-deleted invariant across every join table + moved relation", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Invariant Program", leadMentorId: pMergeId } });
         createdProgramId = program.id;
@@ -1403,9 +1391,9 @@ describe("Merge Participants API", () => {
         expect(await prisma.session.count({ where: { userId: { in: [pKeepId, pMergeId] } } })).toBe(0);
     });
 
-    // #1456 slice 2b-0: relations the merge never repointed, so the fact stayed on a
-    // record the app treats as nonexistent — and, for the RESTRICT and CASCADE ones,
-    // made a later Person delete impossible or silently destructive.
+    // Unrepointed, a relation's fact stays on a record the app treats as nonexistent,
+    // and the RESTRICT and CASCADE ones make the Person delete impossible or silently
+    // destructive.
     describe("repoints every Person relation (2b-0)", () => {
         /** Audit tallies for the merge just run. */
         const movedTallies = async () => {
@@ -1698,8 +1686,8 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // #1456 Decision 3: #1686's collision key was `processId` alone, so the subject
-    // half of @@unique([processId, reviewerId, subjectPersonId]) went undetected.
+    // The collision check covers the subject half of
+    // @@unique([processId, reviewerId, subjectPersonId]), not `processId` alone.
     describe("subject-side attestation collision", () => {
         /** One reviewer attested BOTH records as the subject of one process. */
         const seedSubjectCollision = async () => {
@@ -1863,9 +1851,9 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // #1396: the merge carries the newer lastBackgroundCheck onto the survivor, which can
-    // make the household background-check fresh. Nothing re-derived the state that date
-    // feeds, so a covered application stayed parked.
+    // The merge carries the newer lastBackgroundCheck onto the survivor, which can
+    // make the household background-check fresh, so it re-derives the state that date
+    // feeds and a covered application does not stay parked.
     describe("background-check carryover", () => {
         // Only month/day matter — nextBoundary projects it onto the coming year.
         const BOUNDARY_SEED = new Date(Date.UTC(2000, 7, 1));
@@ -2055,7 +2043,7 @@ describe("Merge Participants API", () => {
             expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status, cleared: null });
         });
 
-        it("carries the check over a household that has a live intake note (#1499)", async () => {
+        it("carries the check over a household that has a live intake note", async () => {
             // A note is shown to the reviewers and gates nothing, so it does not gate this
             // either — the same rule submitIntake's fresh-check shortcut follows.
             await prisma.household.update({ where: { id: householdId }, data: { intakeNotes: "please call us first" } });
@@ -2172,7 +2160,7 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // Matrix 13 (#1456): both-open visits now refused.
+    // Both-open visits are refused.
     it("409s when both persons have an open visit", async () => {
         await prisma.visit.create({ data: { personId: pKeepId, arrivedAt: new Date(Date.now() - 3600000) } });
         await prisma.visit.create({ data: { personId: pMergeId, arrivedAt: new Date(Date.now() - 7200000) } });
@@ -2185,7 +2173,7 @@ describe("Merge Participants API", () => {
         expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
     });
 
-    // Matrix 13b: merge-side-only open visit migrates successfully.
+    // Merge-side-only open visit migrates successfully.
     it("moves a merge-side open visit when keeper has no open visit", async () => {
         await prisma.visit.create({ data: { personId: pMergeId, arrivedAt: new Date(Date.now() - 7200000) } });
         await prisma.visit.create({ data: { personId: pMergeId, arrivedAt: new Date(Date.now() - 10800000), departedAt: new Date(Date.now() - 9800000) } });
@@ -2199,7 +2187,6 @@ describe("Merge Participants API", () => {
         expect(await prisma.visit.count({ where: { personId: pMergeId } })).toBe(0);
     });
 
-    // Matrix 14
     it("accounts move: login-follows-survivor via the same query the NextAuth adapter uses", async () => {
         await prisma.account.create({ data: { userId: pMergeId, type: "oauth", provider: "google", providerAccountId: "acct-login-follow" } });
 
@@ -2218,8 +2205,7 @@ describe("Merge Participants API", () => {
         expect(byOriginalEmail).toBeNull();
     });
 
-    // Matrix 16 (representative subset — see final report for scope note)
-    describe("consumer exclusion (§3 LIVE_PERSON)", () => {
+    describe("consumer exclusion (LIVE_PERSON)", () => {
         it("people/search omits a merged-away tombstone even when the query matches its (unchanged) name", async () => {
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
@@ -2231,7 +2217,7 @@ describe("Merge Participants API", () => {
             expect((data.people as { id: number }[]).some(p => p.id === pMergeId)).toBe(false);
         });
 
-        // #1456: ProgramParticipant collision now refuses the merge entirely.
+        // A ProgramParticipant collision refuses the merge entirely.
         it("enrollment collision refuses instead of leaving a tombstone seat", async () => {
             const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
             createdProgramId = program.id;
@@ -2245,7 +2231,7 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // Matrix 17 (#1456): collision-bearing merge refused, no tombstone residue to audit.
+    // A non-colliding enrollment moves to the keeper, leaving no tombstone residue to audit.
     it("match-audit: a non-colliding enrollment migrates to the keeper normally", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Match Audit Program", shopifyVariantId: "variant-match-audit" } });
         createdProgramId = program.id;

@@ -87,7 +87,7 @@ describe('Membership renewal', () => {
         expect(res.opened).toBe(0);
     });
 
-    it('opens a PENDING_RENEWAL process within the window, once, without emailing (PR-2: the machine never emails)', async () => {
+    it('opens a PENDING_RENEWAL process within the window, once, without emailing (the machine never emails)', async () => {
         await setBoundary(new Date(Date.UTC(2000, 7, 1))); // Aug 1
         const m = await makeActiveMembership('Due', null, `due-lead-${TAG}@example.com`);
         const now = new Date(Date.UTC(2026, 6, 1)); // Jul 1 — within 2 months before Aug 1

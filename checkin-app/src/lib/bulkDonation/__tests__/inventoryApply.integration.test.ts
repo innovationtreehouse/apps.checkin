@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X11 binding: bulk-donation's no-receipt in-kind entry driven into the real
+ * Bulk-donation's no-receipt in-kind entry driven into the real
  * local-inventory apply, each library on its own throwaway database migrated
  * from its committed migrations.
  */

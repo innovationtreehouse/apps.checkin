@@ -41,7 +41,7 @@ describe("reassembleOrders (bulk JSONL parent/child)", () => {
   });
 
   // Shopify Bulk returns non-connection LIST fields (order.refunds) INLINE on the order line,
-  // not as separate `__parentId` lines. Reassembly must keep them (this is the F3 regression).
+  // not as separate `__parentId` lines. Reassembly must keep them.
   it("preserves refunds returned INLINE on the order record", () => {
     const inline = [
       {

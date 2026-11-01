@@ -77,7 +77,7 @@ describe('POST /api/scan — badge whose Person row was deleted', () => {
         await prisma.household.deleteMany({ where: { id: householdId } });
     });
 
-    /** A merged-away person whose Person row is then deleted, as 2b-3 will do. */
+    /** A merged-away person whose Person row is then deleted. */
     async function archivedPerson(name: string, opts: { scanFirst?: boolean } = {}) {
         const loser = await prisma.person.create({
             data: { name, email: `${name}-${TAG}@example.com`, householdId },
@@ -114,8 +114,8 @@ describe('POST /api/scan — badge whose Person row was deleted', () => {
         expect(await prisma.rawBadgeLog.count({ where: { personId: goneId } })).toBe(0);
     });
 
-    // The two arms have to compose, because the tombstone and the archive coexist
-    // for the whole of 2b. Note what the schema rules out: toId is a RESTRICT FK,
+    // The two arms have to compose, because a tombstone and an archive row can
+    // coexist. Note what the schema rules out: toId is a RESTRICT FK,
     // and the merge repoints it, so an archive row pointing at a DELETED person
     // cannot occur — archive-to-archive chains are unreachable, and this
     // archive-then-tombstone shape is the only multi-hop one the DB permits.

@@ -21,7 +21,7 @@ export function householdMemberCodePrefix(programId: number, householdId: number
  * Does this order's coupon list carry THIS program's minted member code? Shopify
  * codes are case-insensitive, so the compare upper-cases and trims the order's side.
  * Prefix-matched on the program's OWN id (the trailing hyphen keeps PRG4 out of
- * PRG42). An EMPTY list is never evidence — pre-#1048 mirror rows carry none.
+ * PRG42). An EMPTY list is never evidence — some mirror rows carry none.
  */
 export function usesProgramMemberCode(discountCodes: string[], programId: number): boolean {
     const prefix = programMemberCodePrefix(programId);

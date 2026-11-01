@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  */
-import { parseCutoff, toFinanceView, type DonorReadRow } from "../copy-donor-reads";
+import { parseCutoff, toFinanceView, type DonorReadRow } from "../lib/donor-read-rows";
 
 const occurredAt = new Date("2026-10-01T12:34:56.789Z");
 const row = (over: Partial<DonorReadRow>): DonorReadRow => ({

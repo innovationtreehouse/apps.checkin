@@ -159,7 +159,7 @@ describe('Parent field-stripping on GET /api/programs/[id]', () => {
 // The route ships `volunteers: { include: { person: true } }` and `leadMentor: true`
 // — full-row Person selects outside the participant bag. A volunteer who is also a
 // household lead of an in-scope household (a parent volunteer) therefore resolves the
-// new binding on merge, with no follow-up. These pin what that delivers.
+// their_program_households binding with no further fetch. These pin what that delivers.
 describe('Parent volunteers, the shape the route already returns', () => {
     const parentVolunteerRow = {
         programId: 100,

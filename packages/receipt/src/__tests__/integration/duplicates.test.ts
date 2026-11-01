@@ -1,4 +1,4 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { ReceiptPrincipal } from "../../contract";
 import { db } from "../../db";
 import { checkDuplicate } from "../../lib/receipt-flow";
@@ -91,6 +91,31 @@ describeDb("duplicate detection", () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
     expect(second.state).not.toBe("duplicate_flagged");
+  });
+
+  const GIFT = { isInKind: true, donor: { self: true } };
+  const REIMBURSED = { needsReimbursement: true };
+
+  describe.each([
+    ["gift first", GIFT, REIMBURSED],
+    ["reimbursement first", REIMBURSED, GIFT],
+  ])("one purchase as a gift of goods and for reimbursement, %s", (_order, firstKind, secondKind) => {
+    beforeEach(() => {
+      const ports = recordingPorts();
+      configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink });
+    });
+
+    it.each([
+      ["the same file", () => { const file = textFile(); return [file, file]; }],
+      ["a different file with the same retailer, date and total", () => [textFile(), textFile()]],
+    ])("holds the later one for finance on %s", async (_match, files) => {
+      const [a, b] = files();
+      const first = await receiptService.upload(a, "text/plain", { details: manualDetails(), ...firstKind });
+      const second = await receiptService.upload(b, "text/plain", { details: manualDetails(), ...secondKind });
+      expect(second.state).toBe("duplicate_flagged");
+      expect(second.duplicateSuspectReceiptId).toBe(first.id);
+      expect((await receiptService.duplicateGroup(second.id)).members.map((m) => m.id).sort()).toEqual([first.id, second.id].sort());
+    });
   });
 
   it("two identical files uploaded at once: at least one is held, and both are in one group", async () => {

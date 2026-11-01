@@ -19,6 +19,7 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { systemActor } from "@/lib/auditActor";
+import { asksHouseholdQuestion } from "@/lib/household/joinQuestion";
 
 // Stable id for the dev/local persona-mint credential flow.
 export const PERSONA_MINT_PROVIDER_ID = "persona-mint";
@@ -160,6 +161,9 @@ const patchedAdapter = {
             if (!linking || !person?.email || normalizeEmail(linking) !== normalizeEmail(person.email)) {
                 throw new Error("A trusted person's sign-in can only be linked from their email on file.");
             }
+        }
+        if (await asksHouseholdQuestion(prisma, userId)) {
+            await prisma.person.update({ where: { id: userId }, data: { householdJoinPending: true } });
         }
         await prisma.account.create({
             data: {
@@ -514,6 +518,7 @@ export const authOptions: NextAuthOptions = {
             if (session.user) {
                 session.user.id = token.id;
                 session.user.denied = token.denied ?? false;
+                session.user.householdJoinPending = token.householdJoinPending ?? false;
                 for (const flag of ROLE_FLAGS) {
                     session.user[flag] = token[flag];
                 }

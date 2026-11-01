@@ -350,7 +350,7 @@ describe('stripValue — _count gating', () => {
 
     it('passes that same _count to an authorized view', () => {
         // `their_own:personal` on the caller's own row grants RawBadgeLog's
-        // personal-tier fields (time/location), so the count is now visible.
+        // personal-tier fields (time/location), so the count is visible.
         const row = { id: 5, name: 'Me', _count: { rawBadgeLogs: 9 } };
         const out = stripValue('Person', row, ['their_own:personal', 'public'], ctx({ selfId: 5 })) as Record<string, unknown>;
         expect(out._count).toEqual({ rawBadgeLogs: 9 });

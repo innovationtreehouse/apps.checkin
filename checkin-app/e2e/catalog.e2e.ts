@@ -3,18 +3,15 @@
  * write it (docs/rules/inventory.md → Access). Errors are red chips that stay until dismissed.
  * Every page must show no error beyond the one a test provokes (support/pageErrors).
  */
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { api, loginAs, type Session } from "../flow-tests/helpers";
+import { addItem, field, SEEDED_CATEGORY, SEEDED_ITEM } from "./support/catalog";
 import { watchPage, type PageWatch } from "./support/pageErrors";
 import { inReceiving } from "./support/receipts";
 import { FINANCE, INVENTORY_MANAGER, releaseLibraries, send, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
 const MANAGER = INVENTORY_MANAGER;
-/** Seeded by packages/global-catalog/prisma/seed.ts. */
-const SEEDED_ITEM = "Roborio v2";
-const SEEDED_CATEGORY = "N — Electronics";
-const SEEDED_SUBCATEGORY = "10 — Control System";
 /** Longer than Mantine's default auto-close, so a chip that closes itself is gone by then. */
 const CHIP_STAYS_MS = 6_000;
 const stamp = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -31,25 +28,23 @@ async function noProblems(watch: PageWatch, where: string): Promise<void> {
   expect([where, await watch.problems()]).toEqual([where, []]);
 }
 
-/** A form field by its label; a required field's label also carries the asterisk. */
-const field = (scope: Locator, label: string) => scope.getByRole("textbox", { name: label, exact: true });
-
-async function choose(page: Page, scope: Locator, label: string, option: string): Promise<void> {
-  await field(scope, label).click();
-  await page.getByRole("option", { name: option, exact: true }).click();
-}
-
-async function addItem(page: Page, name: string): Promise<void> {
-  await page.getByRole("button", { name: "Add Item" }).click();
-  const dialog = page.getByRole("dialog");
-  await field(dialog, "Name").fill(name);
-  await choose(page, dialog, "Usage Behavior", "Durable");
-  await choose(page, dialog, "Category", SEEDED_CATEGORY);
-  await choose(page, dialog, "Subcategory", SEEDED_SUBCATEGORY);
-  await dialog.getByRole("button", { name: "Create", exact: true }).click();
-}
-
 const itemRow = (page: Page, name: string) => page.getByRole("row").filter({ hasText: name });
+
+/** A letter no category holds, archived ones included: a category keeps its letter for good. */
+async function freeLetter(manager: Session): Promise<string> {
+  const categories = await api<Array<{ letter: string }>>(manager, "/api/catalog/categories?includeArchived=true");
+  const taken = new Set(categories.json.map((c) => c.letter));
+  const letter = [..."ZYXWVUTSRQPONMLKJIHGFEDCBA"].find((l) => !taken.has(l));
+  if (!letter) throw new Error("every category letter is taken; reseed the stack");
+  return letter;
+}
+
+/** Archives the category named `name`, which is as far as a category can be removed. */
+const archiveCategory = (manager: Session, name: string): Undo => async () => {
+  const categories = await api<Array<{ id: number; name: string }>>(manager, "/api/catalog/categories");
+  const created = categories.json.find((c) => c.name === name);
+  if (created) expect((await send(manager, "POST", `/api/catalog/categories/${created.id}/archive`)).status).toBe(200);
+};
 
 /** A pending provisional-item proposal, made by proposing a receipt line as a new item in Receiving. */
 async function proposal(manager: Session, proposedName: string): Promise<void> {
@@ -110,7 +105,9 @@ test.describe("the catalog in the browser", () => {
 
   test("the inventory manager adds a category", async ({ browser }) => {
     const name = `E2E category ${stamp()}`;
-    const { context } = await signIn(browser, MANAGER);
+    const { context, session } = await signIn(browser, MANAGER);
+    const letter = await freeLetter(session);
+    undo.push(archiveCategory(session, name));
     const page = await context.newPage();
     const watch = watchPage(page);
 
@@ -118,9 +115,9 @@ test.describe("the catalog in the browser", () => {
     await page.getByRole("button", { name: "Add", exact: true }).first().click();
     const dialog = page.getByRole("dialog");
     await field(dialog, "Name").fill(name);
-    await field(dialog, "Letter (A–Z)").fill("Q");
+    await field(dialog, "Letter (A–Z)").fill(letter);
     await dialog.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(page.getByText(`Q — ${name}`)).toBeVisible();
+    await expect(page.getByText(`${letter} — ${name}`)).toBeVisible();
     await noProblems(watch, "add a category");
     await context.close();
   });

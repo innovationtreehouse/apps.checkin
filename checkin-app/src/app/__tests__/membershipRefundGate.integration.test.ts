@@ -12,6 +12,7 @@ import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
 import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
 import { raiseMembershipPaymentOutcome } from '@/lib/finance/reconcile/membership';
+import { resetTokenCache } from '@/lib/shopify/client';
 import prisma from '@/lib/prisma';
 import { sendEmail } from '@/lib/email';
 
@@ -124,6 +125,76 @@ describe('a refunded order never activates', () => {
         expect(proc?.bgClearedAt).toBeTruthy();
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
         expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId } })).toBe(1);
+    });
+
+    describe('a refund Shopify has made and not reported', () => {
+        const realFetch = global.fetch;
+        const shopifyAnswers = (order: () => Response) => {
+            resetTokenCache();
+            global.fetch = jest.fn(async (url: string | URL | Request) =>
+                String(url).includes('access_token') ? new Response(JSON.stringify({ access_token: 't' })) : order(),
+            ) as typeof fetch;
+        };
+        const refundedOrder = () => new Response(JSON.stringify({
+            data: { order: { displayFinancialStatus: 'REFUNDED', cancelledAt: null, totalRefundedSet: { shopMoney: { amount: '50.00' } } } },
+        }));
+
+        beforeAll(() => {
+            process.env.SHOPIFY_STORE_DOMAIN = 'store.example.com';
+            process.env.SHOPIFY_CLIENT_ID = 'id';
+            process.env.SHOPIFY_CLIENT_SECRET = 'secret';
+        });
+        afterAll(() => {
+            delete process.env.SHOPIFY_STORE_DOMAIN;
+            delete process.env.SHOPIFY_CLIENT_ID;
+            delete process.env.SHOPIFY_CLIENT_SECRET;
+        });
+        afterEach(() => {
+            global.fetch = realFetch;
+        });
+
+        it('orders/paid is refused and raised', async () => {
+            const oid = orderId('unreported-paid');
+            const { processId, orgMembershipId } = await makeApplicant({ status: 'PENDING_PAYMENT', bgCleared: true });
+            shopifyAnswers(refundedOrder);
+
+            const { outcome } = await activateByProcessId(processId, oid, { appliesToYear: 2026 });
+
+            expect(outcome).toBe('refunded');
+            expect((await processOf(processId))?.paidAt).toBeNull();
+            expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+        });
+
+        it('the second approval on a paid application holds it instead of activating', async () => {
+            const oid = orderId('unreported-clear');
+            const { processId, orgMembershipId, leadId } = await makeApplicant({ status: 'PENDING_BG_CLEARANCE', paid: true, shopifyOrderId: oid });
+            shopifyAnswers(refundedOrder);
+
+            await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+            await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+
+            expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
+            expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+        });
+
+        it('when Shopify cannot answer, a payment throws and an approval says to retry, and neither changes anything', async () => {
+            const oid = orderId('outage');
+            const unpaid = await makeApplicant({ status: 'PENDING_PAYMENT', bgCleared: true });
+            const paid = await makeApplicant({ status: 'PENDING_BG_CLEARANCE', paid: true, shopifyOrderId: oid });
+            shopifyAnswers(() => new Response('down', { status: 503 }));
+            const logged = jest.spyOn(console, 'error').mockImplementation();
+
+            await expect(activateByProcessId(unpaid.processId, oid, { appliesToYear: 2026 })).rejects.toThrow();
+            await expect(attest(revA, paid.processId, { result: 'APPROVE', subjectPersonIds: [paid.leadId] })).rejects.toMatchObject({
+                code: 'shopify_unavailable',
+                message: expect.stringContaining('try again later'),
+            });
+            expect(logged).toHaveBeenCalled();
+            logged.mockRestore();
+
+            expect((await processOf(unpaid.processId))?.status).toBe('PENDING_PAYMENT');
+            expect(await prisma.backgroundCheckAttestation.count({ where: { processId: paid.processId } })).toBe(0);
+        });
     });
 
     it('path B: the Board resolving the refund flag before clearance still does not activate', async () => {

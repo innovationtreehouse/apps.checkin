@@ -1,4 +1,4 @@
-import type { ExpensePosting, Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, OutcomeMail, Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
@@ -6,18 +6,20 @@ const budgetOwnerFindMany = jest.fn();
 const personFindUnique = jest.fn();
 const personMergeFindUnique = jest.fn();
 const personFindFirst = jest.fn();
+const personFindMany = jest.fn();
+const personMergeFindMany = jest.fn();
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     personRole: { findMany: personRoleFindMany },
     budgetOwner: { findUnique: budgetOwnerFindUnique, findMany: budgetOwnerFindMany },
-    person: { findUnique: personFindUnique, findFirst: personFindFirst },
-    personMerge: { findUnique: personMergeFindUnique },
+    person: { findUnique: personFindUnique, findFirst: personFindFirst, findMany: personFindMany },
+    personMerge: { findUnique: personMergeFindUnique, findMany: personMergeFindMany },
   },
 }));
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
-const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors; posting: () => Promise<ExpensePosting | null> }; outbound: Outbound }]>();
+const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors; posting: () => Promise<ExpensePosting | null> }; outbound: Outbound; outcomeMail: OutcomeMail }]>();
 const reimburseeVendorId = jest.fn();
 class QuickBooksNotConnectedError extends Error {}
 jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId, QuickBooksNotConnectedError }));
@@ -30,6 +32,8 @@ const booksMapAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ booksMap: { accounts: booksMapAccounts } }));
 const notifyFinanceAlert = jest.fn();
 jest.mock("@/lib/emailRecipients", () => ({ notifyFinanceAlert }));
+const sendPurchaseOutcome = jest.fn();
+jest.mock("@/lib/purchaseOutcomeMail", () => ({ sendPurchaseOutcome }));
 
 const NOT_DENIED = { NOT: { household: { orgMembership: { status: "DENIED" } } } };
 
@@ -49,6 +53,18 @@ it("binds the library's outbound port to checkin's gateway", async () => {
     (await import("../configure")).configureRuntime();
   });
   expect(configureExpense.mock.calls.at(-1)![0].outbound).toBe(gateway);
+});
+
+it("hands each outcome email copy to the host's purchase outcome mail and passes on whether it is done", async () => {
+  await jest.isolateModulesAsync(async () => {
+    (await import("../configure")).configureRuntime();
+  });
+  const mail = configureExpense.mock.calls.at(-1)![0].outcomeMail;
+  const notice = { receiptId: "r-1", outcome: "reimbursement_complete" as const, uploaderPersonId: 7, reimburseePersonId: 8, retailer: "Acme", receiptDate: "2026-10-02" };
+  sendPurchaseOutcome.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  expect(await mail.send(notice, "uploader")).toBe(true);
+  expect(await mail.send(notice, "reimbursee")).toBe(false);
+  expect(sendPurchaseOutcome.mock.calls).toEqual([[notice, "uploader"], [notice, "reimbursee"]]);
 });
 
 describe("expense signer directory excludes people in a DENIED household", () => {
@@ -106,18 +122,22 @@ describe("the live person an id resolves to", () => {
   beforeEach(() => {
     personFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => people[where.id] ?? null);
     personMergeFindUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) => archive[where.fromId] ?? null);
+    personFindMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.filter((id) => people[id]?.mergedIntoId === null).map((id) => ({ id })));
   });
 
   it("is the person when live, the survivor through a tombstone or an archived merge, else null", async () => {
-    const dir = await signoff();
-    await expect(dir.livePersonFor(2)).resolves.toBe(2);
-    await expect(dir.livePersonFor(1)).resolves.toBe(2);
-    await expect(dir.livePersonFor(3)).resolves.toBe(2);
-    await expect(dir.livePersonFor(4)).resolves.toBeNull();
+    const live = await (await signoff()).liveIds([2, 1, 3, 4]);
+    expect([...live]).toEqual([[2, 2], [1, 2], [3, 2], [4, null]]);
   });
 
   it("stops on a cyclic merge chain", async () => {
-    await expect((await signoff()).livePersonFor(5)).resolves.toBeNull();
+    expect((await (await signoff()).liveIds([5])).get(5)).toBeNull();
+  });
+
+  it("every id stored for a live person is their own and each merged into them", async () => {
+    personMergeFindMany.mockResolvedValue([{ fromId: 1 }, { fromId: 3 }]);
+    await expect((await signoff()).storedIdsOf(2)).resolves.toEqual([2, 1, 3]);
+    expect(personMergeFindMany.mock.calls[0][0].where).toEqual({ toId: 2 });
   });
 });
 

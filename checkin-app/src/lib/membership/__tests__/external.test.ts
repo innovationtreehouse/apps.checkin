@@ -8,7 +8,7 @@
  *     no_household/not_lead/wrong_phase), the mock-mode PDF short-circuit, and
  *     the already-claimed-ids short-circuit.
  *   - advanceExternalIfComplete: the volunteer-designation allowlist is matched
- *     at the PENDING_PAYMENT transition (#874) — and only by the race winner.
+ *     at the PENDING_PAYMENT transition — and only by the race winner.
  */
 import { backgroundCheckProvider } from '@/lib/membership/background-check/manual-adapter';
 import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, getOwnBackgroundCheck, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
@@ -105,7 +105,7 @@ describe('setZohoEnvelope', () => {
         const result = await setZohoEnvelope(1, 'req-1', 5);
 
         // zohoActionId is nulled so re-pointing the envelope can't leave the old
-        // action paired with the new request — restores the claimable state (#877).
+        // action paired with the new request — restores the claimable state.
         const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
         expect(call.data).toEqual({ zohoEnvelopeId: 'req-1', zohoActionId: null, zohoSignerPersonId: null });
         expect(call.where.id).toBe(1);
@@ -332,7 +332,7 @@ describe('advanceExternalIfComplete', () => {
         prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 7 });
     });
 
-    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition (#874) and pings reviewers', async () => {
+    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition and pings reviewers', async () => {
         const advanced = { ...readyProcess, status: 'PENDING_PAYMENT' };
         prisma.orgMembershipProcess.findUnique
             .mockResolvedValueOnce(readyProcess) // pre-tx eligibility read
@@ -526,7 +526,7 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(url).toBe('https://sign.example/embed-existing');
     });
 
-    it('dead stored request (declined/expired) → clears the ids and creates a fresh one (#876)', async () => {
+    it('dead stored request (declined/expired) → clears the ids and creates a fresh one', async () => {
         prisma.person.findUnique.mockResolvedValue({
             ...leadUser,
             household: { orgMembership: { processes: [{ ...pendingProcess, zohoEnvelopeId: 'req-dead', zohoActionId: 'act-dead' }] } },

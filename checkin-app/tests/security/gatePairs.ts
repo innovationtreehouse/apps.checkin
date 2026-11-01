@@ -1,5 +1,5 @@
 /**
- * Client gate ↔ server Authorize token pairs (threat model D35). Each library's
+ * Client gate ↔ server Authorize token pairs. Each library's
  * nav entries, pages and count providers decide visibility with a client
  * predicate; the routes behind them admit with a token resolved in
  * security/access-resolvers.ts. gateEquality.test.ts asserts each pair admits

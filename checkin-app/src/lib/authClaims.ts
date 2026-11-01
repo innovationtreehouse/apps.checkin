@@ -7,6 +7,9 @@ import { ROLE_FLAGS, rolesToFlags } from "@/lib/roles";
 /** The participant fields the JWT carries, plus the household membership the login gate reads. */
 export type ClaimSourceParticipant = {
     id: number;
+    name?: string | null;
+    // Their first sign-in's household question is open (lib/household/joinQuestion.ts).
+    householdJoinPending?: boolean;
     // Source of truth for the five authority booleans (see lib/roles.ts rolesToFlags).
     roles: { role: PersonRoleKind }[];
     householdId: number;
@@ -39,24 +42,30 @@ export type ClaimSourceParticipant = {
  */
 export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): void {
     const denied = orgMembershipStatusBlocksLogin(p.household?.orgMembership?.status);
+    const pending = p.householdJoinPending === true;
     const f = rolesToFlags(p.roles);
 
     token.id = p.id;
     token.denied = denied;
+    token.householdJoinPending = pending;
+    // Nothing from the record reaches someone who has not said it is theirs.
+    const locked = denied || pending;
+    if (pending) token.name = null;
+    else token.name ??= p.name;
     for (const flag of ROLE_FLAGS) {
-        token[flag] = denied ? false : f[flag];
+        token[flag] = locked ? false : f[flag];
     }
-    token.householdId = p.householdId;
-    token.householdLead = denied ? false : p.isHouseholdLead;
+    token.householdId = pending ? null : p.householdId;
+    token.householdLead = locked ? false : p.isHouseholdLead;
     // Derived band, never the DOB itself. Not a role, so DENIED doesn't clear
     // it — age is a fact about the person, not an authority grant.
-    token.ageBand = ageBand(p);
-    token.toolStatuses = denied ? [] : p.toolStatuses;
-    token.programsLed = denied ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
+    token.ageBand = pending ? "unknown" : ageBand(p);
+    token.toolStatuses = locked ? [] : p.toolStatuses;
+    token.programsLed = locked ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
     // ops-stg access gate escape hatch — forced false on DENIED, same as every role flag.
-    token.canAccessStaging = denied ? false : p.canAccessStaging;
+    token.canAccessStaging = locked ? false : p.canAccessStaging;
     // Treehouse Volunteer inputs (lib/volunteer.ts), forced false on DENIED.
-    token.isProgramVolunteer = !denied && (p.programVolunteers?.length ?? 0) > 0;
-    token.isVolunteerFamily = !denied && p.household?.orgMembership?.isVolunteerFamily === true;
-    token.isActiveOrgMember = !denied && personRecordIsActiveOrgMember(p);
+    token.isProgramVolunteer = !locked && (p.programVolunteers?.length ?? 0) > 0;
+    token.isVolunteerFamily = !locked && p.household?.orgMembership?.isVolunteerFamily === true;
+    token.isActiveOrgMember = !locked && personRecordIsActiveOrgMember(p);
 }

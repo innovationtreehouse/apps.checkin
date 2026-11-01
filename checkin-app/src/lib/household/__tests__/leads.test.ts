@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Unit check for the shared household-lead ownership helper (audit P1-2). Mocks
+ * Unit check for the shared household-lead ownership helper. Mocks
  * prisma the way participantPiiMinimization.test.ts does, so this runs in the
  * default (non-integration) suite with no live DB.
  */

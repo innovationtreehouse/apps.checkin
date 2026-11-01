@@ -127,30 +127,24 @@ describe('visit-write advisory locks', () => {
         });
     }
 
-    it('two concurrent Present marks on different events → one open visit, no 500', async () => {
+    it('two concurrent Present marks on different events → one links the open visit, the other is refused', async () => {
         await prisma.visit.deleteMany({ where: { personId: subjectId } });
         const [eventA, eventB] = await Promise.all([makeEvent('race-a'), makeEvent('race-b')]);
-        // An open Present mark needs a keyholder already in the building.
-        await prisma.person.update({ where: { id: adminId }, data: { isKeyholder: true } });
-        const keyholderVisit = await prisma.visit.create({ data: { personId: adminId, arrivedAt: new Date(Date.now() - 2 * HOUR) } });
+        await prisma.visit.create({ data: { personId: subjectId, arrivedAt: new Date(Date.now() - 2 * HOUR), arrivedVia: 'SCANNER' } });
 
         const markPresent = (eventId: number) => eventPatch(eventId, {
             action: 'manualEditAttendance',
             participantId: subjectId,
             status: 'Present',
             arrivedAt: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
-            departedAt: null,
+            departedAt: new Date(Date.now() - 60 * 1000).toISOString(),
         });
 
         const [resA, resB] = await Promise.all([markPresent(eventA.id), markPresent(eventB.id)]);
 
-        // Winner records the open visit (200); the loser sees it under the lock and
-        // returns the "checked in for another session" 400. Neither 500s.
         expect([resA.status, resB.status].sort()).toEqual([200, 400]);
+        expect(await prisma.visit.count({ where: { personId: subjectId, deletedAt: null } })).toBe(1);
         expect(await prisma.visit.count({ where: { personId: subjectId, departedAt: null, deletedAt: null } })).toBe(1);
-
-        await prisma.visit.delete({ where: { id: keyholderVisit.id } });
-        await prisma.person.update({ where: { id: adminId }, data: { isKeyholder: false } });
     });
 
     it('two concurrent facility deletes of one visit → 200 + 404, tombstoned once', async () => {

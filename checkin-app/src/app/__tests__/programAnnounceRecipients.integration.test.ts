@@ -22,7 +22,7 @@ import prisma from '@/lib/prisma';
 const mockSendEmail = sendEmail as jest.Mock;
 const TAG = 'announce-recip-test';
 
-describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience)', () => {
+describe('notifyNewProgramAnnounced recipient set (covered-member audience)', () => {
     let tombstoneHouseholdId: number, tombstoneTargetId: number;
     // Integration suites share one DB, so BoardSettings row 1 may already carry a
     // boundary from another suite. The unbounded cases below require none.

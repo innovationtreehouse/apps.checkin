@@ -41,7 +41,7 @@ async function runBackfill(): Promise<void> {
     }
 }
 
-describe('ProgramInstance phase-1 backfill (MB)', () => {
+describe('ProgramInstance backfill', () => {
     let householdId: number;
     let leadId: number;
     let progFullId: number; // program with a lead + full offering columns
@@ -117,7 +117,7 @@ describe('ProgramInstance phase-1 backfill (MB)', () => {
         const bareInstances = await prisma.programInstance.findMany({ where: { programId: progBareId } });
         expect(fullInstances).toHaveLength(1);
         expect(bareInstances).toHaveLength(1);
-        // id-alias: instance.id === program.id (what makes the later FK repoint a pure rename)
+        // id-alias: instance.id === program.id
         expect(fullInstances[0].id).toBe(progFullId);
         expect(bareInstances[0].id).toBe(progBareId);
     });

@@ -41,7 +41,7 @@ stateDiagram-v2
     PENDING_EXTERNAL_ACTION --> ARCHIVED: archiveApplication
     PENDING_EXTERNAL_ACTION --> PENDING_PAYMENT: advanceExternalIfComplete
     PENDING_PAYMENT --> ACTIVE: activate
-    PENDING_PAYMENT --> ACTIVE: grantRenewalPayment · RENEWAL
+    PENDING_PAYMENT --> ACTIVE: grantMembership
     PENDING_PAYMENT --> ARCHIVED: archiveApplication
     PENDING_PAYMENT --> BLOCKED: attest REJECT
     PENDING_PAYMENT --> PENDING_BG_CLEARANCE: activate
@@ -59,7 +59,7 @@ stateDiagram-v2
 
 A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, not an oversight.
 
-| state ╲ event | activate | advanceExternalIfComplete | archiveApplication | attest REJECT | attest change to APPROVE | beginRenewal | boardResetReview | clearBackgroundCheck | closeForRestore | createRenewalProcess | grantRenewalPayment | markContractSigned | personAgreementTriggers | personBgTriggers | recordRefund | startIntake | submitIntake | unarchiveApplication |
+| state ╲ event | activate | advanceExternalIfComplete | archiveApplication | attest REJECT | attest change to APPROVE | beginRenewal | boardResetReview | clearBackgroundCheck | closeForRestore | createRenewalProcess | grantMembership | markContractSigned | personAgreementTriggers | personBgTriggers | recordRefund | startIntake | submitIntake | unarchiveApplication |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ∅ | — | — | — | — | — | — | — | — | — | PENDING_RENEWAL | — | — | PENDING_EXTERNAL_ACTION | PENDING_BG_REVIEW | — | INTAKE | — | — |
 | INTAKE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | PENDING_EXTERNAL_ACTION | — |

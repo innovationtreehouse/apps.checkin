@@ -9,16 +9,24 @@ import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { correctCloseTime } from "@/lib/attendance/close";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
 // covered by the admin everyones band, and stripped for any role a future
 // view adds.
-export const GET = handler('GET /api/facility/visits', async () => {
+//
+// ?closedOut=true lists the visits a close's stamp still ends, newest close
+// first. Visit.facilityCloseId says which close: after a pull-back the close log
+// names both closes, and this column names the one that stands.
+export const GET = handler('GET /api/facility/visits', async ({ req }) => {
+    const closedOut = new URL(req.url).searchParams.get('closedOut') === 'true';
     const visits = await prisma.visit.findMany({
-        take: 50,
-        where: { deletedAt: null },
-        orderBy: { arrivedAt: "desc" },
+        take: closedOut ? 500 : 50,
+        where: closedOut
+            ? { deletedAt: null, departedVia: { in: ["FACILITY_CLOSE", "AUTO_CLOSE"] }, facilityCloseId: { not: null } }
+            : { deletedAt: null },
+        orderBy: closedOut ? [{ facilityCloseId: "desc" }, { arrivedAt: "desc" }] : { arrivedAt: "desc" },
         include: {
             person: {
                 select: { email: true, name: true, isSysadmin: true, isKeyholder: true },
@@ -63,7 +71,7 @@ export const PATCH = withAuth(
             // it takes the same per-person advisory xact lock as /api/scan and re-reads
             // the row inside it — the pre-check above ran unserialized and a racing
             // scan or the facility-close sweep may have closed or removed the visit.
-            const result = await prisma.$transaction(async (tx): Promise<{ error: string; status: number } | { visit: Visit; previous: Visit }> => {
+            const result = await prisma.$transaction(async (tx): Promise<{ error: string; status: number } | { openSince: Date } | { visit: Visit; previous: Visit; overlappedIds: number[] }> => {
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.personId})`;
 
                 const current = await tx.visit.findUnique({ where: { id: visitId } });
@@ -84,6 +92,9 @@ export const PATCH = withAuth(
                 if (!editedArrived && !editedDeparted) {
                     return { error: "Nothing to change.", status: 400 as const };
                 }
+
+                const overlaps = await findVisitOverlaps(tx, current.personId, { arrivedAt: nextArrived, departedAt: nextDeparted }, visitId);
+                if (overlaps.openSince) return { openSince: overlaps.openSince };
 
                 const visit = await tx.visit.update({
                     where: { id: visitId },
@@ -106,12 +117,13 @@ export const PATCH = withAuth(
                     });
                     if (close) await correctCloseTime(tx, close, auth.user.id, nextDeparted);
                 }
-                return { previous: current, visit };
+                return { previous: current, visit, overlappedIds: overlaps.closedIds };
             }, { maxWait: 5000, timeout: 15000 });
 
             if ('error' in result) return apiError(result.error, result.status);
+            if ('openSince' in result) return apiError(await openOverlapRefusal(result.openSince), 409);
             invalidateAttendanceCache();
-            const { visit: updatedVisit, previous } = result;
+            const { visit: updatedVisit, previous, overlappedIds } = result;
 
             // Log the manual edit in the audit trail. secondaryAffectedEntity =
             // the visit's person, so a correction review can tell self from
@@ -131,7 +143,7 @@ export const PATCH = withAuth(
                         newData: JSON.parse(JSON.stringify({
                             ...updatedVisit,
                             type: "staff_correction",
-                            significance: editSignificance(previous, updatedVisit, { byProxy: auth.user.id !== previous.personId }),
+                            ...overlapFlag(overlappedIds, editSignificance(previous, updatedVisit, { byProxy: auth.user.id !== previous.personId })),
                         })),
                     },
                 });

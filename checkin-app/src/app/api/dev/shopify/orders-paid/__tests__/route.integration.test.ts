@@ -23,6 +23,7 @@ import { getServerSession } from 'next-auth/next';
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const TAG = 'dev-shopify-route-test';
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 function asSession(id = 1) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id, isSysadmin: false, isBoardMember: false } });
@@ -203,8 +204,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         expect(proc?.paidAt).not.toBeNull();
     });
 
-    // fireProgram — the { programId, participantIds } branch was previously
-    // untested at the route level (only fireMembership had coverage here).
+    // fireProgram — the { programId, participantIds } branch at the route level.
     // Mirrors the fireMembership suite's structure: same global.fetch stand-in
     // and CHECKIN_ENV/creds wiring from the outer beforeAll, own Program/Person
     // fixtures, self-cleaning in this block's own afterAll.

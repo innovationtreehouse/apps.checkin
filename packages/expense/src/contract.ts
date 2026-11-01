@@ -70,8 +70,10 @@ export interface SignoffDirectory {
   householdIds(personId: number): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
-  /** The live Person an id resolves to: itself when live, its merge survivor when merged away, else null. */
-  livePersonFor(personId: number): Promise<number | null>;
+  /** The live Person each id resolves to: itself when live, its merge survivor when merged away, else null. */
+  liveIds(personIds: number[]): Promise<Map<number, number | null>>;
+  /** Every id a row may hold for a live person: their own and each id merged into them. */
+  storedIdsOf(personId: number): Promise<number[]>;
   /** Whether the person holds an org membership (reimbursing a non-member takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
   /** Whether the person is a known adult; only an adult is reimbursed. */
@@ -92,7 +94,8 @@ export const inertSignoffDirectory: SignoffDirectory = {
   householdsOf: async () => new Map(),
   householdIds: async () => [],
   personExists: async () => false,
-  livePersonFor: async () => null,
+  liveIds: async (personIds) => new Map(personIds.map((id) => [id, null])),
+  storedIdsOf: async (personId) => [personId],
   isOrgMember: async () => false,
   isAdult: async () => false,
   searchAdults: async () => [],
@@ -339,6 +342,22 @@ export interface ExpenseOutcomes {
   forReceipts(receiptIds: unknown): Promise<Map<string, { status: ExpenseOutcomeStatus; notes: string[] }>>;
 }
 
+/** An expense outcome the receipt's uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "expense_line_rejected" | "reimbursement_complete";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
+}
+
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;
@@ -346,6 +365,9 @@ export interface ExpenseSettings {
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;
+  qbMatchWindowDays: number;
+  qbMaxCreatesPerRun: number;
+  qbMaxCreatesPerDay: number;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────

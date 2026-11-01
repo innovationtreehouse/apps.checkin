@@ -6,12 +6,10 @@
  * of what each role may see. Nothing else pins that they exist.
  *
  * security-boundary-isolation.yml deliberately does NOT treat them as boundary
- * files — a decommission has to update its own oracle, and classifying them as
- * boundary made the exception refuse the shape it exists for. That is the right
- * call, and it costs the one mechanical guard those files had: an oracle can now
+ * files, because a decommission has to update its own oracle. So an oracle can
  * ride along inside an ordinary feature PR, and a deleted test is invisible to a
- * green run. CODEOWNERS still forces a security owner onto the review, but that
- * is a human reading a large diff, which is the failure isolation exists to stop.
+ * green run. CODEOWNERS forces a security owner onto the review, but that is a
+ * human reading a large diff, which is the failure isolation exists to stop.
  *
  * So the set is pinned here. Adding an oracle costs one line and makes a
  * reviewer see the new file; removing one has to be written down on purpose.
@@ -61,6 +59,7 @@ const ORACLES = [
     'receipt-flow-status-routes.test.ts',
     'receipt-routes.test.ts',
     'receipt-strip.test.ts',
+    'reference-conflict-strip.test.ts',
     'rsvp-program-scope.test.ts',
     'scopeValidators.test.ts',
     'shop-certifications-strip.test.ts',

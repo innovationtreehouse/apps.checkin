@@ -22,7 +22,7 @@ GET /api/system-status/links
 GET /api/system-status/unsynced-scans
 POST /api/system-status/unsynced-scans/[id]
 GET /api/system-status/kiosk-heartbeat
-# Global catalog (#1286 track 4) — library route factories via handler().
+# Global catalog — library route factories via handler().
 GET /api/catalog/categories
 GET /api/catalog/subcategories
 GET /api/catalog/items
@@ -94,7 +94,9 @@ GET /api/donations/in-kind/queue
 GET /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual/[id]/load-inventory
-# Expense (#1272 L3 W) — library route factories via handler().
+GET /api/donations/settings
+PATCH /api/donations/settings
+# Expense — library route factories via handler().
 GET /api/expense/local-owners
 POST /api/expense/flags/[id]/check-off
 GET /api/expense/expenses/[id]/qb-candidates
@@ -154,7 +156,7 @@ POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/propose
 POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/non-inventory
 GET /api/workflow-mapping/audit-log
 
-# Income (#1283 W): library route factories via handler().
+# Income: library route factories via handler().
 GET /api/income/payouts
 GET /api/income/payouts/[gid]
 GET /api/income/reconciliation
@@ -167,8 +169,10 @@ PUT /api/income/items/[variantId]/category
 DELETE /api/income/items/[variantId]/category
 GET /api/income/qb-exclusions
 POST /api/income/qb-exclusions
+GET /api/income/settings
+PATCH /api/income/settings
 
-# Receipt (#1265 W): library service calls via handler().
+# Receipt: library service calls via handler().
 POST /api/receipts/upload
 GET /api/receipts/mine
 POST /api/receipts/[id]/submitter-confirm

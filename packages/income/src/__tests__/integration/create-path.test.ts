@@ -1,10 +1,10 @@
-import { it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
-import { ATTEMPTED_MATCH_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
+import { ATTEMPTED_MATCH_NOTE, ATTEMPTED_NET_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
 import { CLOSED_NOTE, drainIncomeOutbox, missingRoles, runIncomeOrphanSweep } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
@@ -148,7 +148,12 @@ function bind(over: Partial<IncomeConfig> = {}) {
   });
 }
 
-const rowFor = (g: string) => db.payoutReconciliation.findFirstOrThrow({ where: { orgId: ORG_A, payoutGid: g } });
+/** The one row holding this key; a second row under another source fails the test. */
+const rowFor = async (g: string) => {
+  const rows = await db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: g } });
+  expect(rows).toHaveLength(1);
+  return rows[0];
+};
 const drain = (now = NOW) => drainIncomeOutbox(ORG_A, now);
 const finance = { userId: 9 };
 const resolve = (g: string, req: Parameters<typeof reconciliationService.resolve>[2]) =>
@@ -1305,8 +1310,168 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
   it("never creates a deposit from a hand-loaded mirror payout", async () => {
     const p = payout(2, "2026-06-28", 500);
     setPayout(p, { source: "hand_loaded" });
-    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
+    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 0 } });
     expect(qbo.posts).toHaveLength(0);
+  });
+
+  describe("a payout first seen after switch-on never sits unseen", () => {
+    const LATER = new Date("2026-07-10T12:00:00Z");
+    const audits = (action: string) => db.incomeAuditLog.findMany({ where: { orgId: ORG_A, action }, orderBy: { id: "asc" } });
+
+    /** A WAITING payout seen after switch-on, its first post held back by an unbound posting. */
+    async function waitingPayout() {
+      await switchOn();
+      bind({ posting: undefined });
+      const p = payout(2, "2026-06-28", 500);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+      bind();
+      return p;
+    }
+
+    function changeNet(p: string, netCents: number) {
+      setPayout(p, { netCents });
+      txns[p] = [{ ...txns[p][0], amountCents: netCents, netCents }];
+      orderLines = orderLines.map((l) => (l.orderGid === "O2" ? { ...l, priceCents: netCents } : l));
+    }
+
+    it("a hand-loaded payout goes to finance, never created, and a hand booking still matches it", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      setPayout(p, { source: "hand_loaded" });
+      expect(await drain()).toMatchObject({ reconcile: { opened: 1 }, post: { posted: 0 } });
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "HAND_LOADED", depositId: null });
+      expect((await reconciliationService.listQueue(ORG_A)).map((r) => r.payoutGid)).toEqual([p]);
+      expect(qbo.posts).toHaveLength(0);
+
+      qbo.hand("H2", "2026-06-28", 500);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "MATCHED", kind: null, depositId: "H2" });
+    });
+
+    it("finance can dismiss a hand-loaded payout, and it stays dismissed", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      setPayout(p, { source: "hand_loaded" });
+      await drain();
+      await resolve(p, { action: "dismiss", reason: "booked in an earlier year" });
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+    });
+
+    it("a waiting payout whose net changed tracks the new net and books at it", async () => {
+      const p = await waitingPayout();
+      bind({ posting: undefined });
+      changeNet(p, 600);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING", payoutNetCents: 600 });
+      expect((await audits("reconciliation.waiting")).at(-1)).toMatchObject({ reason: "payout_amount" });
+
+      bind();
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "POSTED", payoutNetCents: 600, depositTotalCents: 600 });
+      expect(qbo.posts).toHaveLength(1);
+    });
+
+    it("an attempted payout whose net changed goes to finance: the app may have booked the old amount", async () => {
+      const p = await waitingPayout();
+      await db.payoutReconciliation.update({
+        where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } },
+        data: { qbCreateAttemptedAt: NOW },
+      });
+      changeNet(p, 600);
+      await runReconcile(ORG_A, NOW);
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", payoutNetCents: 600, qbNote: ATTEMPTED_NET_NOTE });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
+    it("a payout that left paid waits out its window, then goes to finance", async () => {
+      const p = await waitingPayout();
+      setPayout(p, { status: "in_transit" });
+      expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+
+      expect(await drain(LATER)).toMatchObject({ reconcile: { opened: 1 }, post: { posted: 0 } });
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "PAYOUT_NOT_PAID" });
+      expect((await audits("reconciliation.opened")).at(-1)).toMatchObject({ reason: "payout_status:in_transit" });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
+    it("a payout gone from the mirror goes to finance too", async () => {
+      const p = await waitingPayout();
+      payouts = [];
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "PAYOUT_NOT_PAID" });
+    });
+
+    it("a payout paid again returns to waiting and books itself", async () => {
+      const p = await waitingPayout();
+      setPayout(p, { status: "in_transit" });
+      await drain(LATER);
+      setPayout(p, { status: "paid" });
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "POSTED", kind: null });
+      expect(qbo.posts).toHaveLength(1);
+    });
+
+    it("a dismissed unpaid payout stays dismissed; a change of net still reopens it", async () => {
+      const p = await waitingPayout();
+      setPayout(p, { status: "failed" });
+      await drain(LATER);
+      await resolve(p, { action: "dismiss", reason: "the store reversed this payout" });
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+
+      setPayout(p, { netCents: 600 });
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "DRIFT" });
+    });
+
+    it("a sum mismatch clears once the transactions catch up, and the payout books itself", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      const all = txns[p];
+      txns[p] = [];
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "TXN_SUM_MISMATCH" });
+
+      txns[p] = all;
+      await runReconcile(ORG_A, NOW);
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING", kind: null });
+      expect((await audits("reconciliation.waiting")).at(-1)).toMatchObject({ reason: "TXN_SUM_MISMATCH cleared" });
+
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "POSTED" });
+    });
+
+    it("a cleared sum mismatch matches a deposit first", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      const all = txns[p];
+      txns[p] = [];
+      await drain();
+      txns[p] = all;
+      qbo.hand("H2", "2026-06-28", 500);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "MATCHED", depositId: "H2" });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
+    it("an attempted sum mismatch stays with finance once the sums agree", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      const all = txns[p];
+      txns[p] = [];
+      await drain();
+      await db.payoutReconciliation.update({
+        where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } },
+        data: { qbCreateAttemptedAt: NOW },
+      });
+      txns[p] = all;
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "TXN_SUM_MISMATCH" });
+      expect(qbo.posts).toHaveLength(0);
+    });
   });
 
   it("without a posting binding the run only matches; payouts wait", async () => {
@@ -1355,6 +1520,7 @@ describeDb("income settings", () => {
       maxCreatesPerRun: 25,
       maxCreateCentsPerRun: 2_500_000,
       benevityMaxCreateCentsPerRun: 2_500_000,
+      benevityMatchWindowDays: 7,
     });
   });
 
@@ -1429,6 +1595,37 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     ]);
   });
 
+  it("drift-checks settled Shopify and Benevity rows with one key against their own payout and deposit", async () => {
+    const key = payout(1, "2026-06-28", 9_900);
+    await expect1(key);
+    qbo.hand("HS", "2026-06-28", 9_900, BANK);
+    qbo.hand("HB", "2026-06-28", 14_700, BENEVITY_BANK);
+    const rows = () => db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: key }, orderBy: { source: "asc" } });
+
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 2, drifted: 0 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", status: "MATCHED", depositId: "HB" },
+      { source: "shopify", status: "MATCHED", depositId: "HS" },
+    ]);
+
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 0 });
+    expect(await rows()).toMatchObject([{ status: "MATCHED" }, { status: "MATCHED" }]);
+
+    qbo.deposits = qbo.deposits.map((d) => (d.Id === "HB" ? { ...d, TotalAmt: 140 } : d));
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", status: "OPEN", kind: "DRIFT", depositId: null },
+      { source: "shopify", status: "MATCHED", depositId: "HS" },
+    ]);
+
+    setPayout(key, { netCents: 9_800 });
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", payoutNetCents: 14_700 },
+      { source: "shopify", status: "OPEN", kind: "DRIFT", depositId: null, payoutNetCents: 9_800 },
+    ]);
+  });
+
   it("refuses a deposit whose lines do not sum to its net, and answers nothing for a key it never received", async () => {
     await expect(expect1("D1", disbursement("2026-06-28", { netCents: 1 }))).rejects.toMatchObject({ status: 400 });
     expect(await depositStatus(ORG_A, "benevity", ["D1"])).toEqual({});
@@ -1440,6 +1637,19 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 1 });
     expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "HB" });
+  });
+
+  it("matches a Benevity deposit only inside the org's window setting", async () => {
+    await updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 2 }, { userId: 9, isFinance: true, isBoard: false });
+    await expect1();
+    qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
+
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("D1")).depositId).toBeNull();
+
+    await updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 7 }, { userId: 9, isFinance: true, isBoard: false });
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", depositId: "HB" });
   });
 
   it("creates a deposit after switch-on with its accounts and Classes from the books map, under income's Benevity key", async () => {

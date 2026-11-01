@@ -3,7 +3,7 @@
  *
  * Integration tests for DELETE /api/membership-ops/bg-attestations/[id] —
  * the Board-only cleanup path for a BackgroundCheckAttestation the
- * participant-merge route refuses to carry forward (#1456 Decision 3).
+ * participant-merge route refuses to carry forward.
  * Real Postgres, INTEGRATION_DB=1.
  *
  * 401/403 (incl. a sysadmin off the Board) live in authzRoleRejection.integration.test.ts,
@@ -69,8 +69,8 @@ describe('DELETE /api/membership-ops/bg-attestations/[id]', () => {
         await prisma.backgroundCheckAttestation.deleteMany({ where: { OR: [{ processId }, { reviewerId: { in: personIds } }] } });
         await prisma.auditLog.deleteMany({ where: { OR: [{ affectedEntityId: attestationId, tableName: 'BackgroundCheckAttestation' }, { actorId: { in: personIds } }] } });
         await prisma.orgMembershipProcess.deleteMany({ where: { id: processId } });
-        // A case here runs a real merge, which now archives it. PersonMerge.toId is
-        // RESTRICT, so the archive row outranks its survivor (#1456 2b).
+        // A case here runs a real merge, which archives it. PersonMerge.toId is
+        // RESTRICT, so the archive row goes before its survivor.
         await prisma.personMerge.deleteMany({ where: { OR: [{ toId: { in: personIds } }, { fromId: { in: personIds } }] } });
         await prisma.person.deleteMany({ where: { id: { in: personIds } } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: [householdId, ...extraHouseholdIds] } } });
@@ -111,7 +111,7 @@ describe('DELETE /api/membership-ops/bg-attestations/[id]', () => {
         expect(auditJson(audit.oldData)).toMatchObject({ processId, reviewerId, result: 'APPROVE', note: 'looked fine' });
     });
 
-    // The scenario this endpoint exists for (#1456 Decision 3): the merge route
+    // The scenario this endpoint exists for: the merge route
     // refuses when both merge subjects attested the same background check, and
     // deleting one of the two duplicate rows is what turns the refusal into a
     // mergeable state.

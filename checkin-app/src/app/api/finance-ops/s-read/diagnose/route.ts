@@ -19,7 +19,7 @@ import { relTime } from "@/lib/time";
  *
  * ON-DEMAND ONLY. A human clicked "Run diagnostics" on the system-status page.
  * Never poll or cron this: every probe is a paid Aurora wake-up — the same cost
- * that makes the automatic sync daily rather than continuous (infra#129).
+ * that makes the automatic sync daily rather than continuous.
  *
  * The mirror probe is deliberately ONE query, not six checks: the pg error code
  * from `SELECT count(*) FROM sync_run` discriminates every layer on its own
@@ -76,7 +76,7 @@ function classifyMirrorError(err: unknown, dbName: string): { detail: string; co
         case "42501":
             return {
                 code: e.code,
-                detail: "Table exists, but SELECT is denied — checkin's DML role isn't a member of the mirror's NOLOGIN grant-holder yet (infra#136 bootstrap step).",
+                detail: "Table exists, but SELECT is denied — checkin's DML role isn't a member of the mirror's NOLOGIN grant-holder yet. Run the infra repo's bootstrap task with TARGETS=\"s-read\" for this environment.",
             };
     }
     if (/timeout/i.test(e.message ?? "")) {
@@ -157,7 +157,7 @@ export const GET = handler(
                         ? {
                               id: "clock",
                               ok: false,
-                              detail: `Latest run's startedAt is ${Math.round(-ageMs / 60000)} min in the FUTURE — timezone handling regression (see #1042). Process TZ: ${process.env.TZ ?? "(unset)"}.`,
+                              detail: `Latest run's startedAt is ${Math.round(-ageMs / 60000)} min in the FUTURE — timezone handling regression. Mirror timestamps must be written and read as UTC: check s-read's writes and the reads in lib/shopifyRead/client.ts. Process TZ: ${process.env.TZ ?? "(unset)"}.`,
                           }
                         : { id: "clock", ok: true, detail: `Timestamps sane; latest run started ${relTime(run.startedAt)}. Process TZ: ${process.env.TZ ?? "(unset)"}.` },
                 );

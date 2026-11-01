@@ -1,5 +1,5 @@
 /**
- * QB-2 write path: the outbox drains into QuickBooks through the real QuickBooksClient over an
+ * QuickBooks write path: the outbox drains into QuickBooks through the real QuickBooksClient over an
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -8,7 +8,8 @@ import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
 import { db } from "../../db";
-import { TEST_BUCKETS, bindPorts, catalogResolving, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { TEST_BUCKETS, bindPorts, catalogResolving, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { expenseReasons } from "../../services/reasonService";
 import {
@@ -635,6 +636,31 @@ describeDb("QB-2 posting — daily ceiling", () => {
     expect((await expenseRow(second.id)).qbMatchState).toBe("UNMATCHED");
   });
 
+  it("takes the org's daily limit from settings", async () => {
+    await createdAt(2, new Date());
+    await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMaxCreatesPerDay: 2 }, update: { qbMaxCreatesPerDay: 2 } });
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, capped: "day" });
+  });
+
+  it("takes the org's per-run limit from settings", async () => {
+    await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMaxCreatesPerRun: 1 }, update: { qbMaxCreatesPerRun: 1 } });
+    await outboxed("2026-09-10");
+    await outboxed("2026-09-11");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, capped: "count" });
+  });
+
+  it("matches only inside the org's window from settings", async () => {
+    await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMatchWindowDays: 1 }, update: { qbMatchWindowDays: 1 } });
+    const { id } = await outboxed("2026-09-10");
+    qbo.purchases.push({ Id: "900", TxnDate: "2026-09-12", TotalAmt: 10, AccountRef: { value: PAYMENT_ACCOUNT } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+  });
+
   it("creates from before UTC midnight do not count", async () => {
     const yesterday = new Date();
     yesterday.setUTCHours(0, 0, 0, 0);
@@ -676,6 +702,35 @@ describeDb("QB-2 posting — checks at post time", () => {
     await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 3 } });
     expect(await drainExpenseOutbox()).toMatchObject({ waiting: 1 });
     expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).checkedOffAt).not.toBeNull();
+  });
+
+  it("a reimbursee's membership lapsing after close asks for no Board seat", async () => {
+    await handMatched("2026-08-01");
+    await db.expenseReimburseeVendor.create({ data: { orgId: ORG, reimburseePersonId: 42, qbVendorId: VENDOR } });
+    const { id } = await outboxed("2026-09-10", { reimburseePersonId: 42 });
+    await db.expenseLineSignoff.deleteMany({ where: { expenseId: id, seat: "BOARD" } });
+    bindPorts({ quickbooks: { posting: async () => posting() }, signoff: directory({ nonMembers: [42] }) });
+
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+
+    await db.expense.update({ where: { id }, data: { state: "qb_complete" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
+  });
+
+  it("a Board-review total lowered after close asks for no Board approval", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10", { amounts: [100_000, 50_000] });
+    await db.expense.update({ where: { id }, data: { boardAuthorization: null } });
+    await updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000 }, principal(3, { isFinance: true }));
+
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+
+    await db.expense.update({ where: { id }, data: { state: "qb_complete" } });
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
   });
 
   it("a held flag still open when the expense posts is checked off by the post", async () => {

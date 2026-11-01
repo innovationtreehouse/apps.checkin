@@ -519,7 +519,7 @@ describe('Admin Roles API Integration Tests', () => {
             const personRole = rows.find((r) => r.tableName === 'PersonRole');
             expect(person?.newData).toMatchObject({ canAccessStaging: true });
             expect(personRole?.newData).toMatchObject({ isOperations: true });
-            // The role row must not carry the column change — that was the drift.
+            // The role row carries only the role change; the column change stays on Person.
             expect(personRole?.newData).not.toHaveProperty('canAccessStaging');
             expect(person?.newData).not.toHaveProperty('isOperations');
         });
@@ -783,7 +783,7 @@ describe('Admin Roles API Integration Tests', () => {
 
                 expect(await prisma.personRole.count({ where: { personId: nobody.id } })).toBe(0);
 
-                // isOperations never shipped a column — nothing to backfill it from.
+                // OPERATIONS has no column to backfill from.
                 expect(await prisma.personRole.count({ where: { role: 'OPERATIONS', personId: { in: [both.id, keyholderOnly.id, nobody.id] } } })).toBe(0);
             } finally {
                 await prisma.person.deleteMany({ where: { id: { in: [both.id, keyholderOnly.id, nobody.id] } } });

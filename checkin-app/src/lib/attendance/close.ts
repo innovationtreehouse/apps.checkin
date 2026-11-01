@@ -176,10 +176,14 @@ export type DepartureChange = {
     oldDepartedVia: string | null;
     departedAt: Date;
     departedVia: string;
+    /** The close whose departure this one replaced, on a pull-back. */
+    supersededCloseId?: number | null;
 };
 
 /** Log each departure a facility close set, or a correction of it moved, with
- *  its before and after, against the close record. */
+ *  its before and after, against the close record. The log is history and is
+ *  never edited: which close ended a visit is the visit's own facilityCloseId,
+ *  and a pull-back's row names the close it replaced. */
 export async function logCloseDepartures(
     db: DbClient,
     facilityCloseId: number,
@@ -197,7 +201,7 @@ export async function logCloseDepartures(
             affectedEntityId: facilityCloseId,
             secondaryAffectedEntity: c.id,
             oldData: { visitId: c.previousVisitId ?? c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
-            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...note },
+            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...(c.supersededCloseId ? { supersededCloseId: c.supersededCloseId } : {}), ...note },
         })),
     });
 }
@@ -267,7 +271,7 @@ async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; 
     // one this statement overwrites.
     const changes = await db.$queryRaw<DepartureChange[]>`
         WITH ${closeMoment(close.id, close.closedAt)}, old AS (
-            SELECT v.id, v."departedAt", v."departedVia"
+            SELECT v.id, v."departedAt", v."departedVia", v."facilityCloseId"
             FROM "Visit" v, t
             WHERE ${closeSweeps}
             FOR UPDATE OF v
@@ -282,7 +286,7 @@ async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; 
         FROM t, old
         WHERE v.id = old.id
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
-                  v."departedAt", v."departedVia"::text AS "departedVia"`;
+                  v."departedAt", v."departedVia"::text AS "departedVia", old."facilityCloseId" AS "supersededCloseId"`;
     specTrace("CloseExecuted", { closeId: close.id, closedAt: close.closedAt.getTime(), via: close.via, swept: changes.map(c => c.personId) });
     const actor = close.closedById != null ? personActor(close.closedById) : systemActor("system:facility-close");
     await logCloseDepartures(db, close.id, actor, changes, close.via);

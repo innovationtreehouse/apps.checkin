@@ -3,11 +3,11 @@
  */
 /**
  * Unit tests for the membership lifecycle definition (lib/membership/lifecycle).
- * Pure — no DB. Proves the anti-drift guarantees the four fixes rely on:
+ * Pure — no DB. Proves the anti-drift guarantees:
  *   - awaitingBgReview.has (client predicate) ≡ awaitingBgReview.where (server
- *     Prisma fragment) across the full status × flags matrix (fix #1);
- *   - grantableRenewalWhere / settledThisCycleWhere emit the exact fragments the
- *     route + guard + sweep consume (fix #3/#4);
+ *     Prisma fragment) across the full status × flags matrix;
+ *   - grantableApplicationWhere / settledThisCycleWhere emit the exact fragments the
+ *     route + guard + sweep consume;
  *   - isLegalTransition covers the machine’s edges; reachability flags the legacy
  *     RENEWAL_PENDING_BG as unreachable;
  *   - the local ProcessStatus/ProcessKind unions stay in lockstep with the Prisma
@@ -19,7 +19,7 @@ import {
 } from '@/generated/prisma/client';
 import {
     awaitingBgReview,
-    grantableRenewalWhere,
+    grantableApplicationWhere,
     settledThisCycleWhere, handledThisCycleWhere,
     IN_FLIGHT_INITIAL,
     IN_FLIGHT_RENEWAL,
@@ -39,7 +39,7 @@ import {
 } from '@/lib/membership/lifecycle';
 import { assertEnumParity, reachability } from '@/lib/lifecycle';
 
-// ── fix #1: awaitingBgReview — has ≡ where on the full matrix ───────────────────
+// ── awaitingBgReview — has ≡ where on the full matrix ───────────────────
 
 /**
  * Interpret awaitingBgReview.where against a row — the server-side semantics — so
@@ -97,13 +97,11 @@ describe('awaitingBgReview', () => {
     });
 });
 
-// ── fix #3 / #4: renewal where builders ────────────────────────────────────────
+// ── renewal where builders ────────────────────────────────────────
 
-describe('grantableRenewalWhere / settledThisCycleWhere', () => {
-    test('grantableRenewalWhere = payable renewal, NOT bg-gated (fix #3, behavior (a))', () => {
-        // Grant comps payment only; BG stays an independent gate on ACTIVE. So any
-        // PENDING_PAYMENT renewal qualifies — no bgClearedAt clause.
-        expect(grantableRenewalWhere).toEqual({ kind: 'RENEWAL', status: 'PENDING_PAYMENT' });
+describe('grantableApplicationWhere / settledThisCycleWhere', () => {
+    test('grantableApplicationWhere = joining or renewing at payment, NOT bg-gated', () => {
+        expect(grantableApplicationWhere).toEqual({ kind: { in: ['INITIAL', 'RENEWAL'] }, status: 'PENDING_PAYMENT' });
     });
 
     test('settledThisCycleWhere (money) is kind-agnostic: ACTIVE or paid-awaiting-clearance', () => {
@@ -130,7 +128,7 @@ describe('grantableRenewalWhere / settledThisCycleWhere', () => {
     });
 });
 
-// ── fix #2: in-flight lists ────────────────────────────────────────────────────
+// ── in-flight lists ────────────────────────────────────────────────────
 
 describe('IN_FLIGHT lists', () => {
     test('INITIAL is the 5 open INITIAL statuses', () => {
@@ -205,7 +203,7 @@ describe('validate', () => {
 
 // ── transitions ───────────────────────────────────────────────────────────────────────────────────
 
-describe('isLegalTransition covers §5', () => {
+describe('isLegalTransition covers the declared edges', () => {
     test('accepts declared spine edges', () => {
         expect(isLegalTransition('INTAKE', 'PENDING_EXTERNAL_ACTION')).toBe(true);
         expect(isLegalTransition('PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION')).toBe(true);
@@ -251,7 +249,7 @@ describe('isLegalTransition covers §5', () => {
     });
 
     // GUARD: the restore set and the transition table differ by one status on purpose.
-    // RENEWAL_PENDING_BG is restorable (rows closed under the older rule may hold it,
+    // RENEWAL_PENDING_BG is restorable (closed rows may hold it,
     // migration 20260806160000 backfills it) but declaring the edge would make an
     // unreachable status reachable and hide machineSpecs.ts's unreachable report.
     test('GUARD: the restore set is the closable set plus the legacy closed-from steps and status, and nothing else', () => {
@@ -263,18 +261,17 @@ describe('isLegalTransition covers §5', () => {
     });
 
     test('rejects undeclared edges', () => {
-        // The external advance always opens payment — an intake note no longer holds it.
+        // The external advance always opens payment — an intake note does not hold it.
         expect(isLegalTransition('PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW')).toBe(false);
         expect(isLegalTransition('INTAKE', 'ACTIVE')).toBe(false);
         expect(isLegalTransition('ACTIVE', 'PENDING_PAYMENT')).toBe(false);
         expect(isLegalTransition('ARCHIVED', 'ACTIVE')).toBe(false);
     });
 
-    test('filters by kind: grantRenewalPayment PENDING_PAYMENT→ACTIVE is RENEWAL-only', () => {
-        // The renewal-grant edge is tagged kind: RENEWAL; the generic activate edge
-        // (kind undefined) also matches PENDING_PAYMENT→ACTIVE, so both kinds pass —
-        // assert the RENEWAL edge exists explicitly in the table.
-        expect(TRANSITIONS.some((t) => t.from === 'PENDING_PAYMENT' && t.to === 'ACTIVE' && t.kind === 'RENEWAL')).toBe(true);
+    test('the grant edge serves joining and renewing alike', () => {
+        const edge = TRANSITIONS.find((t) => t.event === 'grantMembership');
+        expect(edge).toMatchObject({ from: 'PENDING_PAYMENT', to: 'ACTIVE' });
+        expect(edge?.kind).toBeUndefined();
     });
 });
 

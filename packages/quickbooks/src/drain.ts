@@ -1,9 +1,11 @@
-// The fixed caps, timings and closed-books gate the QuickBooks drains post under, and the run loop that applies the caps.
+// The caps' defaults, fixed timings and closed-books gate the QuickBooks drains post under, and the run loop that applies the caps.
 import { shiftDate } from "./match";
 import type { QuickBooksClient } from "./client";
 
-/** Days either side of a record's date a QuickBooks entry may be dated. */
+/** The default days either side of a record's date a QuickBooks entry may be dated; each lane's settings hold its value. */
 export const MATCH_WINDOW_DAYS = 7;
+/** The widest match window a lane may set, and the reach of a read for an entry already linked, so narrowing never hides one. */
+export const MAX_MATCH_WINDOW_DAYS = 30;
 export const MAX_CREATES_PER_RUN = 25;
 export const MAX_CREATES_PER_DAY = 50;
 /** Failed posts before the drain stops retrying and hands the record to finance. */
@@ -55,8 +57,12 @@ export interface DrainLane<R, O extends string> {
   failures: readonly O[];
   /** Outcomes that made no QuickBooks call, so they leave the streak as it is. */
   noCall?: readonly O[];
-  /** Entries already created today, for a lane held to MAX_CREATES_PER_DAY. */
+  /** Entries already created today, for a lane held to a daily limit. */
   createdToday?: number;
+  /** Defaults to MAX_CREATES_PER_RUN. */
+  maxCreatesPerRun?: number;
+  /** Defaults to MAX_CREATES_PER_DAY. */
+  maxCreatesPerDay?: number;
 }
 
 /** Why a run ended before its last record, and how many records it left unposted. */
@@ -67,8 +73,8 @@ export async function runDrain<R, O extends string>(rows: readonly R[], lane: Dr
   let failuresInARow = 0;
   for (const [i, row] of rows.entries()) {
     const remaining = rows.length - i;
-    if (lane.createdToday !== undefined && lane.createdToday + lane.counts.posted >= MAX_CREATES_PER_DAY) return { by: "day", remaining };
-    if (lane.counts.posted >= MAX_CREATES_PER_RUN) return { by: "count", remaining };
+    if (lane.createdToday !== undefined && lane.createdToday + lane.counts.posted >= (lane.maxCreatesPerDay ?? MAX_CREATES_PER_DAY)) return { by: "day", remaining };
+    if (lane.counts.posted >= (lane.maxCreatesPerRun ?? MAX_CREATES_PER_RUN)) return { by: "count", remaining };
     const outcome = await lane.post(row);
     if (outcome === null) return { by: "post", remaining };
     lane.counts[outcome]++;

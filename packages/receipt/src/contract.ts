@@ -132,6 +132,17 @@ export interface ReceiptHouseholds {
   householdOf(personIds: number[]): Promise<number[]>;
 }
 
+/**
+ * The host's record of merges. A receipt keeps the person ids it was written with, and a merge
+ * cannot reach this database, so every read asks here who an id names now.
+ */
+export interface ReceiptPersonIds {
+  /** The live person each id names today, following merges; null for an id that names nobody live. */
+  liveIds(personIds: number[]): Promise<Map<number, number | null>>;
+  /** Every id a row may still hold for this live person: their own and each one merged into them. */
+  storedIdsOf(personId: number): Promise<number[]>;
+}
+
 // ── OCR provider ─────────────────────────────────────────────────────────────
 
 // OCR output is untrusted: it carries the manual-entry bounds, and money stays inside the
@@ -324,6 +335,7 @@ export interface ReceiptConfig {
   submitterConfirmations?: SubmitterConfirmations;
   purchaseOutcomes?: PurchaseOutcomes;
   households?: ReceiptHouseholds;
+  personIds?: ReceiptPersonIds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
   reimbursees?: ReceiptReimbursees;

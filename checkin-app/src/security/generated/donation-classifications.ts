@@ -116,6 +116,8 @@ export const classifications = {
     DonationOrgSettings: {
         orgId: 'internal',
         inKindQbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -206,6 +208,7 @@ export const classifications = {
         matchState: 'internal',
         claimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
+        qbPostAttempts: 'internal',
         qbNote: 'internal',
         bookedTotalCents: 'internal',
         bookedTxnDate: 'internal',

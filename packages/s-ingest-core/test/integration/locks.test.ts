@@ -1,5 +1,5 @@
 /**
- * Integration test for the advisory-lock concurrency guard (F19). Skipped unless SHOPIFY_READ_DATABASE_URL
+ * Integration test for the advisory-lock concurrency guard. Skipped unless SHOPIFY_READ_DATABASE_URL
  * is set. Each withAdvisoryLock call opens its own connection — one DB session, the same shape as
  * one Lambda execution environment — so nested calls exercise the real cross-session hazard.
  */

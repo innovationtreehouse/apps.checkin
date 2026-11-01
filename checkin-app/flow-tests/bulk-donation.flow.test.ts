@@ -1,5 +1,5 @@
 /**
- * Bulk donation (#1280): the persona matrix (FINANCE, BOARD, a plain member,
+ * Bulk donation: the persona matrix (FINANCE, BOARD, a plain member,
  * anonymous) over every /api/donations route, UploadedFile.fileBlob absent from
  * every JSON response, the stored-CSV download, and one finance journey
  * (upload → assign with a comment rule → hold → account rule → resubmit →

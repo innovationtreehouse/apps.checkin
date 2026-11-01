@@ -253,7 +253,7 @@ describe("MembershipSettingsPage", () => {
     expect("devSigningTarget" in JSON.parse(putOpts!.body as string)).toBe(expected);
   });
 
-  it("opens renewals for all active members after confirming (never emails — PR-2)", async () => {
+  it("opens renewals for all active members after confirming (never emails)", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
       "/api/settings/membership/bulk-open-renewals": { opened: 12, skipped: 3 },

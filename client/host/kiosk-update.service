@@ -1,0 +1,6 @@
+[Unit]
+Description=Move the kiosk to the release tag
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kioskctl check-release

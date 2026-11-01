@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Visit.led_households — the household lead's act-for-members grant (#1254, AT3).
+ * Visit.led_households — the household lead's act-for-members grant.
  *
  * A lead may correct visits for the members of their household, so the response
  * must carry those rows' `personal` fields (arrivedAt/departedAt). `their_own`

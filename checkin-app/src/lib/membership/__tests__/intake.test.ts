@@ -2,12 +2,12 @@
  * @jest-environment node
  */
 /**
- * Unit test for startIntake's race guard (M3): the check+create now runs inside
+ * Unit test for startIntake's race guard: the check+create runs inside
  * a transaction holding a FOR UPDATE lock on the Membership row, so a second
  * in-flight INITIAL process is never created — the tx's own re-check (via `tx`,
  * not the caller's stale pre-tx read) finds the winner and returns it. Mirrors
  * renewal's createRenewalProcess / renewalConcurrency.integration.test.ts intent,
- * but as a mocked-prisma unit test since this worktree has no DB.
+ * as a mocked-prisma unit test.
  */
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
 import { Prisma } from '@/generated/prisma/client';
@@ -18,8 +18,8 @@ import { logger, logBackendError } from '@/lib/logger';
 const txMembershipProcess = { findMany: jest.fn(), create: jest.fn() };
 const txAuditLog = { create: jest.fn() };
 const txQueryRaw = jest.fn();
-// saveIntake's two person.creates now run on a tx client (they pair the create
-// with mintPersonId(tx) — #1693). Same delegate object as the root mock below,
+// saveIntake's two person.creates run on a tx client (they pair the create
+// with mintPersonId(tx)). Same delegate object as the root mock below,
 // so the assertions in this file stay pointed at one place.
 const mockPerson = { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() };
 const mockHousehold = { update: jest.fn() };
@@ -179,7 +179,7 @@ describe('startIntake race guard', () => {
         expect(txMembershipProcess.create).not.toHaveBeenCalled();
     });
 
-    it('P2002 race loser: the FOR UPDATE lock lost to a pre-fix instance, winner found on re-query', async () => {
+    it('P2002 race loser: a concurrent insert gets past the FOR UPDATE lock, winner found on re-query', async () => {
         const winner = { id: 101, orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE' };
         const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0' });
         prisma.$transaction.mockRejectedValueOnce(p2002);
@@ -566,7 +566,7 @@ describe('saveIntake', () => {
         });
     });
 
-    // #1432 site 9 / Decision 5: a submitted-but-blank name is rejected, not
+    // A submitted-but-blank name is rejected, not
     // silently dropped — this is the caller's own name, always required.
     it('rejects blanking the primary parent (caller) name', async () => {
         await expect(saveIntake(1, { primaryParent: { name: '   ' } })).rejects.toMatchObject({ code: 'name_required' });
@@ -581,9 +581,8 @@ describe('saveIntake', () => {
         });
     });
 
-    // Intake used to write DoB with a bare `new Date`, bypassing the #1165 guard
-    // that every other interactive path funnels through: signup could persist an
-    // exact DoB for a 26+ person, with only the nightly cron as the net.
+    // Intake funnels DoB through the same guard as every other interactive path, so
+    // signup cannot persist an exact DoB for a 26+ person and rely on the nightly cron.
     it('strips a 26+ DoB at signup and declares the person an adult', async () => {
         prisma.person.create.mockResolvedValue({ id: 55 });
 
@@ -601,8 +600,8 @@ describe('saveIntake', () => {
         });
     });
 
-    // F1: one calendar-date convention across every DoB writer. A DoB stored at
-    // any other time of day fails SQL age filters cut at UTC midnight (#1447).
+    // One calendar-date convention across every DoB writer. A DoB stored at
+    // any other time of day fails SQL age filters cut at UTC midnight.
     it('stores a kept DoB at UTC midnight', async () => {
         const childBirthYear = new Date().getUTCFullYear() - 12;
 
@@ -826,7 +825,7 @@ describe('saveIntake', () => {
         });
     });
 
-    // #1432 site 10 / Decision 5: same rejection as the primary parent — an
+    // Same rejection as the primary parent — an
     // existing child's name can't be blanked through an update.
     it('rejects blanking an existing child name on update', async () => {
         await expect(saveIntake(1, { children: [{ id: 4, name: '   ' }] })).rejects.toMatchObject({ code: 'name_required' });
@@ -843,8 +842,8 @@ describe('saveIntake', () => {
         });
     });
 
-    // #1432 site 4: "   " is truthy, so the old `else if (child.name)` gate
-    // would have created a child with a whitespace-only stored name.
+    // "   " is truthy, so a bare `else if (child.name)` gate
+    // would create a child with a whitespace-only stored name.
     it('does not create a child from a whitespace-only name', async () => {
         const result = await saveIntake(1, { children: [{ name: '   ' }] });
         expect(prisma.person.create).not.toHaveBeenCalled();
@@ -934,7 +933,7 @@ describe('submitIntake', () => {
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist (#874)', async () => {
+    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist', async () => {
         householdBgIsFresh.mockResolvedValue(true);
 
         const result = await submitIntake(1);
@@ -950,7 +949,7 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
     });
 
-    it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result (#878)', async () => {
+    it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
         householdBgIsFresh.mockResolvedValue(false);
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is
         // already met when we arrive — the advance carries the process to PENDING_PAYMENT.
@@ -962,7 +961,7 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_PAYMENT' });
     });
 
-    it('falls back to the re-read process when the external advance is a no-op (#878)', async () => {
+    it('falls back to the re-read process when the external advance is a no-op', async () => {
         householdBgIsFresh.mockResolvedValue(false);
         // Nothing pre-marked ⇒ advanceExternalIfComplete finds the gate unmet and
         // returns the still-PENDING_EXTERNAL_ACTION process (here left undefined to

@@ -118,7 +118,7 @@ describe('Per-adult background-check subjects', () => {
         expect(await householdBgIsFresh(hh.householdId, boundary, 12)).toBe(true);
     });
 
-    it('the unnamed adult now reads as NEEDED instead of FRESH', async () => {
+    it('the unnamed adult reads as NEEDED, not FRESH', async () => {
         const hh = await twoLeadHousehold('NagOn');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
@@ -238,8 +238,7 @@ describe('Per-adult background-check subjects', () => {
     // ── An approval that names nobody ────────────────────────────────────────
     it('an approval naming nobody counts toward nobody, and reports the count it counted', async () => {
         const hh = await twoLeadHousehold('Legacy');
-        // An approval whose subject column is null: what a review in flight across the
-        // subject migration (20260802120000, nullable, no backfill) carries.
+        // An approval whose nullable subject column is empty.
         await prisma.backgroundCheckAttestation.create({ data: { processId: hh.processId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: null } });
 
         as(rev2, { isBackgroundCheckReviewer: true });
@@ -438,8 +437,7 @@ describe('Per-adult background-check subjects', () => {
                 snapshot: { name: 'Sam Archived', email: null, lastBackgroundCheck: checkedAt.toISOString() },
             },
         });
-        // Sam's Person row never existed as a tombstone here: this is the 2b-3 state,
-        // where the archive is the only record of the merge.
+        // Sam's Person row is deleted, so the archive is the only record of the merge.
         await prisma.person.delete({ where: { id: hh.sam } });
 
         as(board, { isBoardMember: true });
@@ -450,8 +448,8 @@ describe('Per-adult background-check subjects', () => {
         expect(row.fromName).toBe('Sam Archived');
     });
 
-    // Both records exist during 2b, and they say the same thing — so the survivor
-    // must appear once, from the archive, not twice.
+    // A tombstone and an archive row can both exist and say the same thing, so the
+    // survivor must appear once, from the archive, not twice.
     it('prefers the archive over the tombstone without double-counting', async () => {
         const hh = await twoLeadHousehold('MergeBoth');
         const checkedAt = new Date('2026-06-01T00:00:00.000Z');

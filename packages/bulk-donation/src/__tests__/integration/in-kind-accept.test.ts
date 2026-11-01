@@ -109,7 +109,7 @@ async function manualGift(): Promise<{ id: number; lineIds: number[] }> {
   return { id, lineIds: lines.map((l) => l.id) };
 }
 
-const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true };
+const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true, confirmGoodsReceived: true };
 const by = (actorUserId: number) => ({ actorUserId, actorUsername: `u${actorUserId}` });
 const queueFor = (callerId: number) => inKindAcceptService.listQueue(orgId, callerId);
 
@@ -175,7 +175,45 @@ describeDb("accepting", () => {
     for (const bucketId of [3, 4, 404]) {
       await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, bucketId }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
     }
-    await expect(inKindAcceptService.decide("receipt", id, { outcome: "accept", confirmOutsideDonorHousehold: true }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    await expect(inKindAcceptService.decide("receipt", id, { outcome: "accept", confirmOutsideDonorHousehold: true, confirmGoodsReceived: true }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("refuses to accept a gift, with a receipt or without, until the decider confirms the goods", async () => {
+    const id = await receiptGift();
+    const { id: manualId, lineIds } = await manualGift();
+    const lineValues = lineIds.map((lineId) => ({ lineId, valueCents: 100 }));
+    const unconfirmed: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true };
+
+    await expect(inKindAcceptService.decide("receipt", id, unconfirmed, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    await expect(inKindAcceptService.decide("manual", manualId, { ...unconfirmed, lineValues }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).decisionOutcome).toBeNull();
+    expect((await db.manualInKindDonation.findUniqueOrThrow({ where: { id: manualId } })).decisionOutcome).toBeNull();
+    expect(await db.workflowEvent.count({ where: { orgId, eventType: "IN_KIND_DECIDED" } })).toBe(0);
+  });
+
+  it("records the goods confirmation on an accepted gift, with a receipt or without", async () => {
+    const id = await receiptGift();
+    const { id: manualId, lineIds } = await manualGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    await inKindAcceptService.decide("manual", manualId, { ...ACCEPT, lineValues: lineIds.map((lineId) => ({ lineId, valueCents: 100 })) }, by(FINANCE));
+    const events = await db.workflowEvent.findMany({ where: { orgId, eventType: "IN_KIND_DECIDED" } });
+    expect(events.map((e) => [e.entityType, e.actorUserId, JSON.parse(e.payload ?? "{}").goodsConfirmed]).sort()).toEqual([
+      ["in_kind", FINANCE, true],
+      ["manual_in_kind", FINANCE, true],
+    ]);
+  });
+
+  it("refusing or returning needs no goods confirmation and records none", async () => {
+    const id = await receiptGift();
+    await expect(inKindAcceptService.decide("receipt", id, { outcome: "refuse", confirmOutsideDonorHousehold: true }, by(FINANCE))).resolves.toMatchObject({ outcome: "REFUSED" });
+    const [event] = await db.workflowEvent.findMany({ where: { orgId, eventType: "IN_KIND_DECIDED" } });
+    expect(JSON.parse(event.payload ?? "{}")).not.toHaveProperty("goodsConfirmed");
+  });
+
+  it("changing an accepted gift's bucket does not ask for the goods again", async () => {
+    const id = await receiptGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    await expect(inKindAcceptService.decide("receipt", id, { outcome: "accept", bucketId: 2, confirmOutsideDonorHousehold: true }, by(FINANCE))).resolves.toMatchObject({ budgetOwnerId: 2 });
   });
 
   it("keeps a receipt gift's values: line values are refused", async () => {

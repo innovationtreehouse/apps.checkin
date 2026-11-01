@@ -248,6 +248,14 @@ const replies: ReceiptReplies = {
   },
 };
 
+async function liveIds(personIds: number[]): Promise<Map<number, number | null>> {
+  return (await import("@/lib/person/mergeChain")).liveIdsOf(personIds);
+}
+
+async function storedIdsOf(personId: number): Promise<number[]> {
+  return (await import("@/lib/person/mergeChain")).storedIdsOf(personId);
+}
+
 const outcomeMail: OutcomeMail = {
   async send(notice, to) {
     const { sendPurchaseOutcome } = await import("@/lib/purchaseOutcomeMail");
@@ -260,6 +268,7 @@ export function configureRuntime(): void {
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },
+    personIds: { liveIds, storedIdsOf },
     people: { submitterByEmail },
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,

@@ -683,7 +683,7 @@ describe('Program payment-plan routes', () => {
                 });
                 expect(audit).not.toBeNull();
 
-                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all — this supersedes the earlier deny-time +1
+                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all
 
                 // Double-refuse: the second call finds isPaymentPlanRequested
                 // already false -> 409, no-op.
@@ -1004,7 +1004,7 @@ describe('Program payment-plan routes', () => {
             expect(row.isPaymentPlanRequested).toBe(false);
         });
 
-        it('deny override works on a hold-failed row', async () => {
+        it('denying a hold-failed row returns it to unpaid and keeps the denial in the audit log', async () => {
             await enroll(selfId, { requested: true, held: false }); // PENDING_HOLD_FAILED
             mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
             const res = await RefusePost(new Request('http://localhost/api/finance-ops/payment-plans/refuse', {
@@ -1018,7 +1018,14 @@ describe('Program payment-plan routes', () => {
             });
             expect(row.status).toBe('PENDING');
             expect(row.isPaymentPlanRequested).toBe(false);
-            expect(row.paymentPlanDeniedAt).not.toBeNull();
+            expect(row.inventoryHeldAt).toBeNull();
+            expect(row.paymentPlanDeniedAt).toBeNull();
+
+            const audit = await prisma.auditLog.findFirstOrThrow({
+                where: { tableName: 'ProgramParticipant', affectedEntityId: selfId, secondaryAffectedEntity: programId, actorId: boardId },
+                orderBy: { id: 'desc' },
+            });
+            expect(audit.newData).toMatchObject({ reason: 'payment_plan_denied_no_hold' });
         });
     });
 

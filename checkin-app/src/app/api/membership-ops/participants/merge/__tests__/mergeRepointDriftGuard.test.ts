@@ -7,13 +7,10 @@ import { join } from 'node:path';
  * unlisted, nothing stale).
  *
  * A participant merge has to decide something about EVERY foreign key pointing
- * at `Person`. The list of those decisions lived only in the merge's
- * control flow, hand-maintained, and it drifted: #1456 slice 2b-0 found SIX
- * relations the merge had never touched at all — including `RawBadgeLog`
- * (RESTRICT, so the tombstone could never be deleted) and `PersonRole`
- * (CASCADE, so a later delete would destroy a security grant with no audit
- * row). None of that produced a compiler error or a failing test; the relations
- * were simply absent, and absence is invisible.
+ * at `Person`. A relation the merge's control flow skips is invisible: no compiler
+ * error and no failing test, though `RawBadgeLog` (RESTRICT) would make the
+ * tombstone undeletable and `PersonRole` (CASCADE) would destroy a security grant
+ * with no audit row.
  *
  * So the key set is DERIVED from the schema at test time and matched against
  * the annotated DISPOSITIONS map below. Add a Person FK to schema.prisma and

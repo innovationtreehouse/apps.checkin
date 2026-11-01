@@ -22,17 +22,30 @@ export interface DepositLineInput {
   categories: ReadonlyMap<string, number | null>;
 }
 
-const lineAmount = (l: MirrorOrderLine) => l.priceCents * l.quantity - l.discountCents;
+const lineAmount = (l: MirrorOrderLine) => Math.max(0, l.priceCents * l.quantity - l.discountCents);
+
+/** A line's amount scaled to the units it has lost; rounded, so `split` can treat it as a line amount. */
+const refundedAmount = (l: MirrorOrderLine) =>
+  l.quantity ? Math.round((lineAmount(l) * Math.max(0, l.quantity - l.currentQuantity)) / l.quantity) : 0;
 
 /**
- * Split `amount` (any sign) across `lines`: each line gets its own amount when the total covers
- * them all, otherwise its proportional share, rounded toward zero. Returns the per-line parts
- * and what is left for organization level.
+ * The amounts a refund splits by: what each line has lost in refunded units, or the full line
+ * amounts when no units went back, as with a refund of part of the money.
+ * ponytail: the mirror keeps cumulative units per line, not per refund, so a later refund also weights lines an earlier refund took units from; use per-refund lines if the mirror ever keeps them.
  */
-function split(amount: number, lines: MirrorOrderLine[]): { parts: number[]; remainder: number } {
+function refundWeights(lines: MirrorOrderLine[]): number[] {
+  const refunded = lines.map(refundedAmount);
+  return refunded.some((a) => a > 0) ? refunded : lines.map(lineAmount);
+}
+
+/**
+ * Split `amount` (any sign) by per-line `amounts`: each line gets its own amount when the total
+ * covers them all, otherwise its proportional share, rounded toward zero. Returns the per-line
+ * parts and what is left for organization level.
+ */
+function split(amount: number, amounts: number[]): { parts: number[]; remainder: number } {
   const sign = Math.sign(amount);
   const abs = Math.abs(amount);
-  const amounts = lines.map((l) => Math.max(0, lineAmount(l)));
   const total = amounts.reduce((s, a) => s + a, 0);
   if (total === 0) return { parts: amounts.map(() => 0), remainder: amount };
   const parts = amounts.map((a) => sign * (abs >= total ? a : Math.floor((abs * a) / total)));
@@ -40,9 +53,9 @@ function split(amount: number, lines: MirrorOrderLine[]): { parts: number[]; rem
 }
 
 /**
- * Build the lines of a deposit the app creates for one payout. Charges and refunds split
- * across their order's lines by line amount and book to each line's bucket; tax, shipping
- * and rounding book at organization level; each transaction's fee (net − amount) books to
+ * Build the lines of a deposit the app creates for one payout. A charge splits across
+ * its order's lines by line amount and a refund by the lines' refunded units, and each part
+ * books to its line's bucket; tax, shipping and rounding book at organization level; each transaction's fee (net − amount) books to
  * fees; every other transaction type books whole to adjustments. Lines sum to the payout net.
  */
 export function buildDepositLines(input: DepositLineInput): DepositLine[] {
@@ -62,7 +75,7 @@ export function buildDepositLines(input: DepositLineInput): DepositLine[] {
     const type = t.type.toLowerCase();
     if (type === "charge" || type === "refund") {
       const lines = (t.orderGid && byOrder.get(t.orderGid)) || [];
-      const { parts, remainder } = split(t.amountCents, lines);
+      const { parts, remainder } = split(t.amountCents, type === "refund" ? refundWeights(lines) : lines.map(lineAmount));
       lines.forEach((l, i) => {
         const bucket = l.variantId ? (input.categories.get(l.variantId) ?? null) : null;
         add("income", bucket, parts[i]);

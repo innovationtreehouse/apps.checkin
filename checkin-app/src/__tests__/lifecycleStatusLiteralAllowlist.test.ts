@@ -14,14 +14,14 @@ import { join, relative, sep } from 'node:path';
  *   - the ALLOWLIST below: sites that keep such a `where` on purpose — CAS
  *     status+flag transition guards (from-state ∧ a lifecycle flag = a *transition*,
  *     not a plain state-set) and a handful of multi-status read/query filters not
- *     yet migrated onto a StateSet.where.
+ *     on a StateSet.where.
  *
- * SHARPENED GRANULARITY (why this test only flags SETS, not lone literals):
+ * GRANULARITY (why this test only flags SETS, not lone literals):
  *   The drift risk is a hand-listed *set of states* getting out of sync with the
  *   machine. A single bare `status: 'ACTIVE'` read carries none of that risk — it is
- *   pure indirection, trivially wrappable in a StateSet later with zero behavioural
- *   change. Flagging every lone literal forced ~8 single-status reads into the
- *   allowlist purely to absorb false-positives, burying the real signal. So a `where`
+ *   pure indirection, trivially wrappable in a StateSet with zero behavioural
+ *   change. Flagging every lone literal would fill the allowlist with false positives
+ *   and bury the real signal. So a `where`
  *   is flagged ONLY when its status clause is a genuine multi-status construct:
  *     - a set filter: `status: { in: [...] }` or `status: { notIn: [...] }`, OR
  *     - a `status: '<literal>'` appearing ALONGSIDE ≥1 lifecycle flag condition in the
@@ -109,14 +109,14 @@ function isDefinitionModule(rel: string): boolean {
  * existence set's `...personBgOpen.where`, which carry no bare literal and cannot drift).
  */
 const ALLOWLIST: Record<string, string> = {
-    // ── CAS transition guards now source their from-state status from the definition (#1080) ──
+    // ── CAS transition guards source their from-state status from the definition ──
     // The enrollment guards (activateEnrollment, request-payment-plan, payment-plans
     // approve/refuse/manual-hold) and the membership advanceExternal/beginRenewal/unarchive/
     // membership-payment-plans guards spread `...fromWhere(<from>)` instead of a raw `status:`
-    // literal, so they carry NO bare status literal and no longer appear here — the guard↔table
-    // parity test (guardFromStateParity.test.ts) is what keeps them honest now. (renewal's
-    // beginRenewalForUser read is a LONE single-status literal, which the sharpened scanner no
-    // longer flags either, so it isn't listed.)
+    // literal, so they carry NO bare status literal and are not listed — the guard↔table
+    // parity test (guardFromStateParity.test.ts) keeps them honest. (renewal's
+    // beginRenewalForUser read is a LONE single-status literal, which the scanner does not
+    // flag, so it isn't listed either.)
 
     // Not a transition from-state: the PERSON_AGREEMENT edge is ∅→PENDING_EXTERNAL_ACTION
     // (no from-row). This is the "already handled this cycle" existence set — in flight, OR
@@ -127,11 +127,11 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/membership-audit/compliance/route.ts':
         'PERSON_AGREEMENT handled-this-cycle set, read to list over-25 non-leads with no agreement yet: status=PENDING_EXTERNAL_ACTION, or status in {ACTIVE,ARCHIVED} since the cycle floor.',
 
-    // ── invariant-driven reconciler (Phase 4) ──
+    // ── invariant-driven reconciler ──
     'lib/lifecycleDrift.ts':
         'I1 heal query: where status=ACTIVE,inventoryHeldAt not null — the off-diagram violation set itself (has no StateSet; it is precisely what validate() rejects).',
 
-    // ── multi-status read / query filters (not yet migrated onto a StateSet.where) ──
+    // ── multi-status read / query filters (not on a StateSet.where) ──
     'app/api/membership-ops/applications/route.ts':
         'Board application list: live view is a set — status notIn {ACTIVE,ARCHIVED}.',
     'lib/nav/todoCounts.ts':

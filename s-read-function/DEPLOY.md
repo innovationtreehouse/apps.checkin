@@ -11,7 +11,7 @@ ones are done. Do dev first as the rehearsal.
 How the pieces fit:
 
 ```
-Schedule (hourly) ─▶ Lambda s-read-<env>-trigger  ({"mode":"incremental"|"backfill"}; not
+Schedule (daily, 09:00 UTC) ─▶ Lambda s-read-<env>-trigger  ({"mode":"incremental"|"backfill"}; not
    │                 VPC-attached; also the hook for future event sources)
    └─▶ ecs:RunTask on the revision-less s-read-<env>-sync FAMILY (= latest ACTIVE revision)
           └─▶ ECS task s-read-<env>-sync — image CMD runs `src/cli.ts` in ${SYNC_MODE:-incremental} mode
@@ -44,7 +44,7 @@ the app's **Client ID** and **Client Secret** (app Settings) for step 3.
 1. infra applied (auto-applies on merge to infra main): per env, cluster
    `s-read-<env>`, task-def families `s-read-<env>-sync`/`s-read-<env>-migrate`
    with the ghcr `repositoryCredentials`, the `s-read-<env>-trigger` Lambda +
-   hourly schedule, secret shells, IAM, and the shared `s-read-compute` SG.
+   daily schedule, secret shells, IAM, and the shared `s-read-compute` SG.
 2. Run the **bootstrap task** (infra modules/checkin-bootstrap) scoped to
    s-read — it creates `shopify_read_<env>` + the `s_read_<env>_ddl` /
    `s_read_<env>_dml` roles for BOTH envs and writes their database-url
@@ -100,7 +100,7 @@ Variables) to the run-task network JSON — SG id from the infra output
 Then run **Actions → "Deploy s-read" → Run workflow** (from `main` — the OIDC
 role's trust is pinned to `refs/heads/main`) with mode **migrate-and-code**.
 It builds/pushes the image, runs the migrate task (waits for exit 0), then
-registers the new `s-read-<env>-sync` revision. From that moment the hourly schedule
+registers the new `s-read-<env>-sync` revision. From that moment the daily schedule
 runs real syncs.
 
 ## 6. One-time backfill
@@ -132,7 +132,7 @@ aws ecs run-task \
 
 (Verified against the image: the container CMD runs
 `src/cli.ts ${SYNC_MODE:-incremental}`, and cli.ts's `backfill` command calls
-`handler({ mode: "backfill" })`.) The run lock makes an overlap with the hourly
+`handler({ mode: "backfill" })`.) The run lock makes an overlap with the daily
 incremental resolve cleanly (one of them skips). The **migrate** task is
 deliberately NOT invocable through the trigger — it runs only as a raw run-task
 from the deploy workflow.
@@ -150,7 +150,7 @@ from the deploy workflow.
   ```
 
 - **Freshness**: `SELECT max(finished_at) FROM sync_run WHERE status = 'COMPLETED';`
-  should advance every hour.
+  should advance once a day, just after 09:00 UTC.
 
 ## Day-2
 

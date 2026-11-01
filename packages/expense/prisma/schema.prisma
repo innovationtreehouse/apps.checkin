@@ -17,7 +17,7 @@ datasource db {
   provider = "postgresql"
 }
 
-// The org's money thresholds, one row per org. A missing row reads as the column defaults.
+// The org's money thresholds and QuickBooks posting limits, one row per org. A missing row reads as the column defaults.
 model ExpenseOrgSettings {
   /// @sensitivity:internal
   orgId                        String @id @map("org_id")
@@ -25,9 +25,6 @@ model ExpenseOrgSettings {
   capitalTotalThresholdCents   Int    @default(0) @map("capital_total_threshold_cents")
   /// @sensitivity:internal
   capitalLineItemThresholdCents Int   @default(0) @map("capital_line_item_threshold_cents")
-  // The client never reads or writes it.
-  /// @sensitivity:internal
-  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents") @ignore
   // Receipt total at or over which THRESHOLD_CROSSED goes to the board and the expense is held
   // until the Board's approval is recorded. A single line's total never counts.
   /// @sensitivity:internal
@@ -44,6 +41,13 @@ model ExpenseOrgSettings {
   // null means off. Only an expense submitted after it books itself.
   /// @sensitivity:internal
   qbPostingOnAt                DateTime? @map("qb_posting_on_at")
+  // Days either side of a receipt's date a QuickBooks entry may match.
+  /// @sensitivity:internal
+  qbMatchWindowDays            Int    @default(7) @map("qb_match_window_days")
+  /// @sensitivity:internal
+  qbMaxCreatesPerRun           Int    @default(25) @map("qb_max_creates_per_run")
+  /// @sensitivity:internal
+  qbMaxCreatesPerDay           Int    @default(50) @map("qb_max_creates_per_day")
 
   @@map("org_settings")
 }
@@ -410,6 +414,39 @@ model ExpenseEvent {
 
   @@unique([orgId, expenseId], name: "expense_events_org_expense_unique")
   @@map("expense_events")
+}
+
+// One email owed per expense outcome: to the receipt's uploader, and to the person reimbursed when
+// that is someone else. Written in the transition into the final state, so it is owed exactly once.
+model ExpenseOutcomeNotice {
+  /// @sensitivity:internal
+  id               Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId            String    @map("org_id")
+  // The expense's id, which is its receipt's id.
+  /// @sensitivity:internal
+  expenseId        String    @map("expense_id")
+  // expense_line_rejected | reimbursement_complete
+  /// @sensitivity:internal
+  event            String
+  // Set before sending, so a send is never repeated; cleared only after a send that reported failure.
+  /// @sensitivity:internal
+  claimedAt        DateTime? @map("claimed_at")
+  /// @sensitivity:internal
+  uploaderSentAt   DateTime? @map("uploader_sent_at")
+  /// @sensitivity:internal
+  reimburseeSentAt DateTime? @map("reimbursee_sent_at")
+  // Set once every owed copy is sent, given up after OUTCOME_ATTEMPTS, or at creation when nothing is owed.
+  /// @sensitivity:internal
+  doneAt           DateTime? @map("done_at")
+  /// @sensitivity:internal
+  attempts         Int       @default(0)
+  /// @sensitivity:internal
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@unique([expenseId, event])
+  @@index([orgId, doneAt])
+  @@map("expense_outcome_notices")
 }
 
 model ExpenseQbAccount {
