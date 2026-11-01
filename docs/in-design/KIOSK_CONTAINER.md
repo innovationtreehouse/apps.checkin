@@ -408,7 +408,10 @@ rollback.
     skew warning and this clear. The saved view must keep the sample.
   - **Queued rows:** a clear drops every row already queued from the view and saves
     "cleared through queue id N" in the snapshot; the overlay uses only rows above
-    N. The rows still send. Queue position is used because no clock can upset it.
+    N. The rows still send. Queue position is used because no clock can upset it. A
+    roster reply saying tonight's close has run also advances N over rows queued by
+    then, so a restart before they drain does not add those people back. That
+    advance is proposed and not yet modelled.
   - **Hearing tonight:** the roster reply and scan acknowledgement carry
     `lastNightlyCloseAt`. A reply counts as hearing tonight only when that is at or
     after the latest 23:00 by kiosk time. Otherwise it is a clock sample and leaves
@@ -418,7 +421,8 @@ rollback.
     stamped after it, and treats clock-suspect rows as before it. The second half is
     not yet modelled. Those rows are hidden only until the queue drains.
   - **Reboot stamps:** a fallback stamp is never earlier than the snapshot's write
-    time, and a clock-suspect close flags any visit it leaves open. Not yet modelled.
+    time, which passed at model bounds. A clock-suspect close flags any visit it
+    leaves open, which is not yet modelled.
   - **Scan path:** a badge checks for a due clear before it reads the view, as well
     as the timer, since the model assumes the clear comes first.
   - **Model:** a fast Pi clock gives no wrong "Welcome" to anyone not inside at 23:00
