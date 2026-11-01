@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Badge, Card, Center, Group, List, Paper, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { useMemo, useState } from "react";
+import { Badge, Card, Group, List, Paper, SimpleGrid, Stack, Text, TextInput } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { SAFETY_ROLES } from "@/lib/nav/sections/safety";
 import { formatPhone } from "@/lib/phone";
 
@@ -43,46 +44,25 @@ type EmergencyContactInfo = {
   invalid: boolean;
 };
 
+type ContactsResponse = {
+  households?: Household[];
+  building?: { reachable?: boolean };
+};
+
 export default function EmergencyContactsPage() {
   const { ready, loading: authLoading } = useRequireRole(SAFETY_ROLES);
 
-  const [households, setHouseholds] = useState<Household[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, error, reload } = useLoad<ContactsResponse>(ready ? "/api/safety/emergency-contacts" : null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [error, setError] = useState("");
   // Without a recent kiosk heartbeat an open visit is a record, not presence.
-  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+  const presenceConfirmed = data?.building?.reachable === true;
 
-  const fetchContacts = useCallback(() => fetch('/api/safety/emergency-contacts')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-
-        // Sort so that households with physically present participants float to the top
-        const sorted = (data.households || []).sort((a: Household, b: Household) => {
-          if (a.isPresent && !b.isPresent) return -1;
-          if (!a.isPresent && b.isPresent) return 1;
-          return (a.name || "").localeCompare(b.name || "");
-        });
-
-        setHouseholds(sorted);
-        setPresenceConfirmed(data.building?.reachable === true);
-      } else {
-        setError("Failed to load emergency contacts. Ensure you have the proper authorizations.");
-      }
-    })
-    .catch((e) => {
-      console.error("Failed to load emergency contacts:", e);
-      notifications.show({ color: "red", message: "Network error loading contacts.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchContacts();
-  }, [ready, fetchContacts]);
+  // Households with physically present participants float to the top. Sorts a copy: `data` is the shared cached answer.
+  const households = useMemo(() => [...(data?.households ?? [])].sort((a, b) => {
+    if (a.isPresent && !b.isPresent) return -1;
+    if (!a.isPresent && b.isPresent) return 1;
+    return (a.name || "").localeCompare(b.name || "");
+  }), [data]);
 
   // Derived state for searching. Leads match on name and id but not email — this
   // page has never searched contact addresses.
@@ -94,19 +74,10 @@ export default function EmergencyContactsPage() {
     || h.householdMembers.some(matchesPerson)
   );
 
-  if (authLoading || loading) {
-    return <PageLoader />;
-  }
-
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
-
-  if (error) {
-    return (
-      <Center mih="60vh">
-        <Title order={3} c="red">{error}</Title>
-      </Center>
-    );
-  }
+  if (error) return <LoadError what="emergency contacts" message={error} onRetry={reload} />;
+  if (!data) return <PageLoader />;
 
   return (
     <Stack>
