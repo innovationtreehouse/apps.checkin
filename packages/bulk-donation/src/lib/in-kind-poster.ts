@@ -499,8 +499,14 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
     // A gift's last failure is still a failure: an outage that exhausts gifts must not clear the streak.
     failures: ["failed", "exhausted"],
     post: async (gift) => {
-      const result = await postGift(run, gift.source, gift.id, new Date());
-      return result === "not_ready" || result === "busy" ? "waiting" : result;
+      try {
+        const result = await postGift(run, gift.source, gift.id, new Date());
+        return result === "not_ready" || result === "busy" ? "waiting" : result;
+      } catch (err) {
+        // The entry may already be in QuickBooks, so the gift keeps its claim: a post taking over the stale claim looks for the entry by key first.
+        console.warn(`[bulk-donation] in-kind post failed for ${gift.source} gift ${gift.id}`, err);
+        return "failed";
+      }
     },
   });
   counts.capped = stop?.by === "count";

@@ -4,11 +4,11 @@
  * clearing-account pair is found first. Nothing books on or before the books closing date.
  * Finance books, skips or matches by id what the drain hands over.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
-import { db } from "../../db";
+import { db, getPrisma } from "../../db";
 import { configureBulkDonation } from "../../runtime";
 import { ingestInKind, recordInKindDonor } from "../../inKind";
 import { inKindAcceptService, type InKindDecisionInput } from "../../services/inKindAcceptService";
@@ -424,6 +424,43 @@ describeDb("in-kind drain", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
     expect(qbo.posts).toHaveLength(1);
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+  });
+
+  it("a settle that throws after the create leaves the gift POSTING, the run carries on, and the stale claim links the entry without a second create", async () => {
+    await switchOn();
+    const stuck = await acceptedGift();
+    // Another value: an unclaimed entry of the same value and date would send this gift to finance.
+    const next = await acceptedGift({ totalCents: 4400 });
+    const transaction = vi.spyOn(getPrisma(), "$transaction");
+    qbo.afterCreate = async () => {
+      qbo.afterCreate = null;
+      transaction.mockRejectedValueOnce(new Error("deadlock detected"));
+    };
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, posted: 1, sweep: { entries: 2, flagged: 0 } });
+    transaction.mockRestore();
+    expect(await posting(stuck)).toMatchObject({ matchState: "POSTING", claimedAt: expect.any(Date) });
+    expect(await bookings(stuck)).toEqual([]);
+    expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1, posted: 0 });
+    expect(qbo.posts).toHaveLength(2);
+
+    await db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: stuck } }, data: { claimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000) } });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, failed: 0 });
+    expect(qbo.posts).toHaveLength(2);
+    expect(await bookings(stuck)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+  });
+
+  it("claims that throw count toward the failure streak, which stops the run and alerts finance", async () => {
+    await switchOn();
+    for (let i = 0; i < 4; i++) await acceptedGift();
+    const transaction = vi.spyOn(getPrisma(), "$transaction").mockRejectedValue(new Error("connection dropped"));
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, stoppedAfterFailures: true });
+    transaction.mockRestore();
+    expect(drainStops).toEqual([{ failures: 3, remaining: 1 }]);
+    expect(qbo.posts).toHaveLength(0);
   });
 
   describe("a post that loses its claim", () => {
