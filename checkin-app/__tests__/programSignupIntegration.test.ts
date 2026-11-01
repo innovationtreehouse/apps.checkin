@@ -83,7 +83,7 @@ jest.mock('@/lib/prisma', () => {
       // Event creation reads the org timezone via getAppSettings().
       upsert: jest.fn().mockResolvedValue({ id: 1, timezone: 'America/Chicago', locale: 'en-US' }),
     },
-    // Enroll route now wraps the insert in $transaction + a FOR UPDATE
+    // Enroll route wraps the insert in $transaction + a FOR UPDATE
     // capacity check; run the callback against this same mock as the tx client.
     // The household PATCH route also mints the new member's id through
     // mintPersonId(tx), which is one $queryRaw — hence the resolved row.

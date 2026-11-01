@@ -148,7 +148,7 @@ describe('middleware emptied-session gate', () => {
 /**
  * Dev-instance org-login gate (CHECKIN_ENV=dev). This is the "not world-readable" fence
  * for the public cloud dev instance: every page requires a verified org member, else /signin.
- * Untested before — a regression here silently exposes every page to anonymous visitors.
+ * A fault here silently exposes every page to anonymous visitors.
  */
 describe('middleware dev-instance org gate', () => {
     const ORIGINAL_ENV = process.env.CHECKIN_ENV;

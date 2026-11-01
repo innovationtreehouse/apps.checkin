@@ -5,15 +5,15 @@ const repoRoot = join(__dirname, '..', '..');
 const read = (...p: string[]) => readFileSync(join(repoRoot, ...p), 'utf8');
 
 /**
- * Source-level guards for two wiring/config regressions that jsdom can't reproduce
+ * Source-level guards for two wiring/config faults that jsdom can't reproduce
  * (one is a CSS custom-property scope issue, the other a CLI runner choice).
  */
 describe('branding & seed wiring', () => {
   /**
    * The next/font CSS variables (--font-fredoka/-nunito/-space-mono) must live on <html>,
    * the same scope where MantineProvider declares --mantine-font-family: var(--font-nunito).
-   * When they were on <body>, those vars were undefined at :root, every font-family resolved
-   * to an invalid var(), and the whole document fell back to the UA default serif.
+   * On <body>, those vars are undefined at :root, every font-family resolves to an invalid
+   * var(), and the whole document falls back to the UA default serif.
    */
   it('applies brand.fontVariables to <html>, not <body>', () => {
     const layout = read('src', 'app', 'layout.tsx');

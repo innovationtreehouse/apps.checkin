@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { customJestConfig as rawJestConfig } from '../../jest.config';
 
 /**
- * Guards the runner boundary from issue #228: checkin-app runs on Jest, every
+ * Guards the runner boundary: checkin-app runs on Jest, every
  * `packages/*` and `*-function` workspace runs on Vitest, and a Vitest
  * `.test.ts` must never be swept into this Jest run. The only levers that widen
  * Jest's collection scope are `rootDir` and `roots`, so this asserts against the
