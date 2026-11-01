@@ -197,6 +197,7 @@ export const classifications = {
         matchState: 'internal',
         qbEntity: 'internal',
         qbTxnId: 'internal',
+        bookedTxnDate: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },

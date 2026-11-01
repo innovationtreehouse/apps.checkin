@@ -1,16 +1,13 @@
 // Drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
 // when it was edited or removed in QuickBooks afterwards. Read-only: QuickBooks is never changed.
 import { dollarsToCents, sumCents } from "@checkin/money";
-import { MAX_MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, MAX_MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, todaysSlice, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import type { ExpensePosting } from "../contract";
 import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import { raiseFlag } from "../services/flagService";
 import { lineCents } from "../qb-write";
 import { logError } from "./logger";
-
-/** QuickBooks reads per run: one windowed read per checked expense. */
-export const MAX_DRIFT_CHECKS_PER_RUN = 25;
 
 export type DriftField = "missing" | "amount" | "date" | "key" | "accounts" | "vendor";
 
@@ -76,16 +73,6 @@ export function observedOf(entry: QboPurchase | QboBill | undefined, drift: Drif
     vendor: entry.VendorRef?.value ?? null,
   };
   return JSON.stringify(Object.fromEntries(drift.map((field) => [field, shown[field]])));
-}
-
-/**
- * The slice of `ids` to check today. The start moves by the cap each UTC day, so every entry
- * is checked within ceil(n / cap) days without storing a cursor.
- */
-export function todaysSlice<T>(ids: T[], cap: number, now = new Date()): T[] {
-  if (ids.length <= cap) return ids;
-  const start = (Math.floor(now.getTime() / 86_400_000) * cap) % ids.length;
-  return [...ids, ...ids].slice(start, start + cap);
 }
 
 /**

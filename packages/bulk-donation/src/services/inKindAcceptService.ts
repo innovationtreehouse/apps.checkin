@@ -731,7 +731,8 @@ async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ read
     const gift = waits.includes("booking") ? toBook(g) : null;
     if (!gift) continue;
     open.push(gift);
-    if (waits.length === 1) ready.push(gift);
+    // A drifted gift stays open, so it can rival a hand booking, but only finance moves it.
+    if (waits.length === 1 && postings.get(key)?.matchState !== QB_MATCH_STATE.DRIFT) ready.push(gift);
   }
   return { ready, open };
 }
