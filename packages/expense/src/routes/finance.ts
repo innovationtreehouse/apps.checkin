@@ -12,7 +12,7 @@ import { createPartOwnerRepository } from "../repositories/partOwner";
 import { writeOrgAudit } from "../lib/audit";
 import { getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
-import { withLiveParty } from "../lib/livePeople";
+import { withLiveParties, withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
 import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
@@ -32,14 +32,16 @@ async function asFinance(principal: ExpensePrincipal) {
 
 // ── Holds ─────────────────────────────────────────────────────────────────────
 
-export const holds: ExpenseRouteHandler = async ({ req }) => ({
-  ExpenseHold: await db.expenseHold.findMany({
+export const holds: ExpenseRouteHandler = async ({ req }) => {
+  const rows = await db.expenseHold.findMany({
     where: { orgId: await getOrgId(), status: "PENDING" },
     orderBy: [{ expenseId: "asc" }, { id: "asc" }],
     ...pageArgs(query(req)),
     include: { lineItem: true, expense: true },
-  }),
-});
+  });
+  const expenses = await withLiveParties(rows.map((row) => row.expense));
+  return { ExpenseHold: rows.map((row, i) => ({ ...row, expense: expenses[i] })) };
+};
 
 export const holdLineAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");

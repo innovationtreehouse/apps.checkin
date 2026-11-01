@@ -211,10 +211,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // One row per (person, program): re-enrolment reactivates the withdrawn
             // row and clears the last stint's fields, so its order, plan request and
             // clocks never join the new stint.
+            const reenroll = initialStatus === 'ACTIVE' ? ENROLLMENT_WRITES.reenrollComp : ENROLLMENT_WRITES.reenrollPaid;
             const { count } = await tx.programParticipant.updateMany({
-                where: { programId, personId: participantId, ...ENROLLMENT_WRITES.reenrollPaid.where },
+                where: { programId, personId: participantId, ...reenroll.where },
                 data: {
-                    ...(initialStatus === 'ACTIVE' ? ENROLLMENT_WRITES.reenrollComp.data() : ENROLLMENT_WRITES.reenrollPaid.data()),
+                    ...reenroll.data(),
                     endedAt: null,
                     pendingSince: new Date(),
                     scholarshipRequestKind: null,

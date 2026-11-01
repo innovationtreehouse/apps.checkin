@@ -357,6 +357,34 @@ describeDb("in-kind drain", () => {
     expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
   });
 
+  it("finance's failed book counts no attempt, and can always be asked again", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.refuseCreate = true;
+    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
+    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
+
+    for (let retry = 0; retry < 2; retry++) {
+      await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503, message: "QuickBooks failed while booking; the gift can be booked again" });
+      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
+    }
+
+    qbo.refuseCreate = false;
+    expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
+  });
+
+  it("a gift finance failed to book after the limit gets one more drain try, then returns to finance", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.refuseCreate = true;
+    for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503 });
+    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ exhausted: 1 });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS + 1 });
+  });
+
   it("a run that cannot read the closing date counts no attempt against the gift", async () => {
     await switchOn();
     const id = await acceptedGift();

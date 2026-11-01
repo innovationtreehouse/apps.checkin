@@ -282,9 +282,10 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
 /**
  * Counts a failed post on the gift, and hands the gift to finance at the limit. A run that could not
  * read the closing date creates nothing, so its failures say nothing about the gift and do not count.
+ * Nor does finance's "book it": the limit stops the drain retrying alone, and finance may always ask again.
  */
 async function countFailure(tx: DbOrTx, run: Run, postingId: number, attemptsBefore: number, s: Settlement): Promise<Settlement> {
-  if (s.state !== QB_MATCH_STATE.POST_FAILED || !run.close.ok) return s;
+  if (s.state !== QB_MATCH_STATE.POST_FAILED || !run.close.ok || run.book) return s;
   const attempts = attemptsBefore + 1;
   await tx.inKindPosting.update({ where: { id: postingId }, data: { qbPostAttempts: attempts } });
   if (attempts < MAX_POST_ATTEMPTS) return s;
