@@ -542,6 +542,8 @@ Small, and each closes a gap the model found:
   (protocol 8); see "Scan times". About 40 lines.
 - **Queue depth on every signed request**: an `X-Kiosk-Queue-Depth` header from
   the proxy and the drain. About 5 lines.
+- **Clearing its own view at 23:00** when offline, by server-based time; see Q4.
+  About 15 lines.
 
 **Server-only items that shrink the kiosk's contract** (no kiosk code, but the
 kiosk no longer has to cope with them): the held-close reply, the
@@ -586,8 +588,9 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 4. **PR 3 — drop the three `Visit.forceClose*` columns** (a release after PR 2,
    so no running code reads them). A contract-phase migration; live data in the
    columns is transient dialog state, so nothing to preserve.
-5. **PR 4 — kiosk client** (K1–K8, plus the three additions: live only behind
-   an empty queue, server-time stamps at protocol 8, the queue-depth header),
+5. **PR 4 — kiosk client** (K1–K8, plus the four additions: live only behind
+   an empty queue, server-time stamps at protocol 8, the queue-depth header,
+   clearing its own view at 23:00),
    shipped as the next kiosk release. It can
    merge any time after PR 1; until PR 1 is live, K1 would only make the
    kiosk's own screen buttons fail, which no one uses at the door. K2 needs the
@@ -619,8 +622,7 @@ drain window (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`).
 
 ## Owner decisions (2026-10-27)
 
-Asked of the owner after the first draft. Q1–Q3 are settled. Q4 (a) is
-**interim, pending the Board**. Q5 is settled.
+Asked of the owner after the first draft. All are settled.
 
 **Q1. Members' and household leads' own corrections stay**, on closed visits
 only. Members insert their own past visits, correct their times and remove
@@ -638,29 +640,34 @@ visit covers the session, the mark links to it and never departs it. If not,
 the mark creates a closed visit for the session's time, so the hours count.
 The leader enters a departure; a mark never creates an open visit or ends one.
 
-**Q4. The kiosk offline across 11 PM: (a) accepted as an interim answer,
-pending the Board.** The kiosk keeps showing people the server closed out
-until it reconnects. Next morning one of them may see "Goodbye" on arrival.
-For a member, the server records that scan as flagged and changes nothing,
-and they badge again. For a keyholder the same mistaken scan also records a
-building close; that is accepted as an ordinary mistaken scan (Q5). No new
-code. The owner is raising this with the Board; until it rules, the design
-builds (a). The alternative on the table is the
-kiosk applying the 23:00 close to its own view by its own clock when it has not
-heard from the server: about 15 lines on the kiosk, at the cost of a
-clock-driven roster rule like the one removed in #2039 (a wrong Pi clock or
-timezone would empty the door screen while people are inside). The model
-confirms that risk: with a fast Pi clock, (b) shows a "Welcome" to someone
-still inside.
+**Q4. The kiosk offline across 11 PM: the kiosk clears its own view at 23:00
+(owner, 2026-10-31).** A kiosk that has not heard from the server since before
+23:00 applies the close to its own view, so the next morning's first arrival
+gets "Welcome" rather than a wrong "Goodbye".
+
+- **Time source.** The server-time sample plus elapsed monotonic time (see "Scan
+  times"), with the organisation's timezone from config. Never the Pi's clock:
+  that is the risk behind the rule removed in #2039, where a wrong clock or
+  timezone emptied the door screen with people inside. With no sample since boot
+  the kiosk does nothing, and the view stays as it was.
+- **It sends nothing.** The server's 23:00 run stays the one close of record, and
+  the backstop when the kiosk is dead or unplugged.
+- **Not yet re-checked.** The model showed a fast Pi clock giving a "Welcome" to
+  someone still inside. That run used the Pi's clock, so this time source needs
+  its own check.
+
+About 15 lines on the kiosk. It needs the server-time sample, so it ships with
+protocol 8.
 
 **Q5. A wrong "Goodbye" for a keyholder records a building close: accepted.**
-The kiosk was offline across 23:00, so it still shows keyholder K inside after
-the server closed K out. Next morning K arrives first. The kiosk shows K inside
-and nobody else, so K's badge is a one-badge close: the door says "You are
-closing the building", and the kiosk queues a close, which the server applies
-like every kiosk close. Nobody else is swept, since nobody else is in yet. The
-same happens on the same day, under any Q4 answer, when a keyholder who forgot
-to badge out comes back while the kiosk still shows them inside.
+The kiosk still shows keyholder K inside after K left without badging out. K
+comes back. The kiosk shows K inside and nobody else, so K's badge is a one-badge
+close: the door says "You are closing the building", and the kiosk queues a
+close, which the server applies like every kiosk close. Nobody else is swept,
+since nobody else is in yet. This happens on the same day whenever a keyholder
+who forgot to badge out returns. It also happens the next morning when a kiosk
+offline across 23:00 had no server-time sample and so could not clear its view
+(Q4).
 
 The owner accepts this as an ordinary mistaken scan. People read the screen: a
 returning keyholder who sees "Goodbye" or "closing the building" knows they
@@ -702,9 +709,9 @@ Held throughout:
 - "Can't confirm" without a fresh heartbeat holds by construction.
 
 Not modelled: the close-log wording (`facilityCloseId` authoritative,
-`supersededCloseId` on the pull-back's log row), which is text only, and a
-kiosk-owned 23:00 close (Q4 (b)), left for a separate variant if the Board
-picks it.
+`supersededCloseId` on the pull-back's log row), which is text only, and the
+kiosk clearing its own view at 23:00 by server-based time (Q4), which needs a
+variant before the kiosk release.
 
 ## Appendix: sources
 

@@ -11,6 +11,9 @@ export const classifications = {
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
         qbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
+        qbMaxCreatesPerDay: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',

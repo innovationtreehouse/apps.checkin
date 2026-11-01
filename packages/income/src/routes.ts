@@ -12,6 +12,7 @@ import { runReconcile } from "./lib/reconcile";
 import { DEPOSIT_SOURCE } from "./lib/sources";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
+import { getIncomeSettings, updateIncomeSettings } from "./services/settingsService";
 
 const NOT_AN_OBJECT = "Expected a JSON object";
 
@@ -124,6 +125,19 @@ export const clearItemCategory: IncomeRouteHandler = async ({ params }) => {
   const variant = variantId(params.variantId);
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return { IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.clearCategory(orgId, variant, who)) };
+};
+
+export const getSettings: IncomeRouteHandler = async () => {
+  const orgId = await getOrgId();
+  return { IncomeOrgSettings: { orgId, ...(await getIncomeSettings(orgId)) } };
+};
+
+/** The roles come from the host's auth context, because the library's principal carries none. */
+export const updateSettings = (roles: { isFinance: boolean; isBoard: boolean }): IncomeRouteHandler => async ({ req }) => {
+  const patch = await parseBody(req, z.unknown());
+  const [orgId, who] = await Promise.all([getOrgId(), actor()]);
+  const next = await mapServiceErrors(() => updateIncomeSettings(orgId, patch, { ...who, ...roles }));
+  return { IncomeOrgSettings: { orgId, ...next } };
 };
 
 export const listExclusions: IncomeRouteHandler = async () => ({

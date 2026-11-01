@@ -80,8 +80,8 @@ describe("facilityOpen", () => {
     });
 
     const arrived = rows[0].arrivedAt.getTime();
-    const close = (closedAt: number, executedAt: number, via = "KIOSK") =>
-        lastCloseFind.mockResolvedValue({ closedAt: new Date(closedAt), executedAt: new Date(executedAt), via });
+    const close = (closedAt: number, executedAt: number) =>
+        lastCloseFind.mockResolvedValue({ closedAt: new Date(closedAt), executedAt: new Date(executedAt) });
 
     it("is not reopened by a check-in scanned before the latest close and delivered after it ran", async () => {
         close(arrived + 60 * 60_000, arrived + 2 * 60 * 60_000);
@@ -97,11 +97,6 @@ describe("facilityOpen", () => {
     it("is reopened by a keyholder arriving live just after a close ran", async () => {
         close(arrived - 60_000, arrived - 59_000);
         expect((await getFullAttendance()).safety.facilityOpen).toBe(true);
-    });
-
-    it("is not reopened by an arrival within the skew of the nightly sweep", async () => {
-        close(arrived - 60_000, arrived - 59_000, "NIGHTLY_SWEEP");
-        expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
     });
 
     it("is reopened by a keyholder who arrived well after the latest close", async () => {

@@ -17,6 +17,9 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   // Per test; a spec that walks many pages raises its own from the page count.
   timeout: 180_000,
+  // Below the nightly job's limit (e2e-tests.yml) less its setup, so a hung run still ends here,
+  // writes its report and keeps its traces.
+  globalTimeout: 55 * 60_000,
   expect: { timeout: 30_000 },
   // Steps print as they run, so a run cut short still shows where it was; the nightly
   // workflow lists failed tests from the JSON results.

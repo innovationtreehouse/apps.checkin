@@ -226,6 +226,14 @@ Income checks each online-store payout against the deposits in the books.
   books. With no closing date set, it books nothing dated before income's posting
   was switched on, and when it cannot read the date it books nothing.  [Decision — owner; *Principle: fail closed*]
 
+- The window for matching a giving-platform deposit, one to 30 days either side
+  of its date, is a setting, seven by default. Finance or the board may change it
+  in either direction. Each change is recorded.  [Decision — owner]
+
+- How many deposits the app may create in one run, and how many dollars' worth for
+  each deposit source, are settings. Finance may lower them; raising one takes the
+  board. Each change is recorded.  [Decision — owner]
+
 - Until income's posting is switched on, the app only matches. A payout it cannot
   match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
 

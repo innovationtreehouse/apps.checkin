@@ -1,7 +1,8 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
-import { MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
+import { appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
+import { readExpenseSettings } from "./settingsService";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
@@ -135,8 +136,9 @@ async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): 
   const entity: QbMatchEntity = expense.needsReimbursement ? "Bill" : "Purchase";
   const date = expense.receiptDate;
   if (!date) return { entity, txns: [] };
-  const from = shiftDate(date, -MATCH_WINDOW_DAYS);
-  const to = shiftDate(date, MATCH_WINDOW_DAYS);
+  const { qbMatchWindowDays } = await readExpenseSettings(db, expense.orgId);
+  const from = shiftDate(date, -qbMatchWindowDays);
+  const to = shiftDate(date, qbMatchWindowDays);
   const { reader, refs } = getExpenseRuntime().quickbooks;
   // Read before the refs check, so QuickBooks being off answers 503, never an empty list.
   const txns = await (entity === "Bill" ? reader.billsBetween(from, to) : reader.purchasesBetween(from, to));

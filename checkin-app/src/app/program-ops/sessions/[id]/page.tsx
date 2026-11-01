@@ -184,6 +184,10 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const handleSaveManualAttendance = async () => {
     if (!editingAttendance) return;
     // Instant feedback only — server remains the trust boundary.
+    if (manualStatus === 'Present' && !manualDeparted) {
+      setManualNotice({ ok: false, msg: "Departure time is required for Present status" });
+      return;
+    }
     if (manualStatus === 'Present' && manualArrived && manualDeparted &&
         Date.parse(manualDeparted) <= Date.parse(manualArrived)) {
       setManualNotice({ ok: false, msg: "Departure time must be after arrival time" });
@@ -334,7 +338,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                           } else {
                             setManualStatus("Absent");
                             setManualArrived(toDatetimeLocal(eventData.startAt));
-                            setManualDeparted(toDatetimeLocal(eventData.endAt));
+                            setManualDeparted(toDatetimeLocal(new Date(Math.min(Date.parse(eventData.endAt), Date.now())).toISOString()));
                           }
                         }}>
                           Manual Edit
@@ -543,14 +547,14 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                 onChange={(v) => setManualStatus((v as "Present" | "Absent") ?? "Present")}
                 allowDeselect={false}
                 data={[{ value: "Present", label: "Present" }, { value: "Absent", label: "Absent", disabled: isCheckedIn }]}
-                description={isCheckedIn ? "Check them out first to mark Absent." : undefined}
+                description={isCheckedIn ? "Still checked in: they badge out at the kiosk, or the 11 PM close ends the visit." : undefined}
               />
             );
           })()}
           {manualStatus === "Present" && (
             <>
               <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => setManualArrived(e.currentTarget.value)} />
-              <TextInput type="datetime-local" label="Departed Time (Optional)" value={manualDeparted} onChange={(e) => setManualDeparted(e.currentTarget.value)} />
+              <TextInput type="datetime-local" label="Departed Time" value={manualDeparted} onChange={(e) => setManualDeparted(e.currentTarget.value)} />
             </>
           )}
           {manualNotice && (

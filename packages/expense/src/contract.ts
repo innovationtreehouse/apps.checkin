@@ -362,6 +362,9 @@ export interface ExpenseSettings {
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;
+  qbMatchWindowDays: number;
+  qbMaxCreatesPerRun: number;
+  qbMaxCreatesPerDay: number;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────
