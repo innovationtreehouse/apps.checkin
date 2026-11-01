@@ -104,7 +104,7 @@ export function RolesEditModal({ target, me, noBoard = false, onClose, onSaved }
     if (field === 'isKeyVolunteer') {
       if (!mayManageKeyVolunteers) return { disabled: true, reason: 'Only board members can grant or remove the Key Volunteer role' };
       if (rolesForm.isKeyVolunteer && KEY_VOLUNTEER_GATED_FLAGS.some((f) => rolesForm[f])) {
-        return { disabled: true, reason: 'Remove Board, BG reviewer, Keyholder and Finance first' };
+        return { disabled: true, reason: 'Remove Board and BG reviewer first' };
       }
       return null;
     }

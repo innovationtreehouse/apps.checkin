@@ -538,12 +538,16 @@ Procedure below is built on them.
 
 ### Key Volunteers
 
-- BOARD, BG reviewer, Keyholder and Finance are granted only to a person who holds
-  the Key Volunteer role and has signed the current version of the key volunteer
-  agreement. The check is at the grant, for every actor, system paths included; it
-  is not repeated when the role is used. A person merge carries a role the
-  merged-away record already held, which is not a new grant.  [Decision — @thpr,
-  2026-10-30; *Policy: Membership Policy, Art. VI §VI.2*]
+- BOARD and BG reviewer, the two roles the policy names, are granted only to a
+  person who holds the Key Volunteer role and has signed the current version of the
+  key volunteer agreement. The check is at the grant, for every actor, system paths
+  included; it is not repeated when the role is used. A person merge carries a role
+  the merged-away record already held, which is not a new grant.  [Decision —
+  @thpr, 2026-10-30; *Policy: Membership Policy, Art. VI §VI.2*]
+
+- Keyholder and Finance are not gated on the agreement. Finance is held entirely by
+  the Board today, so gating it would add nothing.  [Decision — deliberate limit,
+  @thpr, 2026-10-31]
 
 - Using a role is not gated on the agreement. A person who holds one of those roles
   keeps using it while a re-sign is outstanding, and the app does not block review
@@ -552,7 +556,7 @@ Procedure below is built on them.
   deliberate limit, @thpr, 2026-10-30, against *Membership Policy, Art. VI §VI.2*]
 
 - The Key Volunteer role is granted and removed by the Board alone. It cannot be
-  removed while the person holds any of the four roles above; that role is removed
+  removed while the person holds BOARD or BG reviewer; that role is removed
   first. It grants no access of its own: the Board grants it to whoever owes the
   agreement, and the app records the role, not the reason.  [Decision — @thpr,
   2026-10-30]
@@ -582,6 +586,6 @@ Procedure below is built on them.
   removes no one's role. A wording fix that is not material leaves the version
   alone.  [Decision — @thpr, 2026-10-30]
 
-- Everyone who held one of the four roles when the gate went live was recorded as a
+- Everyone who held BOARD or BG reviewer when the gate went live was recorded as a
   Key Volunteer who had signed version 1, on the date of that migration, without a
   signing request.  [Decision — @thpr, 2026-10-30]

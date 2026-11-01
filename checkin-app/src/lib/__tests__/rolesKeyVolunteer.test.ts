@@ -7,15 +7,15 @@ function dbWithBoardCount(count: number): DbClient {
 
 describe("orderRoleChanges", () => {
     it("revokes the gated roles before Key Volunteer, and grants Key Volunteer first", () => {
-        expect(orderRoleChanges({ isKeyVolunteer: false, isKeyholder: false, isBoardMember: false, isOperations: true })).toEqual([
+        expect(orderRoleChanges({ isKeyVolunteer: false, isBackgroundCheckReviewer: false, isBoardMember: false, isOperations: true })).toEqual([
             ["isBoardMember", false],
-            ["isKeyholder", false],
+            ["isBackgroundCheckReviewer", false],
             ["isKeyVolunteer", false],
             ["isOperations", true],
         ]);
-        expect(orderRoleChanges({ isFinance: true, isKeyVolunteer: true })).toEqual([
+        expect(orderRoleChanges({ isBoardMember: true, isKeyVolunteer: true })).toEqual([
             ["isKeyVolunteer", true],
-            ["isFinance", true],
+            ["isBoardMember", true],
         ]);
     });
 

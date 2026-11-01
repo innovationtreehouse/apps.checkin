@@ -224,10 +224,10 @@ export const PATCH = withAuth(
                 return apiError("Cannot remove the last board member", 409);
             }
             if (error instanceof KeyVolunteerAgreementRequiredError) {
-                return apiError("Sign the current Key Volunteer agreement first: Board, BG reviewer, Keyholder and Finance are granted only to a Key Volunteer who has signed it.", 409);
+                return apiError("Sign the current Key Volunteer agreement first: Board and BG reviewer are granted only to a Key Volunteer who has signed it.", 409);
             }
             if (error instanceof KeyVolunteerRemovalOrderError) {
-                return apiError("Remove Board, BG reviewer, Keyholder and Finance first, then the Key Volunteer role.", 409);
+                return apiError("Remove Board and BG reviewer first, then the Key Volunteer role.", 409);
             }
             if (error instanceof DeniedHouseholdBoardError) {
                 return apiError("This person's household has been denied membership. Restore the household's membership before granting the board role.", 409);

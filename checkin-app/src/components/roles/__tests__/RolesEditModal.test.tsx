@@ -90,10 +90,11 @@ describe("RolesEditModal", () => {
 
     it("gated roles grant only to a Key Volunteer signed at the current version", () => {
         const { unmount } = renderWithProviders(<RolesEditModal target={jane} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />);
-        // Not a Key Volunteer: Board and Finance can't be granted; her Keyholder role can still be removed.
+        // Not a Key Volunteer: Board and BG reviewer can't be granted; Keyholder and Finance can.
         expect(screen.getByLabelText("Board")).toBeDisabled();
-        expect(screen.getByLabelText("Finance")).toBeDisabled();
+        expect(screen.getByLabelText("BG Reviewer")).toBeDisabled();
         expect(screen.getByLabelText("Keyholder")).toBeEnabled();
+        expect(screen.getByLabelText("Finance")).toBeEnabled();
         unmount();
 
         renderWithProviders(
@@ -104,11 +105,11 @@ describe("RolesEditModal", () => {
     });
 
     it("Key Volunteer: board-only, and not removable while a gated role is on", () => {
-        const kv = { ...jane, isKeyVolunteer: true, kvaSignedCurrent: true, kvaSignedAt: "2026-10-01T12:00:00.000Z" };
+        const kv = { ...jane, isBackgroundCheckReviewer: true, isKeyVolunteer: true, kvaSignedCurrent: true, kvaSignedAt: "2026-10-01T12:00:00.000Z" };
         const { unmount } = renderWithProviders(<RolesEditModal target={kv} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />);
-        // Keyholder is on, so Key Volunteer can't be switched off until it is.
+        // BG reviewer is on, so Key Volunteer can't be switched off until it is; her Keyholder role doesn't block it.
         expect(screen.getByLabelText("Key Volunteer")).toBeDisabled();
-        fireEvent.click(screen.getByLabelText("Keyholder"));
+        fireEvent.click(screen.getByLabelText("BG Reviewer"));
         expect(screen.getByLabelText("Key Volunteer")).toBeEnabled();
         expect(screen.getByLabelText("Board")).toBeEnabled();
         unmount();

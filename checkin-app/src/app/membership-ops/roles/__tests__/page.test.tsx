@@ -34,7 +34,7 @@ describe("RolesPage — holders-first roles editor", () => {
 
     it("person-picker opens the edit modal for the picked person, and a save updates the group", async () => {
         setSession({ id: 99, isBoardMember: true });
-        const cara = { id: 3, name: "Cara Candidate", email: "cara@example.com", isYouth: false, isSysadmin: false, isBoardMember: false, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false, isKeyVolunteer: true, kvaSignedCurrent: true };
+        const cara = { id: 3, name: "Cara Candidate", email: "cara@example.com", isSysadmin: false, isBoardMember: false, isKeyholder: false, isBackgroundCheckReviewer: false, isOperations: false };
         const getFetch = mockFetchJson({ "/api/roles": { people }, "/api/people/search": { people: [cara] } });
         renderWithProviders(<RolesPage />);
         await screen.findByText("Ann Admin");
@@ -49,7 +49,7 @@ describe("RolesPage — holders-first roles editor", () => {
         // auto-confirm synchronously from inside the Save click handler.
         const patchFetch = jest.fn(async () => {
             // The page refetches /api/roles after a save; it now lists Cara.
-            people.push({ ...cara, isKeyholder: true });
+            people.push({ ...cara, isYouth: false, isKeyholder: true });
             return { ok: true, status: 200, json: async () => ({ message: "ok", user: { ...cara, isKeyholder: true } }) };
         });
         global.fetch = ((...args: Parameters<typeof fetch>) => {

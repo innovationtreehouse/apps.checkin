@@ -451,11 +451,22 @@ describe('Admin Roles API Integration Tests', () => {
 
         it('refuses a gated role to someone who is not a signed Key Volunteer -> 409', async () => {
             asSession({ id: kvBoardId, isBoardMember: true });
-            for (const flag of ['isBoardMember', 'isBackgroundCheckReviewer', 'isKeyholder', 'isFinance']) {
+            for (const flag of ['isBoardMember', 'isBackgroundCheckReviewer']) {
                 const res = await PATCH(patchReq({ targetUserId: kvTargetId, [flag]: true }));
                 expect(res.status).toBe(409);
                 expect((await res.json()).error).toContain('Key Volunteer agreement');
             }
+        });
+
+        it('grants Keyholder and Finance with no Key Volunteer role or agreement', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: true, isFinance: true }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).user).toMatchObject({ isKeyholder: true, isFinance: true, isKeyVolunteer: false });
+            expect(await openKva()).toBeNull();
+
+            const revoke = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: false, isFinance: false }));
+            expect(revoke.status).toBe(200);
         });
 
         it('a sysadmin-only actor cannot grant Key Volunteer while a board member exists -> 403', async () => {
@@ -466,7 +477,7 @@ describe('Admin Roles API Integration Tests', () => {
 
         it('granting Key Volunteer with a gated role in one request is refused: the agreement is unsigned', async () => {
             asSession({ id: kvBoardId, isBoardMember: true });
-            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: true, isKeyholder: true }));
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: true, isBackgroundCheckReviewer: true }));
             expect(res.status).toBe(409);
             expect(await prisma.personRole.count({ where: { personId: kvTargetId } })).toBe(0);
             expect(await openKva()).toBeNull();
@@ -490,10 +501,10 @@ describe('Admin Roles API Integration Tests', () => {
             const open = await openKva();
             await markContractSigned(open!.id, kvBoardId, true);
             asSession({ id: kvBoardId, isBoardMember: true });
-            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: true }));
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isBackgroundCheckReviewer: true }));
             expect(res.status).toBe(200);
             const list = await (await GET(getReq())).json();
-            expect(list.people.find((p: { id: number }) => p.id === kvTargetId)).toMatchObject({ isKeyholder: true, kvaSignedCurrent: true, kvaOpenProcessId: null });
+            expect(list.people.find((p: { id: number }) => p.id === kvTargetId)).toMatchObject({ isBackgroundCheckReviewer: true, kvaSignedCurrent: true, kvaOpenProcessId: null });
         });
 
         it('Key Volunteer cannot be removed before the gated role; both in one request is ordered', async () => {
@@ -502,7 +513,7 @@ describe('Admin Roles API Integration Tests', () => {
             expect(refused.status).toBe(409);
             expect((await refused.json()).error).toContain('first');
 
-            const both = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: false, isKeyholder: false }));
+            const both = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: false, isBackgroundCheckReviewer: false }));
             expect(both.status).toBe(200);
             expect(await prisma.personRole.count({ where: { personId: kvTargetId } })).toBe(0);
         });

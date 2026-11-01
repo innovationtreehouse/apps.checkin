@@ -1,6 +1,6 @@
--- Grandfathers the current holders of the four roles a Key Volunteer
--- Agreement now gates (BOARD, BG_REVIEWER, KEYHOLDER, FINANCE): each live
--- person holding one gets KEY_VOLUNTEER and an agreement already signed at
+-- Grandfathers the current holders of the two roles a Key Volunteer
+-- Agreement now gates (BOARD, BG_REVIEWER): each live person holding
+-- either gets KEY_VOLUNTEER and an agreement already signed at
 -- version 1, dated now, recorded as by the Board with no Zoho request.
 -- Rests on @thpr's statement of 2026-10-30 that they are known to have signed
 -- (docs/rules/membership.md, "Key Volunteers").
@@ -16,7 +16,7 @@ WITH candidates AS (
   SELECT DISTINCT r."personId"
   FROM "PersonRole" r
   JOIN "Person" p ON p.id = r."personId"
-  WHERE r."role" IN ('BOARD', 'BG_REVIEWER', 'KEYHOLDER', 'FINANCE')
+  WHERE r."role" IN ('BOARD', 'BG_REVIEWER')
     AND p."mergedIntoId" IS NULL
     AND NOT EXISTS (
       SELECT 1 FROM "PersonRole" k WHERE k."personId" = r."personId" AND k."role" = 'KEY_VOLUNTEER'

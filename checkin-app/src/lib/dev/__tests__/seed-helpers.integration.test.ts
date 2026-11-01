@@ -51,8 +51,12 @@ describe("dev seed-helpers (integration)", () => {
         expect(await prisma.person.findUnique({ where: { email: "boardmember@example.com" } })).not.toBeNull();
     });
 
-    it("seeded holders of the gated roles are Key Volunteers with a signed agreement", async () => {
-        for (const email of ["boardmember@example.com", "keyholder1@example.com", "bg.reviewer@example.com", "finance@example.com"]) {
+    it("seeded Board and BG reviewer holders are Key Volunteers with a signed agreement", async () => {
+        for (const email of ["keyholder1@example.com", "finance@example.com"]) {
+            const person = await prisma.person.findUniqueOrThrow({ where: { email }, select: { id: true } });
+            expect(await prisma.personRole.count({ where: { personId: person.id, role: "KEY_VOLUNTEER" } })).toBe(0);
+        }
+        for (const email of ["boardmember@example.com", "bg.reviewer@example.com"]) {
             const person = await prisma.person.findUniqueOrThrow({ where: { email }, select: { id: true } });
             expect(await prisma.personRole.findUnique({ where: { personId_role: { personId: person.id, role: "KEY_VOLUNTEER" } } })).not.toBeNull();
             expect(await prisma.orgMembershipProcess.count({

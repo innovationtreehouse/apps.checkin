@@ -322,7 +322,7 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 
 ## Dropped — confirmed built (not backlog)
 
-**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer, Keyholder and Finance. Rules in `docs/rules/membership.md` § Key Volunteers.
+**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board and BG reviewer. Rules in `docs/rules/membership.md` § Key Volunteers.
 
 **RB19** — pentest email-enumeration oracle: verified **already closed / not exploitable** (fix-chip made no code change, 2026-07-21). Dropped.
 
