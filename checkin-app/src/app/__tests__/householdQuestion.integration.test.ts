@@ -224,7 +224,9 @@ describe('refusals', () => {
         const person = await addPerson(await household());
         signedInAs(person.id);
         expect((await answer(false)).status).toBe(409);
-        expect((await ask()).status).toBe(409);
+        const res = await ask();
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ household: null });
         expect((await prisma.person.findUniqueOrThrow({ where: { id: person.id } })).email).toBe(person.email);
     });
 
@@ -241,5 +243,9 @@ describe('refusals', () => {
         const { added } = await addedAdult();
         signedInAs(added.id, { householdJoinPending: true });
         expect((await answer('no')).status).toBe(400);
+        for (const body of ['', 'not json', 'null']) {
+            expect((await POST(request(url, { method: 'POST', body }))).status).toBe(400);
+        }
+        expect(await pending(added.id)).toBe(true);
     });
 });

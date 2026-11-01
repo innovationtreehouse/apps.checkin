@@ -7,27 +7,27 @@ const REFUSALS: Record<JoinRefusal, { message: string; status: number }> = {
     denied: { message: "This household cannot be answered for. Please ask the Board.", status: 403 },
 };
 
-async function refusingAsResponse<T>(work: () => Promise<T>): Promise<T> {
+async function readJoin(req: Request): Promise<boolean> {
+    const body: unknown = await req.json().catch(() => null);
+    const join = typeof body === "object" && body !== null && "join" in body ? body.join : undefined;
+    if (typeof join !== "boolean") throw new ApiResponseError(400, "join must be true or false");
+    return join;
+}
+
+export const GET = handler("GET /api/profile/household-question", async ({ auth }) => {
+    if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
+    return { Household: await householdQuestion(auth.user.id) };
+});
+
+export const POST = handler("POST /api/profile/household-question", async ({ req, auth }) => {
+    if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
+    const join = await readJoin(req);
     try {
-        return await work();
+        await answerHouseholdQuestion(auth.user.id, join);
     } catch (error) {
         if (!(error instanceof JoinQuestionError)) throw error;
         const { message, status } = REFUSALS[error.refusal];
         throw new ApiResponseError(status, message);
     }
-}
-
-export const GET = handler("GET /api/profile/household-question", async ({ auth }) => {
-    if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
-    const userId = auth.user.id;
-    return { Household: await refusingAsResponse(() => householdQuestion(userId)) };
-});
-
-export const POST = handler("POST /api/profile/household-question", async ({ req, auth }) => {
-    if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
-    const userId = auth.user.id;
-    const { join } = await req.json();
-    if (typeof join !== "boolean") throw new ApiResponseError(400, "join must be true or false");
-    await refusingAsResponse(() => answerHouseholdQuestion(userId, join));
     return {};
 });

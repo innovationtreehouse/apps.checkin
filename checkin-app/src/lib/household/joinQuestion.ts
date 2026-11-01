@@ -5,6 +5,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { nameWrite } from "@/lib/person/name";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { personActor } from "@/lib/auditActor";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { isYouth } from "@/lib/time";
 
 export type JoinRefusal = "not_pending" | "youth" | "denied";
@@ -34,14 +36,13 @@ export async function asksHouseholdQuestion(db: DbClient, personId: number): Pro
     return peer !== null;
 }
 
-/** The household's name is all the question shows: nothing of the record that carries the address. */
-export async function householdQuestion(personId: number): Promise<{ name: string }> {
+/** The household's name is all the question shows: nothing of the record that carries the address. Null when no question is open. */
+export async function householdQuestion(personId: number): Promise<{ name: string } | null> {
     const person = await prisma.person.findUnique({
         where: { id: personId },
         select: { householdJoinPending: true, household: { select: { name: true } } },
     });
-    if (!person?.householdJoinPending) throw new JoinQuestionError("not_pending");
-    return { name: person.household.name };
+    return person?.householdJoinPending ? { name: person.household.name } : null;
 }
 
 // The address's holder may not be whoever the household meant, so a no carries nothing over.
@@ -75,7 +76,7 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
         // Conditional on the question still being open: a second answer that read it open
         // before the first committed lands on no row.
         const close = async (data: Prisma.PersonUpdateManyMutationInput) => {
-            const { count } = await tx.person.updateMany({ where: { id: personId, householdJoinPending: true }, data: { ...data, householdJoinPending: false } });
+            const { count } = await tx.person.updateMany({ where: { id: personId, householdJoinPending: true, mergedIntoId: null }, data: { ...data, householdJoinPending: false } });
             if (count !== 1) throw new JoinQuestionError("not_pending");
         };
 
@@ -96,6 +97,7 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
         const account = await tx.account.findFirst({ where: { userId: personId }, select: { id_token: true } });
         // Cleared first: Person.email is unique and the new person takes it.
         await close({ email: null, emailVerified: null, googleId: null, image: null });
+        await removeAliasesForSignInEmail(tx, person.email, personActor(personId), "household_question_no");
         const fresh = await createInOwnHousehold(tx, {
             email: person.email,
             name: nameFromIdToken(account?.id_token) ?? nameWrite(person.email.split("@")[0]) ?? "Member",
