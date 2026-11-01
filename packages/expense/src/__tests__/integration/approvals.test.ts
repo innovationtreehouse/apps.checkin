@@ -1,14 +1,15 @@
 /**
  * Per-line approval services against the real database: bucket approvers, the Board stand-in
  * and its reason, the seat refusals the approval takes, FINANCE assignment (incl. permanent and
- * org-level), the reject path, racing decisions, decisions refused to the submitter's and
- * reimbursee's households, and Approve All.
+ * org-level), the reject path, racing decisions, what the submitter's and reimbursee's
+ * households may and may not do on their lines, and Approve All.
  */
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG, seedSubmitterSeat } from "../helpers/seed";
-import { setReimbursee } from "../../services/signoffService";
+import { setReimbursee, signLine, signoffStatus } from "../../services/signoffService";
 import { approveLine, approveLines, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
 const LEADER = principal(2);
@@ -162,6 +163,38 @@ describeDb("approveLines (Approve All)", () => {
     expect(await statuses(approvalIds)).toEqual(["approved", "approved"]);
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "line_item_approved", userId: 2 } })).toBe(2);
     expect(await state(id)).toBe("qb_pending");
+  });
+
+  it("a retry of a batch that committed succeeds and writes nothing", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [2], 102: [2] } }) });
+    const { id, approvalIds } = await linesInApproval([100, 101, 102]);
+    const batch = approvalIds.slice(0, 2);
+
+    await approveLines(LEADER, id, batch);
+    await approveLines(LEADER, id, batch);
+
+    expect(await statuses(approvalIds)).toEqual(["approved", "approved", "pending"]);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "line_item_approved" } })).toBe(2);
+  });
+
+  it("a retry succeeds after the batch moved the expense on", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [2] } }) });
+    const { id, approvalIds } = await linesInApproval([100, 101]);
+
+    await approveLines(LEADER, id, approvalIds);
+    await approveLines(LEADER, id, approvalIds);
+
+    expect(await state(id)).toBe("qb_pending");
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "line_item_approved" } })).toBe(2);
+  });
+
+  it("a line someone else approved still refuses the batch", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2, 9], 101: [2] } }) });
+    const { id, approvalIds } = await linesInApproval([100, 101]);
+    await db.lineItemOwnerApproval.update({ where: { id: approvalIds[0] }, data: { status: "approved", decidedByUserId: 9 } });
+
+    await expect(approveLines(LEADER, id, approvalIds)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/^Line 1: Item is not in pending status/) });
+    expect(await statuses(approvalIds)).toEqual(["approved", "pending"]);
   });
 
   it("approves none when one line is refused, and the error names that line", async () => {
@@ -361,30 +394,20 @@ describeDb("assignOwner", () => {
   });
 });
 
-/** Resolves once `n` backends in this database are waiting on a row lock. */
-async function blocked(n: number): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const [{ c }] = await db.$queryRaw<{ c: bigint }[]>`SELECT count(*) AS c FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (c >= BigInt(n)) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error(`fewer than ${n} backends blocked on a lock`);
-}
-
 /** Holds `lock` until both racers have read and are waiting to write, then lets them go. */
 async function race<A, B>(lock: string, a: () => Promise<A>, b: () => Promise<B>) {
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
-  let held!: () => void;
-  const locked = new Promise<void>((r) => (held = r));
+  let held!: (pid: number) => void;
+  const locked = new Promise<number>((r) => (held = r));
   const holder = db.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(lock);
-    held();
+    held(await backendPid(tx));
     await gate;
   }, { timeout: 20_000 });
-  await locked;
+  const holderPid = await locked;
   const settled = Promise.allSettled([a(), b()]);
-  await blocked(2);
+  await waitersBehind(db, holderPid, 2);
   release();
   await holder;
   return settled;
@@ -431,10 +454,9 @@ describeDb("racing decisions", () => {
   });
 });
 
-describeDb("the submitter's and reimbursee's households decide none of their lines", () => {
+describeDb("the submitter's and reimbursee's households approve, raise and reject on none of their lines", () => {
   const SUBMITTER_FINANCE = principal(1, { isFinance: true });
   const HOUSEMATE_FINANCE = principal(6, { isFinance: true });
-  const REIMBURSEE_FINANCE = principal(8, { isFinance: true });
   const untouched = async (approvalId: number, status: string) =>
     expect(await approval(approvalId)).toMatchObject({ status, decidedByUserId: null });
 
@@ -460,43 +482,84 @@ describeDb("the submitter's and reimbursee's households decide none of their lin
     await expect(approveLine(principal(6), id, approvalId)).rejects.toMatchObject({ status: 403 });
     await untouched(approvalId, "pending");
   });
+});
 
-  it("assigning an exception's bucket", async () => {
-    const { id, approvalId } = await lineInApproval(100, "exception_raised");
-    await expect(financeAssign(SUBMITTER_FINANCE, id, approvalId, 101)).rejects.toMatchObject({ status: 403 });
-    await untouched(approvalId, "exception_raised");
-  });
+describeDb("a conflicted FINANCE holder chooses a line's bucket; an independent person still checks it", () => {
+  const SUBMITTER_FINANCE = principal(1, { isFinance: true });
+  const HOUSEMATE_FINANCE = principal(6, { isFinance: true });
+  const REIMBURSEE_FINANCE = principal(8, { isFinance: true });
+  const missing = async (id: string) => (await signoffStatus(id))[0].missing;
 
-  it("resolving an unknown line's bucket", async () => {
-    const { id, approvalId } = await lineInApproval(null, "unknown");
-    await expect(resolveUnknown(SUBMITTER_FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
-    await untouched(approvalId, "unknown");
-  });
-
-  it("assigning a line's bucket, as a housemate or the reimbursee", async () => {
-    bindPorts({ signoff: directory({ households: [[1, 6]] }) });
+  it("assigning a line's bucket, as a housemate or the reimbursee, leaves it pending for its approver", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, households: [[1, 6]] }) });
     const { id, approvalId } = await lineInApproval(null);
-    await expect(assignOwner(HOUSEMATE_FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
+    await assignOwner(HOUSEMATE_FINANCE, id, approvalId, 100);
 
     const paid = await seedExpense({ state: "assign_ownership", needsReimbursement: true, reimburseePersonId: 8 });
     const paidApproval = await seedApproval(paid, await seedLineItem(paid), { ownerId: null });
-    await expect(assignOwner(REIMBURSEE_FINANCE, paid, paidApproval, 100)).rejects.toMatchObject({ status: 403 });
+    await assignOwner(REIMBURSEE_FINANCE, paid, paidApproval, 100);
 
-    expect((await approval(approvalId))!.ownerId).toBeNull();
-    expect((await approval(paidApproval))!.ownerId).toBeNull();
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 100, status: "pending" });
+    expect(await approval(paidApproval)).toMatchObject({ ownerId: 100, status: "pending" });
+    expect(await state(id)).toBe("owner_approval");
+    await expect(approveLine(HOUSEMATE_FINANCE, id, approvalId)).rejects.toMatchObject({ status: 403 });
+    await approveLine(LEADER, id, approvalId);
+    expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 2 });
   });
 
-  it("a permanent mapping leaves a sibling line on a conflicted expense unassigned", async () => {
+  it("resolving an unknown line's bucket leaves it pending for its approver", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] } }) });
+    const { id, approvalId } = await lineInApproval(null, "unknown");
+    await resolveUnknown(SUBMITTER_FINANCE, id, approvalId, 100);
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 100, status: "pending", decidedByUserId: 1 });
+    expect(await state(id)).toBe("owner_approval");
+    await expect(approveLine(SUBMITTER_FINANCE, id, approvalId)).rejects.toMatchObject({ status: 403 });
+    await approveLine(LEADER, id, approvalId);
+    expect((await approval(approvalId))!.status).toBe("approved");
+  });
+
+  it("a permanent mapping assigns a sibling line on an expense the caller is conflicted on", async () => {
     bindPorts({ signoff: directory({ households: [[1, 6]] }) });
     const target = await seedExpense({ state: "assign_ownership", submitterId: 4 });
     const targetApproval = await seedApproval(target, await seedLineItem(target, { gtin13: "0000000000017" }), { ownerId: null });
     const household = await lineInApproval(null);
-    const stranger = await seedExpense({ state: "assign_ownership", submitterId: 4 });
-    const strangerApproval = await seedApproval(stranger, await seedLineItem(stranger, { gtin13: "0000000000017" }), { ownerId: null });
 
     await assignOwner(HOUSEMATE_FINANCE, target, targetApproval, 100, true);
 
-    expect((await approval(household.approvalId))!.ownerId).toBeNull();
-    expect((await approval(strangerApproval))!.ownerId).toBe(100);
+    expect(await approval(household.approvalId)).toMatchObject({ ownerId: 100, status: "pending" });
+  });
+
+  it("settling an exception without making it final takes no Board seat", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [1, 3], board: [5] }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(SUBMITTER_FINANCE, id, approvalId, 101);
+    expect(await approval(approvalId)).toMatchObject({ status: "finance_assigned", ownerId: 101, bucketFinal: false });
+
+    await approveLine(principal(4), id, approvalId);
+    expect(await missing(id)).toEqual(["TREASURER"]);
+  });
+
+  it("a final assignment by a conflicted holder takes a Board seat, which a conflicted Board member cannot fill", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [1, 3], board: [5, 6], households: [[1, 6]] }) });
+    const { id, li, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(SUBMITTER_FINANCE, id, approvalId, 101, true, "grant 12 pays for it");
+
+    await approveLine(principal(4), id, approvalId);
+    await signLine(FINANCE, li, "TREASURER");
+    expect(await missing(id)).toEqual(["BOARD"]);
+    expect(await state(id)).toBe("qb_pending");
+
+    await expect(signLine(principal(6, { isBoard: true }), li, "BOARD")).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/submitter, the reimbursee/) });
+    await signLine(BOARD, li, "BOARD");
+    expect(await missing(id)).toEqual([]);
+  });
+
+  it("a final assignment by a holder without a conflict takes no Board seat", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 7], board: [5] }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+    await financeAssign(FINANCE, id, approvalId, 101, true, "grant 12 pays for it");
+
+    await approveLine(principal(4), id, approvalId);
+    expect(await missing(id)).toEqual(["TREASURER"]);
   });
 });

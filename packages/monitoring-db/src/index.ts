@@ -20,8 +20,8 @@ export * from "./incident.js";
 export * from "./outbox.js";
 
 // Push-based freshness heartbeats: services write (createHeartbeatSink/recordHeartbeat),
-// the watchdog reads (readServiceHeartbeats). Replaces the watchdog's per-service DB probe.
+// the watchdog reads (readServiceHeartbeats).
 export * from "./heartbeat.js";
 
-// Concurrency guard: advisory-lock helper that defends the single-flight assumption (F19)
+// Concurrency guard: advisory-lock helper that defends the single-flight assumption
 export * from "./lock.js";

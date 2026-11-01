@@ -107,16 +107,16 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe('GET /api/donations/in-kind/manual', () => {
-    it.each([{ isFinance: true }, { isBoardMember: true }])('%o reads donors, audited', async (flags) => {
+    it.each([{ isFinance: true }, { isBoardMember: true }])('%o reads donors', async (flags) => {
         signIn(9, flags);
         const res = await GET(new NextRequest(URL_BASE), noParams);
         expect(res.status).toBe(200);
         const [row] = await res.json();
         expect(row).toMatchObject({ donorFirstName: 'Pat', donorLastName: 'Rivera', donorCompanyName: 'Rivera Tools' });
-        expect(list.mock.calls[0][1]).toMatchObject({ actorUserId: 9, route: 'GET /api/donations/in-kind/manual' });
+        expect(list.mock.calls[0][1]).toBe(true);
     });
 
-    it.each([{ isOperations: true }, { isInventoryManager: true }])('%o gets no donor fields and no donor read', async (flags) => {
+    it.each([{ isOperations: true }, { isInventoryManager: true }])('%o gets no donor fields', async (flags) => {
         signIn(9, flags);
         const res = await GET(new NextRequest(URL_BASE), noParams);
         expect(res.status).toBe(200);
@@ -125,7 +125,7 @@ describe('GET /api/donations/in-kind/manual', () => {
         expect(row).not.toHaveProperty('donorLastName');
         expect(row).not.toHaveProperty('donorCompanyName');
         expect(row.lines).toEqual([{ id: 11, gtin13: '0000000000017', description: 'Drill', quantity: 2, valueCents: null, suggestedValueCents: 1500 }]);
-        expect(list.mock.calls[0][1]).toBeNull();
+        expect(list.mock.calls[0][1]).toBe(false);
     });
 
     it('refuses a plain session', async () => {

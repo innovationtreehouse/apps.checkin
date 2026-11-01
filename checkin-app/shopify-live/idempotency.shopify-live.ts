@@ -3,7 +3,7 @@
  */
 /**
  * LIVE contract: a resend of the inventory mutations the program-stock writer
- * (#2055) sends under `@idempotent(key:)` never writes twice — Admin API 2026-04,
+ * sends under `@idempotent(key:)` never writes twice — Admin API 2026-04,
  * same mutation shapes. Whether the key itself was honoured is logged, not asserted. Each check logs one `[idempotency] <check>: PASS|FAIL|INFO` line plus the
  * raw response fields, so the result reads straight off the workflow log.
  *
@@ -91,7 +91,7 @@ function report(check: string, outcome: "PASS" | "FAIL" | "INFO", note: string, 
 }
 const passFail = (pass: boolean) => (pass ? "PASS" : "FAIL");
 
-describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => {
+describe("live: Shopify idempotency keys on inventory mutations", () => {
     let itemId: string;
     let locationId: string;
     const k1 = `citest-set-${crypto.randomUUID()}`;
@@ -146,7 +146,7 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
         const first = await gql(ACTIVATE_KEYED, vars);
         const firstPayload = first.data?.inventoryActivate as ActivatePayload;
         if (first.errors?.length || !firstPayload) {
-            report("d. inventoryActivate keyed x2", "FAIL", "API REJECTED @idempotent on inventoryActivate — #2055's activate call would fail", first);
+            report("d. inventoryActivate keyed x2", "FAIL", "API REJECTED @idempotent on inventoryActivate — the keyed activate call in lib/shopify/stock.ts would fail", first);
             await gqlOk(ACTIVATE_PLAIN, { inventoryItemId: itemId, locationId }, "inventoryActivate");
             throw new Error("inventoryActivate rejected the idempotency key");
         }

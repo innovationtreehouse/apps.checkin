@@ -6,7 +6,7 @@ import {
 } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
-import { getOrg, ports } from "../runtime";
+import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
 
@@ -122,7 +122,7 @@ export async function sweepStuckApplying(): Promise<{
 }> {
   const rows = await db.receivedReceipt.findMany({
     where: {
-      orgId: (await getOrg()).id,
+      orgId: await getOrgId(),
       state: "applying",
       ...unclaimedSince(Date.now()),
     },
@@ -148,9 +148,15 @@ export async function sweepStuckApplying(): Promise<{
   return counts;
 }
 
+/** A line the inventory leg carries. */
+function isInventoryLine(ls: LineStatusFields): boolean {
+  if (ls.recognitionStatus === "provisional") return !!ls.provisionalItemGtin13;
+  return ls.recognitionStatus === "recognized" && ls.assignedGtin13 != null;
+}
+
 /**
  * Count a sweep attempt that left the receipt applying; at the cap, move it to apply_failed. True when it moved.
- * Every such attempt ran after the push began, so a give-up marks inventory unconfirmed and the lines stay locked.
+ * Every such attempt ran after the push began, so a give-up marks inventory unconfirmed if an inventory leg has no stamp, and the lines stay locked.
  */
 async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, error: string): Promise<boolean> {
   await db.receivedReceipt.updateMany({
@@ -158,9 +164,14 @@ async function countSweepAttempt(row: Pick<ReceivedReceipt, "id" | "orgId">, err
     data: { applySweepAttempts: { increment: 1 } },
   });
   const validationNotes = `Stopped retrying after ${MAX_SWEEP_APPLY_ATTEMPTS} attempts. Last error: ${error}`;
+  const [{ inventoryAppliedAt }, lines] = await Promise.all([
+    db.receivedReceipt.findUniqueOrThrow({ where: { id: row.id }, select: { inventoryAppliedAt: true } }),
+    db.receivedReceiptLineStatus.findMany({ where: { receivedReceiptId: row.id } }),
+  ]);
+  const inventoryUnconfirmed = !inventoryAppliedAt && lines.some(isInventoryLine);
   const { count } = await db.receivedReceipt.updateMany({
     where: { id: row.id, state: "applying", applySweepAttempts: { gte: MAX_SWEEP_APPLY_ATTEMPTS }, ...unclaimedSince(Date.now()) },
-    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0, inventoryUnconfirmedAt: new Date() },
+    data: { state: "apply_failed", validationNotes, applySweepAttempts: 0, ...(inventoryUnconfirmed ? { inventoryUnconfirmedAt: new Date() } : {}) },
   });
   if (count !== 1) return false;
   await insertAuditEvent(db, {
@@ -203,9 +214,7 @@ async function pushAndSettle(
   const applyItems = receipt.lineItems
     .filter((li) => {
       const ls = statusMap.get(li.receiptLineItemId);
-      const status = ls?.recognitionStatus ?? "unrecognized";
-      if (status === "provisional") return !!ls?.provisionalItemGtin13;
-      return status === "recognized" && ls?.assignedGtin13 != null;
+      return !!ls && isInventoryLine(ls);
     })
     .map((li) => {
       const ls = statusMap.get(li.receiptLineItemId)!;

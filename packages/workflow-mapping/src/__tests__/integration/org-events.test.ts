@@ -1,5 +1,5 @@
-/** S5 consumer: remap on editable receipts, audit-only rejection, org check, cursor, catch-up. */
-import { beforeEach, expect, it } from "vitest";
+/** S5 consumer: remap on editable receipts, audit-only rejection, org check, applied ledger, catch-up. */
+import { beforeEach, expect, it, vi } from "vitest";
 import { fixturesForSeam } from "@checkin/receipt-contract-fixtures";
 import { db } from "../../db";
 import type { OrgEventRecord } from "../../contract";
@@ -21,9 +21,19 @@ async function provisionalLine(state: "pending_review" | "applying" | "apply_fai
   return makeLineStatus(r.id, { recognitionStatus: "provisional", provisionalItemGtin13: PROV });
 }
 
-async function cursor(): Promise<number> {
-  return (await db.workflowSystemData.findUnique({ where: { id: 1 } }))?.orgEventCursor ?? 0;
+async function applied(): Promise<number[]> {
+  return (await db.workflowAppliedOrgEvent.findMany({ orderBy: { id: "asc" } })).map((r) => r.id);
 }
+
+const rejected = (id: number) => event(id, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" });
+const malformed = (id: number) => event(id, "provisional_approved", { bad: true });
+
+/** A source that honours the id cursor and returns at most `pageSize` events, like the catalog. */
+const paged = (events: OrgEventRecord[], pageSize = 500) => ({
+  eventsSince: async (_org: string, after: number) => events.filter((e) => e.id > after).slice(0, pageSize),
+});
+
+const CLEAN = { applied: 0, failed: 0, unprocessed: 0, unreadable: false };
 
 beforeEach(async () => {
   await clearAll();
@@ -54,7 +64,7 @@ describeDb("S5 remap", () => {
       });
     }
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
-    expect(await cursor()).toBe(5);
+    expect(await applied()).toEqual([5]);
   });
 
   it("leaves a recognized line that still carries the provisional GTIN alone", async () => {
@@ -94,7 +104,7 @@ describeDb("S5 remap", () => {
       return { id: i + 1, orgId: TEST_ORG_ID, eventType, payload: JSON.stringify(rest) };
     });
     await orgEventConsumer.onOrgEvents(events);
-    expect(await cursor()).toBe(events.length);
+    expect(await applied()).toHaveLength(events.length);
   });
 
   it("replay is a no-op: a re-applied event changes nothing and audits nothing new", async () => {
@@ -106,18 +116,18 @@ describeDb("S5 remap", () => {
     expect(await db.workflowAuditLog.count({ where: { eventType: "provisional_rejected" } })).toBe(1);
   });
 
-  it("an event committed after a higher id is still applied, and the cursor does not move back", async () => {
+  it("an event committed after a higher id is still applied", async () => {
     const ls = await provisionalLine("pending_review");
     await orgEventConsumer.onOrgEvents([event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })]);
     await orgEventConsumer.onOrgEvents([approved(7)]);
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
-    expect(await cursor()).toBe(8);
+    expect(await applied()).toEqual([7, 8]);
   });
 
-  it("an event for another org is rejected, audited, and the cursor advances past it", async () => {
+  it("an event for another org is rejected, audited, and later events still apply", async () => {
     const ls = await provisionalLine("pending_review");
     await orgEventConsumer.onOrgEvents([approved(1, OTHER_ORG_ID), approved(2)]);
-    expect(await cursor()).toBe(2);
+    expect(await applied()).toEqual([1, 2]);
     expect((await db.workflowAuditLog.findFirstOrThrow({ where: { eventType: "org_event_rejected" } })).details).toMatch(/"eventId":1/);
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
   });
@@ -125,7 +135,7 @@ describeDb("S5 remap", () => {
 
 describeDb("catch-up sweep", () => {
   it("is a no-op with the inert event source", async () => {
-    expect(await catchUpOrgEvents()).toEqual({ applied: 0, failed: 0 });
+    expect(await catchUpOrgEvents()).toEqual(CLEAN);
   });
 
   it("replays past a bad event, records it, and retries it by id", async () => {
@@ -139,13 +149,13 @@ describeDb("catch-up sweep", () => {
         },
       },
     });
-    expect(await catchUpOrgEvents()).toEqual({ applied: 3, failed: 1 });
-    expect(await cursor()).toBe(4);
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 3, failed: 1 });
+    expect(await applied()).toEqual([1, 2, 4]);
     expect(await db.workflowFailedOrgEvent.findMany()).toMatchObject([{ id: 3, eventType: "provisional_approved" }]);
 
-    // The recorded failure is retried by id from its stored payload, not re-read from the window.
-    expect(await catchUpOrgEvents()).toEqual({ applied: 3, failed: 1 });
-    expect(asked).toEqual([0, 0]);
+    // The recorded failure is retried by id from its stored payload, and applied events are not applied again.
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1 });
+    expect(asked).toEqual([0, 4, 0, 4]);
   });
 
   it("a bad event in the post-commit call-out does not block later events, and a fixed retry clears it", async () => {
@@ -153,25 +163,151 @@ describeDb("catch-up sweep", () => {
     await orgEventConsumer.onOrgEvents([event(3, "provisional_approved", { bad: true }), approved(4)]);
 
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
-    expect(await cursor()).toBe(4);
+    expect(await applied()).toEqual([4]);
     expect(await db.workflowFailedOrgEvent.count()).toBe(1);
 
     // A failure that clears (the stored payload now applies) is removed from the record.
     await db.workflowFailedOrgEvent.update({ where: { id: 3 }, data: { payload: approved(3).payload } });
-    expect(await catchUpOrgEvents()).toEqual({ applied: 1, failed: 0 });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 1 });
     expect(await db.workflowFailedOrgEvent.count()).toBe(0);
   });
 
-  it("catch-up re-reads behind the cursor, so an event that committed late is not skipped", async () => {
+  it("catch-up consumes an event that committed after a higher id was applied", async () => {
     const ls = await provisionalLine("pending_review");
     // Event 8 committed and was applied first; event 7 committed after it.
     await orgEventConsumer.onOrgEvents([event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })]);
     configure({ catalogEventSource: { eventsSince: async (_org, since) => [approved(7), event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })].filter((e) => e.id > since) } });
 
-    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 0 });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 1 });
 
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
     expect(await db.workflowAuditLog.count({ where: { eventType: "provisional_rejected" } })).toBe(1);
-    expect(await cursor()).toBe(8);
+    expect(await applied()).toEqual([7, 8]);
+  });
+
+  it("applies an event lost more than 100 ids behind the newest", async () => {
+    const ls = await provisionalLine("pending_review");
+    const later = Array.from({ length: 150 }, (_, i) => rejected(i + 8));
+    await orgEventConsumer.onOrgEvents(later);
+    configure({ catalogEventSource: paged([approved(7), ...later]) });
+
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 1 });
+
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+  });
+
+  it("reads every page of the catalog, however long its history", async () => {
+    const events = Array.from({ length: 5 }, (_, i) => rejected(i + 1));
+    configure({ catalogEventSource: paged(events, 2) });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 5 });
+    expect(await applied()).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("a capped run drains over later runs without alerting", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure({ catalogEventSource: paged([rejected(1), rejected(2), rejected(3)]), alerts: { orgEventsStuck } });
+
+    expect(await catchUpOrgEvents({ limit: 2 })).toEqual({ ...CLEAN, applied: 2, unprocessed: 1 });
+    expect(await catchUpOrgEvents({ limit: 2 })).toEqual({ ...CLEAN, applied: 1 });
+    expect(orgEventsStuck).not.toHaveBeenCalled();
+  });
+
+  it("failures that keep failing leave room in the cap for new events", async () => {
+    await orgEventConsumer.onOrgEvents([malformed(1), malformed(2), malformed(3), malformed(4)]);
+    configure({ catalogEventSource: paged([malformed(1), malformed(2), malformed(3), malformed(4), rejected(5)]) });
+
+    expect(await catchUpOrgEvents({ limit: 4 })).toEqual({ ...CLEAN, applied: 1, failed: 3, unprocessed: 1 });
+    expect(await applied()).toEqual([5]);
+  });
+});
+
+describeDb("catch-up alerts", () => {
+  it("alerts on each run while the catalog can't be read, and still retries failures", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    await orgEventConsumer.onOrgEvents([malformed(1)]);
+    configure({ catalogEventSource: { eventsSince: async () => { throw new Error("catalog down"); } }, alerts: { orgEventsStuck } });
+
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1, unreadable: true });
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true });
+  });
+
+  it("alerts when an event first fails in the sweep, not on later retries", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck } });
+
+    await catchUpOrgEvents();
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
+  });
+
+  it("alerts when an event first fails in the call-out, not when the sweep retries it", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck } });
+
+    await orgEventConsumer.onOrgEvents([malformed(1)]);
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+  });
+
+  it("alerts on each run while a capped run applies nothing", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure({ catalogEventSource: paged([rejected(1)]), alerts: { orgEventsStuck } });
+
+    await catchUpOrgEvents({ limit: 0 });
+    await catchUpOrgEvents({ limit: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+  });
+
+  it("finishes the run when the alert itself throws", async () => {
+    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck: async () => { throw new Error("mail down"); } } });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1 });
+  });
+
+  it("finishes the sweep when a ledger write throws", async () => {
+    const spy = vi.spyOn(db.workflowAppliedOrgEvent, "createMany").mockRejectedValueOnce(new Error("db blip"));
+    configure({ catalogEventSource: paged([rejected(1), rejected(2)]) });
+    try {
+      expect(await catchUpOrgEvents()).toMatchObject({ applied: 1 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await applied()).toEqual([2]);
+  });
+});
+
+describeDb("first-run replay", () => {
+  it("replaying all history over current state changes nothing", async () => {
+    const remapped = await provisionalLine("pending_review");
+    const managerLinked = await makeLineStatus((await makeReceipt({ state: "pending_review" })).id, {
+      recognitionStatus: "provisional",
+      provisionalItemGtin13: PROV,
+    });
+    const leftReview = await provisionalLine("resolved");
+    const history = [
+      approved(1),
+      event(2, "provisional_mapped_to_existing", { provisionalGtin13: "2000000000039", realGtin13: REAL }),
+      rejected(3),
+      approved(4, OTHER_ORG_ID),
+    ];
+    await db.receivedReceiptLineStatus.update({
+      where: { id: managerLinked.id },
+      data: { recognitionStatus: "non_inventory", provisionalItemGtin13: null },
+    });
+    await orgEventConsumer.onOrgEvents(history);
+    const snapshot = async () => ({
+      lines: await db.receivedReceiptLineStatus.findMany({ orderBy: { id: "asc" } }),
+      audit: await db.workflowAuditLog.findMany({ orderBy: { id: "asc" } }),
+    });
+    const before = await snapshot();
+    expect(before.lines.map((l) => l.id)).toEqual(expect.arrayContaining([remapped.id, leftReview.id]));
+
+    await db.workflowAppliedOrgEvent.deleteMany({});
+    configure({ catalogEventSource: paged(history) });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 4 });
+
+    expect(await snapshot()).toEqual(before);
   });
 });

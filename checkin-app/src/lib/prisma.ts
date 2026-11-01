@@ -31,9 +31,9 @@ const pool = new Pool({
     // a lock (e.g. the scan route's `pg_advisory_xact_lock`, checkin-app/src/app/api/scan/route.ts),
     // the lock is held until Postgres's OWN keepalive notices — which never
     // happens without this — so any later query needing that same lock hangs
-    // indefinitely (issue #688: "20+ min no response", not fixed by --forceExit,
-    // since that only governs whether the LATER run's own process exits, not
-    // whether an EARLIER orphaned one is still silently holding a lock).
+    // indefinitely. --forceExit doesn't help: it only governs whether the LATER
+    // run's own process exits, not whether an EARLIER orphaned one is still
+    // silently holding a lock.
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000,
     // Scale-to-zero invariant: idle connections MUST be reaped (and `min` must
@@ -46,13 +46,12 @@ const pool = new Pool({
     // aurora-resume-retry extension below, not by holding sockets open.
     idleTimeoutMillis: 60_000,
     min: 0,
-    // Server-side backstops for tests (#688 → #701's other half): #701 put
-    // statement/idle-in-transaction timeouts into deploy/docker-compose.yml's
-    // Postgres, but CI's `services:` container and the per-worker integration
-    // DBs never got them — so an orphaned connection holding a lock
-    // mid-transaction (keepAlive above only catches DEAD peers, not live
-    // processes parked on an open transaction) stalled a whole CI run
-    // unboundedly (the 2026-07-16 hang on main). These are session-level
+    // Server-side backstops for tests: deploy/docker-compose.yml's Postgres sets
+    // statement/idle-in-transaction timeouts, but CI's `services:` container and
+    // the per-worker integration DBs don't — so an orphaned connection holding a
+    // lock mid-transaction (keepAlive above only catches DEAD peers, not live
+    // processes parked on an open transaction) could stall a whole CI run
+    // unboundedly. These are session-level
     // settings the pg client applies on connect, so they cover every Postgres
     // a test run touches — CI service container, worktree DBs, local — with
     // one knob. Test-only: prod/Aurora long transactions stay governed by the

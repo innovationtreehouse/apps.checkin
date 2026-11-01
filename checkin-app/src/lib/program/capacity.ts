@@ -27,9 +27,9 @@ export class ProgramCapacityError extends Error {
 
 /**
  * Lock the Program row and verify it has room for `seats` more enrollments,
- * run inside a transaction. Mirrors the lead-cap fix in
- * {@link file://./../household/leads.ts}: the bare count-then-create that
- * callers used to do is a TOCTOU race — under Postgres' default Read Committed
+ * run inside a transaction. Mirrors the lead cap in
+ * {@link file://./../household/leads.ts}: a bare count-then-create
+ * is a TOCTOU race — under Postgres' default Read Committed
  * isolation two concurrent enrollers both count N and both insert, overfilling
  * the program. The `FOR UPDATE` lock serializes enrollers for this program: the
  * second blocks until the first commits, then re-counts and is rejected.

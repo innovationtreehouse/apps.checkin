@@ -113,6 +113,7 @@ export const classifications = {
         status: 'internal',
         holdReason: 'internal',
         dmarcVerdict: 'internal',
+        refusal: 'pii',
         fileBlob: 'pii',
         fileKey: 'pii',
         fileSize: 'internal',
@@ -130,6 +131,8 @@ export const classifications = {
         claimedAt: 'internal',
         senderSentAt: 'internal',
         creditedSentAt: 'internal',
+        refusals: 'pii',
+        refusalSentAt: 'internal',
         doneAt: 'internal',
         attempts: 'internal',
         createdAt: 'internal',
@@ -140,6 +143,18 @@ export const classifications = {
         gmailMessageId: 'internal',
         receivedAt: 'internal',
         alertedAt: 'internal',
+        createdAt: 'internal',
+    },
+    ReceiptOutcomeNotice: {
+        id: 'internal',
+        orgId: 'internal',
+        receiptId: 'internal',
+        event: 'internal',
+        claimedAt: 'internal',
+        uploaderSentAt: 'internal',
+        reimburseeSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
         createdAt: 'internal',
     },
     ReceiptIgnoredFile: {
@@ -186,6 +201,8 @@ export const relations = {
     ReceiptMailReply: {
     },
     ReceiptMailAtRisk: {
+    },
+    ReceiptOutcomeNotice: {
     },
     ReceiptIgnoredFile: {
     },

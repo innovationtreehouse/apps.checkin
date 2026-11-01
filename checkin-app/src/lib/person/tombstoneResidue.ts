@@ -1,11 +1,9 @@
-// #1456 §2a census. A merged-away Person is a tombstone: the merge repoints its
-// live rows to the survivor and parks only what a unique-constraint collision
-// left behind. 2b-3 will delete the tombstone row, but a delete is only safe once
-// its residue is resolved. This module classifies that residue by whether a
-// self-serve cleanup pathway exists — the "no pathway" report the census produces.
-// Shared by the census route (relation list for the _count select) and its page
-// (deriving the report client-side from the returned counts). Deleted with
-// LIVE_PERSON in the final teardown.
+// A merge deletes the merged-away Person row; the census lists the tombstone rows
+// the delete migration kept. Deleting one is only safe once its residue is resolved.
+// This module classifies that residue by whether a self-serve cleanup pathway
+// exists — the "no pathway" report the census produces. Shared by the census route
+// (relation list for the _count select) and its page (deriving the report
+// client-side from the returned counts).
 
 export type Disposition = 'route' | 'cascade' | 'none';
 

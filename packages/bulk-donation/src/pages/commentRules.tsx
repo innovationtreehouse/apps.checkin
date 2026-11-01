@@ -10,7 +10,7 @@ interface RuleRow { id: number; comment: string; ownerId: number; createdAt: str
 export default function CommentRulesPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
-  const rules = useLoad<RuleRow[]>(paged("/comment-rules", page));
+  const rules = useLoad<RuleRow[]>(paged("/comment-rules", page), { keepPrevious: true });
   const owners = useOwners();
 
   return (

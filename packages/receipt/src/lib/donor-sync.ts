@@ -1,13 +1,13 @@
 import { db } from "../db";
 import { InKindDonorSchema } from "../contract";
 import { audit, type Actor } from "../repositories/receipt";
-import { getOrg, ports } from "../runtime";
+import { getOrgId, ports } from "../runtime";
 
 const MAX_SENDS = 3;
 
 /**
  * X13: tell donations the receipt's current in-kind state. Which call is made comes from the
- * receipt now, not a stored operation: in-kind sends the donor, otherwise a withdrawal. A
+ * receipt's state, not a stored operation: in-kind sends the donor, otherwise a withdrawal. A
  * `none` receipt (never in-kind) sends nothing. The receipt flips to `synced` only if what was
  * sent is still current; a change made during the call is sent again. Each call carries the
  * receipt's donorSyncSeq, and the callee drops one older than it has seen, so a slow send can
@@ -15,7 +15,7 @@ const MAX_SENDS = 3;
  */
 export async function sendDonorSync(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
-    const orgId = (await getOrg()).id;
+    const orgId = await getOrgId();
     for (let attempt = 0; attempt < MAX_SENDS; attempt++) {
       const row = await db.receipt.findFirst({
         where: { id: receiptId, orgId },

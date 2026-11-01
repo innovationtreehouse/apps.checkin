@@ -27,6 +27,24 @@ describe("updateExpenseSettings — guards", () => {
 });
 
 describeDb("expense settings", () => {
+  it("holds the QuickBooks limits to finance lowers, the Board raises", async () => {
+    await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 60 }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 40 }, FINANCE);
+    await updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 60 }, principal(5, { isBoard: true }));
+    expect(await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } })).toBe(2);
+  });
+
+  it("refuses a per-run limit above the per-day limit", async () => {
+    await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 10 }, FINANCE)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("lets finance move the match window either way, within 1 to 30", async () => {
+    await updateExpenseSettings(ORG, { qbMatchWindowDays: 30 }, FINANCE);
+    await updateExpenseSettings(ORG, { qbMatchWindowDays: 1 }, FINANCE);
+    await expect(updateExpenseSettings(ORG, { qbMatchWindowDays: 31 }, FINANCE)).rejects.toThrow();
+    await expect(updateExpenseSettings(ORG, { qbMatchWindowDays: 0 }, FINANCE)).rejects.toThrow();
+  });
+
   it("a missing row reads as the defaults", async () => {
     expect(await getExpenseSettings(ORG)).toEqual(DEFAULT_EXPENSE_SETTINGS);
     expect(DEFAULT_EXPENSE_SETTINGS).toMatchObject({

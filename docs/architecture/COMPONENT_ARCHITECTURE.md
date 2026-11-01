@@ -142,11 +142,15 @@ producer is the first instance.
   (the catalog's `OrgEventConsumer`); the producer never imports a consumer.
 - A consumer failure never undoes the producer's write: a throwing consumer is
   logged, the rest still run, the request succeeds.
-- Each consumer keeps its own cursor in its own database and advances it in the
-  same transaction as its reaction, so the cursor never passes an event whose
-  reaction did not commit. Replay reads the producer's rows after a given id;
-  the catch-up cron step re-applies from the cursor. The producer records
-  nothing about who consumed what — tracking consumers would couple it to them.
+- Each consumer keeps a ledger of received events in its own database. Its own
+  commit rule decides how a reaction and its ledger row land: expense writes
+  both in one transaction; local inventory and receipt mapping react first and
+  rely on idempotent reactions, so many local inventories can stay async against
+  one global catalog. A failed event is recorded and retried, and never holds
+  back the events after it. The catch-up cron step pages through the producer's
+  rows and consumes any not in the ledger (`sweepOrgEvents` in
+  `@checkin/component-kit`). The producer records nothing about who consumed
+  what — tracking consumers would couple it to them.
 
 ## UI and nav
 

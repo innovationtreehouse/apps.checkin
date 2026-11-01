@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { handler, badRequest } from "@/security/handler";
+import { archivedPeople } from "@/lib/person/archivedPeople";
 import { FINANCE_VIEWS_PAGE_SIZE, financeViewKindWhere, isFinanceViewKind } from "@/lib/finance/financeViewKinds";
 
 /**
@@ -58,13 +59,19 @@ export const GET = handler('GET /api/system-status/finance-views', async ({ req 
         prisma.financeViewLog.groupBy({ by: ['actorId'] }),
     ]);
 
-    // Not LIVE_PERSON-filtered: a viewer since merged away must still be named.
-    const people = actors.length
+    // Not LIVE_PERSON-filtered: a viewer since merged away must still be named,
+    // from the merge archive once the merge has deleted their row.
+    const actorIds = actors.map((a) => a.actorId);
+    const people: { id: number; name: string | null }[] = actors.length
         ? await prisma.person.findMany({
-            where: { id: { in: actors.map((a) => a.actorId) } },
+            where: { id: { in: actorIds } },
             select: { id: true, name: true },
         })
         : [];
+    const found = new Set(people.map((p) => p.id));
+    for (const { id, name } of await archivedPeople(prisma, actorIds.filter((id) => !found.has(id)))) {
+        people.push({ id, name });
+    }
 
     // Always both keys, even empty: handler.ts unwraps a single-key bag to a bare value.
     return { FinanceViewLog: rows, Person: people };

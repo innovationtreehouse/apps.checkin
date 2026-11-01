@@ -1,4 +1,8 @@
+/** The GTIN-13 check digit of exactly twelve digits; throws on any other input. */
 export function calculateChecksum(partial12: string): number {
+  if (!/^\d{12}$/.test(partial12)) {
+    throw new Error(`GTIN-13 checksum needs exactly 12 digits, got "${partial12}"`);
+  }
   let sum = 0;
   for (let i = 0; i < 12; i++) {
     sum += parseInt(partial12[i], 10) * (i % 2 === 0 ? 1 : 3);

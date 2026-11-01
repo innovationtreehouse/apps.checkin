@@ -223,20 +223,6 @@ describeDb("orgRepository.update", () => {
 
 // ── OrgEventsRepository ───────────────────────────────────────────────────────
 
-describeDb("orgEventsRepository.getMaxId", () => {
-  it("returns 0 when no events exist", async () => {
-    const max = await eventsRepo.getMaxId();
-    expect(max).toBe(0);
-  });
-
-  it("returns the maximum id when events exist", async () => {
-    await db.expenseReceivedOrgEvent.create({ data: { id: 10, orgId: ORG, eventType: "test", payload: "{}", receivedAt: new Date() } });
-    await db.expenseReceivedOrgEvent.create({ data: { id: 20, orgId: ORG, eventType: "test", payload: "{}", receivedAt: new Date() } });
-    const max = await eventsRepo.getMaxId();
-    expect(max).toBe(20);
-  });
-});
-
 describeDb("orgEventsRepository.insert and exists", () => {
   it("exists returns false before insert", async () => {
     expect(await eventsRepo.exists(99)).toBe(false);

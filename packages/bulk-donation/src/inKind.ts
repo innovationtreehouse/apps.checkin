@@ -6,8 +6,7 @@ import { z } from "zod";
 import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { CatalogItemSummarySchema, InKindDonorSchema, type CatalogItemSummary, type InKindDonor } from "./contract";
 import { db } from "./db";
-import { recordDonorDataReads, type DonorReadContext } from "./repositories/audit";
-import { getCatalogLookup, getOrg, getOrgId, getPrincipal } from "./runtime";
+import { getCatalogLookup, getOrgId, getPrincipal } from "./runtime";
 import { inKindService } from "./services/inKindService";
 import { manualInKindService, type ManualInKindInput } from "./services/manualInKindService";
 
@@ -16,12 +15,12 @@ const syncSeqSchema = z.number().int().nonnegative();
 
 /** Built at call time: the org is only known once the host has configured the runtime. */
 async function thisOrg() {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   return z.string().refine((id) => id === orgId, { message: "orgId is not this org" });
 }
 
 async function receiptInOrg() {
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   return CompletedReceiptSchema.refine((r) => r.orgId === orgId, { message: "orgId is not this org", path: ["orgId"] }).refine(
     (r) => r.isInKind,
     { message: "not an in-kind receipt", path: ["isInKind"] },
@@ -61,11 +60,6 @@ export async function withdrawInKind(orgId: string, receiptId: string, seq: numb
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
   await inKindService.withdraw(orgId, receiptId, syncSeqSchema.parse(seq));
-}
-
-/** The host showed these in-kind receipts with their donor names: one donor-read audit row per receipt. */
-export async function recordReceiptDonorReads(reader: DonorReadContext, receiptIds: string[]): Promise<void> {
-  await recordDonorDataReads(db, await getOrgId(), "in_kind", reader, receiptIdSchema.array().parse(receiptIds));
 }
 
 /** X10 caller: catalog search for the no-receipt picker. */

@@ -214,10 +214,12 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |
 | `board.programAgeMisfit` | program date/age edit (`programs/update.ts`) | board | programName, count, people, `actionLink` ("Open the program") |
 | `board.inventoryEventsStuck` | inventory catch-up finds stuck catalog events | board | problem |
+| `board.expenseEventsStuck` | expense catch-up finds stuck catalog events | board | problem |
+| `board.receiptMappingEventsStuck` | receipt mapping catch-up finds stuck catalog events | board | problem |
 
 > See sub-decision B (blurb) below.
 
-### finance — 9
+### finance — 10
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
@@ -229,6 +231,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |
 | `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
 | `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
+| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak | FINANCE, else board | failures, remaining, `actionLink` ("Open the in-kind queue") |
 
 ### receipt — 2
 | key | trigger | recipient | tokens |

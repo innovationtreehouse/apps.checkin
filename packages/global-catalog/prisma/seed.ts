@@ -1,10 +1,8 @@
 /**
- * Catalog dev/test seed (#1286 §12). Writes the baseline reference rows lifted
- * from Inventory's setup-test-data.sh — category Electronics/N, subcategory
- * Control System/10, two items, one item-reference — directly via the catalog
- * Prisma client / services against CATALOG_DATABASE_URL (NOT over HTTP + the
- * retired /api/auth/login the source script used). Idempotent by name/letter so
- * a re-run is safe; the flow harness reseeds a fresh DB each run anyway.
+ * Catalog dev/test seed. Writes the baseline reference rows — category
+ * Electronics/N, subcategory Control System/10, two items, one item-reference —
+ * directly via the catalog Prisma client / services against CATALOG_DATABASE_URL,
+ * not over HTTP. Idempotent by name/letter so a re-run is safe; the flow harness reseeds a fresh DB each run anyway.
  */
 import * as dotenv from "dotenv";
 import { getPrisma, initDb } from "../src/db";

@@ -282,7 +282,11 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
 
 /** Compares each amount a Totals row gives with the sum of the parsed gifts; a column the row leaves empty is not checked. */
 function checkTotals({ record, info }: Located, rows: BenevityRow[], bindings: Map<keyof BenevityRow, Binding>): string[] {
-  const currency = rows[0]?.currency ?? "USD";
+  const fileCurrency = rows[0]?.currency ?? "USD";
+  // Intl accepts any three-letter code and throws a RangeError on anything else.
+  const known = /^[A-Za-z]{3}$/.test(fileCurrency);
+  const currency = known ? fileCurrency : "USD";
+  const shownIn = known ? "" : ` (shown in USD; the file's Currency "${fileCurrency}" is not a currency code)`;
   const issues: string[] = [];
   for (const field of TOTALLED) {
     const b = bindings.get(field) ?? null;
@@ -297,7 +301,7 @@ function checkTotals({ record, info }: Located, rows: BenevityRow[], bindings: M
     }
     const summed = sumCents(...rows.map((r) => r[field]));
     if (reported.data !== summed) {
-      issues.push(`${where}: report says ${formatCents(reported.data, currency)}, gifts add up to ${formatCents(summed, currency)}`);
+      issues.push(`${where}: report says ${formatCents(reported.data, currency)}, gifts add up to ${formatCents(summed, currency)}${shownIn}`);
     }
   }
   return issues;

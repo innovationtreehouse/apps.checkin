@@ -59,13 +59,13 @@ describe("AppFrame", () => {
     expect(screen.getByText("Membership Ops")).toBeInTheDocument();
     expect(screen.getByText("Membership Audit")).toBeInTheDocument();
     expect(screen.getByText("Program Ops")).toBeInTheDocument();
-    // Revenue Ops admits FINANCE or BOARD — a sysadmin does NOT see it (issue #1083).
+    // Revenue Ops admits FINANCE or BOARD — a sysadmin does NOT see it.
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
     expect(screen.getByText("System Status")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 
-  it("shows Revenue Ops (the renamed Finance Ops) to a board member", () => {
+  it("shows Revenue Ops to a board member", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
 
@@ -101,7 +101,7 @@ describe("AppFrame", () => {
     expect(screen.queryByText("Membership Audit")).not.toBeInTheDocument();
   });
 
-  it("shows Facility Ops to an operations-only user (#1633's aggregate-tools grant)", () => {
+  it("shows Facility Ops to an operations-only user (aggregate-tools grant)", () => {
     setSession({ id: 4, isOperations: true });
     renderFrame();
 

@@ -1,4 +1,5 @@
 /** Card-charge Board seat and Board authorization against the real database. */
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -10,16 +11,6 @@ import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
-
-/** Resolves once some backend in this database is waiting on a row lock. */
-async function someoneBlocked(): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n > 0n) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error("no backend blocked on a lock");
-}
 
 describeDb("card charges", () => {
   // purchaser 1 · owner 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household ·
@@ -62,18 +53,18 @@ describeDb("card charges", () => {
     // The void holds the expense lock uncommitted while the drain reads no hold.
     let commit!: () => void;
     const gate = new Promise<void>((r) => (commit = r));
-    let voided!: () => void;
-    const held = new Promise<void>((r) => (voided = r));
+    let voided!: (pid: number) => void;
+    const held = new Promise<number>((r) => (voided = r));
     const voiding = db.$transaction(async (tx) => {
       await lockExpense(tx, id);
       await tx.expenseLineSignoff.deleteMany({ where: { expenseId: id, seat: "TREASURER" } });
-      voided();
+      voided(await backendPid(tx));
       await gate;
     }, { timeout: 20_000 });
-    await held;
+    const holderPid = await held;
 
     const drain = checkAndProcessExpense(ORG, id);
-    await someoneBlocked();
+    await waitersBehind(db, holderPid);
     commit();
     await voiding;
     await drain;
@@ -84,6 +75,39 @@ describeDb("card charges", () => {
     const [line] = await db.expenseLineItem.findMany({ where: { expenseId: id }, select: { id: true } });
     await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line.id, seat: "TREASURER", signerUserId: 9002 } });
     await checkAndProcessExpense(ORG, id);
+    expect(await events(id)).toBe(1);
+  });
+
+  it("a seat void queued behind the outbox commit finds the expense already moved on", async () => {
+    const id = await signedCard();
+    expect(await holds(id)).toEqual([]);
+
+    // The holder lets the commit queue on the expense lock first, then the void behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: (pid: number) => void;
+    const held = new Promise<number>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await lockExpense(tx, id);
+      locked(await backendPid(tx));
+      await gate;
+    }, { timeout: 20_000 });
+    const holderPid = await held;
+
+    const drain = checkAndProcessExpense(ORG, id);
+    await waitersBehind(db, holderPid, 1);
+    const [commit] = await db.$queryRaw<{ query: string }[]>`SELECT query FROM pg_stat_activity WHERE ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+    expect(commit.query).toContain("FOR UPDATE");
+    const voiding = db.$transaction(async (tx) => {
+      await lockExpense(tx, id);
+      return (await tx.expense.findUniqueOrThrow({ where: { id } })).state;
+    }, { timeout: 20_000 });
+    await waitersBehind(db, holderPid, 2);
+    release();
+    await holder;
+    await drain;
+
+    expect(await voiding).toBe("qb_complete");
     expect(await events(id)).toBe(1);
   });
 

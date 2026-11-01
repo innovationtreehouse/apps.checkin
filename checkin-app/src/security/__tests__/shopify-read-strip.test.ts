@@ -16,7 +16,7 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { allRoutes, getRoute, VALID_ROLES, type Token } from '@/security/core';
+import { allRoutes, getRoute, ROLES, type Token } from '@/security/core';
 import { handler } from '@/security/handler';
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
@@ -169,7 +169,7 @@ describe('mirror registry — stripping', () => {
         const views: (readonly Token[])[] = [[]];
         for (const [endpoint, spec] of allRoutes()) {
             if (!ENDPOINTS.includes(endpoint)) continue;
-            for (const role of VALID_ROLES) {
+            for (const role of ROLES) {
                 views.push(spec.orderedView.find(([r]) => r === role)?.[1] ?? []);
             }
         }

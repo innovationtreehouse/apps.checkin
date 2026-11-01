@@ -50,10 +50,10 @@ describe("Revenue Ops Income and Shopify tabs", () => {
     expect(hrefs(tabs)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items"]);
   });
 
-  it("gives FINANCE only the income screens under Shopify, and lands it on Payouts", () => {
+  it("gives FINANCE only the income screens under Shopify, after the payment-plan tabs", () => {
     const tabs = visibleLinks(REVENUE_OPS, finance, released);
     expect(hrefs(tabs.find((t) => t.name === "Shopify")?.subLinks ?? [])).toEqual(["/income/payouts", "/income/reconciliation"]);
-    expect(hrefs(tabs)[0]).toBe("/income/payouts");
+    expect(hrefs(tabs).slice(0, 3)).toEqual(["/finance-ops/payment-plan", "/finance-ops/membership-payment-plan", "/income/payouts"]);
   });
 
   it("hides both from FINANCE until income is released", () => {

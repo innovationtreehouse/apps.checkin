@@ -143,6 +143,10 @@ denial fired a `+1` — that let the seat resell out from under a denied-but-not
 applicant, silently drifting DB capacity and Shopify's count apart.) Sends no automatic
 email — see §5.
 
+A request whose hold failed has no seat to keep, so denying it stamps nothing: the flag
+clears, the row is an ordinary unpaid claim with its non-payment notices and no grace
+clock, and the denial is kept in the audit log.
+
 ### Approval (`POST /api/finance-ops/payment-plans`)
 
 No Shopify operation either (the seat was already taken out of the pool at application
@@ -220,7 +224,9 @@ before being auto-withdrawn. The cron sweep (`GET /api/cron/scholarship-grace-ex
 the past, then auto-withdraws each one (reusing release path (a) — semantically, expiry
 *is* auto-withdrawal + seat restore) and audit-logs with a distinct
 `reason: "scholarship_grace_expired"` context so it reads differently from a manual
-withdrawal in the audit trail. Each row is processed independently (a per-row failure
+withdrawal in the audit trail. The delete repeats the sweep's query as its own condition,
+so a row that was paid, approved, re-applied for or removed after the select is skipped:
+it stays as it is, with no +1 and no audit entry. Each row is processed independently (a per-row failure
 doesn't block the rest of the sweep), and the sweep never touches non-`PENDING` rows —
 an approved (`ACTIVE`) participant's hold was already consumed, not left outstanding, so
 it can never match this query regardless of how old `paymentPlanDeniedAt` is.

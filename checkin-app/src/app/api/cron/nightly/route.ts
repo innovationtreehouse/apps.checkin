@@ -11,25 +11,48 @@ import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTrigger
 import { systemActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
+import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
 
-export const GET = withCron(async () => {
+/** A nightly run this soon after the last one is a retry of the same night. */
+const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
+
+export const GET = withCron(() => duringNightlyRun(async () => {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
-        const now = new Date();
 
-        // 1. Find all users who are currently checked in (abandoned visits)
-        // A tombstoned open visit is not abandoned — it's deleted; closing it
-        // would rewrite a record the member chose to erase.
-        const abandonedVisits = await prisma.visit.findMany({
-            where: {
-                departedAt: null,
-                ...LIVE_VISIT
-            },
-            include: {
-                person: true
-            }
-        });
+        // 1. Find all users who are currently checked in (abandoned visits), and
+        // record the sweep: a facility close with no person behind it. Recorded
+        // every night, even with nobody open, because this row is what fences a
+        // scan from before it that arrives later. The facility lock makes the read
+        // and the close one step against a check-in: an arrival that commits
+        // before it is read and swept, and one after it sees this close
+        // (fenceReplayedArrival).
+        const { now, close, abandonedVisits } = await prisma.$transaction(async (tx) => {
+            await lockFacility(tx);
+            const now = new Date();
+            const sweptTonight = await tx.facilityClose.findFirst({
+                where: { via: "NIGHTLY_SWEEP", closedAt: { gt: new Date(now.getTime() - SAME_NIGHT_MS) } },
+                select: { id: true },
+            });
+            // A tombstoned open visit is not abandoned — it's deleted; closing it
+            // would rewrite a record the member chose to erase.
+            const abandonedVisits = await tx.visit.findMany({
+                where: {
+                    departedAt: null,
+                    ...LIVE_VISIT
+                },
+                include: {
+                    person: true
+                }
+            });
+            // A retry's departures carry its own time, so they need their own close.
+            const close = sweptTonight && abandonedVisits.length === 0 ? null : await tx.facilityClose.create({
+                data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
+                select: { id: true },
+            });
+            return { now, close, abandonedVisits };
+        }, { maxWait: 5_000, timeout: 15_000 });
 
         let failed = 0;
         const forceClosed: typeof abandonedVisits = [];
@@ -37,12 +60,8 @@ export const GET = withCron(async () => {
         // "Notified" means a SYSTEM_NOTIFY audit row + log line; nothing emails the board.
         let boardNotified = false;
 
-        if (abandonedVisits.length > 0) {
-            // The sweep is a facility close with no person behind it.
-            const close = await prisma.facilityClose.create({
-                data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
-                select: { id: true },
-            });
+        if (close && abandonedVisits.length > 0) {
+            const closeId = close.id;
             // One bad checkout must not abort the rest, so each visit's checkout and
             // its departure logs commit together, alone. Each takes the person lock
             // then the facility lock (the order every check-in path uses), so a
@@ -57,7 +76,7 @@ export const GET = withCron(async () => {
                         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
                         await lockFacility(tx);
                         // Empty: someone else departed the visit first, so this close set nothing.
-                        const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", close.id);
+                        const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", closeId);
                         // A visit split across events departs as several rows; each is logged.
                         const departures: DepartureChange[] = segments.flatMap((seg) => seg.departedAt && seg.departedVia ? [{
                             id: seg.id,
@@ -68,7 +87,7 @@ export const GET = withCron(async () => {
                             departedAt: seg.departedAt,
                             departedVia: seg.departedVia,
                         }] : []);
-                        await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
+                        await logCloseDepartures(tx, closeId, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
                     });
                     if (segments.length > 0) forceClosed.push(visit);
@@ -117,12 +136,11 @@ export const GET = withCron(async () => {
         // 2. Process all pending post-event emails immediately, regardless of 1-hour delay
         const emailResult = await processPostEventEmails({ forceImmediate: true });
 
-        // 3. #1165: delete DoB for anyone who has crossed 26 since the last run. No
+        // 3. Delete DoB for anyone who has crossed 26 since the last run. No
         // age-gated program can target anyone over 25 (MAX_PROGRAM_AGE), so a DoB for
         // a 26+ person is dead weight on our most-sensitive field. Strip it and set the
         // declared-adult flag so age gates / search / UI still see them as an adult.
-        // The #1165 backfill migration did the one-time sweep; this keeps it clean as
-        // members age in. Raw SQL so age is judged in the DB, tombstones included.
+        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB, tombstones included.
         const purgedPeople = await prisma.$queryRaw<{ id: number }[]>`
             UPDATE "Person"
             SET "dateOfBirth" = NULL, "isDeclaredAdult" = true
@@ -169,4 +187,4 @@ export const GET = withCron(async () => {
             adultDobPurged,
             personAgreements
         });
-});
+}));

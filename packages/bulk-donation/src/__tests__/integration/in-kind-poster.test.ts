@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { QuickBooksClient, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_POST_ATTEMPTS, QuickBooksClient, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -14,6 +14,7 @@ import { ingestInKind, recordInKindDonor } from "../../inKind";
 import { inKindAcceptService, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import { inKindKey, inKindPostingOnAt, runInKindQbPosting } from "../../lib/in-kind-poster";
 import { InKindQbResolveInputSchema, resolveInKindQb, type InKindQbResolveInput } from "../../lib/in-kind-resolve";
+import { DEFAULT_DONATION_SETTINGS, readDonationSettings, updateDonationSettings } from "../../services/settingsService";
 import type { InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 
@@ -26,7 +27,7 @@ const BUCKETS: OwnerInfo[] = [
   { id: 2, name: "Shop", archivedAt: null, quickBooksClassId: "C2" },
 ];
 const ACTOR = { actorUserId: FINANCE, actorUsername: "finance", correlationId: null };
-const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true };
+const ACCEPT: InKindDecisionInput = { outcome: "accept", bucketId: 1, confirmOutsideDonorHousehold: true, confirmGoodsReceived: true };
 
 interface PostedJournal {
   TxnDate: string;
@@ -41,6 +42,8 @@ class FakeQbo {
   purchases: QboPurchase[] = [];
   posts: { key: string; body: PostedJournal }[] = [];
   closeDate: string | null = null;
+  /** The books closing date read fails. */
+  refuseCloseRead = false;
   dropAfterCreate = false;
   /** The create fails without reaching the books. */
   refuseCreate = false;
@@ -56,6 +59,7 @@ class FakeQbo {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
+      if (query === "SELECT * FROM Preferences" && this.refuseCloseRead) throw new Error("connection refused");
       if (query === "SELECT * FROM Preferences") return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       const since = /FROM JournalEntry WHERE MetaData\.CreateTime >= '([^']+)'/.exec(query);
       if (since) {
@@ -94,6 +98,8 @@ let accounts: Partial<Record<BooksMapRole, string>>;
 let awaiting: { giftSource: string; giftId: number }[];
 let assets: number[];
 let alerts: number;
+let drainStops: { failures: number; remaining: number }[];
+let drainStopAlertFails: boolean;
 
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
@@ -115,6 +121,10 @@ function configure() {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
       sweepIncomplete: async () => void alerts++,
+      drainStopped: async ({ failures, remaining }) => {
+        if (drainStopAlertFails) throw new Error("SES down");
+        drainStops.push({ failures, remaining });
+      },
     },
   });
 }
@@ -175,6 +185,8 @@ beforeEach(async () => {
   awaiting = [];
   assets = [];
   alerts = 0;
+  drainStops = [];
+  drainStopAlertFails = false;
   configure();
 });
 
@@ -301,6 +313,66 @@ describeDb("in-kind drain", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ unbooked: 1 });
     expect(qbo.posts).toHaveLength(0);
     expect((await posting(id)).qbNote).toMatch(/closed books/);
+  });
+
+  it("hands gifts that always fail to finance at the limit, so a newer gift then posts, and alerts finance each run the streak stops", async () => {
+    await switchOn();
+    const stuck = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+    const newer = await acceptedGift();
+    qbo.refuseCreate = true;
+
+    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, exhausted: 0, stoppedAfterFailures: true });
+      expect(await posting(stuck[0])).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: run });
+    }
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 0, exhausted: 3, stoppedAfterFailures: true });
+    expect(drainStops).toEqual(Array(MAX_POST_ATTEMPTS).fill({ failures: 3, remaining: 1 }));
+    for (const id of stuck) {
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbNote: expect.stringMatching(/stopped trying after 5 failed attempts: .*connection refused/) });
+    }
+    expect((await inKindAcceptService.listQueue(orgId, FINANCE)).filter((g) => g.qbState === "NEEDS_FINANCE").map((g) => g.id).sort()).toEqual([...stuck].sort());
+    await expect(posting(newer)).rejects.toThrow();
+
+    // QuickBooks still refuses, but the newer gift gets its turn: its own failure now shows.
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, exhausted: 0, stoppedAfterFailures: false });
+    expect(await posting(newer)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1 });
+
+    qbo.refuseCreate = false;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    expect(await posting(newer)).toMatchObject({ matchState: "CREATED" });
+    expect(await posting(stuck[0])).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
+    expect(qbo.posts).toHaveLength(1);
+    expect(drainStops).toHaveLength(MAX_POST_ATTEMPTS);
+  });
+
+  it("finance can still book a gift handed over at the limit", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.refuseCreate = true;
+    for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
+    expect((await posting(id)).matchState).toBe("NEEDS_FINANCE");
+
+    qbo.refuseCreate = false;
+    expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
+  });
+
+  it("a run that cannot read the closing date counts no attempt against the gift", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.refuseCloseRead = true;
+    for (let run = 0; run <= MAX_POST_ATTEMPTS; run++) await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, closeDateRead: false });
+    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0 });
+    expect(drainStops).toEqual([]);
+  });
+
+  it("a failed streak alert does not fail the run", async () => {
+    await switchOn();
+    await acceptedGift();
+    await acceptedGift();
+    await acceptedGift();
+    qbo.refuseCreate = true;
+    drainStopAlertFails = true;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, stoppedAfterFailures: true });
   });
 
   it("a create that landed but went unanswered is found by its key next run, never booked twice", async () => {
@@ -539,5 +611,54 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect(await resolve(id, { action: "skip", reason: "looks unbooked" })).toMatchObject({ qbState: "CREATED" });
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000", matchState: "CREATED" }]);
     expect(qbo.posts).toHaveLength(1);
+  });
+});
+
+describeDb("in-kind drain settings", () => {
+  const set = (data: { qbMatchWindowDays?: number; qbMaxCreatesPerRun?: number }) =>
+    db.donationOrgSettings.upsert({ where: { orgId }, create: { orgId, ...data }, update: data });
+  const clearingPair = (date: string) => {
+    qbo.deposits.push({ Id: "51", TxnDate: date, TotalAmt: 33, DepositToAccountRef: { value: "290" } });
+    qbo.purchases.push({ Id: "52", TxnDate: date, TotalAmt: 33, AccountRef: { value: "290" } });
+  };
+
+  it("stops at the org's per-run limit", async () => {
+    await switchOn();
+    await set({ qbMaxCreatesPerRun: 1 });
+    await acceptedGift();
+    await acceptedGift();
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capped: true });
+  });
+
+  it("looks for finance's pair only within the org's match window", async () => {
+    await switchOn();
+    await set({ qbMatchWindowDays: 1 });
+    await acceptedGift();
+    clearingPair("2026-10-22");
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ matched: 0, posted: 1 });
+  });
+
+  it("finds finance's pair anywhere in a widened match window", async () => {
+    await set({ qbMatchWindowDays: 30 });
+    await acceptedGift();
+    clearingPair("2026-11-15");
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ matched: 1 });
+  });
+
+  it("reads the same defaults with no settings row as a new row's columns give", async () => {
+    await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
+    await db.donationOrgSettings.create({ data: { orgId } });
+    await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
+  });
+
+  it("records a change with its before and after", async () => {
+    await updateDonationSettings(orgId, { qbMatchWindowDays: 3 }, { isFinance: true, isBoard: false }, ACTOR);
+
+    await expect(readDonationSettings(db, orgId)).resolves.toEqual({ qbMatchWindowDays: 3, qbMaxCreatesPerRun: 25 });
+    const event = await db.workflowEvent.findFirstOrThrow({ where: { orgId, eventType: "SETTINGS_UPDATED" } });
+    expect(JSON.parse(event.payload ?? "")).toEqual({ before: { qbMatchWindowDays: 7 }, after: { qbMatchWindowDays: 3 } });
   });
 });

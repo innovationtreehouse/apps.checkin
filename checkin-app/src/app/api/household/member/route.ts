@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { logger } from "@/lib/logger";
+import { logger, logBackendError } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError } from "@/lib/household/leads";
@@ -7,8 +7,9 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
+import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
@@ -16,9 +17,12 @@ import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInE
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+
+class BecameTrustedError extends Error {}
 
 export const PATCH = withAuth(
     {},
@@ -39,7 +43,7 @@ export const PATCH = withAuth(
                 return apiError(PHONE_ERROR, 400);
             }
 
-            // A submitted-but-blank name is rejected, not silently dropped (Decision 5).
+            // A submitted-but-blank name is rejected, not silently dropped.
             if (name !== undefined && !nameWrite(name)) {
                 return apiError("Name cannot be blank", 400);
             }
@@ -81,6 +85,14 @@ export const PATCH = withAuth(
                 return apiError("That household member was not found", 404);
             }
 
+            if (participantId === userId && isYouth(targetHouseholdMember.dateOfBirth)) {
+                return apiError("Youth profiles are read-only.", 403);
+            }
+
+            if (replacesUnder18Date(dob, over25, targetHouseholdMember.dateOfBirth)) {
+                return apiError(UNDER_18_DECLARATION_REFUSAL, 400);
+            }
+
             // A sysadmin manages their own household without leading it, so making
             // someone its lead that way is a grant to their own household.
             if (isLead === true && participantId !== userId && !targetHouseholdMember.isHouseholdLead) {
@@ -107,7 +119,8 @@ export const PATCH = withAuth(
                 + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
                 || Boolean(targetHouseholdMember.lastBackgroundCheck)
                 || targetHouseholdMember.canAccessStaging
-                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily);
+                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily)
+                || (email !== undefined && (await trustStatus(prisma, participantId)).isTrusted);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
@@ -130,18 +143,20 @@ export const PATCH = withAuth(
                         nickname: nicknameWrite(nickname),
                         email: email !== undefined && !holdsGrant ? (email === "" ? null : email.toLowerCase()) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
-                        // 26+ DoB is stripped and forces the flag on; an empty DoB honors
-                        // the checkbox. `undefined` dob leaves the field unchanged.
-                        ...(dob !== undefined ? normalizeAdultDob(dob) : {}),
-                        ...(over25 !== undefined && !dob ? { isDeclaredAdult: !!over25 } : {}),
+                        ...normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth),
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
                     },
                     select: HOUSEHOLD_PEER_SELECT,
                 });
 
+                // Read after the write and roll back: a grant this misses commits after
+                // the edit, so it lands on the new address rather than being changed under.
+                if (email !== undefined && !holdsGrant && (await trustStatus(tx, participantId)).isTrusted) {
+                    throw new BecameTrustedError();
+                }
+
                 // Set when the field edits saved but the requested promotion to lead
-                // was declined by the per-household cap (#269). We report this back
+                // was declined by the per-household cap. We report this back
                 // rather than 400 the whole edit, so the form can say the member's
                 // details were saved even though they weren't made a lead.
                 let leadRejection: string | null = null;
@@ -213,7 +228,14 @@ export const PATCH = withAuth(
             });
             invalidateAttendanceCache();
             if (deniedLead) {
-                await raiseDeniedHouseholdActivity({ householdId: deniedLead.householdId, personId: deniedLead.personId, what: "household lead promotion refused" });
+                const ref = { householdId: deniedLead.householdId, personId: deniedLead.personId };
+                try {
+                    await raiseDeniedHouseholdActivity({ ...ref, what: "household lead promotion refused" });
+                } catch (error) {
+                    // The edit has committed, so this failure must not read as a failed save.
+                    logger.error("Household Member PATCH denied household raise failed:", ref, error);
+                    await logBackendError(error, "PATCH /api/household/member denied household raise", ref);
+                }
             }
 
             return NextResponse.json({
@@ -226,6 +248,10 @@ export const PATCH = withAuth(
         } catch (error: unknown) {
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);
+            }
+            if (error instanceof BecameTrustedError) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
             }
             logger.error("Household Member PATCH Error:", error);
             return apiError("Internal Server Error", 500);

@@ -3,11 +3,10 @@ import { httpError, mapServiceErrors, parseId } from "@checkin/component-kit";
 import { readCapped } from "@checkin/utils";
 import { db } from "../db";
 import { CsvValidationError, parseBenevityCsv } from "../lib/csv-parser";
-import { recordDonorDataRead } from "../repositories/audit";
 import { uploadedFileService } from "../services/uploadedFileService";
 import { getOrgId } from "../runtime";
 import type { DonationFileRouteHandler, DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, pageArgs } from "./_shared";
+import { auditContext, pageArgs } from "./_shared";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /** Room over the file cap for the multipart framing. */
@@ -55,7 +54,7 @@ export const upload: DonationRouteHandler = async ({ req }) => {
   return { UploadedFile: { ...result, originalFilename: file.name } };
 };
 
-export const download: DonationFileRouteHandler = async ({ req, params }) => {
+export const download: DonationFileRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
   const orgId = await getOrgId();
   const file = await db.uploadedFile.findFirst({
@@ -63,10 +62,6 @@ export const download: DonationFileRouteHandler = async ({ req, params }) => {
     select: { id: true, orgId: true, originalFilename: true, fileBlob: true },
   });
   if (!file?.fileBlob) throw httpError(404, "File not found");
-  await recordDonorDataRead(db, orgId, "uploaded_file", await donorReader(req, "GET /api/donations/uploaded-files/[id]/blob"), {
-    ids: [id],
-    count: 1,
-  });
   return { row: file, contentType: "text/plain", filename: file.originalFilename };
 };
 

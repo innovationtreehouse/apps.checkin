@@ -1,4 +1,4 @@
-/** Sign-off seat and approval rules (F2 / F2-COI, the C′ decisions of #2503), pure — no database. */
+/** Sign-off seat and approval rules (Financial Policy F2 / F2-COI), pure — no database. */
 import { describe, it, expect } from "vitest";
 import {
   approvalRefusal,
@@ -30,6 +30,7 @@ const pending: SignoffFacts = {
   reimburseeSetter: null,
   seatedHouseholds: [],
   boardSeat: false,
+  conflictedFinal: false,
   approved: false,
   approver: null,
   expenseSigners: [],
@@ -206,6 +207,32 @@ describe("a non-member reimbursement (C′.6)", () => {
 
   it("a card charge takes no Board seat for the membership fact", () => {
     expect(takesBoardSeat({ ...base, kind: "card_charge", reimburseeIsMember: false })).toBe(false);
+  });
+});
+
+describe("a bucket made final by a conflicted FINANCE holder", () => {
+  const final = { ...base, conflictedFinal: true };
+
+  it("adds a Board seat, on a card charge too, after the approval and the Treasurer", () => {
+    expect(takesBoardSeat(final)).toBe(true);
+    expect(takesBoardSeat({ ...final, kind: "card_charge" })).toBe(true);
+    expect(missingSeats(final, seats(["SUBMITTER", 1], ["TREASURER", 3]))).toEqual(["BOARD"]);
+    expect(signoffRefusal({ ...final, approved: false, approver: null }, [], "BOARD", 5)).toMatch(/not approved yet/);
+    expect(signoffRefusal(final, seats(["SUBMITTER", 1]), "BOARD", 5)).toMatch(/after the Treasurer/);
+    expect(signoffRefusal(final, seats(["SUBMITTER", 1], ["TREASURER", 3]), "BOARD", 5)).toBeNull();
+  });
+
+  it("is refused to a conflicted Board member, and held when no Board member is free of conflict", () => {
+    const filled = seats(["SUBMITTER", 1], ["TREASURER", 3]);
+    const conflictedBoard = { ...final, board: [5, 8] };
+    expect(signoffRefusal(conflictedBoard, filled, "BOARD", 8)).toMatch(/submitter, the reimbursee/);
+    expect(blockedSeats(conflictedBoard, filled)).toEqual([]);
+    expect(blockedSeats({ ...final, board: [8] }, filled)).toEqual(["BOARD"]);
+  });
+
+  it("a line without it takes no Board seat", () => {
+    expect(takesBoardSeat(base)).toBe(false);
+    expect(missingSeats(base, seats(["SUBMITTER", 1], ["TREASURER", 3]))).toEqual([]);
   });
 });
 

@@ -20,6 +20,9 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
+import { signCheckout } from '@/lib/programs/checkoutSignature';
+
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 jest.mock('@/lib/membership/payment', () => ({
     activateByProcessId: jest.fn().mockResolvedValue({ outcome: 'active', process: null }),
@@ -58,18 +61,17 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     let p1: number;
     let p2: number;
     let h1: number;
+    // The signature the program page's checkout puts on the link for its own household.
+    const checkoutSig = (pid: number, accountIds: string, householdId = h1) =>
+        signCheckout(pid, accountIds.split(',').map(Number), householdId);
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         // shopifyVariantId is the variant the enroll flow's checkout link is
         // built from — seed it so the guard under test has something to match
         // line_items against.
-        // endAt "now": membership coverage always reaches it, whatever
-        // orgMembershipYearBoundary a concurrently-running suite has installed
-        // on the shared BoardSettings row (a boundary's next occurrence is
-        // never in the past, so the fee-settled test can't lose that race).
         const program = await prisma.program.create({
-            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
         });
         programId = program.id;
 
@@ -83,10 +85,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         p2 = b.id;
 
-        // Route now checks the order's line items against BoardSettings'
+        // The route checks the order's line items against BoardSettings'
         // configured membership variant id(s) — seed one so the routing test
         // below can prove a matching order activates.
-        // No year boundary, so an ACTIVE membership covers every program end date.
         restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
@@ -95,9 +96,13 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
     });
 
-    beforeEach(() => {
+    // No year boundary, so a bare-ACTIVE membership covers every program date. Under
+    // any boundary it covers only through the current cycle's start, short of the
+    // program's membership year, and the fee-settled cases stay PENDING.
+    beforeEach(async () => {
         jest.clearAllMocks();
         process.env.SHOPIFY_WEBHOOK_SECRET = SECRET;
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
     });
 
     afterAll(async () => {
@@ -130,6 +135,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: accountIds },
                 { name: 'Program_ID', value: String(programId) },
+                { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(programId, accountIds) },
             ],
         });
     }
@@ -252,7 +258,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     });
 
     it('does NOT activate a PENDING participant when the paid order does not contain the program\'s Shopify variant (fails closed)', async () => {
-        // The core regression test: note_attributes alone (CheckMeIn_Account_ID /
+        // The core guard: note_attributes alone (CheckMeIn_Account_ID /
         // Program_ID) are customer-controlled and must NOT be enough to activate —
         // the order's line_items have to actually contain the program's variant.
         // Here they carry an unrelated (cheaper) variant instead.
@@ -287,6 +293,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: accountIds },
                 { name: 'Program_ID', value: String(programId) },
+                { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(programId, accountIds) },
             ],
         });
         const setActive = (personId: number, shopifyOrderId: string | null) => prisma.programParticipant.upsert({
@@ -322,6 +329,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     note_attributes: [
                         { name: 'CheckMeIn_Account_ID', value: String(p1) },
                         { name: 'Program_ID', value: String(programId) },
+                        { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(programId, String(p1)) },
                     ],
                 });
                 await POST(webhookReq(body, sign(body)));
@@ -379,6 +387,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 note_attributes: [
                     { name: 'CheckMeIn_Account_ID', value: `${p1},${p2}` },
                     { name: 'Program_ID', value: String(programId) },
+                    { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(programId, `${p1},${p2}`) },
                 ],
             });
             await POST(webhookReq(body, sign(body)));
@@ -565,6 +574,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 note_attributes: [
                     { name: 'CheckMeIn_Account_ID', value: String(p1) },
                     { name: 'Program_ID', value: String(noVariantProgram.id) },
+                    { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(noVariantProgram.id, String(p1)) },
                 ],
             });
             const res = await POST(webhookReq(body, sign(body)));
@@ -610,7 +620,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
-        // H2: whether the order actually contains the configured membership variant
+        // Whether the order actually contains the configured membership variant
         // is forwarded so activate() can enforce it.
         expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', { appliesToYear: null });
     });
@@ -661,6 +671,18 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(activateByProcessId).toHaveBeenCalledWith(45, '98771', null);
     });
 
+    it('forwards no membership line for an order of only custom or deleted products that covers the fee', async () => {
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98773,
+            total_price: '500.00',
+            line_items: [{ variant_id: null, product_id: null, title: 'Custom membership', price: '500.00', quantity: 1 }],
+            note_attributes: [{ name: 'Membership_Process_ID', value: '47' }],
+        });
+        expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(47, '98773', null);
+    });
+
     it('activates the program seat AND the membership when one order carries both', async () => {
         await setPending(p1);
         const body = JSON.stringify({
@@ -671,6 +693,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 { name: 'Membership_Process_ID', value: '43' },
                 { name: 'CheckMeIn_Account_ID', value: String(p1) },
                 { name: 'Program_ID', value: String(programId) },
+                { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(programId, String(p1)) },
             ],
         });
         const res = await POST(webhookReq(body, sign(body)));
@@ -749,6 +772,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     note_attributes: [
                         { name: 'CheckMeIn_Account_ID', value: String(sgp1) },
                         { name: 'Program_ID', value: String(singlePoolProgramId) },
+                        { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(singlePoolProgramId, String(sgp1), sgh1) },
                     ],
                 });
 
@@ -791,6 +815,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     note_attributes: [
                         { name: 'CheckMeIn_Account_ID', value: String(sgp1) },
                         { name: 'Program_ID', value: String(singlePoolProgramId) },
+                        { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(singlePoolProgramId, String(sgp1), sgh1) },
                     ],
                 });
 

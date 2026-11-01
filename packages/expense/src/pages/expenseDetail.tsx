@@ -10,7 +10,8 @@ import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
 import { backToQueue, lineWaitsOnViewer } from "../lib/backToQueue";
 import { lineCents } from "../qb-write";
-import { api, goTo, send, useBuckets, useLoad, useRoles } from "../components/api";
+import { api, goTo, send, useLoad, useRoles } from "../components/api";
+import { bucketChoices, type Bucket as LocalOwner } from "../lib/buckets";
 import { LoadError } from "@checkin/component-ui";
 import NonInventoryBadge from "../components/NonInventoryBadge";
 import AccountHoldsPanel, { type Hold } from "../components/AccountHoldsPanel";
@@ -112,7 +113,7 @@ const NOT_SENT: Record<string, string> = {
   NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
   AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
   UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
-  BEFORE_LINE: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
+  SKIPPED: "Not sent to QuickBooks: finance skipped it",
 };
 
 const REVIEW_LABEL: Record<ReviewKind, { title: string; act: string }> = {
@@ -172,7 +173,7 @@ function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee
   const [text, setText] = useState(initial);
   const [query, setQuery] = useState(initial.trim().length >= 2 ? initial.trim() : "");
   const [picked, setPicked] = useState<VendorOption | null>(null);
-  const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null);
+  const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null, { keepPrevious: true });
   const link = async (body: unknown) => { if (await send(`${base}/reimbursee-vendor`, "PUT", body, "Vendor linked")) onLinked(); };
 
   if (options.error === QB_OFF) return <Text size="sm" c="dimmed">{options.error}</Text>;
@@ -223,7 +224,7 @@ function ReimburseePicker({ base, onSet }: { base: string; onSet: () => void }) 
   const [picked, setPicked] = useState<PersonOption | null>(null);
   const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
   const term = search.trim();
-  const options = useLoad<PersonOption[]>(term.length >= 2 ? `${base}/reimbursee/options?q=${encodeURIComponent(term)}` : null);
+  const options = useLoad<PersonOption[]>(term.length >= 2 ? `${base}/reimbursee/options?q=${encodeURIComponent(term)}` : null, { keepPrevious: true });
   const body = newPerson ? { newPerson: { name: newPerson.name.trim(), isAdult: true } } : picked && { personId: picked.personId };
   const ready = newPerson ? newPerson.name.trim() !== "" && newPerson.isAdult : picked !== null;
   const people = [picked, ...(options.data ?? [])]
@@ -376,6 +377,37 @@ interface Candidate {
   vendorRef: string | null;
 }
 
+/** The QuickBooks reasons finance answers with a skip. */
+const QB_SKIP_REASONS = new Set<ReasonCode>(["QB_UNBOOKED", "QB_AWAITING_MATCH", "QB_VENDOR_MISSING", "QB_POST_FAILED"]);
+
+/** Skips the expense for good, with the required reason. A refusal may have changed it, so the page rereads either way. */
+function SkipButton({ base, onDecided, onRefused }: { base: string; onDecided: () => void; onRefused: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [why, setWhy] = useState("");
+  return (
+    <>
+      <Button size="xs" variant="default" onClick={() => { setWhy(""); setAsking(true); }}>Skip</Button>
+      <Modal opened={asking} onClose={() => setAsking(false)} title="Skip this expense in QuickBooks">
+        <Stack>
+          <Text size="sm">The app will never book or match this expense again. This cannot be undone.</Text>
+          <Textarea label="Why it is skipped" required value={why} onChange={(ev) => setWhy(ev.currentTarget.value)} />
+          <Button
+            disabled={!why.trim()}
+            onClick={async () => {
+              const skipped = await send(`${base}/qb-resolve`, "POST", { action: "skip", reason: why.trim() }, "Skipped in QuickBooks");
+              setAsking(false);
+              if (skipped) onDecided();
+              else onRefused();
+            }}
+          >
+            Skip this expense
+          </Button>
+        </Stack>
+      </Modal>
+    </>
+  );
+}
+
 /** QuickBooks entries the expense may match: pick one, or exclude one that belongs to nothing, with a reason. */
 function MatchPicker({ base, currency, onDecided }: { base: string; currency: string; onDecided: () => void }) {
   const candidates = useLoad<Candidate[]>(`${base}/qb-candidates`);
@@ -428,7 +460,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
   const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
   const vendor = useLoad<VendorLink>(isFinance ? `${base}/reimbursee-vendor` : null);
-  const bucketOptions = useBuckets(isFinance || isBoard);
+  const owners = useLoad<LocalOwner[]>(isFinance || isBoard ? "/local-owners" : null);
+  const bucketOptions = bucketChoices(owners.data);
   const [dialog, setDialog] = useState<{ action: LineAction; approval: Approval } | null>(null);
   const [text, setText] = useState("");
   const [bucket, setBucket] = useState<string | null>(null);
@@ -504,6 +537,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   // Settling an exception, finance may make the bucket final; that takes a note.
   const canMakeFinal = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "finance-assign";
   const finalNoteMissing = canMakeFinal && final && !text.trim();
+  const ownersError = owners.error && <LoadError what="the bucket list" message={owners.error} onRetry={owners.reload} />;
   const waitingOnYou = e.lineItems.filter((l) => statusOf.get(l.id)?.actions.some((a) => a.primary)).length;
   const reviews = (e.flags ?? []).flatMap((flag) => {
     const kind = flag.checkedOffAt ? null : reviewKindOf(flag);
@@ -560,6 +594,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {open("QB_VENDOR_MISSING") && (
             <Text size="sm">The reimbursee has no QuickBooks vendor yet; link one in the Reimbursee panel below. The next drain then posts it.</Text>
           )}
+          {reasons.some((r) => QB_SKIP_REASONS.has(r.code) && r.actionable) && (
+            <Group mt="xs"><SkipButton base={base} onDecided={() => void decided()} onRefused={reloadAll} /></Group>
+          )}
         </Paper>
       )}
       <Text size="sm">
@@ -589,6 +626,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Paper>
       )}
 
+      {approvals.error && <LoadError what="the bucket approvals" message={approvals.error} onRetry={approvals.reload} />}
+      {signoffs.error && <LoadError what="the line actions" message={signoffs.error} onRetry={signoffs.reload} />}
       {waitingOnYou > 0 && <Text size="sm" fw={600}>{waitingOnYou} of {e.lineItems.length} lines wait on you.</Text>}
       <ApproveAllButton base={base} statuses={signoffs.data ?? []} approvals={approvalRows} onDone={() => void decided()} />
       <Table>
@@ -614,6 +653,8 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             const s = statusOf.get(l.id);
             const main = s?.actions.find((x) => x.primary);
             const more = s?.actions.filter((x) => !x.primary) ?? [];
+            // Every act but a signature works on the line's approval row, so it waits for the approvals to load.
+            const waitsForApproval = (x: LineAction) => x.act !== "sign" && !a;
             return (
               <Table.Tr key={l.id} fw={main ? 700 : undefined} data-waiting-on-you={main ? true : undefined}>
                 <Table.Td>{main && <span aria-label="Waits on you">→ </span>}{l.lineNumber}</Table.Td>
@@ -649,7 +690,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Table.Td>
                   <Group gap={4} wrap="nowrap">
                     {main && (
-                      <Button size="compact-xs" onClick={() => take(l.id, main, a)}>{actLabel(main)}</Button>
+                      <Button size="compact-xs" disabled={waitsForApproval(main)} onClick={() => take(l.id, main, a)}>{actLabel(main)}</Button>
                     )}
                     {more.length > 0 && (
                       <Menu position="bottom-end">
@@ -658,7 +699,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                         </Menu.Target>
                         <Menu.Dropdown>
                           {more.map((x) => (
-                            <Menu.Item key={`${x.act}-${x.seat ?? ""}`} onClick={() => take(l.id, x, a)}>{actLabel(x)}</Menu.Item>
+                            <Menu.Item key={`${x.act}-${x.seat ?? ""}`} disabled={waitsForApproval(x)} onClick={() => take(l.id, x, a)}>{actLabel(x)}</Menu.Item>
                           ))}
                         </Menu.Dropdown>
                       </Menu>
@@ -706,6 +747,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               {e.reimburseePersonId ? (vendor.data?.ExpenseReimburseeView?.name ?? `person #${e.reimburseePersonId}`) : "(unknown — held)"}
             </Marked>
           </Text>
+          {!!e.reimburseePersonId && vendor.error && (
+            <LoadError what="the reimbursee's QuickBooks vendor" message={vendor.error} onRetry={vendor.reload} />
+          )}
           {!e.reimburseePersonId && <ReimburseePicker base={base} onSet={() => void decided()} />}
           {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
             ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
@@ -716,6 +760,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       {isFinance && (e.state === "capital_review" || e.state === "set_depreciation_cycle") && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">{e.state === "capital_review" ? "Capital review" : "Depreciation cycle"}</Text>
+          {e.state === "set_depreciation_cycle" && ownersError}
           {capitalRows
             .filter(({ line }) => e.state === "capital_review" || line.isCapital)
             .map(({ line, value }) => (
@@ -758,6 +803,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         <Stack>
           {needsBucket ? (
             <>
+              {ownersError}
               <Select label="Bucket" data={bucketOptions} value={bucket} onChange={setBucket} searchable />
               {canMapPart && (
                 <Checkbox label="Always use this bucket for this part" checked={permanent} onChange={(ev) => setPermanent(ev.currentTarget.checked)} />

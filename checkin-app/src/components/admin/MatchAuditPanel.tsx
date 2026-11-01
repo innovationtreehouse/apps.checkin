@@ -31,7 +31,7 @@ export function MatchAuditPanel() {
 
   // Optimistic local bucket flip → TRACKED_EXCEPTION. Deliberately NOT a re-run of
   // the audit: a re-run re-sweeps the whole mirror and wakes the scale-to-zero
-  // cluster (infra#129) for what is a one-row state change. The next real "Run
+  // cluster for what is a one-row state change. The next real "Run
   // match audit" reconciles from the DB (matchAudit.ts's tracked lookup) anyway.
   const track = async (key: string, body: TrackBody) => {
     setTracking((s) => new Set(s).add(key));
@@ -262,7 +262,7 @@ export function MatchAuditPanel() {
                       }</Table.Td>
                       <Table.Td>
                         {/* NO_PROCESS rows have no processId — no entity to key a PaymentException
-                            on, so no Track button (out of scope for this PR; see matchAudit.ts). */}
+                            on, so no Track button (see matchAudit.ts). */}
                         {m.processId != null && (
                           <Button size="xs" variant="light"
                             loading={tracking.has(`m-${m.processId}`)}

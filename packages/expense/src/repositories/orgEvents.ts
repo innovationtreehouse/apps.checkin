@@ -3,14 +3,9 @@ import type { ExpenseReceivedOrgEvent, ReceivedOrgEventStatus, NewReceivedOrgEve
 
 export function createOrgEventsRepository(db: Db) {
   return {
-    async getMaxId(): Promise<number> {
-      const result = await db.expenseReceivedOrgEvent.aggregate({ _max: { id: true } });
-      return result._max.id ?? 0;
-    },
-
-    /** Ids already received (any status) above `afterId`. */
-    async idsAfter(afterId: number): Promise<number[]> {
-      const rows = await db.expenseReceivedOrgEvent.findMany({ where: { id: { gt: afterId } }, select: { id: true } });
+    /** Those of `ids` already received (any status). */
+    async idsIn(ids: number[]): Promise<number[]> {
+      const rows = await db.expenseReceivedOrgEvent.findMany({ where: { id: { in: ids } }, select: { id: true } });
       return rows.map((r) => r.id);
     },
 

@@ -1,10 +1,12 @@
 // Acknowledgements of mailed receipts: one per message, sent once the message has a receipt, to
 // its sender and to the person the receipt is credited to when that is someone else, so a person
-// whose name someone else mailed a receipt under hears about it.
+// whose name someone else mailed a receipt under hears about it. A verified sender is also told
+// once which files were refused: on the acknowledgement when it is going out then, else on its own.
 import { db } from "../db";
-import type { MailAcknowledgement, MailPart, ReceiptReplies } from "../contract";
+import type { MailAcknowledgement, MailPart, MailRefusal, ReceiptReplies } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
-import { getOrg, replies } from "../runtime";
+import { withLivePeople } from "../lib/livePeople";
+import { getOrgId, replies } from "../runtime";
 
 /** Messages acknowledged per run; the rest wait for the next run. */
 export const REPLY_CAP = 50;
@@ -33,46 +35,69 @@ export function isAutomated(payload: MailPart, address: string | null): boolean 
 
 /**
  * Close the owed reply of each message left with no stored or assigned file, which can no longer
- * become a receipt, so the sweep never scans it again.
+ * become a receipt, so the sweep never scans it again. An unsent refusal notice keeps its row open.
  */
-export async function closeUnreplyable(tx: Prisma.TransactionClient, gmailMessageIds: string[]): Promise<void> {
+export async function closeUnreplyable(tx: Prisma.TransactionClient | typeof db, gmailMessageIds: string[]): Promise<void> {
   const live = await tx.receiptMailItem.findMany({
     where: { gmailMessageId: { in: gmailMessageIds }, status: { in: ["held", "deferred", "assigned"] } },
     select: { gmailMessageId: true },
   });
   const liveIds = new Set(live.map((l) => l.gmailMessageId));
   const dead = gmailMessageIds.filter((id) => !liveIds.has(id));
-  if (dead.length > 0) await tx.receiptMailReply.updateMany({ where: { gmailMessageId: { in: dead }, doneAt: null }, data: { doneAt: new Date() } });
+  if (dead.length > 0) {
+    await tx.receiptMailReply.updateMany({
+      where: { gmailMessageId: { in: dead }, doneAt: null, OR: [{ refusals: { equals: [] } }, { refusalSentAt: { not: null } }] },
+      data: { doneAt: new Date() },
+    });
+  }
 }
 
-type Send = { field: "senderSentAt" | "creditedSentAt"; ack: MailAcknowledgement };
+type Send = { fields: ("senderSentAt" | "creditedSentAt" | "refusalSentAt")[]; ack: MailAcknowledgement };
 
 /**
  * The copies still owed on a claimed row. The sender's copy counts as the credited person's only
  * when it is actually sent, so a forged From credited to the person it names still reaches them.
+ * Refused files ride on the sender's copy when one is going out, else go alone.
  */
-async function owedSends(out: ReceiptReplies, id: number, receiptId: string): Promise<Send[]> {
+async function owedSends(out: ReceiptReplies, id: number, receiptId: string | null): Promise<Send[]> {
   const row = await db.receiptMailReply.findUniqueOrThrow({ where: { id } });
-  // ponytail: a message whose files finance credits to different people acknowledges only the first; add a reply per receipt if that happens.
-  const receipt = await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } });
-  const credited = await out.contactOf(receipt.uploadedByUserId);
-  const sameAsSender = row.replyToSender && credited !== null && credited.email.toLowerCase() === row.senderAddress;
-  const ack = { senderAddress: row.senderAddress, receiptId, receivedAt: row.receivedAt };
-
+  const refused = row.refusalSentAt || !row.replyToSender ? [] : (row.refusals as unknown as MailRefusal[]);
+  const base = { senderAddress: row.senderAddress, receivedAt: row.receivedAt };
+  const notice = refused.length > 0 ? ["refusalSentAt" as const] : [];
   const sends: Send[] = [];
-  if (row.replyToSender && !row.senderSentAt) {
-    sends.push({ field: "senderSentAt", ack: { ...ack, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null } });
+
+  if (receiptId) {
+    // ponytail: a message whose files finance credits to different people acknowledges only the first; add a reply per receipt if that happens.
+    const [receipt] = await withLivePeople([await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } })]);
+    const credited = await out.contactOf(receipt.uploadedByUserId);
+    const sameAsSender = row.replyToSender && credited !== null && credited.email.toLowerCase() === row.senderAddress;
+    const ack = { ...base, receiptId, refused: [] };
+    if (row.replyToSender && !row.senderSentAt) {
+      sends.push({
+        fields: ["senderSentAt", ...notice],
+        ack: { ...ack, refused, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null },
+      });
+    }
+    if (credited && !sameAsSender && !row.creditedSentAt) {
+      sends.push({ fields: ["creditedSentAt"], ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name } });
+    }
   }
-  if (credited && !sameAsSender && !row.creditedSentAt) {
-    sends.push({ field: "creditedSentAt", ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name } });
+  if (refused.length > 0 && !sends.some((s) => s.fields.includes("refusalSentAt"))) {
+    sends.push({ fields: notice, ack: { ...base, receiptId: null, refused, to: row.senderAddress, mine: false, creditedName: null } });
   }
   return sends;
 }
 
 /** Finish a claimed row, or release it for a later run and count the attempt, giving up after REPLY_ATTEMPTS. */
-async function settle(id: number, allSent: boolean): Promise<void> {
-  if (allSent) {
+async function settle(id: number, allSent: boolean, hasReceipt: boolean): Promise<void> {
+  if (allSent && hasReceipt) {
     await db.receiptMailReply.update({ where: { id }, data: { doneAt: new Date() } });
+    return;
+  }
+  if (allSent) {
+    // Only a refusal notice went out: the row stays open for the acknowledgement a stored file may still earn.
+    const { gmailMessageId } = await db.receiptMailReply.update({ where: { id }, data: { claimedAt: null }, select: { gmailMessageId: true } });
+    await closeUnreplyable(db, [gmailMessageId]);
     return;
   }
   const { attempts } = await db.receiptMailReply.update({ where: { id }, data: { claimedAt: null, attempts: { increment: 1 } }, select: { attempts: true } });
@@ -80,7 +105,7 @@ async function settle(id: number, allSent: boolean): Promise<void> {
 }
 
 /**
- * Send each owed acknowledgement whose message now has a receipt. A row is claimed before any
+ * Send each owed acknowledgement whose message now has a receipt, and each unsent refusal notice. A row is claimed before any
  * send and stays claimed once a send succeeds, so nothing is sent twice; a send that reports
  * failure releases the claim for a later run. Does nothing while the host's mail out is unbound.
  */
@@ -88,9 +113,9 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
   const out = replies();
   const counts = { sent: 0, failed: 0 };
   if (!out) return counts;
-  const orgId = (await getOrg()).id;
+  const orgId = await getOrgId();
   // The first receipt made from each waiting message, by ledger order.
-  const owed = await db.$queryRaw<{ id: number; receiptId: string }[]>`
+  const owed = await db.$queryRaw<{ id: number; receiptId: string | null }[]>`
     SELECT r.id, (
       SELECT i.receipt_id FROM receipt_mail_items i
       WHERE i.gmail_message_id = r.gmail_message_id AND i.receipt_id IS NOT NULL
@@ -98,7 +123,10 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
     ) AS "receiptId"
     FROM receipt_mail_replies r
     WHERE r.org_id = ${orgId} AND r.done_at IS NULL AND r.claimed_at IS NULL AND r.attempts < ${REPLY_ATTEMPTS}
-      AND EXISTS (SELECT 1 FROM receipt_mail_items i WHERE i.gmail_message_id = r.gmail_message_id AND i.receipt_id IS NOT NULL)
+      AND (
+        EXISTS (SELECT 1 FROM receipt_mail_items i WHERE i.gmail_message_id = r.gmail_message_id AND i.receipt_id IS NOT NULL)
+        OR (r.reply_to_sender AND r.refusals <> '[]'::jsonb AND r.refusal_sent_at IS NULL)
+      )
     ORDER BY r.id
     LIMIT ${REPLY_CAP}`;
 
@@ -112,12 +140,12 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
       // Nothing was sent, so the claim is released and the attempt counts.
       console.error("[receipt] mail acknowledgement could not be prepared for one message:", err);
       counts.failed++;
-      await settle(id, false).catch((e: unknown) => console.error("[receipt] mail acknowledgement claim not released:", e));
+      await settle(id, false, receiptId !== null).catch((e: unknown) => console.error("[receipt] mail acknowledgement claim not released:", e));
       continue;
     }
 
     let allSent = true;
-    for (const { field, ack } of sends) {
+    for (const { fields, ack } of sends) {
       let ok = false;
       try {
         ok = await out.send(ack);
@@ -125,7 +153,7 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
         console.error("[receipt] mail acknowledgement failed for one message:", err);
       }
       if (ok) {
-        await db.receiptMailReply.update({ where: { id }, data: { [field]: new Date() } });
+        await db.receiptMailReply.update({ where: { id }, data: Object.fromEntries(fields.map((f) => [f, new Date()])) });
         counts.sent++;
       } else {
         allSent = false;
@@ -133,7 +161,7 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
       }
     }
     // ponytail: a crash between a send and its stamp leaves the row claimed and never retried; that is the at-most-once side.
-    await settle(id, allSent);
+    await settle(id, allSent, receiptId !== null);
   }
   return counts;
 }

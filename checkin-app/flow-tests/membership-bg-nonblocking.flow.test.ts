@@ -2,15 +2,15 @@
  * @jest-environment node
  */
 /**
- * Flow test for PR #428 — the background check is non-blocking.
+ * Flow test: the background check is non-blocking.
  *
  * Drives the real user journey over HTTP against a running dev server with a
  * fresh seed: a non-member applicant fills intake, the board records the two
  * external actions, and the applicant pays before the check has cleared.
  *
- * Asserts the two behaviours the PR introduced end-to-end:
+ * Asserts two behaviours end-to-end:
  *   1. After the external step the application is at PENDING_PAYMENT — payment is
- *      unblocked (pre-PR it parked at PENDING_BG_REVIEW until reviewers cleared it).
+ *      unblocked, with no wait for reviewers to clear the check.
  *   2. Paying before the check clears holds at PENDING_BG_CLEARANCE with the
  *      membership still inactive (never ACTIVE without a valid check).
  *
@@ -21,7 +21,7 @@ import { loginAs, api } from "./helpers";
 
 type State = { process: { id: number; status: string } | null; membershipStatus: string | null };
 
-describe("flow: membership background check is non-blocking (PR #428)", () => {
+describe("flow: membership background check is non-blocking", () => {
     it("intake → external → PENDING_PAYMENT, and paying before BG clears holds inactive", async () => {
         const applicant = await loginAs("parent.family2@example.com"); // non-member household lead
         const board = await loginAs("boardmember@example.com");        // sysadmin + board
@@ -48,7 +48,7 @@ describe("flow: membership background check is non-blocking (PR #428)", () => {
         const processId = afterSubmit.json.process!.id;
 
         // Board records the contract + background-check consent (manual fallbacks,
-        // no Zoho/Averity needed). Pre-#428 this advanced to PENDING_BG_REVIEW.
+        // no Zoho/Averity needed).
         const c1 = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
         expect(c1.status).toBe(200);
         const c2 = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-bg-consent" }) });

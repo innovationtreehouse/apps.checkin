@@ -9,6 +9,7 @@ import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb } from "./expense-qb-poster";
+import { sendOutcomeNotices } from "./outcome-notices";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -301,6 +302,9 @@ async function commitQbProcessing(
     }
 
     const accountByLine = new Map(resolved.map((r) => [r.id, r.account]));
+    // Finance can set a line's account until this lock is taken, and that account wins over the earlier read.
+    const manualAccounts = await tx.expenseLineItem.findMany({ where: { expenseId, manualQbAccount: { not: null } }, select: { id: true, manualQbAccount: true } });
+    for (const { id, manualQbAccount } of manualAccounts) accountByLine.set(id, manualQbAccount!);
     for (const li of lineItems) {
       await tx.expenseLineItem.update({
         where: { id: li.id },
@@ -451,6 +455,7 @@ async function processExpenseForQb(
       snapshots,
     );
     if (!committed) return;
+    await sendOutcomeNotices([expenseId]);
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
     // Unique constraint on expenseEvents → concurrent run already committed; safe to ignore

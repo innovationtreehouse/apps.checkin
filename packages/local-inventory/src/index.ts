@@ -14,7 +14,6 @@ export * as routes from "./routes";
 export {
   configureLocalInventory,
   getPrincipal,
-  getOrg,
   getOrgId,
   getNavCounts,
   inventoryApply,

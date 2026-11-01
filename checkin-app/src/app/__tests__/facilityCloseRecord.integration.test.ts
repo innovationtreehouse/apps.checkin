@@ -8,7 +8,6 @@
  * outcome is the same as without the record.
  */
 import { POST as scanPOST } from '@/app/api/scan/route';
-import { DELETE as dashboardDELETE } from '@/app/api/attendance/route';
 import { PATCH as manualPATCH, DELETE as manualDELETE } from '@/app/api/attendance/manual/[id]/route';
 import { GET as nightlyGET } from '@/app/api/cron/nightly/route';
 import { PATCH as staffPATCH } from '@/app/api/facility/visits/route';
@@ -17,7 +16,8 @@ import { authenticateRequest } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
 import type { FacilityCloseVia, Person, Visit } from '@/generated/prisma/client';
 import type { NextRequest } from 'next/server';
-import { sendEmail } from '@/lib/email';
+import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { lockFacility } from '@/lib/facilityLock';
 
 jest.mock('@/lib/auth', () => ({
     ...jest.requireActual('@/lib/auth'),
@@ -52,7 +52,6 @@ describe('facility close record and departure log (real DB)', () => {
     let member: Person;
     let member2: Person;
     let board: Person;
-    let boardKey: Person;
     let people: Person[];
     let closeIdFloor: number;
     const programIds: number[] = [];
@@ -66,8 +65,7 @@ describe('facility close record and departure log (real DB)', () => {
         member = await mk('Member', {});
         member2 = await mk('Member2', {});
         board = await mk('Board', { isBoardMember: true });
-        boardKey = await mk('BoardKey', { isBoardMember: true, isKeyholder: true });
-        people = [keyholder, keyholder2, member, member2, board, boardKey];
+        people = [keyholder, keyholder2, member, member2, board];
     });
 
     // The close is facility-wide: start every test from an empty building.
@@ -211,6 +209,29 @@ describe('facility close record and departure log (real DB)', () => {
             ], keyholder);
             expect(close.closedAt.getTime()).toBe(scannedAt.getTime());
         });
+
+        it('a pull-back moves the visit to the kiosk close, and its log row names the nightly close it replaced', async () => {
+            asKiosk();
+            const cronAt = new Date(Date.now() - 10 * 60_000);
+            const scannedAt = new Date(Date.now() - HOUR);
+            const nightly = await prisma.facilityClose.create({ data: { closedAt: cronAt, via: 'NIGHTLY_SWEEP', executedAt: cronAt } });
+            await open(keyholder);
+            await open(member, { departedAt: cronAt, departedVia: 'AUTO_CLOSE', facilityCloseId: nightly.id });
+
+            await scanPOST(req('/api/scan', 'POST', {
+                participantId: keyholder.id, clientEventId: `evt-${TAG}`, scannedAt: scannedAt.toISOString(), replay: true, forceCloseConfirmed: true,
+            }));
+
+            const pulledBack = await visitOf(member);
+            expect(pulledBack.facilityCloseId).not.toBe(nightly.id);
+            const row = await prisma.auditLog.findFirstOrThrow({
+                where: { tableName: 'FacilityClose', affectedEntityId: pulledBack.facilityCloseId!, secondaryAffectedEntity: pulledBack.id },
+            });
+            expect(row.newData).toMatchObject({ supersededCloseId: nightly.id });
+
+            await prisma.visit.updateMany({ where: { facilityCloseId: nightly.id }, data: { facilityCloseId: null } });
+            await prisma.facilityClose.delete({ where: { id: nightly.id } });
+        });
     });
 
     describe('kiosk on scan protocol 6 (the kiosk sends the close)', () => {
@@ -300,146 +321,6 @@ describe('facility close record and departure log (real DB)', () => {
         });
     });
 
-    describe('web', () => {
-        it('a session scan (home page toggle) writes one WEB_CHECKOUT close', async () => {
-            asSession(keyholder);
-            await open(keyholder);
-            await open(member);
-
-            const warn = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id }));
-            expect(warn.status).toBe(400);
-            const { forceCloseToken } = await warn.json();
-
-            const res = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, forceCloseToken, closeChoice: 'close' }));
-            expect(await res.json()).toMatchObject({ facilityClosed: true });
-
-            await expectOneClose('WEB_CHECKOUT', keyholder.id, [{ person: member, before: fresh }], keyholder);
-        });
-
-        it('a keyholder board member\'s dashboard checkout of the last keyholder writes one WEB_DASHBOARD close', async () => {
-            asSession(boardKey);
-            const kv = await open(keyholder);
-            await open(member);
-            await open(member2);
-
-            const warn = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
-            expect(warn.status).toBe(400);
-            const { forceCloseToken } = await warn.json();
-
-            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken, closeChoice: 'close' }));
-            expect(res.status).toBe(200);
-            expect(await res.json()).toMatchObject({ success: true, facilityClosed: true });
-
-            const close = await expectOneClose('WEB_DASHBOARD', boardKey.id, [
-                { person: member, before: fresh },
-                { person: member2, before: fresh },
-            ], keyholder);
-            // The board ended someone else's visit: no visit of the board's is the close.
-            expect(close.closerVisitId).toBeNull();
-        });
-
-        it('a board member who is not a keyholder may leave but never close', async () => {
-            asSession(board);
-            const kv = await open(keyholder);
-            const mv = await open(member);
-
-            const warn = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
-            const body = await warn.json();
-            expect(body).toMatchObject({ type: 'close_choice', choices: ['leave', 'cancel'] });
-
-            const close = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken: body.forceCloseToken, closeChoice: 'close' }));
-            expect(close.status).toBe(400);
-            const leave = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken: body.forceCloseToken, closeChoice: 'leave' }));
-            expect(await leave.json()).toMatchObject({ success: true, facilityClosed: false });
-            expect((await prisma.visit.findUniqueOrThrow({ where: { id: mv.id } })).departedAt).toBeNull();
-            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
-        });
-
-        it('a correction closing the last keyholder\'s open visit writes one WEB_CORRECTION close', async () => {
-            asSession(keyholder);
-            const kv = await open(keyholder);
-            await open(member);
-            const departedAt = new Date(Date.now() - 60_000).toISOString();
-            const ctx = { params: Promise.resolve({ id: String(kv.id) }) };
-
-            const warn = await manualPATCH(req(`/api/attendance/manual/${kv.id}`, 'PATCH', { departedAt }), ctx);
-            expect(warn.status).toBe(400);
-            const { forceCloseToken } = await warn.json();
-
-            const res = await manualPATCH(req(`/api/attendance/manual/${kv.id}`, 'PATCH', { departedAt, forceCloseToken, closeChoice: 'close' }), ctx);
-            expect(res.status).toBe(200);
-            expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
-
-            const close = await expectOneClose('WEB_CORRECTION', keyholder.id, [{ person: member, before: fresh }], keyholder);
-            expect(close.closedAt.toISOString()).toBe(departedAt);
-        });
-
-        it('a tombstone of the last keyholder\'s open visit never closes the facility', async () => {
-            asSession(keyholder);
-            const kv = await open(keyholder);
-            const mv = await open(member);
-            const ctx = { params: Promise.resolve({ id: String(kv.id) }) };
-
-            const warn = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', {}), ctx);
-            expect(warn.status).toBe(400);
-            const body = await warn.json();
-            expect(body).toMatchObject({ type: 'close_choice', choices: ['leave', 'cancel'], othersInside: 1 });
-
-            const close = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', { forceCloseToken: body.forceCloseToken, closeChoice: 'close' }), ctx);
-            expect(close.status).toBe(400);
-            const again = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', { forceCloseToken: body.forceCloseToken, closeChoice: 'leave' }), ctx);
-            expect(again.status).toBe(200);
-            expect((await prisma.visit.findUniqueOrThrow({ where: { id: kv.id } })).deletedAt).not.toBeNull();
-            expect((await prisma.visit.findUniqueOrThrow({ where: { id: mv.id } })).departedAt).toBeNull();
-            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
-        });
-
-        it('a keyholder\'s leave names the keyholder handed over to, departs nobody else, and emails them', async () => {
-            asSession(keyholder);
-            const kv = await open(keyholder);
-            const mv = await open(member);
-
-            const warn = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
-            const body = await warn.json();
-            expect(body.keyholders).toEqual(expect.arrayContaining([expect.objectContaining({ id: keyholder2.id })]));
-
-            const unnamed = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken: body.forceCloseToken, closeChoice: 'leave' }));
-            expect(unnamed.status).toBe(400);
-
-            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', {
-                visitId: kv.id, forceCloseToken: body.forceCloseToken, closeChoice: 'leave', handoverToId: keyholder2.id,
-            }));
-            expect(await res.json()).toMatchObject({ success: true, facilityClosed: false });
-            expect((await prisma.visit.findUniqueOrThrow({ where: { id: mv.id } })).departedAt).toBeNull();
-            expect(await prisma.visit.count({ where: { personId: keyholder2.id } })).toBe(0);
-            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
-
-            const choice = await prisma.auditLog.findFirstOrThrow({ where: { actorId: keyholder.id, tableName: 'Visit', affectedEntityId: kv.id } });
-            expect(choice.newData).toMatchObject({ type: 'last_keyholder_choice', choice: 'leave', handoverToId: keyholder2.id, othersInside: 1 });
-            expect(sendEmail).toHaveBeenCalledWith(keyholder2.email, expect.any(String), expect.stringContaining('1 person is'));
-        });
-
-        it('a keyholder alone checking out writes one close that departs nobody else', async () => {
-            asSession(boardKey);
-            const kv = await open(keyholder);
-
-            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
-            expect(await res.json()).toMatchObject({ success: true, facilityClosed: true });
-
-            await expectOneClose('WEB_DASHBOARD', boardKey.id, [], keyholder);
-        });
-
-        it('a checkout that does not close writes no close record', async () => {
-            asSession(board);
-            await open(keyholder);
-            const mv = await open(member);
-
-            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: mv.id }));
-            expect(await res.json()).toMatchObject({ success: true, facilityClosed: false });
-            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
-        });
-    });
-
     describe('correcting a close', () => {
         const ago = (ms: number) => new Date(Date.now() - ms);
         const patch = (v: Visit, body: Record<string, unknown>) =>
@@ -450,39 +331,39 @@ describe('facility close record and departure log (real DB)', () => {
             where: { tableName: 'FacilityClose', affectedEntityId: closeId, newData: { path: ['moved'], equals: true } },
         });
 
-        /** The keyholder closes by correcting their open visit to `at`. */
-        async function closeByCorrection(kv: Visit, at: Date) {
+        /** A keyholder's kiosk close confirmed at `at`, delivered from the kiosk's queue. */
+        async function closeAt(at: Date) {
+            asKiosk();
+            const res = await scanPOST(req('/api/scan', 'POST', {
+                participantId: keyholder.id, clientEventId: `evt-correct-${TAG}`, scannedAt: at.toISOString(),
+                replay: true, intent: 'OUT', close: 'confirmed', protocolVersion: 6,
+            }));
+            expect(await res.json()).toMatchObject({ facilityClosed: true });
             asSession(keyholder);
-            const warn = await patch(kv, { departedAt: at.toISOString() });
-            expect(warn.status).toBe(400);
-            const { forceCloseToken } = await warn.json();
-            const res = await patch(kv, { departedAt: at.toISOString(), forceCloseToken, closeChoice: 'close' });
-            expect(res.status).toBe(200);
         }
 
-        it('a correction that closes departs everyone at the typed time, and leaves inside whoever arrived after it', async () => {
+        it('an open visit is neither corrected nor removed, and nothing closes', async () => {
+            asSession(keyholder);
             const kv = await open(keyholder);
             const mv = await open(member);
-            const late = await open(member2, { arrivedAt: ago(30 * 60_000) });
-            const at = ago(HOUR);
 
-            await closeByCorrection(kv, at);
+            expect((await patch(kv, { departedAt: ago(60_000).toISOString() })).status).toBe(409);
+            expect((await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', {}), { params: Promise.resolve({ id: String(kv.id) }) })).status).toBe(409);
 
-            expect(await departedAt(mv)).toEqual(at);
-            expect(await departedAt(late)).toBeNull();
-            expect(await theClose()).toMatchObject({ via: 'WEB_CORRECTION', closedAt: at, closerVisitId: kv.id });
+            expect(await prisma.visit.findUniqueOrThrow({ where: { id: kv.id } })).toMatchObject({ departedAt: null, deletedAt: null });
+            expect(await departedAt(mv)).toBeNull();
+            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
         });
 
         it('an earlier correction moves the departures the close set, except a later arrival and an owner-corrected one', async () => {
-            asSession(keyholder);
+            asKiosk();
             const kv = await open(keyholder);
             const mv = await open(member);
             const bv = await open(board);
             const late = await open(member2, { arrivedAt: ago(30 * 60_000) });
 
-            const warn = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
-            const { forceCloseToken } = await warn.json();
-            await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken, closeChoice: 'close' }));
+            const res = await scanPOST(req('/api/scan', 'POST', { protocolVersion: 6, participantId: keyholder.id, intent: 'OUT', close: 'confirmed' }));
+            expect(await res.json()).toMatchObject({ facilityClosed: true });
             const close = await theClose();
             expect(close.closerVisitId).toBe(kv.id);
             const original = close.closedAt;
@@ -512,7 +393,7 @@ describe('facility close record and departure log (real DB)', () => {
             const kv = await open(keyholder);
             const mv = await open(member);
             const at = ago(HOUR);
-            await closeByCorrection(kv, at);
+            await closeAt(at);
             const close = await theClose();
 
             const later = ago(30 * 60_000);
@@ -531,7 +412,7 @@ describe('facility close record and departure log (real DB)', () => {
         it('the board correcting the closer\'s departure earlier moves the close, logged as the board on the closer\'s behalf', async () => {
             const kv = await open(keyholder);
             const mv = await open(member);
-            await closeByCorrection(kv, ago(HOUR));
+            await closeAt(ago(HOUR));
             const close = await theClose();
 
             asSession(board);
@@ -619,11 +500,80 @@ describe('facility close record and departure log (real DB)', () => {
             await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
         });
 
-        it('writes no close when nobody is inside', async () => {
-            process.env.CRON_SECRET = 'test-secret';
-            const res = await nightlyGET(cronReq());
-            expect(res.status).toBe(200);
-            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+        describe('with nobody inside', () => {
+            const closesSinceFloor = () => prisma.facilityClose.findMany({ where: { id: { gt: closeIdFloor } } });
+
+            // Rows left by other suites would read as tonight's sweep or as a fence.
+            beforeEach(async () => {
+                process.env.CRON_SECRET = 'test-secret';
+                await prisma.visit.updateMany({ where: { facilityCloseId: { not: null } }, data: { facilityCloseId: null } });
+                await prisma.facilityClose.deleteMany();
+            });
+
+            it('still records the close, logging no departures', async () => {
+                expect((await nightlyGET(cronReq())).status).toBe(200);
+                const close = await expectOneClose('NIGHTLY_SWEEP', null, []);
+                expect(close.executedAt).not.toBeNull();
+            });
+
+            it('fences a check-in scanned before it that arrives after it', async () => {
+                expect((await nightlyGET(cronReq())).status).toBe(200);
+                const [close] = await closesSinceFloor();
+
+                asKiosk();
+                const scannedAt = new Date(close.closedAt.getTime() - 60_000);
+                const res = await scanPOST(req('/api/scan', 'POST', {
+                    participantId: keyholder.id, clientEventId: `evt-${TAG}-fenced`, scannedAt: scannedAt.toISOString(),
+                    replay: true, intent: 'IN', protocolVersion: SCAN_PROTOCOL_VERSION,
+                }));
+                expect((await res.json()).type).toBe('checkin');
+
+                const visit = await visitOf(keyholder);
+                expect(visit.arrivedAt).toEqual(scannedAt);
+                expect(visit).toMatchObject({ departedAt: close.closedAt, departedVia: 'FACILITY_CLOSE', facilityCloseId: close.id });
+                const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: `evt-${TAG}-fenced` } });
+                expect(log?.reviewReason).toBe('closed_before_delivery');
+            });
+
+            it('waits for a check-in holding the facility lock, then sweeps it', async () => {
+                let nightly: ReturnType<typeof nightlyGET> | undefined;
+                const visit = await prisma.$transaction(async (tx) => {
+                    await lockFacility(tx);
+                    const visit = await tx.visit.create({ data: { personId: member.id, arrivedAt: new Date() } });
+                    nightly = nightlyGET(cronReq());
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    return visit;
+                });
+                expect((await nightly!).status).toBe(200);
+
+                const [close] = await closesSinceFloor();
+                expect(await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } })).toMatchObject({ departedVia: 'AUTO_CLOSE', facilityCloseId: close.id });
+                await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
+            });
+
+            it('records no second close when the run is retried the same night', async () => {
+                await nightlyGET(cronReq());
+                expect((await nightlyGET(cronReq())).status).toBe(200);
+                await expectOneClose('NIGHTLY_SWEEP', null, []);
+            });
+
+            it('gives a retry its own close when it does find someone inside', async () => {
+                await nightlyGET(cronReq());
+                await open(member);
+                await nightlyGET(cronReq());
+
+                const closes = await closesSinceFloor();
+                expect(closes).toHaveLength(2);
+                expect((await visitOf(member)).facilityCloseId).toBe(Math.max(...closes.map(c => c.id)));
+                await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
+            });
+
+            it('records its own close after a keyholder closed earlier that evening', async () => {
+                await prisma.facilityClose.create({ data: { closedAt: new Date(Date.now() - 3 * HOUR), closedById: keyholder.id, via: 'KIOSK' } });
+                await nightlyGET(cronReq());
+                const closes = await closesSinceFloor();
+                expect(closes.map(c => c.via).sort()).toEqual(['KIOSK', 'NIGHTLY_SWEEP']);
+            });
         });
     });
 });

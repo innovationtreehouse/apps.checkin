@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billCandidate, depositCandidate, findMatch, purchaseCandidate, type MatchRequest } from "../match";
+import { billCandidate, depositCandidate, findMatch, purchaseCandidate, shiftDate, type MatchRequest } from "../match";
 import { appKeyOf } from "../client";
 import type { QboBill, QboDeposit, QboPurchase } from "../types";
 
@@ -152,5 +152,18 @@ describe("candidate adapters", () => {
     expect(purchaseCandidate(purchase)).toMatchObject({ amountCents: 1200, ref: "41" });
     expect(billCandidate(bill, (b) => b.DocNumber)).toMatchObject({ ref: "77", appKey: undefined });
     expect(billCandidate({ ...bill, DocNumber: "exp-9" }, (b) => b.DocNumber)).toMatchObject({ appKey: "exp-9" });
+  });
+});
+
+describe("shiftDate", () => {
+  it("crosses month, year and leap-day boundaries", () => {
+    expect(shiftDate("2026-01-31", 1)).toBe("2026-02-01");
+    expect(shiftDate("2026-01-01", -1)).toBe("2025-12-31");
+    expect(shiftDate("2024-03-01", -1)).toBe("2024-02-29");
+    expect(shiftDate("2026-03-01", -7)).toBe("2026-02-22");
+  });
+
+  it("throws on a date that does not parse", () => {
+    expect(() => shiftDate("not-a-date", 1)).toThrow(RangeError);
   });
 });

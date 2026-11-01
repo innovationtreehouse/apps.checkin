@@ -3,12 +3,12 @@
  */
 /**
  * GET /api/people/search?roster=active — the population badge display names are
- * disambiguated against (#1625).
+ * disambiguated against.
  *
  * The page-level test proves the printed name doesn't move when the operator ticks a
  * checkbox or types, but it does that against a mocked server. These are the server-side
  * halves of the same claim: roster mode returns ACTIVE members only, excludes merge
- * tombstones, and — the part the whole fix rests on — ignores `q` entirely, so a search
+ * tombstones, and — the part stable names rest on — ignores `q` entirely, so a search
  * cannot shrink the population a name is computed from.
  */
 
@@ -122,7 +122,7 @@ describe('GET /api/people/search?roster=active', () => {
         const ghost = await makePerson('John Ghost', 'ghost', 'ACTIVE');
         await prisma.person.update({ where: { id: ghost.id }, data: { mergedIntoId: adminId } });
 
-        // The #1628 cohort. Every one of these is an ACTIVE member — status cannot be
+        // The renewal cohort. Every one of these is an ACTIVE member — status cannot be
         // what separates them, only whether they settled the current cycle.
         await makePerson('Renewed Rita', 'rita', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
         await makePerson('Joined Jo', 'jo', 'ACTIVE', { kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
@@ -154,7 +154,7 @@ describe('GET /api/people/search?roster=active', () => {
             .map(p => p.name)
             .sort();
 
-    /** The year each #1628 fixture is handed, keyed by name. */
+    /** The year each cohort fixture is handed, keyed by name. */
     const years = async () => {
         const rows = await rosterRows('roster=active');
         const names = ['Renewed Rita', 'Joined Jo', 'Stale Sam', 'Archived Al', 'John Smith'];
@@ -182,7 +182,7 @@ describe('GET /api/people/search?roster=active', () => {
         expect(names).not.toContain('Sysadmin Sue');
     });
 
-    describe('the membership year (#1628)', () => {
+    describe('the membership year', () => {
         it('goes only to households that settled this renewal cycle', async () => {
             const y = await years();
             expect(y['Renewed Rita']).toMatch(/^\d{4}-\d{4}$/);

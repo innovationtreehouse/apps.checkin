@@ -39,6 +39,7 @@ function fakeTx(process: { subjectPersonId: number | null; householdId: number }
         },
         volunteerDesignation: { findMany: async () => [] },
         auditLog: { create: jest.fn() },
+        paymentException: { findFirst: async () => null, create: jest.fn(async () => ({ id: 99 })) },
     };
     return tx;
 }
@@ -79,7 +80,8 @@ describe("clearBackgroundCheck self-grant guard", () => {
     it("leaves a PERSON_BG in a DENIED household uncleared and carries the household out for the board", async () => {
         const tx = fakeTx({ subjectPersonId: 3, householdId: 20 }, "DENIED");
         const outcome = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState);
-        expect(outcome.denied).toEqual({ householdId: 20, processId: 7 });
+        expect(outcome.denied).toEqual({ householdId: 20, processId: 7, notice: { kind: "DENIED_HOUSEHOLD_ACTIVITY", severity: "CRITICAL", exceptionId: 99 } });
+        expect(tx.paymentException.create).toHaveBeenCalled();
         expect(tx.person.update).not.toHaveBeenCalled();
         expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });

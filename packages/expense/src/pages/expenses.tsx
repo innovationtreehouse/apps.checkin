@@ -96,8 +96,8 @@ export function ExpenseList({
   const show = (v: string, p: number, active = onlyActive) => router.replace(listHref(v, p, active), { scroll: false });
   const counts = useLoad<Record<string, number>>("/counts");
   const filter = `view=${view}${activeOnly ? "&active=1" : ""}`;
-  const rows = useLoad<ExpenseRow[]>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`);
-  const total = useLoad<{ total: number }>(`/expenses/count?${filter}`);
+  const rows = useLoad<ExpenseRow[]>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const total = useLoad<{ total: number }>(`/expenses/count?${filter}`, { keepPrevious: true });
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];

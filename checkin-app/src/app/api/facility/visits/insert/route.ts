@@ -1,19 +1,18 @@
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
-import { handler, badRequest, notFound, unauthorized } from "@/security/handler";
+import type { Prisma, Visit } from "@/generated/prisma/client";
+import { handler, ApiResponseError, badRequest, notFound, unauthorized } from "@/security/handler";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Staff insert-for-others at an arbitrary past time: the path for a
 // genuine unenrolled walk-in, which the event-roster mark (program-scoped, event
 // window) and the kiosk (live, badge-driven) cannot record. Unlike the
 // self-service route the target personId IS taken from the body — that is the
 // point of the endpoint — so the role gate is the whole boundary. Declared in
-// the security registry (POST /api/facility/visits/insert); it sits on its own
-// path rather than as a POST on the sibling /api/facility/visits for the
-// lint-ordering reason recorded there and in #1491.
+// the security registry (POST /api/facility/visits/insert).
 export const POST = handler('POST /api/facility/visits/insert', async ({ req, auth }) => {
     if (auth.type !== 'session') throw unauthorized();
 
@@ -51,22 +50,27 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
 
     // Same per-person advisory lock as every other visit write, so this
     // insert can't race the kiosk or the facility-close sweep.
-    const visit = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit; overlappedIds: number[] }> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${subjectId})`;
-        return tx.visit.create({
+        const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: ar.value, departedAt: dr.value });
+        if (overlaps.openSince) return { openSince: overlaps.openSince };
+        const visit = await tx.visit.create({
             data: {
                 personId: subjectId,
                 arrivedAt: ar.value,
                 departedAt: dr.value,
                 // Typed clocks, staff actor. How is TYPED; who is the audit
-                // actor vs subject (#1624). Not LEAD_MARKED (that is an event
+                // actor vs subject. Not LEAD_MARKED (that is an event
                 // window, no clock).
                 arrivedVia: "TYPED",
                 departedVia: "TYPED",
                 associatedEventId: eventId,
             },
         });
+        return { visit, overlappedIds: overlaps.closedIds };
     });
+    if ('openSince' in result) throw new ApiResponseError(409, await openOverlapRefusal(result.openSince));
+    const { visit, overlappedIds } = result;
     // A closed keyholder visit can cover someone's arrival and clear their
     // "no keyholder" mark on the live roster.
     invalidateAttendanceCache();
@@ -78,7 +82,7 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
             tableName: "Visit",
             affectedEntityId: visit.id,
             secondaryAffectedEntity: subjectId,
-            newData: { arrivedAt: ar.value, departedAt: dr.value, type: "staff_entry" },
+            newData: { arrivedAt: ar.value, departedAt: dr.value, type: "staff_entry", ...overlapFlag(overlappedIds) },
         },
     });
 

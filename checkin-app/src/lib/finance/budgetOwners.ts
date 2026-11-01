@@ -8,7 +8,7 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 
-// Budget-owner buckets (#1280 §6) and their approvers. FINANCE manages buckets;
+// Budget-owner buckets and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
 
 const BUCKET_SELECT = {

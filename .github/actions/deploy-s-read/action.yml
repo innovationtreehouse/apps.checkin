@@ -2,9 +2,8 @@ name: Deploy s-read
 description: >
   Build the s-read image, register new revisions of BOTH task-def families, and
   (in migrate-and-code mode) run the migrate task in between — for ONE env. The
-  runnable half of what deploy-s-read.yml used to inline. The CALLER must have
-  already checked out the ref to build (this action does not checkout — it builds
-  from the current workspace) and must run in a job whose OIDC sub the target
+  CALLER must have already checked out the ref to build (this action does not
+  checkout — it builds from the current workspace) and must run in a job whose OIDC sub the target
   deploy role trusts: for prod that means `environment: production`, which is
   exactly why folding this into the app deploy job collapses the release to a
   SINGLE approval (one job enters `production`, not two).
@@ -76,8 +75,9 @@ runs:
         docker push "$IMAGE"
         echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-    # Both families get a new revision pointing at the new image (infra#112's
-    # deploy contract) — the migrate one first, since migrations ship in the image.
+    # Both families get a new revision pointing at the new image (the infra repo
+    # owns the task definitions and expects this) — the migrate one first, since
+    # migrations ship in the image.
     - name: Register new migrate task definition
       id: register_migrate
       shell: bash
@@ -135,7 +135,7 @@ runs:
             "for i in 1 2 3 4 5; do npm run db:deploy -w @checkin/s-ingest-core && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"
           ]}]}' > "$RUNNER_TEMP/migrate-overrides.json"
 
-        # FARGATE_SPOT strategy (associated on the cluster — infra#131), not
+        # FARGATE_SPOT strategy (associated on the cluster in the infra repo), not
         # on-demand --launch-type: matches the checkin migrate tasks. A Spot
         # reclaim mid-migration fails the step loudly and a rerun is clean —
         # one small migration per release, gated per database.

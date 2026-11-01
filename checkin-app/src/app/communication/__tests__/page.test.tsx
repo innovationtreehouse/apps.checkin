@@ -31,6 +31,30 @@ describe("CommunicationPage", () => {
         expect(await screen.findByLabelText("Email me when I check in or out")).toBeDisabled();
     });
 
+    it("shows the receipts preference on by default and saves it with the others", async () => {
+        setSession({ id: 1, email: "a@example.com" });
+        const fetchMock = mockFetchJson({
+            "/api/profile": { profile: { notificationSettings: { emailCheckinReceipts: true } } },
+        });
+        renderWithProviders(<CommunicationPage />);
+
+        const outcomes = await screen.findByLabelText("Email me about my receipts and reimbursements");
+        expect(outcomes).toBeChecked();
+
+        fireEvent.click(screen.getByLabelText("Email me when I check in or out"));
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/profile", expect.objectContaining({ method: "PATCH" })));
+        const patch = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+        expect(JSON.parse(String(patch?.[1]?.body)).notificationSettings).toMatchObject({ emailPurchaseOutcomes: true });
+    });
+
+    it("loads the receipts preference when it is off", async () => {
+        setSession({ id: 1, email: "a@example.com" });
+        mockFetchJson({ "/api/profile": { profile: { notificationSettings: { emailPurchaseOutcomes: false } } } });
+        renderWithProviders(<CommunicationPage />);
+
+        expect(await screen.findByLabelText("Email me about my receipts and reimbursements")).not.toBeChecked();
+    });
+
     it("persists the outreach-suppression toggle immediately", async () => {
         setSession({ id: 1, email: "a@example.com" });
         const fetchMock = mockFetchJson({

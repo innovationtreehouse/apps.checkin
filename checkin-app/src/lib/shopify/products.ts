@@ -136,7 +136,7 @@ async function findProductByHandle(
 }
 
 /**
- * Single-pool model (product decision 2026-07-06): mints ONE Shopify variant
+ * Single-pool model: mints ONE Shopify variant
  * per program, priced at the base/non-member rate — inventory IS the whole
  * program capacity, not a per-tier pool. Members buy the same variant and get
  * a per-enrollee discount code at checkout (see {@link mintMemberDiscountCode})

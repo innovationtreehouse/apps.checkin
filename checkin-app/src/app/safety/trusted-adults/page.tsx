@@ -20,6 +20,7 @@ import { notifications } from "@mantine/notifications";
 import { AlertBanner, type AlertTone } from "@/components/admin/AlertBanner";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { TRUSTED_ADULTS_ROLES } from "@/lib/nav/sections/safety";
 import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 
@@ -97,7 +98,7 @@ const daysBetween = (aIso: string, bIso: string) =>
     Math.round((new Date(aIso).getTime() - new Date(bIso).getTime()) / 86400000);
 
 export default function AdminTrustedAdultsPage() {
-    const { ready, loading: authLoading, user } = useRequireRole(["isSysadmin", "isBoardMember"]);
+    const { ready, loading: authLoading, user } = useRequireRole(TRUSTED_ADULTS_ROLES);
     const [items, setItems] = useState<TrustedAdult[]>([]);
     const [loading, setLoading] = useState(true);
     const [busyId, setBusyId] = useState<number | null>(null);

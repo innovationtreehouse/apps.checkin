@@ -1,4 +1,5 @@
 import { db, isUniqueConstraintError } from "../db";
+import { readIncomeSettings } from "./settingsService";
 import type { QbDeposit } from "../contract";
 import { getIncomeConfig } from "../runtime";
 import {
@@ -43,17 +44,20 @@ async function openRow(orgId: string, id: number) {
   return row;
 }
 
+/** The kind a row keeps once finance settles it: only PAYOUT_NOT_PAID, which drift checks read. */
+const settledKind = (row: { kind: string | null }) => (row.kind === RECON_KIND.PAYOUT_NOT_PAID ? row.kind : null);
+
 /** The bank account a row's deposits land in, from the books map. */
 async function bankOf(row: { source: string }): Promise<string | undefined> {
   return (await roleAccounts())[isBenevity(row) ? BANK_ROLE.benevity : BANK_ROLE.shopify];
 }
 
 /** Deposits into the row's bank account dated within ±window of its date, read live from QuickBooks. */
-async function windowDeposits(row: { source: string; payoutDate: string }): Promise<QbDeposit[]> {
+async function windowDeposits(row: { orgId: string; source: string; payoutDate: string }): Promise<QbDeposit[]> {
   const { deposits: source } = getIncomeConfig();
   const bank = await bankOf(row);
   if (!source || !bank) throw new ServiceError(503, "QuickBooks is not connected");
-  const w = windowDays(row.source);
+  const w = windowDays(row.source, (await readIncomeSettings(db, row.orgId)).benevityMatchWindowDays);
   const from = addDays(row.payoutDate, -w);
   const to = addDays(row.payoutDate, w);
   return (await depositsIn(source, [[from, to]])).filter((d) => d.depositToAccount === bank);
@@ -127,7 +131,7 @@ async function goAhead(orgId: string, id: number, actor: Actor, book: boolean) {
   if (!closedThrough) throw new ServiceError(409, "QuickBooks has no books closing date set, and income posting is not switched on");
   const turn = await postPayout(orgId, id, { closedThrough, mayCreate: true }, true, { actor, book });
   if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
-  if (turn.outcome === "held") throw new ServiceError(409, `Decide the payout's items first: ${turn.row.reason ?? ""}`);
+  if (turn.outcome === "held") throw new ServiceError(409, `The payout is held: ${turn.row.reason ?? ""}`);
   if (book && turn.outcome === "waiting") {
     throw new ServiceError(409, "The payout is not ready to book: it is being posted, its Shopify payout changed, or a books-map role it needs has no account");
   }
@@ -159,7 +163,8 @@ async function fitsPostablePayout(client: TxClient, orgId: string, qbTxnId: stri
   const accounts = await roleAccounts();
   const banks = { [DEPOSIT_SOURCE.SHOPIFY]: accounts[BANK_ROLE.shopify], [DEPOSIT_SOURCE.BENEVITY]: accounts[BANK_ROLE.benevity] };
   if (!source || (!banks.shopify && !banks.benevity)) throw new ServiceError(503, "QuickBooks is not connected");
-  const windows = rows.map((r) => matchWindow(r.payoutDate, r.source));
+  const { benevityMatchWindowDays } = await readIncomeSettings(client, orgId);
+  const windows = rows.map((r) => matchWindow(r.payoutDate, r.source, benevityMatchWindowDays));
   const d = (await depositsIn(source, windows.map((w): [string, string] => [w.from, w.to]))).find((x) => x.id === qbTxnId);
   if (!d) return false;
   return rows.some((row, i) =>
@@ -237,7 +242,7 @@ export const reconciliationService = {
           where: { id },
           data: {
             status: RECON_STATUS.RESOLVED,
-            kind: null,
+            kind: settledKind(current),
             resolution: RECON_RESOLUTION.MANUAL,
             origin: deposit.appKey === rowKey(current) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             reason: why,
@@ -273,7 +278,7 @@ export const reconciliationService = {
         where: { id },
         data: {
           status: RECON_STATUS.RESOLVED,
-          kind: null,
+          kind: settledKind(current),
           resolution: RECON_RESOLUTION.DISMISSED,
           reason: why,
           qbNote: null,

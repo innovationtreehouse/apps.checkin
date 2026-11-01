@@ -95,7 +95,7 @@ describe('Bulk renewal migration', () => {
         expect(res.status).toBe(403);
     });
 
-    it('a board member opens PENDING_RENEWAL for all active members, idempotently, never emailing (PR-2)', async () => {
+    it('a board member opens PENDING_RENEWAL for all active members, idempotently, never emailing', async () => {
         (sendEmail as jest.Mock).mockClear();
         asBoard(boardId);
 

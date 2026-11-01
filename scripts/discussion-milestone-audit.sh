@@ -33,7 +33,7 @@ parse_candidates() {
     }'
 }
 
-# Same convention apply.sh uses in #1602: the milestone is the first vMAJOR.MINOR
+# The milestone is the first vMAJOR.MINOR
 # in the title, so no text in the body can name one.
 milestone_from_title() { grep -oE 'v[0-9]+\.[0-9]+' <<<"$1" | head -1 || true; }
 

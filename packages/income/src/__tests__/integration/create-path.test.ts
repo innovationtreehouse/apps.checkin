@@ -1,15 +1,15 @@
-import { it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
-import { ATTEMPTED_MATCH_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
+import { ATTEMPTED_MATCH_NOTE, ATTEMPTED_NET_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
 import { CLOSED_NOTE, drainIncomeOutbox, missingRoles, runIncomeOrphanSweep } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
-import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
+import type { MirrorBalanceTxn, MirrorOrderLine, MirrorOrderSubtotal, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
 import { clearAll, ORG_A } from "../helpers/fixtures";
 import { depositStatus, expectDeposit, type ExpectedDeposit } from "../../lib/intake";
 import type { BooksMap, BooksMapRole } from "@checkin/quickbooks";
@@ -60,9 +60,9 @@ class FakeQbo {
         if (this.closeDateFails) return json({ Fault: { Error: [{ code: "3100" }] } }, 400);
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       }
-      const since = /MetaData\.CreateTime >= '([^']+)' STARTPOSITION 1 MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
+      const since = /MetaData\.CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
-        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(0, Number(since[2]));
+        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(Number(since[2]) - 1, Number(since[2]) - 1 + Number(since[3]));
         return json({ QueryResponse: list.length ? { Deposit: list } : {} });
       }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
@@ -94,6 +94,7 @@ let qbo: FakeQbo;
 let payouts: MirrorPayout[];
 let txns: Record<string, MirrorBalanceTxn[]>;
 let orderLines: MirrorOrderLine[];
+let subtotals: MirrorOrderSubtotal[];
 let owners: OwnerInfo[];
 let alerts: PostCapEvent[];
 let sweepAlerts: { orgId: string; since: Date }[];
@@ -102,11 +103,12 @@ let activeClasses: string[];
 
 const gid = (n: number) => `gid://shopify/ShopifyPaymentsPayout/${n}`;
 
-/** A paid payout of one charge on order `O<n>` with no lines, so the whole charge books at org level. */
+/** A paid payout of one charge on order `O<n>` with one custom-item line, so the whole charge books at org level. */
 function payout(n: number, day: string, netCents: number): string {
   const g = gid(n);
   payouts.push({ payoutGid: g, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD", source: "api" });
   txns[g] = [{ txnGid: `${g}/t`, type: "charge", orderGid: `O${n}`, orderName: `#${n}`, amountCents: netCents, feeCents: 0, netCents, source: "api" }];
+  orderLines.push({ orderGid: `O${n}`, variantId: null, title: "Custom", sku: null, quantity: 1, currentQuantity: 1, priceCents: netCents, discountCents: 0 });
   return g;
 }
 
@@ -119,6 +121,7 @@ const mirror: PayoutMirror = {
   payout: async (g) => payouts.find((p) => p.payoutGid === g) ?? null,
   transactions: async (g) => txns[g] ?? [],
   orderLines: async (gids) => orderLines.filter((l) => gids.includes(l.orderGid)),
+  orderSubtotals: async (gids) => subtotals.filter((o) => gids.includes(o.orderGid)),
   itemsSeen: async () => [],
 };
 
@@ -145,7 +148,12 @@ function bind(over: Partial<IncomeConfig> = {}) {
   });
 }
 
-const rowFor = (g: string) => db.payoutReconciliation.findUniqueOrThrow({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } } });
+/** The one row holding this key; a second row under another source fails the test. */
+const rowFor = async (g: string) => {
+  const rows = await db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: g } });
+  expect(rows).toHaveLength(1);
+  return rows[0];
+};
 const drain = (now = NOW) => drainIncomeOutbox(ORG_A, now);
 const finance = { userId: 9 };
 const resolve = (g: string, req: Parameters<typeof reconciliationService.resolve>[2]) =>
@@ -161,6 +169,7 @@ beforeEach(async () => {
   payouts = [];
   txns = {};
   orderLines = [];
+  subtotals = [];
   owners = [];
   alerts = [];
   sweepAlerts = [];
@@ -354,7 +363,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
   beforeEach(switchOn);
 
   const claimAt = (g: string, at: Date) =>
-    db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } }, data: { postClaimedAt: at } });
+    db.payoutReconciliation.update({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } }, data: { postClaimedAt: at } });
 
   it("a fresh claim keeps the drain and reconcile off the payout; a stale one is taken over", async () => {
     const p = payout(2, "2026-06-28", 500);
@@ -413,7 +422,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "reject";
     await drain();
     qbo.mode = "ok";
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
 
     expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", qbNote: expect.stringContaining("may already have booked") });
     expect(qbo.posts).toHaveLength(1);
@@ -507,7 +516,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "reject";
     await drain();
     const warning = "app entry 999 is not linked; void or link it";
-    await db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } }, data: { qbNote: warning } });
+    await db.payoutReconciliation.update({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } }, data: { qbNote: warning } });
 
     await resolve(p, { action: "retry" });
     expect(await rowFor(p)).toMatchObject({ kind: "POST_FAILED", qbNote: warning });
@@ -563,7 +572,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
   it("dismiss on a payout never attempted needs no lookup", async () => {
     const p = payout(2, "2026-06-10", 500);
     await runReconcile(ORG_A, NOW);
-    await db.payoutReconciliation.update({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } }, data: { status: "OPEN", kind: "NO_DEPOSIT" } });
+    await db.payoutReconciliation.update({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } }, data: { status: "OPEN", kind: "NO_DEPOSIT" } });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 400 })));
     expect(await resolve(p, { action: "dismiss", reason: "refunded" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
   });
@@ -579,7 +588,7 @@ describeDb("runIncomeOrphanSweep", () => {
     expect(await rowFor(linked)).toMatchObject({ status: "POSTED" });
     const strayEntry = (await rowFor(stray)).depositId;
     await db.payoutReconciliation.update({
-      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: stray } },
+      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: stray } },
       data: { status: "OPEN", kind: "DRIFT", depositId: null, origin: null },
     });
 
@@ -597,7 +606,7 @@ describeDb("runIncomeOrphanSweep", () => {
     const entry = (await rowFor(g)).depositId;
     if (!entry) throw new Error("not posted");
     await db.payoutReconciliation.update({
-      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
+      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } },
       data: { status: "OPEN", kind: "DRIFT", depositId: null, origin: null },
     });
     return { g, entry };
@@ -626,7 +635,7 @@ describeDb("runIncomeOrphanSweep", () => {
   it("does not note an entry whose lost-claim warning finance cleared", async () => {
     const { g, entry } = await unlinked();
     await db.payoutReconciliation.update({
-      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
+      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } },
       data: { qbNote: `app entry ${entry} may need voiding: its post lost the payout to another` },
     });
     await resolve(g, { action: "clear_note", reason: "voided" });
@@ -665,7 +674,7 @@ describeDb("runIncomeOrphanSweep", () => {
         locked();
         await released;
         await tx.payoutReconciliation.update({
-          where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: g } },
+          where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: g } },
           data: { status: "RESOLVED", kind: null, depositId: entry },
         });
       },
@@ -695,10 +704,10 @@ describeDb("runIncomeOrphanSweep", () => {
     expect((await rowFor(a)).qbNote).toBeNull();
   });
 
-  it("alerts finance when the read fills a page", async () => {
+  it("alerts finance when the read reaches its cap", async () => {
     payout(2, "2026-06-28", 500);
     await drain();
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ full: true });
     expect(sweepAlerts).toEqual([expect.objectContaining({ orgId: ORG_A })]);
   });
@@ -877,7 +886,7 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
     await drain();
     const created = (await rowFor(p)).depositId;
     await db.payoutReconciliation.update({
-      where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p } },
+      where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } },
       data: { status: "WAITING", origin: null, depositId: null, depositTxnDate: null, depositTotalCents: null },
     });
 
@@ -889,7 +898,7 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
   it("the app's own deposit is never hand-matched to another payout of the same amount", async () => {
     const p2 = payout(2, "2026-06-28", 500);
     await drain();
-    await db.payoutReconciliation.delete({ where: { orgId_payoutGid: { orgId: ORG_A, payoutGid: p2 } } });
+    await db.payoutReconciliation.delete({ where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p2 } } });
     setPayout(p2, { status: "in_transit" });
     const p3 = payout(3, "2026-06-28", 500);
 
@@ -912,10 +921,10 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
       { txnGid: `${g}/a`, type: "adjustment", orderGid: null, orderName: null, amountCents: 150, feeCents: 0, netCents: 150, source: "api" },
     ];
     setPayout(g, { netCents: 9830 });
-    orderLines = [
-      { orderGid: "O9", variantId: "V1", title: "Camp", sku: null, quantity: 2, priceCents: 3000, discountCents: 0 },
-      { orderGid: "O9", variantId: "V2", title: "Shirt", sku: null, quantity: 1, priceCents: 4000, discountCents: 0 },
-    ];
+    orderLines.push(
+      { orderGid: "O9", variantId: "V1", title: "Camp", sku: null, quantity: 2, currentQuantity: 2, priceCents: 3000, discountCents: 0 },
+      { orderGid: "O9", variantId: "V2", title: "Shirt", sku: null, quantity: 1, currentQuantity: 1, priceCents: 4000, discountCents: 0 },
+    );
     return g;
   }
 
@@ -966,6 +975,16 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
     expect(await drain(late)).toMatchObject({ post: { posted: 1, held: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 9830 });
+  });
+
+  it("a decision made before an item's first sale is honoured on its first payout", async () => {
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+
+    const g = orderPayout(2);
+
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", reason: null });
   });
 
   it("an item marked general income books without a Class and is not held", async () => {
@@ -1035,6 +1054,119 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
     await drain(new Date("2026-06-30T13:00:00Z"));
     expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: null });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  const LATE = new Date("2026-07-20T12:00:00Z");
+  const withoutLines = (g: string) => {
+    const lines = orderLines;
+    orderLines = [];
+    return { g, restore: () => void (orderLines = lines) };
+  };
+  const withoutOrder = (n: number) => {
+    const g = payout(n, "2026-06-28", 500);
+    txns[g] = [{ ...txns[g][0], orderGid: null, orderName: null }];
+    orderLines = [];
+    return g;
+  };
+
+  it("a charge whose order has no lines holds, stays held past the window, and books once the lines arrive", async () => {
+    const { g, restore } = withoutLines(payout(2, "2026-06-28", 500));
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "orders with no lines: O2" });
+
+    await drain(LATE);
+    await runReconcile(ORG_A, LATE);
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING" });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.needs_mapping" } })).toBe(1);
+
+    restore();
+    expect(await drain(LATE)).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 500 });
+  });
+
+  it("a charge whose order lost a line holds, and books once the line arrives", async () => {
+    const g = payout(2, "2026-06-28", 500);
+    orderLines = [{ ...orderLines[0], priceCents: 300 }];
+    subtotals = [{ orderGid: "O2", subtotalCents: 500 }];
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "orders with missing lines: O2" });
+    expect(qbo.posts).toHaveLength(0);
+
+    orderLines.push({ ...orderLines[0], priceCents: 200 });
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", reason: null });
+  });
+
+  it("lines that arrive with an undecided item move the hold's reason to that item", async () => {
+    const g = orderPayout(2);
+    const { restore } = withoutLines(g);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ reason: "orders with no lines: O9" });
+
+    restore();
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "undecided items: V1, V2" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a charge with no order holds past the window and book refuses it", async () => {
+    const g = withoutOrder(2);
+    const reason = `transactions with no order: ${g}/t`;
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason });
+
+    await drain(LATE);
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason });
+    await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409 });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("finance settles a charge with no order by a hand-booked deposit, which the next run matches", async () => {
+    const g = withoutOrder(2);
+    await drain();
+
+    qbo.hand("H2", "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ status: "MATCHED", kind: null, depositId: "H2" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("finance settles a charge with no order by matching a deposit of another amount, with a reason", async () => {
+    const g = withoutOrder(2);
+    await drain();
+
+    qbo.hand("H2", "2026-06-28", 450);
+    await expect(resolve(g, { action: "match", depositId: "H2" })).rejects.toMatchObject({ status: 400 });
+    expect(await resolve(g, { action: "match", depositId: "H2", reason: "booked net of a fee" })).toMatchObject({ status: "RESOLVED", kind: null, depositId: "H2" });
+
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ status: "RESOLVED", depositId: "H2" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("finance settles a charge with no order by dismissing it, and later runs leave it dismissed", async () => {
+    const g = withoutOrder(2);
+    await drain();
+
+    await expect(resolve(g, { action: "dismiss", reason: " " })).rejects.toMatchObject({ status: 400 });
+    expect(await resolve(g, { action: "dismiss", reason: "booked in the prior year" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", kind: null });
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("booking a NO_DEPOSIT payout whose lines are gone holds it and names the gap", async () => {
+    await clearAll();
+    const g = payout(2, "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "NO_DEPOSIT" });
+
+    orderLines = [];
+    await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409, message: "The payout is held: orders with no lines: O2" });
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "orders with no lines: O2" });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -1178,8 +1310,168 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
   it("never creates a deposit from a hand-loaded mirror payout", async () => {
     const p = payout(2, "2026-06-28", 500);
     setPayout(p, { source: "hand_loaded" });
-    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
+    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 0 } });
     expect(qbo.posts).toHaveLength(0);
+  });
+
+  describe("a payout first seen after switch-on never sits unseen", () => {
+    const LATER = new Date("2026-07-10T12:00:00Z");
+    const audits = (action: string) => db.incomeAuditLog.findMany({ where: { orgId: ORG_A, action }, orderBy: { id: "asc" } });
+
+    /** A WAITING payout seen after switch-on, its first post held back by an unbound posting. */
+    async function waitingPayout() {
+      await switchOn();
+      bind({ posting: undefined });
+      const p = payout(2, "2026-06-28", 500);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+      bind();
+      return p;
+    }
+
+    function changeNet(p: string, netCents: number) {
+      setPayout(p, { netCents });
+      txns[p] = [{ ...txns[p][0], amountCents: netCents, netCents }];
+      orderLines = orderLines.map((l) => (l.orderGid === "O2" ? { ...l, priceCents: netCents } : l));
+    }
+
+    it("a hand-loaded payout goes to finance, never created, and a hand booking still matches it", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      setPayout(p, { source: "hand_loaded" });
+      expect(await drain()).toMatchObject({ reconcile: { opened: 1 }, post: { posted: 0 } });
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "HAND_LOADED", depositId: null });
+      expect((await reconciliationService.listQueue(ORG_A)).map((r) => r.payoutGid)).toEqual([p]);
+      expect(qbo.posts).toHaveLength(0);
+
+      qbo.hand("H2", "2026-06-28", 500);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "MATCHED", kind: null, depositId: "H2" });
+    });
+
+    it("finance can dismiss a hand-loaded payout, and it stays dismissed", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      setPayout(p, { source: "hand_loaded" });
+      await drain();
+      await resolve(p, { action: "dismiss", reason: "booked in an earlier year" });
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+    });
+
+    it("a waiting payout whose net changed tracks the new net and books at it", async () => {
+      const p = await waitingPayout();
+      bind({ posting: undefined });
+      changeNet(p, 600);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING", payoutNetCents: 600 });
+      expect((await audits("reconciliation.waiting")).at(-1)).toMatchObject({ reason: "payout_amount" });
+
+      bind();
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "POSTED", payoutNetCents: 600, depositTotalCents: 600 });
+      expect(qbo.posts).toHaveLength(1);
+    });
+
+    it("an attempted payout whose net changed goes to finance: the app may have booked the old amount", async () => {
+      const p = await waitingPayout();
+      await db.payoutReconciliation.update({
+        where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } },
+        data: { qbCreateAttemptedAt: NOW },
+      });
+      changeNet(p, 600);
+      await runReconcile(ORG_A, NOW);
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", payoutNetCents: 600, qbNote: ATTEMPTED_NET_NOTE });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
+    it("a payout that left paid waits out its window, then goes to finance", async () => {
+      const p = await waitingPayout();
+      setPayout(p, { status: "in_transit" });
+      expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+
+      expect(await drain(LATER)).toMatchObject({ reconcile: { opened: 1 }, post: { posted: 0 } });
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "PAYOUT_NOT_PAID" });
+      expect((await audits("reconciliation.opened")).at(-1)).toMatchObject({ reason: "payout_status:in_transit" });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
+    it("a payout gone from the mirror goes to finance too", async () => {
+      const p = await waitingPayout();
+      payouts = [];
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "PAYOUT_NOT_PAID" });
+    });
+
+    it("a payout paid again returns to waiting and books itself", async () => {
+      const p = await waitingPayout();
+      setPayout(p, { status: "in_transit" });
+      await drain(LATER);
+      setPayout(p, { status: "paid" });
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "POSTED", kind: null });
+      expect(qbo.posts).toHaveLength(1);
+    });
+
+    it("a dismissed unpaid payout stays dismissed; a change of net still reopens it", async () => {
+      const p = await waitingPayout();
+      setPayout(p, { status: "failed" });
+      await drain(LATER);
+      await resolve(p, { action: "dismiss", reason: "the store reversed this payout" });
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+
+      setPayout(p, { netCents: 600 });
+      await drain(LATER);
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "DRIFT" });
+    });
+
+    it("a sum mismatch clears once the transactions catch up, and the payout books itself", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      const all = txns[p];
+      txns[p] = [];
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "TXN_SUM_MISMATCH" });
+
+      txns[p] = all;
+      await runReconcile(ORG_A, NOW);
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING", kind: null });
+      expect((await audits("reconciliation.waiting")).at(-1)).toMatchObject({ reason: "TXN_SUM_MISMATCH cleared" });
+
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "POSTED" });
+    });
+
+    it("a cleared sum mismatch matches a deposit first", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      const all = txns[p];
+      txns[p] = [];
+      await drain();
+      txns[p] = all;
+      qbo.hand("H2", "2026-06-28", 500);
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "MATCHED", depositId: "H2" });
+      expect(qbo.posts).toHaveLength(0);
+    });
+
+    it("an attempted sum mismatch stays with finance once the sums agree", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      const all = txns[p];
+      txns[p] = [];
+      await drain();
+      await db.payoutReconciliation.update({
+        where: { orgId_source_payoutGid: { orgId: ORG_A, source: "shopify", payoutGid: p } },
+        data: { qbCreateAttemptedAt: NOW },
+      });
+      txns[p] = all;
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "TXN_SUM_MISMATCH" });
+      expect(qbo.posts).toHaveLength(0);
+    });
   });
 
   it("without a posting binding the run only matches; payouts wait", async () => {
@@ -1228,6 +1520,7 @@ describeDb("income settings", () => {
       maxCreatesPerRun: 25,
       maxCreateCentsPerRun: 2_500_000,
       benevityMaxCreateCentsPerRun: 2_500_000,
+      benevityMatchWindowDays: 7,
     });
   });
 
@@ -1290,6 +1583,49 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await status()).toEqual({ state: "matched", depositId: "H1", txnDate: "2026-06-29", totalCents: 14_800 });
   });
 
+  it("keeps a Shopify payout and a Benevity deposit with one key on separate rows", async () => {
+    const key = payout(1, "2026-06-28", 9_900);
+    expect(await expect1(key)).toBe("recorded");
+    await runReconcile(ORG_A, NOW);
+    expect(await expect1(key)).toBe("unchanged");
+    const rows = await db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: key }, orderBy: { source: "asc" } });
+    expect(rows).toMatchObject([
+      { source: "benevity", payoutNetCents: 14_700 },
+      { source: "shopify", payoutNetCents: 9_900 },
+    ]);
+  });
+
+  it("drift-checks settled Shopify and Benevity rows with one key against their own payout and deposit", async () => {
+    const key = payout(1, "2026-06-28", 9_900);
+    await expect1(key);
+    qbo.hand("HS", "2026-06-28", 9_900, BANK);
+    qbo.hand("HB", "2026-06-28", 14_700, BENEVITY_BANK);
+    const rows = () => db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: key }, orderBy: { source: "asc" } });
+
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 2, drifted: 0 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", status: "MATCHED", depositId: "HB" },
+      { source: "shopify", status: "MATCHED", depositId: "HS" },
+    ]);
+
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 0 });
+    expect(await rows()).toMatchObject([{ status: "MATCHED" }, { status: "MATCHED" }]);
+
+    qbo.deposits = qbo.deposits.map((d) => (d.Id === "HB" ? { ...d, TotalAmt: 140 } : d));
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", status: "OPEN", kind: "DRIFT", depositId: null },
+      { source: "shopify", status: "MATCHED", depositId: "HS" },
+    ]);
+
+    setPayout(key, { netCents: 9_800 });
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", payoutNetCents: 14_700 },
+      { source: "shopify", status: "OPEN", kind: "DRIFT", depositId: null, payoutNetCents: 9_800 },
+    ]);
+  });
+
   it("refuses a deposit whose lines do not sum to its net, and answers nothing for a key it never received", async () => {
     await expect(expect1("D1", disbursement("2026-06-28", { netCents: 1 }))).rejects.toMatchObject({ status: 400 });
     expect(await depositStatus(ORG_A, "benevity", ["D1"])).toEqual({});
@@ -1301,6 +1637,19 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 1 });
     expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "HB" });
+  });
+
+  it("matches a Benevity deposit only inside the org's window setting", async () => {
+    await updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 2 }, { userId: 9, isFinance: true, isBoard: false });
+    await expect1();
+    qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
+
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("D1")).depositId).toBeNull();
+
+    await updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 7 }, { userId: 9, isFinance: true, isBoard: false });
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", depositId: "HB" });
   });
 
   it("creates a deposit after switch-on with its accounts and Classes from the books map, under income's Benevity key", async () => {

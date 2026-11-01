@@ -1,4 +1,4 @@
-/** Card-charge rules (Financial Policy §XII.4, owner rulings of 2026-10-16), pure — no database. */
+/** Card-charge rules (Financial Policy §XII.4), pure — no database. */
 import { describe, it, expect } from "vitest";
 import {
   blockedSeats,
@@ -86,6 +86,7 @@ const card: SignoffFacts = {
   reimburseeSetter: null,
   seatedHouseholds: [],
   boardSeat: true,
+  conflictedFinal: false,
   approved: true,
   approver: 2,
   expenseSigners: [],

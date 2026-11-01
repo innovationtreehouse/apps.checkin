@@ -12,7 +12,7 @@ import { hasAnyRole } from "@/lib/nav/gates";
 // index admits both so it can redirect each to their own tab. The gate lives here
 // because the membership and finance settings pages self-gate nothing. Operations' only real
 // destination is settings/outreach — every other settings page carries its own stricter
-// useRequireRole(['isSysadmin','isBoardMember']) that bounces an operations session back out,
+// useRequireRole(SETTINGS_ADMIN_ROLES) that bounces an operations session back out,
 // the same layered pattern that keeps board members off the sysadmin-only localization tab.
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();

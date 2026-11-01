@@ -32,7 +32,8 @@ vi.mock("../../src/sync/backfill.js", () => ({ runBackfill: vi.fn() }));
 vi.mock("../../src/monitoring.js", () => ({ buildHeartbeatSink: vi.fn(() => undefined) }));
 
 import { handler } from "../../src/handler.js";
-import { reapStaleRuns, loadDbConfig } from "@checkin/s-ingest-core";
+import { prisma, reapStaleRuns, loadDbConfig } from "@checkin/s-ingest-core";
+import { buildHeartbeatSink } from "../../src/monitoring.js";
 import { ensureStore } from "../../src/sync/store.js";
 import { runIncremental } from "../../src/sync/incremental.js";
 import { runBackfill } from "../../src/sync/backfill.js";
@@ -72,6 +73,13 @@ it("reaps stale runs before resolving the store, and uses the configured store i
   expect(order).toEqual(["reap", "ensureStore"]);
   expect(vi.mocked(ensureStore).mock.calls[0][2]).toBe("configured-store");
   expect(loadDbConfig).toHaveBeenCalled();
+});
+
+it("hands the reaper the heartbeat sink, so the watchdog hears about killed runs", async () => {
+  const sink = vi.fn();
+  vi.mocked(buildHeartbeatSink).mockReturnValueOnce(sink);
+  await handler({});
+  expect(reapStaleRuns).toHaveBeenCalledWith(prisma, sink);
 });
 
 it("runs on the live store id, not the configured one", async () => {

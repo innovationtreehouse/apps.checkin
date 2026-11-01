@@ -93,13 +93,11 @@ describe('unsynced-scans record resolution (real DB)', () => {
         expect(stamped?.reviewReason).toBe('stale_replay'); // still says why it parked
     });
 
-    it('leave-open mints an open visit while a keyholder is present', async () => {
+    it('400s a record with no departure: it never leaves a visit open', async () => {
         const row = await park({ timestamp: new Date() });
         const res = await POST(req(row.id, { action: 'record' }), ctx(row.id));
-        expect(res.status).toBe(200);
-
-        const visit = await prisma.visit.findFirst({ where: { personId: memberId } });
-        expect(visit?.departedAt).toBeNull();
+        expect(res.status).toBe(400);
+        expect(await prisma.visit.count({ where: { personId: memberId } })).toBe(0);
     });
 
     it('409s when a visit already covers the scan time, leaving the row unreviewed', async () => {
@@ -165,14 +163,14 @@ describe('unsynced-scans record resolution (real DB)', () => {
         expect((await prisma.rawBadgeLog.findUnique({ where: { id: row.id } }))?.reviewedAt).toBeNull();
     });
 
-    it('409s leave-open when a LATER open visit exists — no second open visit, ever', async () => {
+    it('409s a departure that runs into a LATER open visit', async () => {
         const row = await park(); // parked 19:14
         await prisma.visit.create({
             data: { personId: memberId, arrivedAt: new Date('2026-08-20T20:00:00.000Z'), arrivedVia: 'SCANNER' },
         });
-        const res = await POST(req(row.id, { action: 'record' }), ctx(row.id));
+        const res = await POST(req(row.id, { action: 'record', departedAt: '2026-08-20T20:30:00.000Z' }), ctx(row.id));
         expect(res.status).toBe(409);
-        expect(await prisma.visit.count({ where: { personId: memberId, departedAt: null } })).toBe(1);
+        expect(await prisma.visit.count({ where: { personId: memberId } })).toBe(1);
     });
 
     it('409s recording a row that names no person, and the row can still be dismissed', async () => {

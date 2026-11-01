@@ -237,9 +237,7 @@ const MAX_TX_RETRIES = 5;
  *   - a Serializable write-conflict / deadlock, which Prisma surfaces as P2034 (and which
  *     the raw driver may also report as Postgres 40001 / 40P01).
  *
- * Under SQLite this never fired because the better-sqlite3 adapter holds one connection and
- * serializes whole transactions; Postgres actually runs them concurrently, so the retry is
- * what now provides that safety.
+ * Postgres runs these transactions concurrently, so the retry is what keeps a cycle consistent.
  */
 function isRetryableTxConflict(err: unknown): boolean {
   if (isUniqueConstraintError(err)) return true;

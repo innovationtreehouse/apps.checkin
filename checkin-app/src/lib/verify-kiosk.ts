@@ -1,12 +1,13 @@
 import crypto from "crypto";
 import { config } from "./config";
-import { stampKioskSeen } from "./kioskSeen";
+import { parseQueueDepth, stampKioskSeen } from "./kioskSeen";
 
 /**
  * Verify an Ed25519 signature from the kiosk client.
  *
  * The kiosk signs: `${timestamp}:${nonce}:${method}:${path}:${body}`
  * Headers: X-Kiosk-Timestamp, X-Kiosk-Nonce, X-Kiosk-Signature (hex-encoded)
+ * X-Kiosk-Queue-Depth is outside the signed message; it only feeds the heartbeat.
  *
  * Rejects if:
  *  - Missing headers
@@ -62,7 +63,8 @@ export function verifyKioskSignature(
     timestampHeader: string | null,
     signatureHeader: string | null,
     nonceHeader: string | null,
-    publicKeys: Buffer | Buffer[]
+    publicKeys: Buffer | Buffer[],
+    queueDepthHeader?: string | null
 ): VerifyResult {
     if (!timestampHeader || !signatureHeader || !nonceHeader) {
         return { ok: false, status: 401, error: "Missing kiosk signature headers" };
@@ -133,7 +135,7 @@ export function verifyKioskSignature(
         return { ok: false, status: 401, error: "Replay detected" };
     }
     seenNonces.set(nonceHeader, nowMs + MAX_AGE_SECONDS * 1000);
-    stampKioskSeen(nowMs);
+    stampKioskSeen(nowMs, parseQueueDepth(queueDepthHeader));
 
     return { ok: true };
 }

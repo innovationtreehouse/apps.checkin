@@ -86,9 +86,8 @@ describe("checkinEnv / isProd / isDevInstance / isLocal / devToolsActive", () =>
         expect(config.devToolsActive()).toBe(true);
     });
     it("devToolsActive ignores NODE_ENV: cloud-dev runs the production image", () => {
-        // Regression for the Debug-nav 404: every deployed instance has
-        // NODE_ENV=production (Dockerfile), so a NODE_ENV fuse killed the /dev
-        // tools on cloud-dev itself. The gate must be CHECKIN_ENV alone.
+        // Every deployed instance has NODE_ENV=production (Dockerfile), so a NODE_ENV
+        // fuse would kill the /dev tools on cloud-dev. The gate must be CHECKIN_ENV alone.
         const original = process.env.NODE_ENV;
         Object.defineProperty(process.env, "NODE_ENV", { value: "production", configurable: true });
         try {
@@ -235,7 +234,7 @@ describe("zohoMockActive / zohoAvailable / zohoWebhookSecret", () => {
         expect(config.zohoMockActive()).toBe(false);
         expect(config.zohoAvailable()).toBe(false);
     });
-    it("mock STAYS active under a production build (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("mock STAYS active under a production build (NODE_ENV is not a fuse)", () => {
         // Deployed instances all run NODE_ENV=production; CHECKIN_ENV alone decides.
         clearZoho();
         process.env.CHECKIN_ENV = "local";
@@ -284,7 +283,7 @@ describe("shopifyMockActive / shopifyWebhookSecret", () => {
         expect(config.shopifyMockActive()).toBe(false);
         expect(config.shopifyWebhookSecret()).toBeNull();
     });
-    it("mock STAYS active under a production build (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("mock STAYS active under a production build (NODE_ENV is not a fuse)", () => {
         clearShopify();
         process.env.CHECKIN_ENV = "local";
         (process.env as Record<string, string>).NODE_ENV = "production";
@@ -318,7 +317,7 @@ describe("bgMockActive", () => {
         (process.env as Record<string, string>).NODE_ENV = "test";
         expect(config.bgMockActive()).toBe(false);
     });
-    it("mock STAYS active under a production build (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("mock STAYS active under a production build (NODE_ENV is not a fuse)", () => {
         delete process.env.AVERITY_CONSENT_URL;
         process.env.CHECKIN_ENV = "local";
         (process.env as Record<string, string>).NODE_ENV = "production";

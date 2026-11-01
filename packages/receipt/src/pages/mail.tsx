@@ -4,7 +4,7 @@ import { Alert, Button, Group, Modal, Paper, Stack, Table, Text, TextInput, Titl
 import { notifications } from "@mantine/notifications";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, send, useLoad } from "../components/api";
-import { releaseAll } from "../components/releaseAll";
+import { releaseAll, releaseOne } from "../components/releaseAll";
 
 interface MailItem {
   id: number;
@@ -33,13 +33,6 @@ interface IgnoredFile {
   reason: string;
   createdAt: string;
 }
-
-const releaseOne = (id: number) =>
-  fetch(`${BASE}/mail-items/${id}/assign`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ release: true }),
-  });
 
 /** A button that releases every given deferred item, one at a time, after a confirm showing the count. */
 function ReleaseAllButton({ ids, label, onDone }: { ids: number[]; label: string; onDone: () => void }) {

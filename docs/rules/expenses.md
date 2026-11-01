@@ -73,8 +73,9 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - Only the person who paid is reimbursed: the adult who uploaded the receipt
-  and said they paid for it themselves.
-  [Decision]
+  and said they paid for it themselves, or another adult named as the person
+  reimbursed under the naming rule in Spending sign-off.
+  [Decision — owner]
 
 - Only finance approves and rejects receipts, imports old ones, and changes
   receipt settings.
@@ -98,24 +99,68 @@ Things the app takes as true because they are handled outside it.
   finance's reason, until the uploader acknowledges it on the receipt.
   [Decision — owner]
 
+- When finance rejects a receipt, its uploader gets one email naming the
+  retailer and date and linking to the receipt, and so does the person
+  reimbursed when that is someone else, unless the next rule skips that person.
+  Neither email names the other person, and neither carries finance's reason or
+  the total.
+  [Decision — owner ruling 2026-10-31]
+
+- A rejection email goes only to a person with a linked sign-in and an email
+  address who has not turned off "Email me about my receipts and
+  reimbursements" or all email. Anyone else's copy is dropped, not held: it is
+  not sent if they later sign in or turn email back on. Unsubscribing from
+  invitations does not stop it. A skipped uploader still sees the rejection and
+  the reason in My receipts. A send that fails gets three tries in all, the
+  later ones in the daily sweep, and is then given up.
+  [Decision]
+
 - Once a receipt is finalized, its uploader sees in the receipt pages what
   became of the purchase: receiving, the expense's approval and booking, with
   the reason on a rejected line, and an in-kind gift's decision. The person
   reimbursed sees the same for a receipt someone else uploaded for them.
   [Decision — owner]
 
+- When an expense closes with a rejected line, or a reimbursement is signed off
+  and sent to the books, the receipt's uploader and the person reimbursed each
+  get one email naming the retailer and date and linking to the receipt. A card
+  charge's sign-off, a backfill, and an approver's exception send none. Neither
+  email names the other person, and neither carries a line's note or the total.
+  [Decision — owner ruling 2026-10-31]
+
+- A person may turn the receipt and reimbursement emails off; turning off all
+  email also stops them. They are on until turned off. Only a live person with
+  a verified sign-in email is emailed.
+  [Decision — owner ruling 2026-10-31; *Principle: fail closed*]
+
+- An outcome email carries only what its recipient's own receipt pages show.
+  [Decision — *Principle: least privilege*]
+
 - Nobody takes a step on a receipt they are conflicted on if they could use it
   to their own benefit or to hide or clear their own spending. A person is
   conflicted when they, or someone in their household, uploaded the receipt or
-  is reimbursed for it. A conflicted person may not approve a line or raise an
-  exception on it, sign any sign-off seat, or record Board authorization.
+  is reimbursed for it. A conflicted person may not approve a line, raise or
+  reject an exception on it, sign any sign-off seat, or record Board
+  authorization.
   Classifying a purchase that is already signed off is bookkeeping, and any
   finance holder may do it: the capital or non-capital designation, the
-  depreciation cycle and owner bucket, the account set on a mapping hold, and
-  resubmitting a held expense. Until a receipt is finalized, its submitter may
-  correct its tax and date; a receipt whose tax or date its submitter corrected
-  goes to finance review.
+  depreciation cycle and owner bucket, the account set on a mapping hold,
+  resubmitting a held expense, and matching the expense to its QuickBooks
+  entry. Until a receipt is finalized, its submitter may correct its tax and
+  date; a receipt whose tax or date its submitter corrected goes to finance
+  review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Choosing a line's bucket before sign-off is not a conflicted step. A
+  conflicted finance holder may assign a line's bucket, resolve an unknown
+  one, and settle a raised exception by moving the line to another bucket.
+  The line still waits for its bucket's approver, or a Board member without a
+  conflict in their place, and for every seat it takes. A conflicted finance
+  holder who makes the assignment final gives the line a Board signature: a
+  Board member without a conflict signs it, after the Treasurer. Settling an
+  exception without making it final adds no Board signature, because the new
+  bucket's approver may still raise an exception.
+  [Decision — owner ruling 2026-10-30]
 
 - A tax or date the submitter fills in where the field was blank goes to
   finance review the same as one they changed. Finance sees which it was:
@@ -123,14 +168,17 @@ Things the app takes as true because they are handled outside it.
   the new one. A tax of $0 is a value, so a tax raised from $0 is changed.
   [Decision]
 
+- A reading that replaces typed details ends those corrections: finance is told
+  only of edits made since the latest reading. Asking for that reading warns the
+  person first, and the audit log keeps the replaced edits.
+  [Decision]
+
 - A conflicted person also may not reject a receipt, change its tax or date as
   finance, name the person reimbursed, or close its reviews.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
-- A person conflicted on an expense may not choose which QuickBooks entry it is
-  matched to. The app does not refuse this yet: any finance holder can make the
-  match.
-  [Short of policy — *Policy: Ethics Policy, Art. III §III.5*]
+- A person conflicted on an expense may not skip it in QuickBooks.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Excluding a QuickBooks entry from matching can hide spending, but no conflict
   check can refuse it, because a QuickBooks entry names no person. Every
@@ -146,6 +194,15 @@ Things the app takes as true because they are handled outside it.
   auto-reply, a bounce, list mail). Mail that never becomes a receipt gets no
   acknowledgement, and no acknowledgement is sent twice.
   [Decision]
+
+- A person whose emailed file is refused is told which file and why: too large,
+  the wrong type, empty, an email attached as a file, or the holding queue is
+  full. This reaches them even when no receipt was made, and does not wait on
+  the message's other files. If the receipt already exists, one email covers
+  both. Only senders who pass the sender check and may submit receipts are
+  told. Forged, unknown and automatic mail gets nothing. No notice is sent
+  twice.
+  [Decision — owner]
 
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
@@ -182,9 +239,26 @@ Things the app takes as true because they are handled outside it.
   refused automatically.
   [Decision — deliberate limit]
 
-- A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
-  needs no spending sign-off.
+- A receipt's file hash is deliberately not unique, so two receipts may hold the
+  same file: the second is stored and flagged for finance. A unique hash would
+  refuse it before a person could look. Reading the same file from the same
+  mailed message again makes no second receipt.
+  [Decision — deliberate limit]
+
+- An automatic reading of a receipt is kept whole or not at all. When a reading
+  fails, is refused, has no lines, or has any value out of bounds, nothing from
+  it is saved, and the receipt waits for a person to retry or discard it. A
+  reading with lines but no retailer, date or total is kept, and its submitter
+  fills those in before any other check runs.
   [Decision]
+
+- A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
+  needs no spending sign-off. It is a donation, not an expense record.
+  [Decision]
+
+- Donated equipment goes through the same capital thresholds, review and register
+  as purchased equipment.
+  [Decision — owner]
 
 - Finance may record old receipts for purchases already in the books. Doing so
   never reimburses anyone and never books anything a second time.
@@ -234,6 +308,13 @@ Things the app takes as true because they are handled outside it.
   that amount; with the setting off, no expense's tax waits on finance. An
   expense whose tax changes after finance approved it waits again, because
   finance never approved the new amount.
+  [Decision]
+
+### Capital register
+
+- The capital register holds one row per physical asset: a line of three units
+  gets three rows and three numbers. An asset number is used once per org, and
+  loading a number already on the register changes nothing.
   [Decision]
 
 ### Finance review
@@ -288,12 +369,14 @@ Things the app takes as true because they are handled outside it.
 - Once the submitter has confirmed a reimbursement, a change finance makes to
   what the submitter claimed or what they are paid voids the submitter's
   signature: its line items, a line's quantity or unit price, tax, shipping,
-  discount, the total, the currency, the receipt date, or the person
-  reimbursed. The reimbursement does not reach the books until the person
-  reimbursed confirms it again. Finance's bookkeeping does not void it: a
-  line's bucket, the accounting-system account set on a hold, or the capital
-  or depreciation designation; nor does correcting the retailer. The void and
-  the new confirmation are both recorded.
+  discount, the total, the currency, or the receipt date. The reimbursement
+  does not reach the books until the person reimbursed confirms it again.
+  Finance's bookkeeping does not void it: a line's bucket, the
+  accounting-system account set on a hold, or the capital or depreciation
+  designation; nor does correcting the retailer. Naming the person reimbursed
+  does not void it either: finance names them only while they are unknown,
+  when no confirmation exists, and a known person reimbursed is not changed.
+  The void and the new confirmation are both recorded.
   [Decision — owner]
 
 - A line's program approver signs it by approving it: the approval records who
@@ -302,14 +385,19 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - An expense's sign-offs run in steps: first the line's approval, then the
-  Treasurer, then the Board. Finance moving a line out of an exception is a
-  signature at the Treasurer step, and recording the Board's authorization is
-  one at the Board step. Each step refuses everyone who signed an
+  Treasurer, then the Board. Recording the Board's authorization is a
+  signature at the Board step. Each step refuses everyone who signed an
   earlier step anywhere on the expense, and a step is also refused to whoever
   already signed a later one. Nobody signs while someone in their household
   holds a seat on the expense. One person may sign the same step on several
   lines. This holds for card charges and reimbursements alike.
   [Decision — owner]
+
+- Finance moving a line to a bucket, whether settling an exception or not, is
+  not a signature at any step and is not refused for a conflict. It does not
+  stop whoever moved it, or their household, from signing a step on the
+  expense.
+  [Decision — owner ruling 2026-10-30]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line.
@@ -319,7 +407,9 @@ Things the app takes as true because they are handled outside it.
   bucket, until finance marks the line's bucket assignment final. After that,
   no exception is raised on the line, and it still waits for its bucket's
   approver or a Board member in their place. A final assignment is not an
-  approval. Making it final takes a note, which is recorded.
+  approval. Making it final takes a note, which is recorded. A final
+  assignment made by a finance holder conflicted on the expense adds a Board
+  signature to the line.
   [Decision — owner]
 
 - A line's signatures are given in order: the submitter's confirmation on a
@@ -328,8 +418,8 @@ Things the app takes as true because they are handled outside it.
   exist; a Board signature waits for the Treasurer's.
   [Decision — owner]
 
-- Nobody signs off a reimbursement line, its approval included, until the
-  person reimbursed is known.
+- Nobody signs off a reimbursement line, its approval included, or raises an
+  exception on it, until the person reimbursed is known.
   [Decision — owner]
 
 - When an earlier step on a line is cleared or has to be given again, every
@@ -348,11 +438,17 @@ Things the app takes as true because they are handled outside it.
   household or role does not undo it.
   [Decision]
 
-- If someone who has already signed an expense joins the submitter's household
-  before the expense reaches the books, the expense can stay waiting to be
-  booked, with nothing telling finance and no way to give that seat to someone
-  else. This is an accepted risk: it is unlikely ever to happen, and no fix is
-  planned.
+- Whether an expense needs a Board seat or the Board's approval is settled when
+  it closes, using the facts of that moment. If the person reimbursed later
+  loses their membership, or the Board-review total is later lowered, the expense
+  still reaches the books and needs no new signature or approval.
+  [Decision — owner ruling 2026-10-31]
+
+- Someone who has already signed an expense and then joins the household of the
+  submitter or the person reimbursed keeps their signature, and the expense
+  still reaches the books; the app does not check the signers again at booking.
+  A signature that has to be given again is judged anew, so they are refused
+  and another signer takes the seat.
   [Decision — deliberate limit]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
@@ -449,6 +545,32 @@ the parts specific to expenses.
   each program's spending can be read against its budget.
   [Decision]
 
+- Each expense line reaches the books on one account, with its share of tax,
+  shipping and discount. Nothing splits a line across accounts or categories. A
+  line the mappings do not resolve to exactly one account waits for finance to
+  set it.
+  [Decision]
+
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]
+
+- The window for matching an expense to a QuickBooks entry, one to 30 days either
+  side of its date, is a setting. Finance or the Board may change it in either
+  direction. Each change is recorded.
+  [Decision — owner]
+
+- How many QuickBooks entries the app may create per run and per day are settings,
+  25 and 50 by default. Finance may lower them; raising one takes the Board. The
+  per-run limit may not exceed the per-day limit. Each change is recorded. No
+  dollar limit per run applies to expenses.
+  [Decision — owner]
+
+- Finance may skip an expense that waits on it to reach the books, giving a
+  reason. The record keeps who skipped it and why. The app never books or
+  matches a skipped expense again, even if the expense later goes back to an
+  earlier step. If the app may already have created the entry, it looks for that
+  entry first and links it instead of skipping. A skipped reimbursement shows
+  its payment status as unavailable, because the app holds no entry to read a
+  payment from.
+  [Decision — owner]

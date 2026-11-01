@@ -11,7 +11,9 @@ import {
   inertSignoffDirectory,
   type CatalogEventSource,
   type CatalogReader,
+  type ExpenseAlerts,
   type OrgIdentity,
+  type OutcomeMail,
   type Outbound,
   type OwnerDirectory,
   type PeopleDirectory,
@@ -38,11 +40,14 @@ export interface ExpenseConfig {
   signoff?: SignoffDirectory;
   catalog?: CatalogReader;
   catalogEvents?: CatalogEventSource;
+  alerts?: ExpenseAlerts;
   /** Display names, for showing who a reimbursee is. */
   people?: PeopleDirectory;
   quickbooks?: Partial<QuickBooksPorts>;
   /** The host's outbound gateway; unbound, every outbound send throws. */
   outbound?: Outbound;
+  /** Unset means outcome emails wait unsent. */
+  outcomeMail?: OutcomeMail;
 }
 
 export interface ExpenseRuntime {
@@ -51,9 +56,11 @@ export interface ExpenseRuntime {
   signoff: SignoffDirectory;
   catalog: CatalogReader;
   catalogEvents: CatalogEventSource;
+  alerts?: ExpenseAlerts;
   people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
   outbound: Outbound;
+  outcomeMail?: OutcomeMail;
 }
 
 export const expenseRuntime = defineRuntime<ExpenseRuntime, { id: number }>("expense");
@@ -66,6 +73,7 @@ export function configureExpense(config: ExpenseConfig): void {
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
     catalogEvents: config.catalogEvents ?? inertCatalogEventSource,
+    alerts: config.alerts,
     people: config.people ?? inertPeopleDirectory,
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,
@@ -74,14 +82,11 @@ export function configureExpense(config: ExpenseConfig): void {
       posting: config.quickbooks?.posting ?? (async () => null),
     },
     outbound: config.outbound ?? inertOutbound,
+    outcomeMail: config.outcomeMail,
   });
 }
 
 export const getExpenseRuntime = expenseRuntime.require;
-
-export function getOrg(): Promise<OrgIdentity> {
-  return getExpenseRuntime().org();
-}
 
 /** The current request's org id, the scope of every expense row. */
 export const getOrgId = expenseRuntime.getOrgId;

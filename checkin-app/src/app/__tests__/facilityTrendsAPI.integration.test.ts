@@ -224,7 +224,7 @@ describe('Facility trends API', () => {
         expect(data.totals.totalVolunteerHours).toBe(8);
     });
 
-    // Issue #1676: bySource decomposes HOURS by arrivedVia, never people. This
+    // bySource decomposes HOURS by arrivedVia, never people. This
     // program's bucket is the case that matters — `volunteerId` carries both a
     // LEAD_MARKED (3h) and a TYPED (3h) visit here, so a per-source person count
     // would double-count them, but uniqueVolunteers must not.
@@ -267,7 +267,7 @@ describe('Facility trends API', () => {
         expect(scoped.totals.totalVolunteerHours).toBe(8);
     });
 
-    // What the route still excludes, now that source no longer gates anything:
+    // Source gates nothing; what the route excludes is:
     // an open visit has no duration to sum, and a deleted visit did not happen.
     it('still excludes open and soft-deleted visits', async () => {
         const res = await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${untaggedProgramId}`);
@@ -332,9 +332,8 @@ describe('Facility trends API', () => {
         await prisma.program.delete({ where: { id: program.id } });
     });
 
-    // #1624: staff walk-in insert stamps TYPED (typed clocks, actor on the
-    // audit row). Hours count either way; the stamp is what must not regress
-    // to WEB or LEAD_MARKED (window, no clock).
+    // Staff walk-in insert stamps TYPED (typed clocks, actor on the audit row). Hours
+    // count either way; the stamp must stay off WEB and LEAD_MARKED (window, no clock).
     it('counts a real staff walk-in insert in trends hours', async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `StaffEntry ${TAG}` } });
         const insertArrival = new Date(Date.now() - 4 * 3600000);

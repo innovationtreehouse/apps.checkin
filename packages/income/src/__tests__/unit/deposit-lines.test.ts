@@ -14,7 +14,7 @@ const txn = (type: string, orderGid: string | null, amountCents: number, feeCent
 });
 
 const line = (orderGid: string, variantId: string | null, priceCents: number, quantity = 1, discountCents = 0): MirrorOrderLine => ({
-  orderGid, variantId, title: "item", sku: null, quantity, priceCents, discountCents,
+  orderGid, variantId, title: "item", sku: null, quantity, currentQuantity: quantity, priceCents, discountCents,
 });
 
 const sum = (lines: DepositLine[]) => lines.reduce((s, l) => s + l.amountCents, 0);
@@ -54,7 +54,7 @@ describe("buildDepositLines", () => {
     expect(sum(lines)).toBe(1000);
   });
 
-  it("books a refund as negative lines against the same order's buckets", () => {
+  it("splits a refund with no unit change across the order's lines by amount", () => {
     const lines = buildDepositLines({
       payoutNetCents: 6000 - 3000,
       txns: [txn("charge", "O1", 6000), txn("refund", "O1", -3000)],
@@ -64,6 +64,74 @@ describe("buildDepositLines", () => {
     expect(find(lines, "income", 7)).toBe(1000 - 500);
     expect(find(lines, "income", 9)).toBe(5000 - 2500);
     expect(sum(lines)).toBe(3000);
+  });
+
+  it("books a refund to the line that lost its units, leaving the charge on full amounts", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: 10000 - 4000,
+      txns: [txn("charge", "O1", 10000), txn("refund", "O1", -4000)],
+      orderLines: [line("O1", "V-camp", 6000), { ...line("O1", "V-shirt", 4000), currentQuantity: 0 }],
+      categories,
+    });
+    expect(find(lines, "income", 9)).toBe(6000);
+    expect(find(lines, "income", 7)).toBeUndefined();
+    expect(sum(lines)).toBe(6000);
+  });
+
+  it("weights a partly refunded line by the value of its refunded units", () => {
+    // Shirt 3 × $10 − $3 discount, one unit back = $9.00. Camp untouched. $1.00 of refunded tax.
+    const lines = buildDepositLines({
+      payoutNetCents: -1000,
+      txns: [txn("refund", "O1", -1000)],
+      orderLines: [{ ...line("O1", "V-shirt", 1000, 3, 300), currentQuantity: 2 }, line("O1", "V-camp", 5000)],
+      categories,
+    });
+    expect(find(lines, "income", 7)).toBe(-900);
+    expect(find(lines, "income", 9)).toBeUndefined();
+    expect(find(lines, "charge_remainder")).toBe(-100);
+    expect(sum(lines)).toBe(-1000);
+  });
+
+  it("weights refunded lines by value, not by unit count", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -3000,
+      txns: [txn("refund", "O1", -3000)],
+      orderLines: [{ ...line("O1", "V-camp", 5000), currentQuantity: 0 }, { ...line("O1", "V-shirt", 1000), currentQuantity: 0 }],
+      categories,
+    });
+    expect(find(lines, "income", 9)).toBe(-2500);
+    expect(find(lines, "income", 7)).toBe(-500);
+    expect(sum(lines)).toBe(-3000);
+  });
+
+  it("falls back to line amounts when only free lines lost units", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -1000,
+      txns: [txn("refund", "O1", -1000)],
+      orderLines: [{ ...line("O1", "V-camp", 0), currentQuantity: 0 }, line("O1", "V-shirt", 2000)],
+      categories,
+    });
+    expect(find(lines, "income", 7)).toBe(-1000);
+    expect(find(lines, "income", 9)).toBeUndefined();
+    expect(sum(lines)).toBe(-1000);
+  });
+
+  it("leaves refund rounding at org level so the lines sum exactly to the refund", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -1000,
+      txns: [txn("refund", "O1", -1000)],
+      orderLines: [
+        { ...line("O1", "V-shirt", 1000), currentQuantity: 0 },
+        { ...line("O1", "V-camp", 1000), currentQuantity: 0 },
+        { ...line("O1", "V-mug", 1000), currentQuantity: 0 },
+      ],
+      categories,
+    });
+    expect(find(lines, "income", 7)).toBe(-333);
+    expect(find(lines, "income", 9)).toBe(-333);
+    expect(find(lines, "income", null)).toBe(-333);
+    expect(find(lines, "charge_remainder")).toBe(-1);
+    expect(sum(lines)).toBe(-1000);
   });
 
   it("books adjustments and other types whole to adjustments", () => {

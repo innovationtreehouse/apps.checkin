@@ -2,17 +2,17 @@
  * @jest-environment node
  */
 /**
- * Concurrency regression tests for the visit-write paths that do a
+ * Concurrency tests for the visit-write paths that do a
  * read-then-write on Visit: PATCH /api/events/[id] (manualEditAttendance),
  * DELETE /api/facility/visits, and POST /api/my-programs/conflicts/resolve.
  *
- * With nothing serializing them a concurrent writer could invalidate the
- * pre-check before the write landed: two Present marks on different events both
- * saw "no open visit" and both created one (P2002 on
- * Visit_one_open_per_participant → 500), two deletes both saw the row live and
- * both tombstoned it, and two conflict resolutions each saw the other half of
- * the overlap still live and tombstoned both, erasing the session entirely.
- * Each now runs inside a $transaction that takes
+ * With nothing serializing them a concurrent writer can invalidate the
+ * pre-check before the write lands: two Present marks on different events both
+ * see "no open visit" and both create one (P2002 on
+ * Visit_one_open_per_participant → 500), two deletes both see the row live and
+ * both tombstone it, and two conflict resolutions each see the other half of
+ * the overlap still live and tombstone both, erasing the session entirely.
+ * Each runs inside a $transaction that takes
  * `pg_advisory_xact_lock(<the visit's personId>)` and re-checks under the lock,
  * matching /api/scan and /api/attendance/manual.
  *
@@ -127,30 +127,24 @@ describe('visit-write advisory locks', () => {
         });
     }
 
-    it('two concurrent Present marks on different events → one open visit, no 500', async () => {
+    it('two concurrent Present marks on different events → one links the open visit, the other is refused', async () => {
         await prisma.visit.deleteMany({ where: { personId: subjectId } });
         const [eventA, eventB] = await Promise.all([makeEvent('race-a'), makeEvent('race-b')]);
-        // An open Present mark needs a keyholder already in the building.
-        await prisma.person.update({ where: { id: adminId }, data: { isKeyholder: true } });
-        const keyholderVisit = await prisma.visit.create({ data: { personId: adminId, arrivedAt: new Date(Date.now() - 2 * HOUR) } });
+        await prisma.visit.create({ data: { personId: subjectId, arrivedAt: new Date(Date.now() - 2 * HOUR), arrivedVia: 'SCANNER' } });
 
         const markPresent = (eventId: number) => eventPatch(eventId, {
             action: 'manualEditAttendance',
             participantId: subjectId,
             status: 'Present',
             arrivedAt: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
-            departedAt: null,
+            departedAt: new Date(Date.now() - 60 * 1000).toISOString(),
         });
 
         const [resA, resB] = await Promise.all([markPresent(eventA.id), markPresent(eventB.id)]);
 
-        // Winner records the open visit (200); the loser sees it under the lock and
-        // returns the "checked in for another session" 400. Neither 500s.
         expect([resA.status, resB.status].sort()).toEqual([200, 400]);
+        expect(await prisma.visit.count({ where: { personId: subjectId, deletedAt: null } })).toBe(1);
         expect(await prisma.visit.count({ where: { personId: subjectId, departedAt: null, deletedAt: null } })).toBe(1);
-
-        await prisma.visit.delete({ where: { id: keyholderVisit.id } });
-        await prisma.person.update({ where: { id: adminId }, data: { isKeyholder: false } });
     });
 
     it('two concurrent facility deletes of one visit → 200 + 404, tombstoned once', async () => {

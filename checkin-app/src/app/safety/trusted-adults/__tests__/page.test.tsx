@@ -105,8 +105,7 @@ describe("safety/trusted-adults page", () => {
     );
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Recorded: DENIED." })));
 
-    // Cancelling the modal must NOT fire a decision (the old window.prompt returned null,
-    // which `?? ""` swallowed into an empty-note REQUEST_INFO).
+    // Cancelling the modal must NOT fire a decision, least of all an empty-note REQUEST_INFO.
     fireEvent.click(screen.getByRole("button", { name: "Request info" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

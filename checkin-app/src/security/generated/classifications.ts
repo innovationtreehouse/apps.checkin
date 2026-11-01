@@ -64,6 +64,7 @@ export const classifications = {
         state: 'internal',
         postalCode: 'internal',
         intakeNotes: 'pii',
+        archivedAt: 'public',
     },
     EmergencyContact: {
         id: 'public',
@@ -100,6 +101,7 @@ export const classifications = {
         zohoActionId: 'internal',
         zohoSignerPersonId: 'internal',
         contractSignedAt: 'internal',
+        agreementVersion: 'internal',
         bgConsentAt: 'internal',
         bgClearedAt: 'internal',
         shopifyDraftOrderId: 'internal',
@@ -146,6 +148,7 @@ export const classifications = {
         orgMembershipProductUrl: 'internal',
         volunteerFamilyDiscountCode: 'internal',
         bgRecheckMonths: 'public',
+        keyVolunteerAgreementVersion: 'public',
         devSigningTarget: 'internal',
         emailFromAddress: 'public',
         emailReplyToAddress: 'public',

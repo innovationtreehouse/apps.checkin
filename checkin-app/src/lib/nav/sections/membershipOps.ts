@@ -10,7 +10,10 @@ import { SYSADMIN_OR_BOARD, anyRole } from "@/lib/nav/gates";
 export const MEMBERSHIP_OPS_ROLES: readonly RoleFlag[] = [...SYSADMIN_OR_BOARD, "isBackgroundCheckReviewer", "isOperations"];
 
 /** Sysadmin or board: the full run of the admin tools. */
-export const isMembershipOpsAdmin: NavGate = anyRole(SYSADMIN_OR_BOARD);
+export const MEMBERSHIP_OPS_ADMIN_ROLES = SYSADMIN_OR_BOARD;
+export const isMembershipOpsAdmin: NavGate = anyRole(MEMBERSHIP_OPS_ADMIN_ROLES);
+/** The Participants directory: the admin tools' audience plus operations. */
+export const MEMBERSHIP_PARTICIPANTS_ROLES: readonly RoleFlag[] = [...SYSADMIN_OR_BOARD, "isOperations"];
 /** Background-check reviewers and board members (implicit reviewers). */
 export const canReviewMembership: NavGate = anyRole(["isBackgroundCheckReviewer", "isBoardMember"]);
 
@@ -19,7 +22,7 @@ export const MEMBERSHIP_OPS: NavSection = {
   label: "Membership Ops",
   href: "/membership-ops",
   links: [
-    { name: "Participants", href: "/membership-ops/participants", icon: "👥", visible: anyRole([...SYSADMIN_OR_BOARD, "isOperations"]) },
+    { name: "Participants", href: "/membership-ops/participants", icon: "👥", visible: anyRole(MEMBERSHIP_PARTICIPANTS_ROLES) },
     { name: "Merge Participants", href: "/membership-ops/participants/merge", icon: "🔗", visible: isMembershipOpsAdmin },
     { name: "Households", href: "/membership-ops/households", icon: "🏠", visible: isMembershipOpsAdmin },
     { name: "Volunteer Families", href: "/membership-ops/volunteer-memberships", icon: "🙋", visible: isMembershipOpsAdmin },

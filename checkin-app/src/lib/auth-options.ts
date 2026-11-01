@@ -11,7 +11,7 @@ import { config, ORG_DOMAIN } from "@/lib/config";
 import { evaluateMint, type MintMode } from "@/lib/impersonation";
 import { recordLedger } from "@/lib/dev/ledger";
 import { assignParticipantClaims } from "@/lib/authClaims";
-import { ROLE_FLAGS, setRoleFlag } from "@/lib/roles";
+import { ROLE_FLAGS, setRoleFlag, trustStatus } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
@@ -29,26 +29,23 @@ export const UNVERIFIED_EMAIL_SIGNIN_ERROR = "EmailNotVerified";
 // ── NextAuth adapter: the Int ↔ string id boundary, in ONE place ─────────────
 //
 // NextAuth models every id as a string (its cuid default); our Person.id and
-// Account.userId are Int, and the stock PrismaAdapter coerces nothing. That
-// boundary has bitten twice: the Participant→Person rename (#708) fixed the
-// model map for only the methods it happened to touch, and a later change left
-// createUser returning a string id that then crashed linkAccount's Int `userId`
-// column on every first Google sign-in. Both slipped past CI because these
-// methods run ONLY inside the real Google OAuth callback — persona-mint /
-// credentials sign-in (what flow tests exercise via loginAs) never touches the
-// adapter, and the global prisma mock resolves any model name.
+// Account.userId are Int, and the stock PrismaAdapter coerces nothing: a string
+// id from createUser crashes linkAccount's Int `userId` column on every first
+// Google sign-in. CI can't see that through flow tests, because these methods run
+// ONLY inside the real Google OAuth callback — persona-mint / credentials sign-in
+// (what flow tests exercise via loginAs) never touches the adapter, and the global
+// prisma mock resolves any model name.
 //
-// The fix is structural, not another spot-patch: every user/account method the
-// OAuth flow can reach is defined together below, and every id crosses through
-// exactly one of the two converters — never an inline String()/parseInt(). A new
-// adapter method that forgets them is the failure mode to guard against;
-// auth-options-adapter.test.ts calls these directly (the only tier that reaches
+// So every user/account method the OAuth flow can reach is defined together below,
+// and every id crosses through exactly one of the two converters — never an inline
+// String()/parseInt(). A new adapter method that forgets them is the failure mode
+// to guard against; auth-options-adapter.test.ts calls these directly (the only tier that reaches
 // them) to hold that line.
 
 // The stock adapter still backs the methods this flow never overrides (sessions,
 // verification tokens); those operate on the real prisma client and touch no id
 // boundary. `prisma.person` stays a plain, type-checked access on purpose — a
-// cast is exactly how #708 kept a stale model name tsc-green.
+// cast would keep a stale model name tsc-green.
 const baseAdapter = PrismaAdapter({
     ...(prisma as unknown as Record<string, unknown>),
     user: prisma.person,
@@ -59,6 +56,16 @@ const toAdapterUser = (u: { id: number; email: string | null }): AdapterUser =>
     ({ ...u, id: String(u.id), email: u.email ?? "" }) as AdapterUser;
 // string (NextAuth) → Int (DB). NaN-safe; callers treat NaN as "no such id".
 const toDbId = (id: string | number): number => (typeof id === "number" ? id : parseInt(id, 10));
+
+// The address inside a Google id token, which NextAuth has already verified by this point.
+function idTokenEmail(idToken: string | undefined): string | null {
+    try {
+        const { email } = JSON.parse(Buffer.from(idToken?.split(".")[1] ?? "", "base64url").toString());
+        return typeof email === "string" ? email : null;
+    } catch {
+        return null;
+    }
+}
 
 // Every participant must belong to a household (Participant.householdId is
 // required), so new sign-ups get a single-person household they lead.
@@ -79,7 +86,7 @@ export async function createParticipantWithHousehold(data: {
                 ...data,
                 id: await mintPersonId(tx),
                 householdId: household.id,
-                // ponytail: last manufactured name in the tree (Decision 4) — a
+                // ponytail: last manufactured name in the tree — a
                 // provider/flow that supplies no name must not block sign-in; the
                 // member can fix it later in their profile.
                 name: nameWrite(data.name) ?? nameWrite(data.email?.split("@")[0]) ?? "Member",
@@ -110,8 +117,8 @@ const patchedAdapter = {
 
     // NextAuth hands us the provider's email verbatim (Google's casing). The
     // stored value is lowercased on write, so the lookup key must be too — else
-    // a differently-cased address misses the row and NextAuth mints a duplicate
-    // (issue #292). Read normalization mirrors the write extension.
+    // a differently-cased address misses the row and NextAuth mints a duplicate.
+    // Read normalization mirrors the write extension.
     getUserByEmail: async (email: string) => {
         const user = await prisma.person.findUnique({ where: { email: normalizeEmail(email) } });
         return user ? toAdapterUser(user) : null;
@@ -125,19 +132,12 @@ const patchedAdapter = {
         return account?.user ? toAdapterUser(account.user) : null;
     },
 
-    updateUser: async ({ id, ...data }: { id: string; name?: string | null; email?: string | null; image?: string | null; emailVerified?: Date | null }) => {
-        const user = await prisma.$transaction(async (tx) => {
-            if (data.email) {
-                const prior = await tx.person.findUnique({ where: { id: toDbId(id) }, select: { email: true } });
-                if (prior?.email?.toLowerCase() !== data.email.toLowerCase()) {
-                    await removeAliasesForSignInEmail(tx, data.email, systemActor("system:google-sign-in"), "provider_email_change");
-                }
-            }
-            return tx.person.update({
-                where: { id: toDbId(id) },
-                // A provider that stops sending a name must not erase one already on file.
-                data: { name: nameWrite(data.name), email: data.email ?? undefined, image: data.image, emailVerified: data.emailVerified },
-            });
+    updateUser: async ({ id, ...data }: { id: string; name?: string | null; image?: string | null; emailVerified?: Date | null }) => {
+        const user = await prisma.person.update({
+            where: { id: toDbId(id) },
+            // A provider that stops sending a name must not erase one already on file.
+            // Never the email: the sign-in flow has no business changing who signs in as this person.
+            data: { name: nameWrite(data.name), image: data.image, emailVerified: data.emailVerified },
         });
         return toAdapterUser(user);
     },
@@ -151,9 +151,19 @@ const patchedAdapter = {
     // it, and map only our own columns so a provider's extra token fields can't
     // reach prisma.account.create.
     linkAccount: async (account: AdapterAccount) => {
+        const userId = toDbId(account.userId);
+        // NextAuth links any new Google account to a live session, whatever its address,
+        // and that account then signs in as this person.
+        if ((await trustStatus(prisma, userId)).isTrusted) {
+            const person = await prisma.person.findUnique({ where: { id: userId }, select: { email: true } });
+            const linking = idTokenEmail(account.id_token);
+            if (!linking || !person?.email || normalizeEmail(linking) !== normalizeEmail(person.email)) {
+                throw new Error("A trusted person's sign-in can only be linked from their email on file.");
+            }
+        }
         await prisma.account.create({
             data: {
-                userId: toDbId(account.userId),
+                userId,
                 type: account.type,
                 provider: account.provider,
                 providerAccountId: account.providerAccountId,
@@ -229,8 +239,7 @@ export const authOptions: NextAuthOptions = {
         // Dead in prod by construction. Mints a real session AS the chosen persona, stamping an
         // inert `impersonatedBy` claim (display/audit only — no authz path reads it). The policy
         // lives in evaluateMint(); this provider just supplies the caller's claims and the target.
-        // (Replaces the old local-only "Offline Login" provider — local mints are the
-        // unauthenticated-caller case in evaluateMint.)
+        // Local mints are the unauthenticated-caller case in evaluateMint.
         //
         // Registration gates on isDevInstance(), which fails safe to prod (unset CHECKIN_ENV
         // → 'prod'), matching the shared dev fence (lib/dev/guard.ts); evaluateMint
@@ -375,7 +384,7 @@ export const authOptions: NextAuthOptions = {
                 // A persona mint carries the caller's clock, so minting never extends a session.
                 token.signedInAt = user.signedInAt ?? now;
             } else {
-                // A token from before this claim existed starts its clock now.
+                // A token without this claim starts its clock now.
                 token.signedInAt ??= now;
                 if (now - token.signedInAt >= SESSION_MAX_AGE_SECONDS) {
                     // NextAuth's session route catches a jwt-callback error and clears the session
@@ -408,8 +417,8 @@ export const authOptions: NextAuthOptions = {
             // a logged-out visitor, while the persona-mint block above still stamped the gate claims
             // + impersonatedBy so the dev gate passes and "Return to me" works.
             if (user?.email) {
-                // Normalize the lookup key to match the lowercased stored value
-                // (issue #292); Google's casing is otherwise passed through verbatim.
+                // Normalize the lookup key to match the lowercased stored value;
+                // Google's casing is otherwise passed through verbatim.
                 const email = normalizeEmail(user.email);
                 const dbParticipant = await withAuroraResumeRetry(() => prisma.person.findUnique({
                     where: { email, mergedIntoId: null },
@@ -455,10 +464,9 @@ export const authOptions: NextAuthOptions = {
             } else if (token.id) {
                 // On every subsequent request (no `user` present), re-sync authority
                 // flags from the DB so role grants/revocations take effect without
-                // waiting for the token to expire. Previously these flags were only
-                // read at sign-in, which let a revoked isSysadmin/isKeyholder keep their
-                // privileges (including the /api/roles endpoint) until the JWT
-                // aged out — up to 30 days.
+                // waiting for the token to expire. Flags read only at sign-in would let
+                // a revoked isSysadmin/isKeyholder keep their privileges (including the
+                // /api/roles endpoint) until the JWT aged out — up to 30 days.
                 const dbParticipant = await withAuroraResumeRetry(() => prisma.person.findUnique({
                     // A merge tombstone keeps its row and its roles, so `mergedIntoId: null`
                     // (LIVE_PERSON) is what makes this lookup miss and collapses the token

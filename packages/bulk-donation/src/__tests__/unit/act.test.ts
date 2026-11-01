@@ -5,6 +5,7 @@ const show = vi.fn();
 vi.mock("@mantine/notifications", () => ({ notifications: { show: (o: unknown) => show(o) } }));
 vi.mock("next-auth/react", () => ({ useSession: () => ({ data: null }) }));
 
+import { HttpError } from "@checkin/component-ui";
 import { act } from "../../components/api";
 
 beforeEach(() => show.mockReset());
@@ -12,7 +13,7 @@ beforeEach(() => show.mockReset());
 describe("act", () => {
   it("keeps a failure's chip up with the route's error text", async () => {
     const reload = vi.fn();
-    const ok = await act(() => Promise.reject(new Error('Could not import the CSV: line 13 (T1), "Match Amount": not a number: "x"')), "Upload imported", reload);
+    const ok = await act(() => Promise.reject(new HttpError('Could not import the CSV: line 13 (T1), "Match Amount": not a number: "x"', 400)), "Upload imported", reload);
     expect(ok).toBe(false);
     expect(reload).not.toHaveBeenCalled();
     expect(show).toHaveBeenCalledWith(expect.objectContaining({

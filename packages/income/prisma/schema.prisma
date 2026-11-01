@@ -5,7 +5,7 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the income schema under checkin's security regime (design #1283 §7): the
+// Brings the income schema under checkin's security regime: the
 // same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
 // Paths are relative to this schema file.
 generator security {
@@ -76,7 +76,7 @@ model PayoutReconciliation {
   /// @sensitivity:internal
   expected            Json?     @map("expected")
 
-  @@unique([orgId, payoutGid])
+  @@unique([orgId, source, payoutGid])
   @@unique([orgId, depositId])
   @@index([orgId, status])
   @@map("payout_reconciliations")
@@ -103,8 +103,9 @@ model IncomeItemCategory {
   @@map("income_item_categories")
 }
 
-// The org's limits on the deposits one outbox drain may create. FINANCE may lower them;
-// raising one takes the board. Every change is written to the audit log.
+// The org's limits on the deposits one outbox drain may create, and the Benevity match window.
+// FINANCE may lower a limit; raising one takes the board. Finance or the board may move the window
+// either way. Every change is written to the audit log.
 model IncomeOrgSettings {
   /// @sensitivity:internal
   orgId                String @id @map("org_id")
@@ -115,17 +116,20 @@ model IncomeOrgSettings {
   /// The cents cap for Benevity deposits, per deposit and per run; maxCreateCentsPerRun is Shopify's.
   /// @sensitivity:internal
   benevityMaxCreateCentsPerRun Int @default(2500000) @map("benevity_max_create_cents_per_run")
+  /// Days either side of a Benevity deposit's date a QuickBooks deposit may match.
+  /// @sensitivity:internal
+  benevityMatchWindowDays Int @default(7) @map("benevity_match_window_days")
   /// When Shopify posting switched on: set once, by the first drain that posts Shopify payouts, never cleared.
   /// @sensitivity:internal
   qbPostingOnAt        DateTime? @map("qb_posting_on_at")
-  /// When Benevity posting switched on: donation's own stamp, carried over by the move, else the first drain with Benevity deposits due. Never cleared.
+  /// When Benevity posting switched on: set once, by the first drain that posts Benevity deposits, never cleared.
   /// @sensitivity:internal
   benevityQbPostingOnAt DateTime? @map("benevity_qb_posting_on_at")
 
   @@map("org_settings")
 }
 
-// A QuickBooks deposit finance has permanently removed from matching (D5).
+// A QuickBooks deposit finance has permanently removed from matching.
 model IncomeQbMatchExclusion {
   /// @sensitivity:public
   id               Int      @id @default(autoincrement()) @map("id")

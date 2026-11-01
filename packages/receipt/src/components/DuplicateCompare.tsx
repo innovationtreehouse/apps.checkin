@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { BASE, STATE_LABELS } from "./api";
 import { formatCents } from "@checkin/money";
 import ReceiptFile from "./ReceiptFile";
@@ -33,6 +33,8 @@ export interface CompareReceipt {
   discountCents: number | null;
   receiptTotalCents: number | null;
   pushedAt?: string | null;
+  isInKind: boolean;
+  needsReimbursement: boolean;
   lineItems: CompareLine[];
 }
 
@@ -54,7 +56,10 @@ const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
 
 type Row = { label: string; value: (r: CompareReceipt) => string | null | undefined };
 
+const recordedAs = (r: CompareReceipt) => (r.isInKind ? "Gift of goods" : r.needsReimbursement ? "For reimbursement" : "Purchase");
+
 const ROWS: Row[] = [
+  { label: "Recorded as", value: recordedAs },
   { label: "Vendor", value: (r) => r.retailer },
   { label: "Date", value: (r) => r.receiptDate },
   { label: "Receipt #", value: (r) => r.receiptNumber },
@@ -66,6 +71,9 @@ const ROWS: Row[] = [
   { label: "File type", value: (r) => r.mimeType },
   { label: "Uploaded", value: (r) => new Date(r.uploadedAt).toLocaleString() },
 ];
+
+/** Rows that describe a receipt without being a reason it matched. */
+const NEVER_MATCHED = new Set(["Recorded as", "Uploaded"]);
 
 const EMPTY = new Set(["", "—"]);
 
@@ -105,6 +113,8 @@ interface Props {
   receipt: CompareReceipt;
   /** Null while the original loads or when it could not be read. */
   original: CompareReceipt | null;
+  originalError: string | null;
+  onRetryOriginal: () => void;
   originalHref: string;
   /** FINANCE acts; BOARD reads the same compare without actions. */
   isFinance: boolean;
@@ -123,9 +133,10 @@ interface Props {
  * and on that match. Rejecting this receipt, or its uploader discarding it, sits with its other
  * actions.
  */
-export default function DuplicateCompare({ receipt, original, originalHref, isFinance, own, wholeGroup, onNotThisOne, onDifferentPurchases, onKeepThisOne, onRejectOriginal }: Props) {
+export default function DuplicateCompare({ receipt, original, originalError, onRetryOriginal, originalHref, isFinance, own, wholeGroup, onNotThisOne, onDifferentPurchases, onKeepThisOne, onRejectOriginal }: Props) {
   const [reason, setReason] = useState("");
   const sameFile = original != null && same(receipt.fileHash, original.fileHash);
+  const giftAndReimbursement = original != null && ((receipt.isInKind && original.needsReimbursement) || (receipt.needsReimbursement && original.isInKind));
   return (
     <Paper withBorder p="sm">
       <Stack gap="sm">
@@ -137,6 +148,9 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
           <Text size="sm">
             {sameFile ? "Both receipts are the same file." : "The files differ; the receipts match on their details."}
           </Text>
+        )}
+        {giftAndReimbursement && (
+          <Alert color="yellow">One is recorded as a gift of goods and the other is for reimbursement. If they are the same purchase, reimbursing it would pay for goods recorded as given.</Alert>
         )}
         <Table>
           <Table.Thead>
@@ -152,7 +166,7 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
             {ROWS.map((row) => {
               const mine = row.value(receipt);
               const theirs = original ? row.value(original) : null;
-              const matched = original != null && row.label !== "Uploaded" && same(mine, theirs);
+              const matched = original != null && !NEVER_MATCHED.has(row.label) && same(mine, theirs);
               return (
                 <Table.Tr key={row.label} bg={matched ? "var(--mantine-color-blue-light)" : undefined}>
                   <Table.Td>
@@ -192,19 +206,28 @@ export default function DuplicateCompare({ receipt, original, originalHref, isFi
         {isFinance ? (
           <Group gap="xs">
             {receipt.state === "duplicate_flagged" && !own && (
-              <>
-                <Button size="xs" variant="light" onClick={onNotThisOne}>Not this one</Button>
-                {wholeGroup ? (
-                  <>
-                    <Button size="xs" onClick={onDifferentPurchases}>Different purchases</Button>
-                    {original && original.state !== "receipt_finalized" && (
-                      <Button size="xs" variant="light" onClick={onKeepThisOne}>Keep this one</Button>
-                    )}
-                  </>
-                ) : (
-                  <Text size="sm" c="dimmed">This receipt matches more receipts than are shown here. Dismiss the ones that are different purchases with Not this one.</Text>
-                )}
-              </>
+              original ? (
+                <>
+                  <Button size="xs" variant="light" onClick={onNotThisOne}>Not this one</Button>
+                  {wholeGroup ? (
+                    <>
+                      <Button size="xs" onClick={onDifferentPurchases}>Different purchases</Button>
+                      {original.state !== "receipt_finalized" && (
+                        <Button size="xs" variant="light" onClick={onKeepThisOne}>Keep this one</Button>
+                      )}
+                    </>
+                  ) : (
+                    <Text size="sm" c="dimmed">This receipt matches more receipts than are shown here. Dismiss the ones that are different purchases with Not this one.</Text>
+                  )}
+                </>
+              ) : originalError ? (
+                <>
+                  <Text size="sm" c="red">{"Couldn't load the suspected original: "}{originalError}</Text>
+                  <Button size="xs" variant="light" onClick={onRetryOriginal}>Retry</Button>
+                </>
+              ) : (
+                <Text size="sm" c="dimmed">Loading the suspected original…</Text>
+              )
             )}
             {original && !own && !TERMINAL.has(original.state) && !original.pushedAt && (
               <Group align="end" gap="xs">

@@ -1,4 +1,4 @@
-/** Decisions on the expense record (#2481): reasons, the closing acts, required notes and Approve tax. */
+/** Decisions on the expense record: reasons, the closing acts, required notes and Approve tax. */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -103,6 +103,16 @@ describeDb("expense reasons", () => {
     expect(await actionable(FINANCE)).toEqual([["REIMBURSEE_TO_NAME", true]]);
     expect(await actionable(CONFLICTED_FINANCE)).toEqual([["REIMBURSEE_TO_NAME", false]]);
     expect(await actionable(BOARD)).toEqual([["REIMBURSEE_TO_NAME", false]]);
+  });
+
+  it("choosing a line's bucket is actionable for any finance holder, a conflicted one included", async () => {
+    bind();
+    const id = await seedExpense({ state: "owner_approval" });
+    await seedApproval(id, await seedLineItem(id), { ownerId: 100, status: "exception_raised" });
+    await seedApproval(id, await seedLineItem(id), { ownerId: null, status: "unknown" });
+    const actionable = async (p: ReturnType<typeof principal>) => (await expenseReasons(p, id)).map((r) => [r.code, r.actionable]);
+    expect(await actionable(CONFLICTED_FINANCE)).toEqual([["BUCKET_UNKNOWN", true], ["OWNER_EXCEPTION", true]]);
+    expect(await actionable(BOARD)).toEqual([["BUCKET_UNKNOWN", false], ["OWNER_EXCEPTION", false]]);
   });
 
   it("bookkeeping is actionable for any finance holder, a conflicted one included", async () => {

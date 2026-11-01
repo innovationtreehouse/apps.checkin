@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration coverage for the supervising-adult test (#1436 / #1550) against a
+ * Integration coverage for the supervising-adult test against a
  * real Postgres — the half the unit tests mock away is the query itself: the
  * nested membership filter, and the participant-seat probe's "programme in
  * session now" OR (an event bracketing now, or the programme's own dates).
@@ -197,7 +197,7 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the compliance banner (#1550)', () => {
+    describe('the compliance banner', () => {
         it('is clear when two supervising adults cover an unaccompanied youth', async () => {
             await checkIn('ann');
             await checkIn('ben');
@@ -223,13 +223,13 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the departure interrupt ladder (#1436)', () => {
+    describe('the departure interrupt ladder', () => {
         it('warns without a confirm when the third supervising adult leaves', async () => {
             await checkIn('ann');
             await checkIn('ben');
             const cal = await checkIn('cal');
 
-            const res = await wire(processCheckout(people.cal, cal.id, 'kiosk'));
+            const res = await wire(processCheckout(people.cal, cal.id));
             const body = await res.json();
 
             expect(res.status).toBe(200);
@@ -242,14 +242,14 @@ describe('supervising adults (integration)', () => {
             await checkIn('fay');
             const ben = await checkIn('ben');
 
-            const first = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
+            const first = await wire(processCheckout(people.ben, ben.id));
             expect(first.status).toBe(400);
             expect((await first.json()).type).toBe('warning');
             const stamped = await prisma.visit.findUnique({ where: { id: ben.id } });
             expect(stamped?.supervisionWarnedAt).not.toBeNull();
             expect(stamped?.departedAt).toBeNull();
 
-            const second = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
+            const second = await wire(processCheckout(people.ben, ben.id));
             expect(second.status).toBe(200);
             expect((await prisma.visit.findUnique({ where: { id: ben.id } }))?.departedAt).not.toBeNull();
         });
@@ -258,7 +258,7 @@ describe('supervising adults (integration)', () => {
             await checkIn('ann');
             const ben = await checkIn('ben');
 
-            const res = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
+            const res = await wire(processCheckout(people.ben, ben.id));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toMatch(/leaves only 1 supervising adult/i);
@@ -272,7 +272,7 @@ describe('supervising adults (integration)', () => {
             const al = await checkIn('al');
             await checkIn('ben');
 
-            const res = await wire(processCheckout(people.al, al.id, 'kiosk'));
+            const res = await wire(processCheckout(people.al, al.id));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toBeUndefined();
@@ -281,7 +281,7 @@ describe('supervising adults (integration)', () => {
         it('warns a youth checking in below two, and lets them in anyway', async () => {
             await checkIn('ann');
 
-            const res = await wire(processCheckin(people.fay, 'kiosk'));
+            const res = await wire(processCheckin(people.fay));
             const body = await res.json();
 
             expect(res.status).toBe(200);

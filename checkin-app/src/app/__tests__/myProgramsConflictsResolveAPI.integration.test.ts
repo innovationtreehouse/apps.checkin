@@ -110,6 +110,22 @@ describe('My-programs conflicts resolve API', () => {
         }
     });
 
+    it('returns 409 for an open visit, even one that overlaps, and leaves it live', async () => {
+        const open = await prisma.visit.create({
+            data: { personId: participantId, arrivedAt: hoursAgo(5), associatedEventId: eventId },
+        });
+        const sibling = await prisma.visit.create({
+            data: { personId: participantId, arrivedAt: hoursAgo(4), departedAt: hoursAgo(1) },
+        });
+        try {
+            const res = await callAs({ id: leadId }, { visitId: open.id });
+            expect(res.status).toBe(409);
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: open.id } })).deletedAt).toBeNull();
+        } finally {
+            await prisma.visit.deleteMany({ where: { id: { in: [open.id, sibling.id] } } });
+        }
+    });
+
     it('returns 403 for a caller who neither leads the program nor is a global admin', async () => {
         const [anchor, sibling] = await Promise.all([
             prisma.visit.create({ data: { personId: participantId, arrivedAt: hoursAgo(5), departedAt: hoursAgo(2), associatedEventId: eventId } }),

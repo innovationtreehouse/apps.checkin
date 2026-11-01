@@ -7,7 +7,8 @@ The intended behaviour of check-in, check-out and closing the building.
 assembled from the owner's rulings and signed off by the owner on 2026-10-11
 and 2026-10-12; copied here 2026-10-12 from revision 12. That doc also lists
 where the code differed at `main@1f2b2c826`; those gaps are tracked as work,
-not here. Where this file and `docs/rules/attendance-checkin.md` disagree,
+not here. Updated for Board ruling B7/B14, 2026-10-27: nobody closes from the web, which
+replaces the 2026-10-11 sign-off on a web close. Where this file and `docs/rules/attendance-checkin.md` disagree,
 raise it with the owner.
 
 ## Principles
@@ -49,6 +50,11 @@ stateDiagram-v2
 5. **Late scans** (queued offline) are applied in scan order, at scan time. A
    scan more than 10 minutes late, out of order, or with a suspect kiosk clock
    is applied **and** flagged.
+6. **Scan times come from the server's clock,** as the kiosk last measured it,
+   plus the time elapsed since. A queued scan with a close inside the time's
+   uncertainty is applied at its time **and** flagged: which side of the close it
+   belongs on can't be known. Board ruling B7/B14, 2026-10-27; owner ruling
+   2026-10-31.
 
 ## The building: open is derived, close is an event
 
@@ -61,8 +67,7 @@ stateDiagram-v2
 
 ## Closing the building
 
-Only a keyholder closes the building, at the kiosk or on the web. A board
-member who needs to close it must be a keyholder.
+Only a keyholder closes the building, at the kiosk. A board member who needs to close it must be a keyholder.
 
 ```mermaid
 flowchart TD
@@ -71,9 +76,6 @@ flowchart TD
     B -- Yes, keyholder or not --> D[Kiosk: scan again within 15 s to close]
     D -- Same badge again, after 3 s --> C
     D -- No second scan, or another badge --> E[Only this keyholder leaves; the other scan is processed normally]
-    W[Keyholder on the web: Close building] --> F[Web shows who is recorded IN, asks to confirm]
-    F -- Confirm --> G[Close now]
-    F -- Cancel --> H[Nothing changes]
 ```
 
 1. **Kiosk, alone:** a keyholder's OUT when the kiosk shows nobody else IN
@@ -87,16 +89,12 @@ flowchart TD
 3. **Offline:** the same, using what the kiosk shows. The kiosk queues "close
    at t"; the server applies it whenever it arrives, with departures at t. A
    late close is not held for review.
-4. **Web:** a keyholder confirms against the list of who is recorded IN; the
-   close happens at that moment. Times are corrected afterwards on the visit
-   edit screen.
-5. **The server never second-guesses a close:** no freshness window, no
+4. **The server never second-guesses a close:** no freshness window, no
    server-issued token, and a comparison against its own records and clock only
    as `docs/rules/attendance-checkin.md` states.
-6. **The web cannot stop a kiosk close.** No web action (checking the keyholder
-   out, removing their visit, checking in another keyholder, changing roles)
-   prevents or undoes a close confirmed at the kiosk, live or queued.
-7. **Arrivals after a close** start a new visit. A close never departs a visit
+5. **The web cannot stop a kiosk close.** No web action (correcting a visit,
+   changing roles) prevents or undoes a close confirmed at the kiosk, live or queued.
+6. **Arrivals after a close** start a new visit. A close never departs a visit
    that began after its time t (allowing small clock skew).
 
 ## The kiosk
@@ -105,13 +103,31 @@ flowchart TD
   the server has it. A restart never loses a scan.
 - **Never blank:** shows the server's roster plus its own queued scans, and keeps
   showing that view offline.
+- **Keeps one server-time sample** for scan times, signing, its clock warning and
+  clearing its own view at 23:00 when it has not heard from the server. The clear
+  sends the server nothing; the server's 23:00 run stays the one close of record.
+  Roster replies and scan acknowledgements name the latest nightly close whose run
+  has ended.
+  Owner ruling 2026-10-31.
 - **Asks for the second scan itself.** The close confirmation happens at the
   kiosk, not the server.
 
 ## The web
 
-- **With a recent kiosk heartbeat:** shows who is in, whether the building is
+- **Reads.** No check-in, check-out, force checkout or close. Corrections apply
+  to closed visits; times are corrected on the visit edit screen. Board ruling
+  B7/B14, 2026-10-27.
+- **Overlaps.** A website insert or edit that overlaps the person's open visit is
+  refused; one that overlaps a closed visit applies and is flagged for review.
+- **Roster marks.** A Present mark, made after the session starts and with a
+  departure, links a kiosk visit covering the session or else creates a closed
+  visit. It never opens or ends a visit.
+- **Which close ended a visit.** The visit's own link to the close decides. The
+  close log is never edited; a pull-back's log row names the close it replaced.
+- **With a recent kiosk heartbeat and no scans waiting to send:** shows who is in, whether the building is
   open, and supervision state. No-keyholder visits are shown as such and never
   make the building look open.
-- **Without one:** says it can't confirm building state ("kiosk last seen X
+- **With scans waiting:** says it is syncing N scans instead of showing occupancy,
+  open/closed or supervision as fact. Board ruling B7/B14, 2026-10-27.
+- **Without a recent heartbeat:** says it can't confirm building state ("kiosk last seen X
   ago") instead of showing occupancy, open/closed or supervision as fact.

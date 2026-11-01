@@ -157,9 +157,8 @@ model Person {
   household   Household @relation(fields: [householdId], references: [id])
 
   /// True when this person is a lead of their own household ({@link householdId}).
-  /// Single source of truth for leadership — supersedes the HouseholdLead join
-  /// table, which stored a redundant householdId that could diverge (issue: the
-  /// isLead check required lead.householdId === person.householdId). Cap of 2
+  /// Single source of truth for leadership: it sits on the Person, so a lead can
+  /// never be recorded against a household other than their own. Cap of 2
   /// leads/household enforced at write, not in schema. @sensitivity:public
   isHouseholdLead Boolean @default(false)
 
@@ -180,9 +179,8 @@ model Person {
   /// @sensitivity:personal
   allergies String?
 
-  /// @deprecated legacy mirror column, kept in sync by write-through for existing
-  /// readers (see PersonRole). PersonRole is the source of truth; dropped in the
-  /// CONTRACT PR once those readers are ported to `roles:{some:{role:...}}`.
+  /// @deprecated mirror column, kept in sync by write-through for existing readers.
+  /// PersonRole is the source of truth; new readers use `roles:{some:{role:...}}`.
   /// @sensitivity:internal
   isSysadmin                Boolean @default(false)
   /// @deprecated legacy mirror column — see isSysadmin.
@@ -238,10 +236,8 @@ model Person {
   roles        PersonRole[] @relation("PersonRoles")
   grantedRoles PersonRole[] @relation("RoleGrantedBy")
 
-  // Household-lead lookups (a1): "leads of household X" runs on the hot paths
-  // (check-in notification fan-out, nav badges, broken/unclaimed-household scans).
-  // Person had no householdId index — the old HouseholdLead composite PK provided
-  // one; this restores it, extended with isHouseholdLead so lead scans stay index-only.
+  // "Leads of household X" runs on the hot paths (check-in notification fan-out, nav
+  // badges, broken/unclaimed-household scans); isHouseholdLead keeps those scans index-only.
   @@index([householdId, isHouseholdLead])
 }
 
@@ -284,13 +280,12 @@ enum PersonRoleKind {
   OPERATIONS
   INVENTORY_MANAGER
   FINANCE
+  KEY_VOLUNTEER
 }
 
-/// Source of truth for role grants (expand phase of the boolean-column -> table
-/// migration; see docs on the roles-foundation rework). The five session/JWT
-/// booleans (isSysadmin...isOperations) are derived from this table
-/// (src/lib/roles.ts rolesToFlags); four legacy Person columns stay as a
-/// write-through mirror for existing readers (isOperations never had one).
+/// Source of truth for role grants. The session/JWT role booleans are derived from
+/// this table (src/lib/roles.ts rolesToFlags); four Person columns stay as a
+/// write-through mirror for existing readers (the other roles have none).
 model PersonRole {
   /// @sensitivity:internal
   personId    Int
@@ -369,6 +364,10 @@ model Household {
   /// @sensitivity:pii
   intakeNotes String?
 
+  /// When the family left the organisation permanently; null means active.
+  /// @sensitivity:public
+  archivedAt DateTime?
+
   householdMembers  Person[]
   orgMembership     OrgMembership?
   trustedAdults     TrustedAdult[]
@@ -435,15 +434,18 @@ enum OrgMembershipStatus {
 enum OrgMembershipProcessKind {
   INITIAL
   RENEWAL
-  // Per-person background-check obligation (Phase 2). Not tied to a household
+  // Per-person background-check obligation. Not tied to a household
   // membership: orgMembershipId is null and subjectPersonId points at the person
   // being checked. Runs through the same two-reviewer gate as household checks.
   PERSON_BG
-  // Per-person membership agreement for an adult child (#1224). Like PERSON_BG,
+  // Per-person membership agreement for an adult child. Like PERSON_BG,
   // orgMembershipId is null and subjectPersonId is the signer. An 18+ child of the
   // signer is a legal adult and can't be bound by their parent's signature, so they
   // sign their own. Opens at PENDING_EXTERNAL_ACTION; the signature flips it to ACTIVE.
   PERSON_AGREEMENT
+  // Per-person Key Volunteer Agreement. Like PERSON_AGREEMENT, orgMembershipId is
+  // null and subjectPersonId is the signer.
+  KEY_VOLUNTEER_AGREEMENT
 }
 
 enum OrgMembershipProcessStatus {
@@ -528,15 +530,15 @@ model OrgMembership {
 model OrgMembershipProcess {
   /// @sensitivity:public
   id                    Int                        @id @default(autoincrement())
-  // Nullable since Phase 2: a PERSON_BG process is not tied to a household
-  // membership (subjectPersonId is set instead). INITIAL/RENEWAL always set it.
+  // Null on the per-person kinds (PERSON_BG, PERSON_AGREEMENT, KEY_VOLUNTEER_AGREEMENT),
+  // which set subjectPersonId instead. INITIAL/RENEWAL always set it.
   /// @sensitivity:public
   orgMembershipId       Int?
   // onDelete pinned to Restrict to keep the existing constraint (Prisma's default
   // for an optional relation is SetNull; the live FK is RESTRICT). Avoids drift.
   orgMembership         OrgMembership?             @relation(fields: [orgMembershipId], references: [id], onDelete: Restrict)
-  // Set only for PERSON_BG processes — the person being background-checked
-  // (participant, volunteer, or lead). Null for household INITIAL/RENEWAL.
+  // Set only for the per-person kinds — the person being background-checked
+  // (participant, volunteer, or lead) or signing. Null for household INITIAL/RENEWAL.
   /// @sensitivity:public
   subjectPersonId       Int?
   subjectPerson         Person?                    @relation("PersonBgSubject", fields: [subjectPersonId], references: [id])
@@ -564,6 +566,10 @@ model OrgMembershipProcess {
   zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
   /// @sensitivity:internal
   contractSignedAt      DateTime?
+  /// The BoardSettings.keyVolunteerAgreementVersion a KEY_VOLUNTEER_AGREEMENT
+  /// opened at. Null on every other kind.
+  /// @sensitivity:internal
+  agreementVersion      Int?
   /// @sensitivity:internal
   bgConsentAt           DateTime?
   /// When the background-check requirement was satisfied for this cycle — either
@@ -591,10 +597,9 @@ model OrgMembershipProcess {
   manualPaymentById     Int?                    @map("certifiedById")
   /// @sensitivity:internal
   certificationNote     String?
-  /// Write-never as of the outreach engine (PR-2): the renewal sweep and the go-live
-  /// bulk-open button no longer email, so nothing stamps this anymore. Kept (not
-  /// dropped) because dropping a column is a destructive migration for no benefit —
-  /// see lib/outreach for the only remaining send surface.
+  /// Write-never: the renewal sweep and the go-live bulk-open button send no email, so
+  /// nothing stamps this. Kept because dropping a column is a destructive migration for
+  /// no benefit. lib/outreach is the only send surface for renewal mail.
   /// @sensitivity:internal
   renewalReminderSentAt DateTime?
   /// @sensitivity:internal
@@ -719,6 +724,10 @@ model BoardSettings {
   /// (the board must set the real Treehouse policy value before renewals re-check).
   /// @sensitivity:public
   bgRecheckMonths            Int       @default(0)
+  /// Current version of the Key Volunteer Agreement; a signature counts only at
+  /// this version.
+  /// @sensitivity:public
+  keyVolunteerAgreementVersion Int     @default(1)
   /// DEV-INSTANCE-ONLY override for where contract signing requests go:
   /// 'debug' routes them to the in-app mock interstitial (/dev/zoho-sign) even
   /// when real Zoho creds are set; 'zoho' or NULL uses whatever the env
@@ -752,8 +761,8 @@ model BoardSettings {
   scholarshipAckSubject      String?
   /// ACK body for a membership-fee request (POST /api/membership/request-payment-plan).
   /// Plain text: rendered by HTML-escaping then splitting into `<p>` paragraphs — never
-  /// interpreted as HTML (see scholarshipAckProgramBody re: the outreach preview XSS
-  /// history this deliberately avoids). NULL/blank = the default copy.
+  /// interpreted as HTML, so saved copy cannot inject markup or script (XSS).
+  /// NULL/blank = the default copy.
   /// @sensitivity:internal
   scholarshipAckMembershipBody String?
   /// ACK body for a program request (POST /api/programs/[id]/request-payment-plan).
@@ -835,7 +844,7 @@ model AppSettings {
   updatedAt DateTime @updatedAt
 }
 
-/// Trusted Adult Management (Trusted Adults). A board-reviewed disclosure that
+/// A board-reviewed disclosure that
 /// one individual (the subject, always a Person) holds an external
 /// relationship — familial, romantic, guardianship, financial, legal-restriction,
 /// etc. — with a counterparty who may be another Person or someone outside
@@ -843,18 +852,17 @@ model AppSettings {
 /// review cycle is a TrustedAdultReview row (like OrgMembership/OrgMembershipProcess), so
 /// a renewal reuses the facts without re-entry.
 ///
-/// NAMING GLOSSARY (one entity, several names — read before renaming; audit P2-2).
+/// NAMING GLOSSARY (one entity, several names — read before renaming).
 /// This model is the *authorization record*, NOT a person. It involves two people:
 ///   - `disclosedBy`       — the SUBJECT: the Person who entered the disclosure.
 ///   - `trustedAdult*`     — the ADULT being trusted: their name/phone/email
 ///                           (`trustedAdultName/Phone/Email`) and their optional
 ///                           Person link (`trustedAdultPerson` / `trustedAdultPersonId`).
-///                           Historically called the "counterparty" (the adult on the
-///                           other side of the disclosed relationship); that word now
-///                           survives only in explanatory prose, not as an identifier.
+///                           Prose may call them the "counterparty" (the adult on the
+///                           other side of the disclosed relationship); no identifier does.
 /// Synonyms for the SAME concept across layers, so a reviewer isn't misled:
 ///   - Model / DB / relations ............ `TrustedAdult` (this record)
-///   - Adult's fields on the record ...... `trustedAdult*` (P2-2 A1+A2, done)
+///   - Adult's fields on the record ...... `trustedAdult*`
 ///   - Policy prose ...................... "dual relationship"
 ///   - Member/board UI label ............. "Trusted Adult"
 ///   - Operational (front-desk) UI label . "Pickup"
@@ -883,9 +891,7 @@ model TrustedAdult {
   /// @sensitivity:personal
   trustedAdultEmail         String?
   /// The family's explanation for the BOARD — what this adult may or may not do,
-  /// restrictions, safeguarding context. Board + the household's own leads only
-  /// (pii tier is the board/family band here; program leads & keyholders never
-  /// receive it).
+  /// restrictions, safeguarding context.
   /// Narrative safeguarding content. 'internal': board/sysadmin plus an
   /// explicit their_households:internal grant on GET /api/trusted-adults/mine
   /// (the family authored it and the renew form prefills it). Never reaches
@@ -916,8 +922,7 @@ model TrustedAdult {
 }
 
 /// One review cycle for a TrustedAdult. A single board member decides it (no
-/// quorum). subjectParticipantId is denormalized from the parent so the security
-/// stripper can scope a nested review row to the subject (their_own).
+/// quorum). householdId is denormalized from the parent for the security stripper.
 model TrustedAdultReview {
   /// @sensitivity:public
   id                   Int                    @id @default(autoincrement())
@@ -1118,8 +1123,8 @@ model Program {
   shopifyStockLeaseUntil    DateTime?
   /// @sensitivity:internal
   shopifyStockLeaseToken    String?
-  /// Sum of parked stock changes the previous release booked; read as one parked
-  /// entry until settled. Current code parks into shopifyStockParked.
+  /// Sum of parked stock changes with no itemized entry; read as one parked entry
+  /// until settled. New parks go to shopifyStockParked.
   /// @sensitivity:internal
   shopifyStockUnconfirmed   Int       @default(0)
   /// Parked stock writes, a JSON list of { key, delta, parkedAt }: each one Shopify
@@ -1137,20 +1142,15 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
-  budgetOwners BudgetOwner[] @ignore
 }
 
-// Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
-// reads it yet). See docs/in-design/PROGRAM_INSTANCE_RESTRUCTURE.md §3/§7 P1.
-// The offering columns are mirrored here so a later phase can repoint the child
-// FKs (programId → instanceId) as a pure RENAME off the id-aliased backfill.
-// ponytail: two offering columns the design lists are deliberately deferred to a
-// later phase — leadMentorNotificationSettings (its `personal` tier would make
-// this model sensitive-and-scopable, forcing a scopeBindings entry that the
-// design itself only wants in the Phase 3 claim swap) and the retiring
-// @ignore'd shopify org/non-org variant pair. Nothing reads either in Phase 1;
-// the data stays on Program until Phase 5 drops it, so add them with their
-// readers/binding later.
+// Program → Instance → Event: an additive tier with a 1:1 id-aliased backfill that
+// nothing reads. See docs/in-design/PROGRAM_INSTANCE_RESTRUCTURE.md.
+// The offering columns are mirrored here so the child FKs (programId → instanceId)
+// can repoint as a pure RENAME off the id-aliased backfill.
+// ponytail: leadMentorNotificationSettings stays on Program only: its `personal` tier
+// would make this model sensitive-and-scopable, forcing a scopeBindings entry. Add it
+// with its readers and binding.
 model ProgramInstance {
   /// @sensitivity:public
   id               Int              @id @default(autoincrement())
@@ -1173,8 +1173,8 @@ model ProgramInstance {
   enrollmentStatus EnrollmentStatus @default(CLOSED)
   /// @sensitivity:public
   maxParticipants  Int?
-  /// Narrowing override (§3a): NULL = inherit the definition. A non-null value
-  /// may only make the band STRICTER — enforced at write time in a later phase.
+  /// Narrowing override: NULL = inherit the definition. A non-null value may only
+  /// make the band STRICTER; no write path sets these columns or enforces that.
   /// @sensitivity:public
   minAge           Int?
   /// @sensitivity:public
@@ -1196,9 +1196,6 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
-  /// Out of the client; bucket treasurers are BudgetOwnerTreasurer rows. A later migration drops the column.
-  /// @sensitivity:internal
-  isTreasurer   Boolean @default(false) @ignore
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1235,7 +1232,7 @@ model ProgramParticipant {
   /// OrgMembership row — it must be stamped at approval. Null until approved.
   /// @sensitivity:internal
   wasOrgMemberAtApproval Boolean?
-  /// Hold-ledger state (product decision 2026-07-06): stamped when a
+  /// Hold-ledger state: stamped when a
   /// scholarship application takes a seat out of Shopify's pool (-1). Cleared
   /// back to null exactly once, by whichever fires first: withdrawal, a
   /// normal payment (webhook compensates the sale's auto-decrement), or
@@ -1277,8 +1274,8 @@ model Event {
   id          Int      @id @default(autoincrement())
   /// @sensitivity:public
   programId   Int?
-  /// Phase 1 (additive): backfilled to the program's id-aliased instance; no
-  /// read consumer yet. programId stays authoritative until a later phase.
+  /// Backfilled to the program's id-aliased instance. Nothing reads it; programId
+  /// is authoritative.
   /// @sensitivity:public
   instanceId  Int?
   /// @sensitivity:public
@@ -1314,9 +1311,8 @@ model RSVP {
   /// @sensitivity:public
   status        RSVPStatus
   /// @sensitivity:internal
-  // DEPRECATED: event-start reminders were removed (calendars cover this). No code
-  // reads or writes this column. Kept for now; drop in a follow-up migration once
-  // this release is fully rolled out (see DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md).
+  // DEPRECATED: no code reads or writes this column; calendars cover event-start
+  // reminders. Dropping it follows DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md.
   reminderSentAt DateTime?
 
   event       Event       @relation(fields: [eventId], references: [id])
@@ -1344,7 +1340,7 @@ model RawBadgeLog {
   /// @sensitivity:internal
   reviewReason  String?          // set when a stale/out-of-order replay is parked instead of toggled
 
-  /// Review stamp for a parked row (§2 D7): null while it still needs a human.
+  /// Review stamp for a parked row: null while it still needs a human.
   /// `reviewReason != null AND reviewedAt = null` IS the unsynced-scans queue.
   /// @sensitivity:internal
   reviewedAt    DateTime?
@@ -1358,17 +1354,15 @@ model RawBadgeLog {
   @@index([personId, timestamp]) // Double-badge detection in /api/scan
 }
 
-/// Direction the producing surface displayed (invariant 5). Visits project
+/// Direction the producing surface displayed. Visits project
 /// from this log; they do not re-toggle from live state.
 enum PresenceDirection {
   IN
   OUT
 }
 
-/// Stage-2 substrate (docs/rules/attendance-checkin.md, kiosk resilience):
-/// every presence-affecting surface appends an intent-carrying event; Visits
-/// project from the ordered log.
-/// Expand-only — old writers never touch this table.
+/// Every presence-affecting surface appends an intent-carrying event; Visits
+/// project from the ordered log (docs/rules/attendance-checkin.md, kiosk resilience).
 model PresenceEvent {
   /// @sensitivity:internal
   id             Int               @id @default(autoincrement())
@@ -1382,7 +1376,7 @@ model PresenceEvent {
   source         VisitSource
   /// @sensitivity:internal
   clientEventId  String?           @unique
-  /// M2 classify output: PROJECTED | PARKED_* | CONFLICT_*. String, not an
+  /// Classify output: PROJECTED | PARKED_* | CONFLICT_*. String, not an
   /// enum, so new park reasons do not need ADD VALUE. @sensitivity:internal
   classification String?
   /// @sensitivity:internal
@@ -1437,7 +1431,7 @@ model Visit {
   /// Confirm token minted with that warning and returned to the kiosk. Only a
   /// scan echoing it force-closes, so an ordinary double-tap cannot; validity
   /// is by issuance, not elapsed time, so a confirm queued through an outage
-  /// still closes when it lands (§5.23a). @sensitivity:internal
+  /// still closes when it lands. @sensitivity:internal
   forceCloseToken   String?
   /// Who was shown the web close choice the token answers; a web confirm from
   /// anyone else fails as if the token did not match. Null for a kiosk token.
@@ -1445,7 +1439,7 @@ model Visit {
   forceCloseActorId Int?
 
   /// When the kiosk last showed this person the "the room drops below two
-  /// supervising adults" warning (#1436). Its own stamp, not forceCloseWarnedAt:
+  /// supervising adults" warning. Its own stamp, not forceCloseWarnedAt:
   /// the keyholder close-guard is a separate interrupt that can be pending at the
   /// same time.
   /// @sensitivity:internal
@@ -1464,7 +1458,7 @@ model Visit {
   // Partial unique index "Visit_one_open_per_participant" — at most one open,
   // live visit (departedAt IS NULL AND deletedAt IS NULL) per participant.
   // Prisma's DSL can't express a partial unique index, so it lives in raw SQL
-  // (recreated in 20260726120000_visit_tombstone). DB-level backstop against
+  // (20260726120000_visit_tombstone). DB-level backstop against
   // double check-in races.
 }
 
@@ -1550,7 +1544,7 @@ model AuditLog {
   @@index([tableName, timestamp])
 }
 
-/// One view of finance records other than the viewer's own (Board ruling B11).
+/// One view of finance records other than the viewer's own (docs/rules/revenue.md).
 /// Records who looked at which records through which endpoint, never what the
 /// records said. Written by `recordFinanceView` (lib/finance/financeViewLog.ts);
 /// read only by the Board. Kept indefinitely.
@@ -1670,8 +1664,7 @@ model SystemMetricLog {
 }
 
 /// Persisted external-integration / link failures (Shopify, etc.) surfaced on the
-/// System Status > Link Status tab. Previously these were only emailed to admins and
-/// never stored, so there was no view. Rolling log: rows auto-purge after 90 days.
+/// System Status > Link Status tab. Rolling log: rows auto-purge after 90 days.
 model IntegrationErrorLog {
   /// @sensitivity:internal
   id         Int       @id @default(autoincrement())
@@ -1719,17 +1712,15 @@ model CronRunLog {
   @@index([job, success, finishedAt])
 }
 
-/// Permanent record of a participant merge (#1456 phase 2b), written by
+/// Permanent record of a participant merge, written by
 /// membership-ops/participants/merge in the merge transaction.
 ///
-/// It exists because the tombstone `Person` row is going away: today the merge
-/// still writes `mergedIntoId` and keeps the row, so both records agree; in 2b-3
-/// the row is deleted and this becomes the only survivor of it. Two readers
-/// depend on that — the kiosk scan path, which must still resolve a badge that
-/// encodes a merged-away id, and membership-audit/compliance §6, which reports
-/// whose background check a survivor inherited.
+/// It outlives the tombstone `Person` row, so a merged-away record stays answerable
+/// without it. Two readers depend on that — the kiosk scan path, which must still
+/// resolve a badge that encodes a merged-away id, and membership-audit/compliance,
+/// which reports whose background check a survivor inherited.
 ///
-/// No SCOPE_BINDINGS entry, matching the IdCounter precedent (#1456 Decision 5).
+/// No SCOPE_BINDINGS entry, matching IdCounter.
 model PersonMerge {
   /// @sensitivity:internal
   id       Int      @id @default(autoincrement())
@@ -1748,7 +1739,7 @@ model PersonMerge {
   ///
   /// Tiered at the strictest thing inside it — a Json blob is one field, so
   /// adding dateOfBirth would re-tier the whole column to `personal`. It is
-  /// deliberately absent: nothing reads it (#1456 Decision 1).
+  /// deliberately absent: nothing reads it.
   ///
   /// The four role mirrors ride along for the same reason personPreImage carries
   /// them — they record what authority the merged-away record held — and because
@@ -1967,8 +1958,8 @@ model Org {
   name String
 }
 
-/// An accounting bucket that expense lines and bulk-donation gifts are owned by
-/// (#1280 §6). Not a Person. Its approvers are its owner and its treasurers, set
+/// An accounting bucket that expense lines and bulk-donation gifts are owned by.
+/// Not a Person. Its approvers are its owner and its treasurers, set
 /// by the Board. An org-level bucket (Facility is one of several) has none,
 /// because finance assigning an item to it is the approval.
 /// Buckets are archived, never deleted — libraries hold `id` as an opaque
@@ -1979,9 +1970,6 @@ model BudgetOwner {
   id                   Int       @id @default(autoincrement())
   /// @sensitivity:internal
   name                 String
-  /// Out of the client; a later migration drops the column.
-  /// @sensitivity:internal
-  programId            Int?      @ignore
   /// Finance assigning a line to an org-level bucket approves it; it has no owner or treasurers.
   /// @sensitivity:internal
   isOrgLevel           Boolean   @default(false)
@@ -1995,13 +1983,9 @@ model BudgetOwner {
   /// @sensitivity:internal
   quickBooksClassId    String?   @unique
 
-  // Restrict: a program with a bucket is not deleted out from under it, and
-  // SetNull would silently turn a program bucket into an org-level one.
-  program    Program?               @relation(fields: [programId], references: [id], onDelete: Restrict) @ignore
   owner      Person?                @relation("BudgetOwnerOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   treasurers BudgetOwnerTreasurer[]
 
-  @@index([programId])
   @@index([ownerId])
 }
 

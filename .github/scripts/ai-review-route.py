@@ -24,9 +24,8 @@ LADDER = [
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
     ("free", "nvidia/nemotron-3-ultra-550b-a55b:free,recursive/flint-v1.0:free", "50", "300",
      "A cent or two a review (two lanes plus a judge). Routine changes: docs, tests, small refactors, config, renames.", "medium"),
-    # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
-    # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
-    # risks. On glm's own token mix deepseek lists at ~45% of glm's price; judge it by fixed bugs.
+    # deepseek-v4-pro is on trial as the mid rung; judge it by fixed bugs. On glm-5.3's token mix it lists
+    # at ~45% of glm's price, and glm-5.3 ended about half its lanes without a usable review.
     ("mid", "deepseek/deepseek-v4-pro", "30", "300",
      "Dimes a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
     # ponytail: per-review spend caps via tool rounds and diff size on the two costliest rungs.
@@ -309,8 +308,8 @@ def route_selftest():
     assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
     assert pick({"free": 0.0, "mid": 0.05, "high": 0.9, "top": 0.05}, ORDER) == "high"
     assert pick({"free": 0.0, "mid": 0.25, "high": 0.7, "top": 0.05}, ORDER) == "mid"
-    assert pick({"free": 0.05, "mid": 0.03, "high": 0.92}, ORDER) == "free"  # was high
-    assert pick({"free": 0.006, "mid": 0.594, "high": 0.4}, ORDER) == "mid"  # was free
+    assert pick({"free": 0.05, "mid": 0.03, "high": 0.92}, ORDER) == "free"  # P(paid) misses FREE_EXIT
+    assert pick({"free": 0.006, "mid": 0.594, "high": 0.4}, ORDER) == "mid"  # P(paid) clears FREE_EXIT
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"

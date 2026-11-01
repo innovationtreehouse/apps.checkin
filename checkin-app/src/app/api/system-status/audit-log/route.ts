@@ -11,6 +11,7 @@ import { withAuth } from "@/lib/auth";
 import type { Prisma } from "@/generated/prisma/client";
 import { apiError } from "@/lib/api-response";
 import { withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
+import { personNamesById } from "@/lib/person/archivedPeople";
 
 const PAGE_SIZE = 50;
 const ACTIONS = ["CREATE", "EDIT", "DELETE", "BECOME_ADMIN"] as const;
@@ -93,11 +94,7 @@ export const GET = withAuth(
             // page and for the actor dropdown. A since-merged actor still names itself:
             // hiding them would falsify the history this log exists to preserve.
             const actorIds = [...new Set([...rows.map((r) => r.actorId), ...actorIdRows.map((a) => a.actorId)])];
-            const actors = await prisma.person.findMany({
-                where: { id: { in: actorIds } },
-                select: { id: true, name: true },
-            });
-            const nameById = new Map(actors.map((a) => [a.id, a.name]));
+            const nameById = await personNamesById(prisma, actorIds);
 
             const logs = rows.map((r) => ({
                 ...r,

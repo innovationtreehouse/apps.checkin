@@ -81,13 +81,12 @@ jobs:
           ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
           fetch-depth: 0
 
-      # Guards against a repeat of PR #791 (commit 5cf40d2a): .gitignore's
-      # "node_modules/" pattern is directory-only and doesn't match a symlink
-      # of that name, so `git add -A` from a worktree with a symlinked
-      # node_modules silently committed two symlinks pointing at an absolute
-      # host path. Turbopack then panicked in the flow-test docker job
-      # ("Symlink checkin-app/node_modules is invalid, it points out of the
-      # filesystem root"). Lives in this job (not `test`/`deploy-build`)
+      # .gitignore's "node_modules/" pattern is directory-only and doesn't match
+      # a symlink of that name, so `git add -A` from a worktree with a symlinked
+      # node_modules silently commits symlinks pointing at an absolute host
+      # path. Turbopack then panics in the flow-test docker job ("Symlink
+      # checkin-app/node_modules is invalid, it points out of the filesystem
+      # root"). Lives in this job (not `test`/`deploy-build`)
       # because `changes` has no path-filter `if:` and always runs, checkout
       # already happened above, and failing here is instant — no need to
       # wait on npm ci / docker build to catch it.
@@ -184,8 +183,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # Bound the job: the 2026-07-16 lock-wait hang burned a runner for 40+ min
-    # on the 6-hour default. Unit tier baseline is ~2-3 min end to end.
+    # Bound the job: a lock-wait hang would otherwise hold a runner up to the
+    # 6-hour default. Unit tier baseline is ~2-3 min end to end.
     timeout-minutes: 15
 
     # checks: write is required by dorny/test-reporter (publishes the JUnit
@@ -285,8 +284,7 @@ jobs:
 
       - name: Check route coverage (security policy lint)
         if: needs.changes.outputs.app == 'true'
-        # --strict: errors fail the build (0 errors at flip time; warnings never
-        # fail). The new-route-old-authz ratchet would block even without
+        # --strict: errors fail the build (warnings never fail). The new-route-old-authz ratchet would block even without
         # --strict, but strict also arms direct-json / third-party-fetch /
         # registry-drift as real gates.
         run: npm run check-route-coverage -- --strict
@@ -454,8 +452,8 @@ jobs:
 
   # Merges unit-tests' and integration-tests' coverage-final.json (istanbul
   # json, sibling Jest-side contract) into one report and enforces the ONE
-  # real coverage floor — replacing the per-job coverageThreshold that each
-  # partial job above explicitly disabled.
+  # real coverage floor; each partial job above disables its own
+  # coverageThreshold.
   coverage-gate:
     name: Coverage gate (merged)
     needs: [changes, unit-tests, integration-tests]
@@ -479,10 +477,17 @@ jobs:
         if: needs.changes.outputs.app != 'true'
         run: echo "Only client/** changed — no coverage to gate; reporting success."
 
-      # No checkout: nothing here reads repo source, only the two coverage
-      # artifacts (below) and node/npx. That also means no `cache: npm` on
-      # setup-node — that cache needs a lockfile to hash and none is checked
-      # out in this job.
+      # Only the coverage floor is checked out: nothing else here reads repo
+      # source, and a repo-root package.json or .nycrc would configure nyc. With
+      # no lockfile present there is no `cache: npm` on setup-node.
+      - name: Check out the coverage floor
+        if: needs.changes.outputs.app == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
+          sparse-checkout: checkin-app/coverage-floor.json
+          sparse-checkout-cone-mode: false
+
       - name: Setup Node.js
         if: needs.changes.outputs.app == 'true'
         uses: actions/setup-node@v5
@@ -558,18 +563,8 @@ jobs:
           # nyc's internal path handling (confirmed by hand against nyc 18).
           npx -y nyc report --temp-dir merged --reporter=json-summary --reporter=text-summary --report-dir merged-report
 
-      # Same floors as checkin-app/jest.config.js `coverageThreshold.global`
-      # (lines 85 / branches 75 / functions 75 — that object has no
-      # `statements` entry, so none here either). MUST-MATCH: change both
-      # together, or this gate silently drifts from what jest.config.js
-      # actually declares.
-      #
-      # Not derived at runtime: jest.config.js's export is `module.exports =
-      # async () => {...}`, composed through next/jest (loads next.config.js
-      # / .env, requires `next` to be installed) — extracting the numbers
-      # that way would mean checking out the repo and running `npm ci` in
-      # this job, which defeats the point of a fast, checkout-less gate.
-      # Hardcoded instead and read straight from that file above.
+      # checkin-app/coverage-floor.json is also jest.config.js's coverageThreshold.
+      # It has no `statements` entry, so none here either.
       - name: Enforce merged coverage threshold
         if: needs.changes.outputs.app == 'true'
         run: |
@@ -583,11 +578,14 @@ jobs:
             echo "::error::merged coverage contains zero lines — path mismatch between the test jobs' workspaces and this gate; refusing to pass an empty report."
             exit 1
           fi
-          npx -y nyc check-coverage --temp-dir merged --lines 85 --branches 75 --functions 75
+          # jq -e fails the step on a missing key: nyc given no floor would pass anything.
+          LINES=$(jq -e .lines checkin-app/coverage-floor.json)
+          BRANCHES=$(jq -e .branches checkin-app/coverage-floor.json)
+          FUNCTIONS=$(jq -e .functions checkin-app/coverage-floor.json)
+          npx -y nyc check-coverage --temp-dir merged --lines "$LINES" --branches "$BRANCHES" --functions "$FUNCTIONS"
 
-      # Coverage summary on the run's own Summary page — reuses the old `test`
-      # job's script, pointed at the merged report instead of a single tier's
-      # coverage-summary.json. `if: always()` so it still renders whatever the
+      # Coverage summary on the run's own Summary page, read from the merged
+      # report. `if: always()` so it still renders whatever the
       # merge/report step produced even if the threshold step above failed.
       - name: Coverage summary
         if: always() && needs.changes.outputs.app == 'true'
@@ -597,8 +595,7 @@ jobs:
             const path = "merged-report/coverage-summary.json";
             if (!fs.existsSync(path)) { console.log("No merged coverage-summary.json — the merge/report step likely failed before this ran."); process.exit(0); }
             const t = JSON.parse(fs.readFileSync(path, "utf8")).total;
-            // MUST-MATCH checkin-app/jest.config.js coverageThreshold.global — see the enforcement step above.
-            const floor = { lines: 85, branches: 75, functions: 75 };
+            const floor = JSON.parse(fs.readFileSync("checkin-app/coverage-floor.json", "utf8"));
             const mark = (k) => (floor[k] === undefined ? "" : t[k].pct >= floor[k] ? " ✅" : " ❌");
             const lines = [
               "### Coverage (merged unit + integration)",
@@ -608,30 +605,20 @@ jobs:
                 (k) => `| ${k} | ${t[k].covered}/${t[k].total} | ${t[k].pct}%${mark(k)} |`
               ),
               "",
-              "Gate (jest.config.js coverageThreshold): lines ≥85%, branches ≥75%, functions ≥75%.",
+              `Gate (checkin-app/coverage-floor.json): lines ≥${floor.lines}%, branches ≥${floor.branches}%, functions ≥${floor.functions}%.`,
             ];
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
           '
 
-  # Build the exact production image the dev deploy uses (Dockerfile -> `npm run build`),
-  # but never push or deploy it. The deploy flow's build was previously only exercised on
-  # push to main, so build-only failures (e.g. a Turbopack "module not found" that tsc can't
-  # see) slipped through CI and broke the post-merge deploy. Building here gates the MR.
-  # It ALSO boots the built image and probes `/` (smoke test) — `docker build` alone can't
-  # catch a runtime crash on startup, which only surfaced post-merge as a hung ECS rollout.
-  # Every Vitest workspace (packages/*, *-function) — the non-app runner half of
-  # issue #228. These were invisible to CI: the jest jobs run only checkin-app,
-  # so a failing package/function test could merge green (and nearly did: PR
-  # #992's first push carried a failing s-ingest-core normalize test behind
-  # all-green checks). @checkin/money is imported by live app routes yet had no
-  # CI running its suite at all. This job runs the whole tier via the root
+  # Every Vitest workspace (packages/*, *-function), the non-app runner half. The
+  # jest jobs run only checkin-app, so without this job a failing package or
+  # function test could merge green. It runs the whole tier via the root
   # test:packages / test:functions scripts.
   #
   # ubuntu-latest ships a running Docker daemon, so @checkin/pg-test-harness'
   # testcontainers integration suites (monitoring-db, s-ingest-core) boot a
   # throwaway Postgres and actually run here — without Docker they fail under CI
-  # (and skip locally). This is
-  # the Docker-enabled integration lane #228 calls for; no extra service block is
+  # (and skip locally). No extra service block is
   # needed because the harness manages the container itself.
   #
   # Same always-report skip-notice pattern as the jest jobs, because it is a
@@ -695,12 +682,7 @@ jobs:
       # can't merge green. Each imports a generated client, generated above.
       - name: Typecheck functions
         if: needs.changes.outputs.packages == 'true'
-        run: |
-          npm run typecheck -w s-read-function
-          npm run typecheck -w s-replay-function
-          npm run typecheck -w monitoring-relay-function
-          npm run typecheck -w monitoring-watchdog-function
-          npm run typecheck -w qbo-refresher-function
+        run: npm run typecheck:functions
 
       # Packages share checkin-app's root eslint.config.mjs (one rule set).
       - name: Lint packages
@@ -735,9 +717,9 @@ jobs:
         run: npm run test:functions
 
   # The Raspberry Pi kiosk client (client/**, Python). Its suite includes the
-  # H1 guard that the signing proxy never binds 0.0.0.0, and the golden vector
+  # guard that the signing proxy never binds 0.0.0.0, and the golden vector
   # pinning the Ed25519 request-signing contract against the server's
-  # verifyKioskSignature — both of which had no CI to run them. Gated on
+  # verifyKioskSignature. Gated on
   # `client` (not `app`) so a client-only PR, which skips every Node job above,
   # still gets tested; same always-report skip-notice pattern as those jobs,
   # because it is a required check.
@@ -771,9 +753,8 @@ jobs:
           python-version: '3.11'
 
       # client.py / badge.py import nacl and requests at module scope, so the
-      # tests can't run without them. evdev is NOT installed: it needs real
-      # input devices, and the client imports it lazily inside the USB-scanner
-      # listener, which no test exercises.
+      # tests can't run without them. evdev installs too, but tests replace it
+      # with a fake, since it needs real input devices.
       - name: Install dependencies
         if: needs.changes.outputs.client == 'true'
         run: pip install -r client/requirements.txt
@@ -805,6 +786,11 @@ jobs:
         if: needs.changes.outputs.scripts == 'true'
         run: bash scripts/test-dump-task-logs.sh
 
+  # Build the exact production image the dev deploy uses (Dockerfile -> `npm run build`),
+  # but never push or deploy it. This gates the PR on build-only failures (e.g. a Turbopack
+  # "module not found" that tsc can't see) that would otherwise break the post-merge deploy.
+  # It ALSO boots the built image and probes `/` (smoke test) — `docker build` alone can't
+  # catch a runtime crash on startup, which would surface post-merge as a hung ECS rollout.
   deploy-build:
     name: Deploy build (no deploy)
     needs: changes
@@ -893,10 +879,20 @@ jobs:
           # The migrate ECS task runs `npx prisma migrate deploy` in this same
           # image; --no-install proves the lockfile-exact CLI is IN the image
           # (a bare npx would silently download from the registry and mask a
-          # broken COPY closure — the exact regression this guards).
+          # broken COPY closure).
           docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
             -c 'cd checkin-app && npx --no-install prisma --version' \
             || { echo "::error::prisma CLI is not resolvable inside the image — the migrate task would fall back to a registry download"; exit 1; }
+
+          # The receipt file backfill's bundle loads in the image and stops at its unset database.
+          docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
+            -c 'node checkin-app/receipt-file-backfill.mjs 2>&1 | grep -q RECEIPT_DATABASE_URL' \
+            || { echo "::error::the receipt file backfill bundle does not load inside the image"; exit 1; }
+
+          # The donor-read copy's bundle loads in the image and stops at its missing --cutoff.
+          docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
+            -c 'node checkin-app/copy-donor-reads.mjs 2>&1 | grep -q -- --cutoff' \
+            || { echo "::error::the donor-read copy bundle does not load inside the image"; exit 1; }
 
       # Probe each wired library's error statuses against the production image
       # with a migrated DB and a signed-in FINANCE+BOARD+INVENTORY_MANAGER person:

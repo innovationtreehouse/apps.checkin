@@ -2,11 +2,9 @@
  * @jest-environment node
  */
 /**
- * ToolStatus.userId was renamed userId->participantId->personId (Person =
- * Person). The `their_own` stripper branch was SPLIT so ToolStatus reads
- * `personId` while Account/Session (NextAuth-mandated) keep reading `userId`.
- * Guards that split: a member must still self-scope their own ToolStatus rows,
- * and the Account/Session read must NOT regress.
+ * The `their_own` stripper branch reads `personId` for ToolStatus and `userId`
+ * for Account/Session (NextAuth-mandated). Guards that split: a member self-scopes
+ * their own ToolStatus rows, and Account/Session self-scope on `userId`.
  */
 import { scopesHeld, type CallerContext } from '../access-resolvers';
 
@@ -23,7 +21,7 @@ const ctx: CallerContext = {
     ledHouseholdMemberIds: new Set(),
 };
 
-describe('ToolStatus self-scoping after participantId -> personId rename', () => {
+describe('ToolStatus self-scoping on personId', () => {
     it("grants their_own on a ToolStatus row whose personId is the caller", () => {
         expect(scopesHeld('ToolStatus', { personId: 7, toolId: 1 }, ctx).has('their_own')).toBe(true);
     });
@@ -32,12 +30,12 @@ describe('ToolStatus self-scoping after participantId -> personId rename', () =>
         expect(scopesHeld('ToolStatus', { personId: 99, toolId: 1 }, ctx).has('their_own')).toBe(false);
     });
 
-    it('reads personId, not the stale participantId, for ToolStatus', () => {
-        // A row carrying only the OLD key must no longer self-scope.
+    it('reads personId, not participantId, for ToolStatus', () => {
+        // A row carrying only participantId does not self-scope.
         expect(scopesHeld('ToolStatus', { participantId: 7, toolId: 1 }, ctx).has('their_own')).toBe(false);
     });
 
-    it('Account/Session still self-scope on userId (NextAuth, unchanged)', () => {
+    it('Account/Session self-scope on userId (NextAuth)', () => {
         expect(scopesHeld('Account', { userId: 7 }, ctx).has('their_own')).toBe(true);
         expect(scopesHeld('Session', { userId: 7 }, ctx).has('their_own')).toBe(true);
         expect(scopesHeld('Account', { userId: 99 }, ctx).has('their_own')).toBe(false);

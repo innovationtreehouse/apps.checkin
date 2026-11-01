@@ -6,6 +6,7 @@ import { expenseOutcomes } from '@checkin/expense';
 import { receivingOutcomes } from '@checkin/workflow-mapping';
 import { giftOutcomes } from '@checkin/bulk-donation';
 import { sessionUser } from '@/lib/components/host';
+import { sendPurchaseOutcome } from '@/lib/purchaseOutcomeMail';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
@@ -21,6 +22,7 @@ jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receiv
 jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn(), sessionUser: jest.fn() }));
 jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
+jest.mock('@/lib/purchaseOutcomeMail', () => ({ sendPurchaseOutcome: jest.fn() }));
 
 const ADULT_DOB = new Date('1980-01-01');
 
@@ -245,6 +247,19 @@ describe('receipt runtime: mailed receipt acknowledgements', () => {
     });
 });
 
+describe('receipt runtime: outcome emails', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it("hands each copy to the host's purchase outcome mail and passes on whether it is done", async () => {
+        const notice = { receiptId: 'r-1', outcome: 'receipt_rejected' as const, uploaderPersonId: 7, reimburseePersonId: 8, retailer: 'Acme', receiptDate: '2026-10-02' };
+        jest.mocked(sendPurchaseOutcome).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        const mail = boundConfig().outcomeMail;
+        expect(await mail?.send(notice, 'uploader')).toBe(true);
+        expect(await mail?.send(notice, 'reimbursee')).toBe(false);
+        expect(jest.mocked(sendPurchaseOutcome).mock.calls).toEqual([[notice, 'uploader'], [notice, 'reimbursee']]);
+    });
+});
+
 describe('receipt runtime: purchase outcome binding', () => {
     it('joins receiving, the expense and the gift for each receipt asked about', async () => {
         jest.mocked(receivingOutcomes).mockResolvedValue(new Map([['r-1', 'received'], ['r-2', 'waiting']]));
@@ -290,5 +305,23 @@ describe('receipt runtime: principal', () => {
         jest.mocked(sessionUser).mockResolvedValue({ id: 7 } as Session['user']);
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().auth?.getPrincipal()).toBeNull();
+    });
+});
+
+describe('receipt runtime: person ids', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it('names a live id itself, a merged-away id its survivor, and an unknown id nobody', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 2 }]);
+        prisma.person.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { id: number } }) => (where.id === 2 ? { id: 2, mergedIntoId: null } : null));
+        prisma.personMerge.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { fromId: number } }) => (where.fromId === 1 ? { toId: 2 } : null));
+        const live = await boundConfig().personIds?.liveIds([1, 2, 4]);
+        expect(live).toEqual(new Map([[2, 2], [1, 2], [4, null]]));
+    });
+
+    it('lists a live person and every id merged into them', async () => {
+        prisma.personMerge.findMany = jest.fn().mockResolvedValue([{ fromId: 1 }, { fromId: 3 }]);
+        await expect(boundConfig().personIds?.storedIdsOf(2)).resolves.toEqual([2, 1, 3]);
+        expect(prisma.personMerge.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { toId: 2 } }));
     });
 });

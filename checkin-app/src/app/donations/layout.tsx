@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
@@ -11,6 +10,7 @@ import { hasAnyRole, visibleLinks } from "@/lib/nav/gates";
 import { DONATIONS, DONATION_SCREEN_ROLES, donationsRolesFor } from "@/lib/nav/sections/donations";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
+import { useLoad } from "@/lib/api";
 
 type NavCounts = { unassignedQueue: number; disbursementHolds: number };
 
@@ -22,16 +22,8 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
   const { user, loading, ready } = useRequireRole(donationsRolesFor(usePathname() ?? ""));
   const todoCounts = useTodoCounts(ready);
   const countsAllowed = ready && hasAnyRole(user, DONATION_SCREEN_ROLES);
-  const [counts, setCounts] = useState<NavCounts | null>(null);
-
-  useEffect(() => {
-    if (!countsAllowed) return;
-    fetch("/api/donations/nav-counts")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: NavCounts | null) => setCounts(data))
-      // Badges are best-effort; a failed fetch just shows none.
-      .catch(() => setCounts(null));
-  }, [countsAllowed]);
+  // Badges are best-effort, so a failed load shows none.
+  const { data: counts } = useLoad<NavCounts>(countsAllowed ? "/api/donations/nav-counts" : null);
 
   if (loading) {
     return (

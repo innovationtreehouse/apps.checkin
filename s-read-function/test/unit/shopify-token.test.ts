@@ -1,5 +1,5 @@
 /**
- * Token acquisition (#237): static-token precedence, client-credentials minting, in-memory
+ * Token acquisition: static-token precedence, client-credentials minting, in-memory
  * cache reuse, and the early-refresh boundary. The 401-invalidate-retry integration (which
  * needs the request loop) lives in client-auth-retry.test.ts; this file exercises
  * getShopifyToken/invalidateShopifyToken in isolation against a stubbed global `fetch`.

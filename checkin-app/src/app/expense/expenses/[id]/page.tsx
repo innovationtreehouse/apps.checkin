@@ -1,4 +1,4 @@
-// Stub (#1272): the screen lives in the expense library; checkin passes the id, the page it was opened from, the queue tab it returns to, and whether this is dev or local.
+// Stub: the screen lives in the expense library; checkin passes the id, the page it was opened from, the queue tab it returns to, and whether this is dev or local.
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 import { config } from "@/lib/config";
 import { returnPath } from "@/lib/returnPath";

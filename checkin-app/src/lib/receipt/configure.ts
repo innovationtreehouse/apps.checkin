@@ -1,13 +1,14 @@
 /**
- * Wire the receipt library into checkin (#1265 §3/§6), called once at server boot from
+ * Wire the receipt library into checkin, called once at server boot from
  * instrumentation.ts. Binding touches no database and no network: the principal and the org
- * are read lazily, inside a request, and so are households. Bound crossings: X6 (the S1 sink,
- * workflow-mapping's intake, which dedupes on `receiptId`), X12 (reimbursement status, read
- * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable"), X13
- * (the donor sink, bound to donations in-process) and the purchase outcome (receiving, expense
- * and donations, joined here). Mail intake (§2a) is bound only on a deployed
+ * are read lazily, inside a request, and so are households. Bound crossings: the receipt sink
+ * (workflow-mapping's intake, which dedupes on `receiptId`), reimbursement status (read
+ * by expense from QuickBooks; QuickBooks off or any failure reads "status unavailable"),
+ * the donor sink (bound to donations in-process) and the purchase outcome (receiving, expense
+ * and donations, joined here). Mail intake is bound only on a deployed
  * instance with both the token refresher and the mailbox configured; each mailed receipt is
- * acknowledged by email (mailReply.ts).
+ * acknowledged by email (mailReply.ts). A receipt finance rejects is emailed to its uploader and
+ * the person reimbursed (purchaseOutcomeMail.ts).
  */
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
@@ -19,6 +20,7 @@ import {
   createGmailReader,
   fixtureOcr,
   type MailboxReader,
+  type OutcomeMail,
   type PurchaseOutcome,
   type ReceiptAlerts,
   type ReceiptReplies,
@@ -31,7 +33,7 @@ import { getOrg, sessionUser } from "@/lib/components/host";
 import { householdOf } from "@/lib/components/ports";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
-import { createS3FileStore, createTempDirFileStore } from "@/lib/receipt/fileStore";
+import { receiptFileStore } from "@/lib/receipt/fileStore";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
 async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
@@ -246,16 +248,47 @@ const replies: ReceiptReplies = {
   },
 };
 
+/** Who each stored id names today. One query when nobody was merged; only the others walk the merge chain. */
+async function liveIds(personIds: number[]): Promise<Map<number, number | null>> {
+  const [{ default: prisma }, { LIVE_PERSON }, { resolveMergedPerson }] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/lib/person/filters"),
+    import("@/lib/person/mergeChain"),
+  ]);
+  const live = await prisma.person.findMany({ where: { id: { in: personIds }, ...LIVE_PERSON }, select: { id: true } });
+  const out = new Map<number, number | null>(live.map(({ id }) => [id, id]));
+  for (const id of personIds) {
+    if (out.has(id)) continue;
+    const resolved = await resolveMergedPerson(id);
+    out.set(id, resolved.kind === "live" ? resolved.person.id : null);
+  }
+  return out;
+}
+
+async function storedIdsOf(personId: number): Promise<number[]> {
+  const { mergedAwayIdsOf } = await import("@/lib/person/mergeChain");
+  return [personId, ...(await mergedAwayIdsOf(personId))];
+}
+
+const outcomeMail: OutcomeMail = {
+  async send(notice, to) {
+    const { sendPurchaseOutcome } = await import("@/lib/purchaseOutcomeMail");
+    return sendPurchaseOutcome(notice, to);
+  },
+};
+
 export function configureRuntime(): void {
   configureReceipt({
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },
+    personIds: { liveIds, storedIdsOf },
     people: { submitterByEmail },
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
     replies,
+    outcomeMail,
     reimbursementStatus,
     submitterConfirmations,
     purchaseOutcomes: { forReceipts: purchaseOutcomes },
@@ -264,8 +297,7 @@ export function configureRuntime(): void {
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
     // without the key reads nothing and lands auto uploads in ocr_failed.
     ocr: config.checkinEnv() === "local" ? fixtureOcr : createAnthropicOcr(process.env.ANTHROPIC_API_KEY),
-    // Chosen by CHECKIN_ENV, never by whether a bucket is set: a deployed instance with none refuses files.
-    fileStore: config.isLocal() ? createTempDirFileStore() : createS3FileStore(),
+    fileStore: receiptFileStore(),
     storeNewFilesInBucket: config.receiptFilesS3(),
   });
 }

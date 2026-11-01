@@ -7,11 +7,10 @@
  *
  * Covers: the happy path (household + lead created via the shared
  * createParticipantWithHousehold builder, matches the unclaimed-households
- * surface, writes a CREATE audit row), the owner-named 409 (the case-variant
- * regression — the dup check MUST normalize before the lookup or a
+ * surface, writes a CREATE audit row), the owner-named 409 (the dup check MUST normalize before the lookup or a
  * case-variant slips past to a 500 on the @unique constraint), the deliberate
- * sysadmin exclusion (403 — NOT a bug), operations admission (the RBAC
- * rework's follow-on — ops clears this same endpoint), and the standard
+ * sysadmin exclusion (403 — NOT a bug), operations admission (ops clears
+ * this same endpoint), and the standard
  * anon/plain negative-authz pair.
  */
 import { POST } from '@/app/api/membership-ops/contacts/route';
@@ -141,9 +140,9 @@ describe('POST /api/membership-ops/contacts', () => {
 
         // Pin the route's serialized response shape, not just the DB rows above —
         // every assertion before this line still passes if the route's nested
-        // `include: { household: { include: { householdMembers } } }` gets reverted
-        // to a bare `include: { household: true }`; the RTL mock is hand-maintained
-        // and can't catch that regression either.
+        // `include: { household: { include: { householdMembers } } }` becomes
+        // a bare `include: { household: true }`; the RTL mock is hand-maintained
+        // and can't catch that either.
         expect(data.participant.household.householdMembers).toHaveLength(1);
         expect(data.participant.household.householdMembers[0]).toMatchObject({
             id: created!.id,
@@ -168,7 +167,7 @@ describe('POST /api/membership-ops/contacts', () => {
         expect(log.actorId).toBe(boardId);
     });
 
-    it('catches a case-variant duplicate with the owner-named 409 — the normalizeEmail regression', async () => {
+    it('catches a case-variant duplicate with the owner-named 409 (normalizeEmail)', async () => {
         asSession({ id: boardId, isBoardMember: true });
         const variant = ownerEmail.toUpperCase();
         expect(variant).not.toBe(ownerEmail); // sanity: this really is a differently-cased address
@@ -243,7 +242,7 @@ describe('POST /api/membership-ops/contacts', () => {
         expect(log.actorId).toBe(opsId);
     });
 
-    it('403s a sysadmin-only actor — intentional, sysadmin is excluded from board-create (Jeff / #1083-style board-only carve-out), not a bug', async () => {
+    it('403s a sysadmin-only actor — intentional, sysadmin is excluded from board-create (a board-only carve-out), not a bug', async () => {
         asSession({ id: sysadminId, isSysadmin: true });
         const res = await POST(nreq('http://localhost/api/membership-ops/contacts', 'POST', { name: 'Should Not Create', email: `blocked-${CREATED_TAG}@example.com` }));
         expect(res.status).toBe(403);

@@ -2,21 +2,15 @@
  * @jest-environment node
  */
 /**
- * Regression guard for the NextAuth adapter's Int↔string id boundary in
+ * The NextAuth adapter's Int↔string id boundary in
  * auth-options.ts.
  *
  * Why this exists: the adapter's user/account methods run ONLY inside the real
  * Google OAuth callback — persona-mint/credentials sign-in (what flow tests use
  * via loginAs) never touches the adapter, and the global prisma mock in
  * jest.setup.js resolves ANY model name — so no other tier reaches this code.
- * Two bugs have shipped here as a result:
- *   - #708 (Participant→Person rename) missed the model map behind an `as` cast;
- *     getUserByEmail crashed with `undefined ... findUnique`.
- *   - createUser returned a string id that then crashed linkAccount writing it
- *     into Account.userId (Int) — `Expected Int, provided String` — on every
- *     first Google sign-in, while CI stayed green.
  *
- * The boundary is now unified: every user/account method converts ids through
+ * Every user/account method converts ids through
  * toAdapterUser (Int→string out) / toDbId (string→Int in). This suite (a) mocks
  * prisma with ONLY the real model names and (b) actually CALLS the adapter
  * methods (their closures are lazy — a stale map or missed coercion only
@@ -91,7 +85,7 @@ const adapter = authOptions.adapter as unknown as {
 };
 
 const mockAccount = (prisma as unknown as { account: { findUnique: jest.Mock; create: jest.Mock } }).account;
-const mockPersonUpdate = prismaMockTx.person.update;
+const mockPersonUpdate = (prisma as unknown as { person: { update: jest.Mock } }).person.update;
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -107,7 +101,7 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         expect(typeof adapter.createUser).toBe('function');
     });
 
-    test('getUserByEmail (the OAuth-callback path that broke in #708) queries prisma.person', async () => {
+    test('getUserByEmail (the OAuth-callback path) queries prisma.person', async () => {
         mockPersonFindUnique.mockResolvedValue(null);
         // With a stale shim this throws `Cannot read properties of undefined
         // (reading 'findUnique')` — the exact production failure.
@@ -117,10 +111,10 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         );
     });
 
-    // #292: Google hands NextAuth its own casing; the stored value is lowercased
+    // Google hands NextAuth its own casing; the stored value is lowercased
     // on write, so the lookup key must be lowercased too or a mixed-case sign-in
     // misses the existing row and NextAuth mints a duplicate participant/household.
-    test('getUserByEmail lowercases the lookup key (#292 read normalization)', async () => {
+    test('getUserByEmail lowercases the lookup key (read normalization)', async () => {
         mockPersonFindUnique.mockResolvedValue(null);
         await adapter.getUserByEmail('John.Doe@Example.com');
         expect(mockPersonFindUnique).toHaveBeenCalledWith(
@@ -149,7 +143,7 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         expect(created).toEqual(expect.objectContaining({ id: '7', email: 'new@example.com' }));
     });
 
-    // #1693: the OAuth path is one of the nine sites that must pass an explicit
+    // The OAuth path must pass an explicit
     // minted id. A sequence-minted id here is a silent gap on every first sign-in
     // — nothing else in this tree would notice.
     test('createUser passes the minted id through to person.create', async () => {
@@ -163,8 +157,8 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         );
     });
 
-    // #1432 Decision 4: sign-in must never fail for want of a name. createUser
-    // is the one remaining place a name is manufactured — from the email
+    // Sign-in must never fail for want of a name. createUser
+    // is the one place a name is manufactured — from the email
     // local-part, never left null.
     test('createUser defaults a missing name to the email local-part (Decision 4)', async () => {
         prismaMockTx.household.create.mockResolvedValue({ id: 9 });
@@ -203,9 +197,32 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         expect(user).toEqual(expect.objectContaining({ id: '88', email: 'acct@example.com' }));
     });
 
-    // The bug from the checkin-dev logs: base linkAccount wrote the string userId
-    // straight into Account.userId (Int) → `Expected Int, provided String`.
+    test('linkAccount refuses a trusted person an account with another address, or none', async () => {
+        const idToken = (email: string) => `h.${Buffer.from(JSON.stringify({ email })).toString('base64url')}.s`;
+        const account = { userId: '298', type: 'oauth', provider: 'google', providerAccountId: 'g1' };
+        mockAccount.create.mockResolvedValue({});
+        mockPersonFindUnique.mockResolvedValue({
+            email: 'trusted@example.com',
+            roles: [{ role: 'KEYHOLDER' }], budgetOwnersOwned: [], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [],
+        });
+
+        await expect(adapter.linkAccount({ ...account, id_token: idToken('other@example.com') })).rejects.toThrow();
+        await expect(adapter.linkAccount(account)).rejects.toThrow();
+        expect(mockAccount.create).not.toHaveBeenCalled();
+
+        await adapter.linkAccount({ ...account, id_token: idToken('Trusted@Example.com') });
+        expect(mockAccount.create).toHaveBeenCalledTimes(1);
+    });
+
+    test('updateUser never writes an email', async () => {
+        mockPersonUpdate.mockResolvedValue({ id: 12, email: 'u@example.com' });
+        await adapter.updateUser({ id: '12', email: 'new@example.com' } as { id: string });
+        expect(mockPersonUpdate.mock.calls[0][0].data.email).toBeUndefined();
+    });
+
+    // Account.userId is an Int: a raw string userId fails with `Expected Int, provided String`.
     test('linkAccount coerces the string userId to Int before prisma.account.create', async () => {
+        mockPersonFindUnique.mockResolvedValue(null);
         mockAccount.create.mockResolvedValue({});
         await adapter.linkAccount({
             userId: '298',
@@ -231,7 +248,7 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
         expect(user).toEqual(expect.objectContaining({ id: '12', email: 'u@example.com' }));
     });
 
-    // #1432 site 14 / Decision 5: a provider that stops sending a name must
+    // A provider that stops sending a name must
     // not erase one already on file — `name: null` must pass through as
     // `undefined` (Prisma leaves the column alone) rather than nulling it.
     test('updateUser with a null name leaves the stored name untouched', async () => {

@@ -1,10 +1,10 @@
 /**
  * @jest-environment node
  *
- * Finding 10: facility-trends period boundaries and labels were computed with
- * local calendar fields (`getDay`/`getMonth`/`setHours`) and rendered with
- * `toLocaleDateString` carrying no zone, so both followed the SERVER's timezone
- * instead of the org timezone every other server-side date path honors.
+ * Facility-trends period boundaries and labels follow the org timezone, as every
+ * other server-side date path does. Local calendar fields
+ * (`getDay`/`getMonth`/`setHours`) and a zoneless `toLocaleDateString` would follow
+ * the SERVER's timezone instead.
  *
  * The process timezone is pinned to America/Chicago and the org timezone is
  * America/New_York, so a visit in the first hour of a period in the org zone is

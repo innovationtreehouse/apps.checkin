@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -108,7 +109,7 @@ describe("in-kind gift page", () => {
 
   it("keeps a failed retry's error up until dismissed", async () => {
     mockGift = { ...manual, inventoryLoadedAt: null };
-    mockApi.mockRejectedValue(new Error("Catalog item 0011111111116 not found"));
+    mockApi.mockRejectedValue(new HttpError("Catalog item 0011111111116 not found", 409));
     wrap(<ManualGiftPage />);
     fireEvent.click(screen.getByRole("button", { name: "Load again" }));
     await waitFor(() =>

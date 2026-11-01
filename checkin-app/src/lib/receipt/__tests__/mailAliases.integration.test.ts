@@ -99,7 +99,12 @@ describe("mail aliases", () => {
             await expect(add("mine@example.com", actor.email ?? "")).rejects.toMatchObject({ status: 403 });
             const spouse = await prisma.person.create({ data: { id: pat.id + 100_000, name: `${TAG} spouse`, email: `${TAG}.spouse@example.com`, householdId: actor.householdId } });
             await expect(add("spouse-alias@example.com", spouse.email ?? "")).rejects.toMatchObject({ status: 403 });
-            expect(await prisma.auditLog.count({ where: { tableName: SELF_GRANT_REFUSAL_TABLE, actorId: actor.id, action: "EDIT" } })).toBe(2);
+            // Scoped to this grant: an earlier suite's refusal row can carry an actor id that minting has since reissued.
+            const refusals = await prisma.auditLog.findMany({
+                where: { tableName: SELF_GRANT_REFUSAL_TABLE, actorId: actor.id, action: "EDIT", newData: { path: ["table"], equals: "PersonMailAlias" } },
+                orderBy: { id: "asc" },
+            });
+            expect(refusals.map((r) => r.affectedEntityId)).toEqual([actor.id, spouse.id]);
         });
     });
 

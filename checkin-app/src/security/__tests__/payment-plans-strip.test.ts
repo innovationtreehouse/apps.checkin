@@ -94,7 +94,7 @@ describe('payment-plans field-stripping', () => {
     });
 
     it('a non-admin view (member+public) strips email/dob but keeps name', () => {
-        // Not in the registry today — proves the declared policy auto-strips any
+        // Not in the registry — proves the declared policy auto-strips any
         // role later granted a member/public-only view of this route.
         const tokens: readonly Token[] = ['member', 'public'];
         const out = stripValue('ProgramParticipant', row, tokens, ctx()) as Record<string, unknown>;

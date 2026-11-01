@@ -43,6 +43,18 @@ describe("calculateChecksum", () => {
       expect(calculateChecksum(gtin.slice(0, 12))).toBe(parseInt(gtin[12], 10));
     }
   });
+
+  it("calculateChecksum_throws_on_a_non_digit", () => {
+    for (const value of ["40063813339X", "4006381-3393", " 40063813339", "4006381333.3"]) {
+      expect(() => calculateChecksum(value)).toThrow("exactly 12 digits");
+    }
+  });
+
+  it("calculateChecksum_throws_unless_exactly_12_characters", () => {
+    for (const value of ["", "40063813339", "4006381333931"]) {
+      expect(() => calculateChecksum(value)).toThrow("exactly 12 digits");
+    }
+  });
 });
 
 describe("buildGtin13", () => {

@@ -212,6 +212,12 @@ Procedure below is built on them.
 - Nobody clears a blocked application on their own. After a rejection the check
   needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25, 2026-10-27]
 
+- A person merge that brings in a valid check clears an application that has
+  approvals only; the approvals stay on it as a record. A standing rejection stops
+  the merge, and so does a Board reset, which needs two new approvals whatever the
+  earlier check says. A rejection changed to approve and then undone no longer
+  stands, so a merge after that clears the application.  [Decision — owner ruling 2026-10-30]
+
 - The reviewer who rejected may change their answer to approve. That starts the
   review over: every earlier decision on it, theirs and anyone else's, is
   discarded, and their approval is the first of the two it needs. They name the
@@ -248,11 +254,15 @@ Procedure below is built on them.
   approvals, and the adult that approval named is no longer settled. Once the
   check has cleared, or the application is blocked or closed, the approval
   stands. A rejection is not undone; its reviewer may only change it to an
-  approval, as above.  [Decision]
+  approval, as above. A mistaken rejection goes to the Board's reset; see the
+  review-volume assumption in `principles.md`.  [Decision]
 
 - The duplicate-attestation cleanup is the Board's alone. When a person merge
   finds the same review recorded under two identities, only a board member may
   remove the duplicate.  [Decision]
+
+- The Participants directory is for sysadmins, the board and operations. A
+  background-check reviewer works from the review queue.  [Decision — owner; *Principle: least privilege*]
 
 - Every background-check decision that refuses, blocks or denies, and every
   payment certification, records a written reason — wider than the policy, which
@@ -295,11 +305,11 @@ Procedure below is built on them.
 - From there payment and review run in parallel, and membership activates on
   whichever finishes last. Neither alone activates.  [Decision]
 
-- Granting the coming year completes the payment step on a renewal already under
-  way. It stamps no other gate.  [Decision]
+- A board grant completes the payment step on an application already under way,
+  joining or renewing. It stamps no other gate.  [Decision]
 
 - Only an application completing — paid and background check cleared — makes a
-  household a member. Granting the current year is money only: it pays the
+  household a member. A board grant is money only: it pays the
   household's application under way, or opens one for the family to complete,
   and never sets membership directly or skips the check. A household already
   active stays active.  [Decision]
@@ -316,6 +326,19 @@ Procedure below is built on them.
   grant or a household move — changes nothing and goes to the board's
   payment-problems queue with an email. Any other board action on a denied
   household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
+
+- Denying a household revokes trusted-adult access in the same act, both ways;
+  `people-households.md` (Trusted adults) states it. Nothing else the household
+  holds is removed by the denial. Each program enrollment, pending or active, and
+  each program role, volunteer or lead, held by one of its members in a program
+  not yet finished goes to the board's payment-problems queue for removal by hand,
+  so the board can speak to the program's leaders first. The board gets one email
+  per denial that leaves it something to remove.  [Decision — *Principle: people decide about people*]
+
+- Revoking a household's membership does none of this: its trusted adults, its
+  members' trusted-adult authorisations and its program ties are left as they
+  are, and nothing goes to the board. A revocation is usually a lapse, not a
+  safeguarding matter.  [Decision]
 
 - A denied household is sent no outreach. Denial is checked again as each
   message goes out.  [Decision]
@@ -361,6 +384,10 @@ Procedure below is built on them.
   plan. Only the board certifies a payment; a sysadmin cannot.
   [Decision — *Policy: Membership Policy, Art. XIII*]
 
+- A board grant records the membership year the Board chooses: the year in
+  progress, or, inside the renewal window, the coming year. Each grant control
+  names the year it records.  [Decision]
+
 - A membership order the app cannot apply settles nothing and is raised for the
   board: a second order on an application already paid, one arriving after the
   board certified or closed the application or before payment was due, and one
@@ -398,12 +425,12 @@ Procedure below is built on them.
 - Renewals open only inside the renewal window, and opening skips every
   household already handled this cycle — renewed, granted the coming year,
   joined in-window, or closed by the board — so no family is billed twice. The
-  one exception is the board granting the current year to a lapsed active
+  one exception is a board grant to a lapsed active
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
 - Renewals start only from the board's own actions: its "open renewals" button
-  opens them for every household due, and granting the current year opens one
+  opens them for every household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6, 2026-10-27*]
 
@@ -487,8 +514,14 @@ Procedure below is built on them.
 - A background check for an adult child needs neither a sign-in of their own nor
   an email address in the app. The board or a household lead records that an
   external check exists and submits it for review, and consent is implicit in the
-  subject having gone and taken it. The applicant-facing consent attestation is a
-  household path and never this one.  [Decision]
+  subject having gone and taken it.  [Decision]
+
+- An adult who does sign in can record their own check through the
+  applicant-facing consent attestation, so someone who has done their part can
+  say so and stop being chased. A household lead's attestation goes to the
+  household's application while one awaits it; otherwise anyone's goes to their
+  own open check. The audit names the person who attested, so their own record
+  stays distinguishable from the board's.  [Decision]
 
 ### Individual agreement for adult children
 

@@ -62,8 +62,8 @@ describe('Admin Unclaimed Households API Integration Tests', () => {
         // This is the case that must NOT appear: a claimed lead covers the household.
         // Seeded the way a real sign-in leaves it for an imported member: an Account
         // row and NO googleId (NextAuth email-links to the existing Person, which never
-        // backfills googleId). Seeding googleId here instead is what hid the bug where
-        // every imported household stayed listed forever — don't put it back.
+        // backfills googleId). Seeding googleId here instead would hide a lookup that keeps
+        // every imported household listed forever.
         const claimed = await prisma.household.create({ data: { name: 'Unclaimed API Test HH Claimed' } });
         testClaimedHouseholdId = claimed.id;
         const claimedLead = await prisma.person.create({

@@ -3,11 +3,10 @@
 import { Badge, type BadgeProps } from '@mantine/core';
 
 /**
- * Centralized role / certification badge. Replaces the per-page inline-styled badges that
- * were duplicated across the admin, shop, and household pages. Add new roles to ROLE_META.
+ * Centralized role badge. Add new roles to ROLE_META.
  *
  * Tool-CERTIFICATION colors (BASIC/DOF/CERTIFIED/INSTRUCTOR/MAY_CERTIFY_OTHERS) live solely in
- * ToolLevelBadge (the regulated Safety Rules palette) — do not re-add them here. The
+ * ToolLevelBadge (the regulated Safety Rules palette) — do not add them here. The
  * `ParticipantRole` union below makes that a compile error, not just a convention.
  */
 type RoleMeta = { label: string; color: string };

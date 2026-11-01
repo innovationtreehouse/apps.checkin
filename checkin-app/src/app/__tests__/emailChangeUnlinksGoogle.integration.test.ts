@@ -87,6 +87,42 @@ describe('board email change unlinks Google sign-ins', () => {
 
     afterAll(wipe);
 
+    // Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27.
+    describe('on a trusted person', () => {
+        beforeEach(async () => {
+            await prisma.personRole.create({ data: { personId, role: 'FINANCE' } });
+        });
+
+        it('refuses a sysadmin who is not on the board', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: true, isBoardMember: false } });
+            expect((await put(personId, { email: NEW_EMAIL, emailChangeReason: 'New address' })).status).toBe(403);
+            expect((await prisma.person.findUnique({ where: { id: personId } }))?.email).toBe(OLD_EMAIL);
+        });
+
+        it('refuses a board member with no reason', async () => {
+            expect((await put(personId, { email: NEW_EMAIL })).status).toBe(400);
+            expect((await prisma.person.findUnique({ where: { id: personId } }))?.email).toBe(OLD_EMAIL);
+        });
+
+        it('lets a board member change it with a reason, audited', async () => {
+            expect((await put(personId, { email: NEW_EMAIL, emailChangeReason: 'New address' })).status).toBe(200);
+            expect((await prisma.person.findUnique({ where: { id: personId } }))?.email).toBe(NEW_EMAIL);
+            const audit = await expectAuditRow(prisma, { action: 'EDIT', tableName: 'Person', affectedEntityId: personId });
+            expect(audit.actorId).toBe(boardId);
+            expect(auditJson(audit.newData).emailChangeReason).toBe('New address');
+        });
+    });
+
+    it('lets a board member change a bucket owner\'s email with a reason (owner decision 2026-10-30)', async () => {
+        const bucket = await prisma.budgetOwner.create({ data: { name: `Bucket ${TAG}`, ownerId: personId } });
+        try {
+            expect((await put(personId, { email: NEW_EMAIL, emailChangeReason: 'New address' })).status).toBe(200);
+            expect((await prisma.person.findUnique({ where: { id: personId } }))?.email).toBe(NEW_EMAIL);
+        } finally {
+            await prisma.budgetOwner.delete({ where: { id: bucket.id } });
+        }
+    });
+
     it('the old Google account no longer resolves, and the new address links', async () => {
         expect((await adapter.getUserByAccount({ provider: 'google', providerAccountId: OLD_SUB }))?.id).toBe(String(personId));
 

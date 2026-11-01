@@ -3,7 +3,7 @@ import path from 'path';
 import prisma from '@/lib/prisma';
 
 /**
- * Phase-1 backfill (MB) of PROGRAM_INSTANCE_RESTRUCTURE.md against a populated
+ * ProgramInstance backfill against a populated
  * schema. The migration itself no-ops at global setup (empty DB), so this test
  * seeds real Program/Event rows, then runs the migration's OWN backfill SQL
  * (extracted verbatim between its markers — not a reimplementation) and asserts:
@@ -41,7 +41,7 @@ async function runBackfill(): Promise<void> {
     }
 }
 
-describe('ProgramInstance phase-1 backfill (MB)', () => {
+describe('ProgramInstance backfill', () => {
     let householdId: number;
     let leadId: number;
     let progFullId: number; // program with a lead + full offering columns
@@ -117,7 +117,7 @@ describe('ProgramInstance phase-1 backfill (MB)', () => {
         const bareInstances = await prisma.programInstance.findMany({ where: { programId: progBareId } });
         expect(fullInstances).toHaveLength(1);
         expect(bareInstances).toHaveLength(1);
-        // id-alias: instance.id === program.id (what makes the later FK repoint a pure rename)
+        // id-alias: instance.id === program.id
         expect(fullInstances[0].id).toBe(progFullId);
         expect(bareInstances[0].id).toBe(progBareId);
     });

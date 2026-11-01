@@ -1,7 +1,7 @@
 /**
- * The no-receipt in-kind entry: ops picks catalog items (X10) with a quantity and an optional
+ * The no-receipt in-kind entry: ops picks catalog items with a quantity and an optional
  * suggested value, the donation is stored with its donor, and its goods load into inventory keyed
- * `donation:<id>` (X11). Finance sets the value later, when accepting it.
+ * `donation:<id>`. Finance sets the value later, when accepting it.
  */
 import { it, expect, beforeEach, vi } from "vitest";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
@@ -117,24 +117,13 @@ describeDb("recordInKindWithoutReceipt", () => {
   });
 });
 
-describeDb("manualInKindService.list donor reads", () => {
-  const reader = { actorUserId: 1, actorUsername: "testfinance", route: "GET /api/donations/in-kind/manual" };
-
-  it("records one donor read per record returned, not one per list call", async () => {
-    const a = await recordInKindWithoutReceipt(input);
-    const b = await recordInKindWithoutReceipt(input);
-    await db.workflowEvent.deleteMany({});
-    await manualInKindService.list(TEST_ORG_ID, reader);
-    const reads = await db.workflowEvent.findMany({ where: { orgId: TEST_ORG_ID, eventType: "DONOR_DATA_READ" } });
-    expect(reads.map((r) => r.entityId).sort()).toEqual([String(a.id), String(b.id)].sort());
-    expect(reads.every((r) => r.entityType === "manual_in_kind")).toBe(true);
-  });
-
-  it("selects no donor and records no read without a reader", async () => {
+describeDb("manualInKindService.list", () => {
+  it("selects the donor only when asked", async () => {
     await recordInKindWithoutReceipt(input);
-    await db.workflowEvent.deleteMany({});
-    const [row] = await manualInKindService.list(TEST_ORG_ID, null);
+    const [withDonor] = await manualInKindService.list(TEST_ORG_ID, true);
+    expect(withDonor).toHaveProperty("donorLastName");
+    const [row] = await manualInKindService.list(TEST_ORG_ID, false);
     expect(row).not.toHaveProperty("donorLastName");
-    expect(await db.workflowEvent.count({ where: { eventType: "DONOR_DATA_READ" } })).toBe(0);
   });
 });
+

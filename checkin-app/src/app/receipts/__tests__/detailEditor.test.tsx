@@ -1,3 +1,4 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -158,7 +159,7 @@ describe("correcting a receipt whose totals don't add up", () => {
 
   it("keeps a failed resubmit on screen, naming what was saved", async () => {
     mockApi.mockImplementation(async (path) => {
-      if (String(path).endsWith("/resubmit")) throw new Error("Receipt is not in validation_failed");
+      if (String(path).endsWith("/resubmit")) throw new HttpError("Receipt is not in validation_failed", 409);
       return {};
     });
     wrap();
@@ -185,7 +186,7 @@ describe("correcting a receipt whose totals don't add up", () => {
   });
 
   it("does not resubmit when a save fails", async () => {
-    mockApi.mockRejectedValue(new Error("Receipt total must be a number"));
+    mockApi.mockRejectedValue(new HttpError("Receipt total must be a number", 409));
     wrap();
     type("Receipt total", "26.50");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -275,6 +276,39 @@ describe("reviewing an OCR-read receipt", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(shown()).toContainEqual({ message: "Saved", color: "green" }));
     expect(resubmitted()).toBe(false);
+  });
+});
+
+describe("typing the details of a receipt OCR could not read", () => {
+  const unread = {
+    ...receipt, state: "ocr_failed", validationNotes: "OCR failed: not configured", retailer: null, receiptDate: null,
+    receiptTotalCents: null, taxCents: 0, shippingCents: 0, lineItems: [],
+  };
+
+  it("still offers reading it again, and refuses to move on while details are blank", () => {
+    mockReceipt = unread;
+    wrap();
+    expect(screen.getByRole("button", { name: "Read it again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  it("saves the typed details, then sends the receipt on through the flow", async () => {
+    mockReceipt = { ...unread, lineItems: [line(11, "Screws", 1, 500)] };
+    wrap();
+    type("Retailer", "Acme");
+    type("Date", "2026-10-01");
+    type("Receipt total", "5.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1", "/r1/resubmit"]);
+    expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+  });
+
+  it("sends on details saved before a failed resubmit, with nothing left to save", async () => {
+    mockReceipt = { ...unread, retailer: "Acme", receiptDate: "2026-10-01", receiptTotalCents: 500, lineItems: [line(11, "Screws", 1, 500)] };
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
   });
 });
 

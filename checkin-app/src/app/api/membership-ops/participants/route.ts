@@ -81,7 +81,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             });
 
             if (!parent) {
-                // #1688: validate before the transaction opens — a 400 must not
+                // Validate before the transaction opens — a 400 must not
                 // hold the counter row lock.
                 if (!parentName?.trim()) {
                     return apiError("Parent name is required when creating a new parent", 400);
@@ -125,7 +125,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         id: await mintPersonId(tx),
                         name: nameWrite(name),
                         ...(email && { email }),
-                        // #1165: 26+ participants are stored declared-adult with no DoB.
                         ...normalizeAdultDob(dob),
                         householdId: targetHouseholdId
                     }
@@ -137,7 +136,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 return createInOwnHousehold(tx, {
                     name: nameWrite(name)!,
                     ...(email && { email }),
-                    // #1165: 26+ participants are stored declared-adult with no DoB.
                     ...normalizeAdultDob(dob),
                 });
             });

@@ -3,9 +3,10 @@
 // match look first for the app's own entry when a create may have landed. Clear answers a note.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { appKeyOf } from "@checkin/quickbooks";
+import { appKeyOf, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
+import { readDonationSettings } from "../services/settingsService";
 import { recordEvent } from "../repositories/audit";
 import { getInKindQbPosting } from "../runtime";
 import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSource } from "../services/inKindAcceptService";
@@ -15,7 +16,6 @@ import {
   lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
-import { readCloseDate } from "./qb-gate";
 
 const qbId = z.string().trim().min(1).max(64);
 
@@ -61,7 +61,7 @@ async function openRun(orgId: string, actor: Actor): Promise<Run> {
   if (!inKindAccountsReady(accounts)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
   const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness(orgId)]);
   const { open } = await inKindReadiness.giftsToBook(orgId, ctx);
-  return { orgId, book: true, actor, client, accounts, classes, close, onAt, ctx, open };
+  return { orgId, book: true, actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId) };
 }
 
 /** The gift as its booking would carry it, refused unless booking is all it waits on. */

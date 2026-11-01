@@ -407,9 +407,9 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(revokeAudit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    // Regression: a renewal after approval leaves TWO APPROVED reviews (renew doesn't
+    // A renewal after approval leaves TWO APPROVED reviews (renew doesn't
     // retire the prior approval). Withdraw must revoke BOTH — the pickup list shows a
-    // TA while ANY review is APPROVED, so revoking only the latest kept it on the list.
+    // TA while ANY review is APPROVED, so revoking only the latest would keep it on the list.
     it('withdraw revokes every APPROVED review, so a renewed-then-approved TA leaves none live', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
@@ -421,7 +421,7 @@ describe('Trusted Adults service', () => {
 
         await withdrawTrustedAdult(ta.id, leadId);
 
-        // No APPROVED review survives — the /operational `some: APPROVED` filter now drops it.
+        // No APPROVED review survives — the /operational `some: APPROVED` filter drops it.
         expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(0);
         const remaining = await prisma.trustedAdultReview.findMany({ where: { trustedAdultId: ta.id } });
         expect(remaining.every((r) => r.status === 'REVOKED')).toBe(true);
@@ -657,7 +657,7 @@ describe('runExpirySweep edge cases', () => {
         expect(sendEmail).not.toHaveBeenCalled();
     });
 
-    // Regression (#1618): "expiring" is per adult, not per review. An adult who renewed
+    // "Expiring" is per adult, not per review. An adult who renewed
     // early carries a stale in-window approval PLUS a live renewal that outlives it — the
     // renewal is their current authorization, so the stale row must NOT trigger a warning.
     // A genuinely single expiring approval still must.
@@ -709,10 +709,10 @@ describe('runExpirySweep edge cases', () => {
         }
     });
 
-    // Regression: renewing early leaves the adult with TWO APPROVED reviews (renew never
+    // Renewing early leaves the adult with TWO APPROVED reviews (renew never
     // retires the prior one). When the OLD row lapses the sweep must still expire it, but
     // the family is NOT de-authorized — /operational lists a TA while ANY review is
-    // APPROVED. Asserts both directions so the fix can't be "stop emailing".
+    // APPROVED. Asserts both directions so "stop emailing" cannot pass.
     it('a renewed adult whose old review lapses gets no de-authorization email; a genuinely lapsed one still does', async () => {
         const now = new Date();
         const past = new Date(now.getTime() - 1 * DAY);
@@ -758,9 +758,9 @@ describe('runExpirySweep edge cases', () => {
     // Pins "one notice per ADULT, not one per row" — a property of statement ORDER: each
     // row's flip commits before the next row's authorization check reads, so only the last
     // row to lapse finds no approval and mails. Batch the flips into one upfront
-    // transaction and every row sees zero approvals: one email per row again. The
+    // transaction and every row sees zero approvals: one email per row. The
     // `expired` assertion pins the other half — `continue` stays AFTER `expired++`, so
-    // per-review bookkeeping is byte-identical to the pre-fix behaviour.
+    // per-review bookkeeping counts every lapsed row.
     it('two lapsed reviews on ONE adult expire both rows but send exactly one de-authorization email', async () => {
         const now = new Date();
         const ta = await prisma.trustedAdult.create({

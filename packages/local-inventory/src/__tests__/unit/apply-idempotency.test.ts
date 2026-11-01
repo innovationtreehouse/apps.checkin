@@ -175,4 +175,22 @@ describeDb("apply idempotency", () => {
     expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ status: "applied", failureReason: null });
     logged.mockRestore();
   });
+
+  it("a reconcile that throws after createProvisional commits still returns the new rows", async () => {
+    const reconcileProvisionalOnCreate = vi.fn(async () => {
+      throw new Error("lock timeout");
+    });
+    const svc = makeReceiptService({ reconcileProvisionalOnCreate });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const created = await svc.createProvisional(TEST_ORG_ID, {
+      provisionalGtin13: PROV, name: "Widget", usageBehavior: "Unknown", proposedByUserId: 1, receiptId: "r-1",
+    });
+
+    expect(reconcileProvisionalOnCreate).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalled();
+    expect(created.provisionalItem).toMatchObject({ provisionalGtin13: PROV, status: "pending" });
+    expect(await db.inventoryProvisionalItem.count({ where: { provisionalGtin13: PROV } })).toBe(1);
+    logged.mockRestore();
+  });
 });

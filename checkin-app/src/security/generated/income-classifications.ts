@@ -39,6 +39,7 @@ export const classifications = {
         maxCreatesPerRun: 'internal',
         maxCreateCentsPerRun: 'internal',
         benevityMaxCreateCentsPerRun: 'internal',
+        benevityMatchWindowDays: 'internal',
         qbPostingOnAt: 'internal',
         benevityQbPostingOnAt: 'internal',
     },

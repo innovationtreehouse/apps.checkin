@@ -190,7 +190,7 @@ describe('Membership payment API', () => {
     });
 
     it('orders/paid webhook activates the membership (and is idempotent)', async () => {
-        // line_items must contain the configured orgMembershipVariantId or the H2 check rejects it (no membership item).
+        // line_items must contain the configured orgMembershipVariantId or the variant check rejects it (no membership item).
         const payload = { id: 555, line_items: [{ variant_id: VARIANT_ID }], note_attributes: [{ name: 'Membership_Process_ID', value: String(normalProc) }] };
         const res = await SHOPIFY_WEBHOOK(shopifyReq(payload, WEBHOOK_SECRET) as never);
         expect(res.status).toBe(200);

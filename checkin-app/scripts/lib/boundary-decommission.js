@@ -24,12 +24,16 @@
 /** @typedef {{ status: string, path: string }} ChangedFile */
 /** @typedef {(path: string) => string | null} FileReader */
 
-// The two declarative policy files the certifier understands. Every other
+// The declarative policy files the certifier understands: scopeBindings.ts,
+// registry.ts, and each per-library registry file beside it. Every other
 // boundary file (engine, stripper, generator, this script) always isolates.
 const DECLARATIVE_FILES = {
     bindings: 'checkin-app/src/security/scopeBindings.ts',
     registry: 'checkin-app/src/security/registry.ts',
 };
+const REGISTRY_LIBRARY_FILE = /^checkin-app\/src\/security\/registry\/[A-Za-z0-9_]+\.ts$/;
+
+const isRegistryFile = p => p === DECLARATIVE_FILES.registry || REGISTRY_LIBRARY_FILE.test(p);
 
 const SCHEMA_FILE = 'checkin-app/prisma/schema.prisma';
 const MIGRATIONS_DIR = 'checkin-app/prisma/migrations/';
@@ -156,7 +160,23 @@ function segmentByContainers(source, containers) {
     return checkRoundTrip(segments, source);
 }
 
-// registry.ts: top-level defineRoute({...}); / defineOutbound({...}); calls.
+// A call's text must hold exactly one call: its braces close once, followed by
+// `);` and nothing else. Two calls on one line, or trailing code, would let one
+// removed entry take a second, uncertified one with it.
+function callShapeError(kind, call) {
+    const code = call.split('\n').map(stripStringsAndComments).join('\n');
+    let depth = 0;
+    for (let i = 0; i < code.length; i++) {
+        if (code[i] === '{') depth++;
+        else if (code[i] === '}' && --depth === 0) {
+            return /^\);\s*$/.test(code.slice(i + 1)) ? null : `${kind} call does not end in a lone '});'`;
+        }
+    }
+    return `unbalanced ${kind} call`;
+}
+
+// registry.ts and registry/<lib>.ts: top-level defineRoute({...}); and
+// defineOutbound({...}); calls, multi-line or on a single line.
 /** @returns {Segmentation} */
 function segmentTopLevelCalls(source) {
     const lines = source.split('\n');
@@ -177,7 +197,7 @@ function segmentTopLevelCalls(source) {
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        const m = line.match(/^(defineRoute|defineOutbound)\(\{$/);
+        const m = line.match(/^(defineRoute|defineOutbound)\(\{/);
         if (!m) {
             if (isCommentOrBlank(line)) attachBuf.push(line);
             else {
@@ -187,20 +207,24 @@ function segmentTopLevelCalls(source) {
             continue;
         }
         const kind = m[1];
-        const entityLines = [...attachBuf, line];
-        attachBuf = [];
+        const callLines = [line];
         let depth = curlyDelta(line);
         while (depth > 0) {
             i++;
             if (i >= lines.length) return { error: `unterminated ${kind} call` };
-            entityLines.push(lines[i]);
+            callLines.push(lines[i]);
             depth += curlyDelta(lines[i]);
         }
-        const text = entityLines.join('\n');
-        const key = text.match(/(?:endpoint|surface):\s*'([^']+)'/);
-        if (!key) return { error: `${kind} call with no endpoint/surface string` };
+        const call = callLines.join('\n');
+        const shapeError = callShapeError(kind, call);
+        if (shapeError) return { error: `line ${i + 1}: ${shapeError}` };
+        // Keyed from the call alone: an attached comment may quote another endpoint.
+        const keys = [...stripComments(call).matchAll(/(?:endpoint|surface):\s*'([^']+)'/g)];
+        if (keys.length !== 1) return { error: `${kind} call with ${keys.length} endpoint/surface strings` };
+        const text = [...attachBuf, ...callLines].join('\n');
+        attachBuf = [];
         flushOther();
-        segments.push({ type: 'entity', container: kind, name: key[1], text });
+        segments.push({ type: 'entity', container: kind, name: keys[0][1], text });
     }
     spillAttach();
     flushOther();
@@ -366,7 +390,7 @@ function certifyDecommission({ changed, boundaryChanged, violations, readBase, r
 
     const declarative = Object.values(DECLARATIVE_FILES);
     for (const p of boundaryChanged) {
-        if (!declarative.includes(p)) {
+        if (!declarative.includes(p) && !isRegistryFile(p)) {
             reasons.push(`${p}: non-declarative boundary file — direction undecidable, never decommission-eligible`);
         }
     }
@@ -389,14 +413,14 @@ function certifyDecommission({ changed, boundaryChanged, violations, readBase, r
         }
     }
 
-    if (boundaryChanged.includes(DECLARATIVE_FILES.registry)) {
-        const base = readBase(DECLARATIVE_FILES.registry);
-        const head = readHead(DECLARATIVE_FILES.registry);
+    for (const file of boundaryChanged.filter(isRegistryFile)) {
+        const base = readBase(file);
+        const head = readHead(file);
         if (base == null || head == null) {
-            reasons.push(`${DECLARATIVE_FILES.registry}: added or deleted outright — not a decommission`);
+            reasons.push(`${file}: added or deleted outright — not a decommission`);
         } else {
             const d = diffSegmentations(segmentTopLevelCalls(base), head, segmentTopLevelCalls, droppedModels);
-            if (d.error) reasons.push(`${DECLARATIVE_FILES.registry}: ${d.error}`);
+            if (d.error) reasons.push(`${file}: ${d.error}`);
             else {
                 for (const r of d.removed) {
                     if (r.container === 'defineOutbound') {

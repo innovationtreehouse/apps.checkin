@@ -64,6 +64,10 @@ export interface SignoffDirectory {
   boardMembers(): Promise<number[]>;
   /** Everyone in the given people's households. */
   householdOf(personIds: number[]): Promise<number[]>;
+  /** Each given person's household, as householdOf([id]) reads it; an unknown id is left out. */
+  householdsOf(personIds: number[]): Promise<Map<number, number[]>>;
+  /** Everyone in the person's household, merged-away people included: the people whose household the person shares. */
+  householdIds(personId: number): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
   /** The live Person an id resolves to: itself when live, its merge survivor when merged away, else null. */
@@ -85,6 +89,8 @@ export const inertSignoffDirectory: SignoffDirectory = {
   financeHolders: async () => [],
   boardMembers: async () => [],
   householdOf: async () => [],
+  householdsOf: async () => new Map(),
+  householdIds: async () => [],
   personExists: async () => false,
   livePersonFor: async () => null,
   isOrgMember: async () => false,
@@ -140,12 +146,18 @@ export const CatalogOrgEventSchema = z.object({
 });
 export type CatalogOrgEvent = z.infer<typeof CatalogOrgEventSchema>;
 
-/** Catalog events after a cursor, oldest first; read by the catch-up sweep. */
+/** A page of the org's catalog events after an id, oldest first; read by the catch-up sweep. */
 export interface CatalogEventSource {
-  eventsAfter(afterId: number): Promise<unknown[]>;
+  eventsSince(orgId: string, afterId: number): Promise<unknown[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsAfter: async () => [] };
+export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
+
+/** Alerts the host binds to reach a person. */
+export interface ExpenseAlerts {
+  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
+  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
+}
 
 // ── QuickBooks (QB-1 readers, QB-2 writer) ────────────────────────────────────
 
@@ -295,9 +307,10 @@ export type SetReimbursee = (orgId: string, expenseId: string, choice: Reimburse
 /**
  * X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet.
  * A backfilled receipt names the hand-booked transaction it matched (`qbEntity` + `qbTxnId`).
+ * `statusUnavailable` marks an expense finance skipped: the app holds no entry to read a payment from.
  */
 export interface ReimbursementStatus {
-  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
+  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null; statusUnavailable?: boolean }>>;
 }
 
 /**
@@ -308,6 +321,7 @@ export interface ReimbursementStatus {
 export interface SubmitterConfirmations {
   awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
   confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
+  confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
 }
 
 /** Where each receipt's expense stands, as its uploader and reimbursee read it. */
@@ -325,6 +339,22 @@ export interface ExpenseOutcomes {
   forReceipts(receiptIds: unknown): Promise<Map<string, { status: ExpenseOutcomeStatus; notes: string[] }>>;
 }
 
+/** An expense outcome the receipt's uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "expense_line_rejected" | "reimbursement_complete";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
+}
+
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;
@@ -332,6 +362,9 @@ export interface ExpenseSettings {
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;
+  qbMatchWindowDays: number;
+  qbMaxCreatesPerRun: number;
+  qbMaxCreatesPerDay: number;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────
