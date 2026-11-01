@@ -1,14 +1,14 @@
 # s-read-function — the scheduled Shopify orders/payouts/balance-transaction sync,
-# packaged as an ECS task image (infra: innovationtreehouse/infra#112).
+# packaged as an ECS task image (task definitions and schedule live in the infra repo).
 #
 # Build context is the REPO ROOT (same convention as checkin-app/Dockerfile) so the
 # workspace install can see the root package.json + lockfile and every workspace
 # manifest. Build with:  docker build -f s-read-function/Dockerfile .
 #
-# The container runs the EXISTING CLI entry (src/cli.ts) via tsx — the same code path
-# proven locally — not a bundled artifact. The default CMD selects the sync mode from
-# the SYNC_MODE env var (contract with infra#112):
-#   - the s-read-sync task-def / hourly schedule sets SYNC_MODE=incremental
+# The container runs the CLI entry (src/cli.ts) via tsx, the same code path as a local
+# run, not a bundled artifact. The default CMD selects the sync mode from
+# the SYNC_MODE env var (contract with the infra repo's task definitions):
+#   - the s-read-sync task-def / daily schedule sets SYNC_MODE=incremental
 #   - the one-time backfill is a run-task with a SYNC_MODE=backfill env override
 #   - the s-read-migrate task-def overrides the command entirely:
 #       ["npm", "run", "db:deploy", "-w", "@checkin/s-ingest-core"]

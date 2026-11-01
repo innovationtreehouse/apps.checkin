@@ -3,7 +3,7 @@
  */
 /**
  * LIVE contract: a resend of the inventory mutations the program-stock writer
- * (#2055) sends under `@idempotent(key:)` never writes twice — Admin API 2026-04,
+ * sends under `@idempotent(key:)` never writes twice — Admin API 2026-04,
  * same mutation shapes. Whether the key itself was honoured is logged, not asserted. Each check logs one `[idempotency] <check>: PASS|FAIL|INFO` line plus the
  * raw response fields, so the result reads straight off the workflow log.
  *

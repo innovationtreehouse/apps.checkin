@@ -19,7 +19,7 @@ import { relTime } from "@/lib/time";
  *
  * ON-DEMAND ONLY. A human clicked "Run diagnostics" on the system-status page.
  * Never poll or cron this: every probe is a paid Aurora wake-up — the same cost
- * that makes the automatic sync daily rather than continuous (infra#129).
+ * that makes the automatic sync daily rather than continuous.
  *
  * The mirror probe is deliberately ONE query, not six checks: the pg error code
  * from `SELECT count(*) FROM sync_run` discriminates every layer on its own
