@@ -1,201 +1,257 @@
-# Record ids for finance views whose rows have no `id`
+# Finance view log: record what was viewed, not a guess
 
-Design for the gap in the finance view record (the finance-view rule in
-`docs/rules/revenue.md`): five audited routes write a row that names no record.
-One of them, `GET /api/income/items`, is not a finance record and should not be
-logged at all (decided below). That leaves four. No code changes with this doc.
+Design for making the finance view record (the finance-view rule in
+`docs/rules/revenue.md`) name the records each view showed and the screen it
+came through. No code changes with this doc.
 
-## The gap
+## The problem
 
-On an `auditedRead` route, `handler()` takes a record id from each top-level row
-of the **stripped** bag: `row.id ?? row.payoutGid`
-(`checkin-app/src/security/handler.ts`). The `payoutGid` fallback is already a
-hard-coded exception for one route. `rowCount` is the number of top-level rows,
-across every bag key.
+The rule says the record holds "who looked, which records, through which screen,
+and when". Today the handler guesses two of those:
 
-The rule says the record holds "which records". For these five routes it holds
-a count and the path params only:
+- **Which records.** On an `auditedRead` route, `handler()` records
+  `row.id ?? row.payoutGid` for every top-level row of every key in the stripped
+  response (`checkin-app/src/security/handler.ts`). Nothing checks that the field
+  is the finance record's id, or that the row is a record at all.
+- **Which screen.** The row stores the registry key (`GET /api/expense/expenses/[id]`)
+  and the path params, never the query string. The Board's tab then guesses the
+  record kind from the path prefix (`checkin-app/src/lib/finance/financeViewKinds.ts`),
+  so everything under `/api/income` reads as "payout records".
 
-| Route | Top-level row | What identifies the finance record | Survives the stripper? |
-|---|---|---|---|
-| `GET /api/expense/expenses/[id]/signoffs` | `ExpenseLineSignoffStatus`, one per visible line | The expense is the path `id`, already in `params`. Each row's `lineItemId` names the line. | `lineItemId` is `internal`. Every audience in `APPROVER_VIEW` holds `everyones:internal` (Finance, Board, and the bucket approver as `authenticated`). Yes for all. |
-| `GET /api/expense/finance-queue` | `FinanceQueueRow`, one per expense on the chosen tab | `expenseId` | `expenseId` is `internal`; Finance and Board both hold it. Yes for all. |
-| `GET /api/income/items` | `IncomeItemView`, one per Shopify variant | None: a row is a catalog variant and the bucket its sales book to, a mapping, not a finance record. Not to be logged (decided below). | — |
-| `GET /api/receipts/[id]/duplicate-group` | One `ReceiptDuplicateGroup` | The path `id` names the receipt asked about. The receipts shown are `members[].id`, plus the ids in `dismissed`. | `members[].id`, `copyOfId` and `dismissed` are `pii`. Finance and Board both hold `everyones:pii` in `FINANCE_READ_VIEW`. Yes for all. |
-| `GET /api/finance-ops/payment-plans` | `ProgramParticipant`, one per pending request, plus one `BoardSettings` | The enrollment's composite key, `programId` + `personId`. There is no single id column. | Both are `public`. Yes for all. |
+An audit of every audited route (below) found the guess right on about half.
+The rest fail in five ways:
 
-Two side findings from reading these:
+| Failure | Routes | Effect |
+|---|---|---|
+| No `id` on the row | finance-queue, signoffs, duplicate-group, payment-plans | No record named. |
+| The row's own bookkeeping id, not the record's | expense and income qb-exclusions, received-expense-payloads, disbursement-holds, disbursement-events, income reconciliation, both audit-log routes | The id names a bookkeeping row the Board cannot search for. |
+| Helper rows mixed in | expense detail (`ExpenseQueueReason`), line-item-approvals (buckets), expense-events (slim expenses), provisional-items, workflow detail, payout detail (balance transactions), payment-plans (`BoardSettings` as id `"1"`) | Wrong ids in the list, and `rowCount` inflated. |
+| Ids from two tables in one list | in-kind queue, in-kind by-bucket (`source` + `id`) | The same number names two different gifts. |
+| Nothing returned, so nothing logged | reimbursee-vendor and qb-candidates when empty | Opening an expense leaves no row, though the path names it. |
 
-- **payment-plans counts and names `BoardSettings`.** `BoardSettings.id` is
-  `public`, so it survives, and the handler records it as record id `"1"` and
-  counts it as a row. Every view logs one more row than it shows, and an empty
-  queue still writes a row (count 1, id `"1"`).
-- **The same applies to any audited route with a non-record sibling key.** The
-  handler counts every top-level row in every bag key, for example
-  `ExpenseQueueReason` beside `Expense` on the expense detail. Those reasons have
-  no `id`, so they add to the count but not the ids.
+Two more consequences:
 
-## What the Board's tab can link
+- **Repeats collapse wrongly.** The log keeps one row per person, view key and
+  fifteen-minute window, and the view key hashes the endpoint, path params and
+  record ids. A route that records no ids has the same key on every load, so
+  views of different finance-queue tabs within fifteen minutes collapse into
+  one row, and the later tabs are lost.
+- **Own records slip in.** Confirmations shows a Board member their own
+  reimbursements beside everyone else's, and logs all of them. The rule says a
+  person's own receipts are not recorded.
 
-`checkin-app/src/lib/finance/financeViewKinds.ts` decides the kind label, the
-sentence and which ids link to a page. It is app code, not a boundary file.
+## The design
 
-The tab and its search both read `recordIds` only, never `params`:
+### 1. Each audited route declares what it shows
 
-- The tab renders one entry per id in `row.recordIds`
-  (`RecordIds` in `checkin-app/src/app/system-status/finance-views/page.tsx`),
-  and `financeViewRecordHref` links only an id it is given. A row with empty
-  `recordIds` shows no record at all.
-- The record search on `GET /api/system-status/finance-views` filters with
-  `recordIds: { has: record }`. A path id held only in `params` is not found.
+`auditedRead: true` becomes a declaration of the records the route shows:
 
-So a path `id` names the record in the stored row, but the Board can neither see
-it on the tab nor find it by searching for the expense or receipt. Whatever
-mechanism lands, it needs these entries:
+```ts
+auditedRead: {
+  records: [
+    { kind: 'expense', key: 'FinanceQueueRow', id: 'expenseId' },
+    { kind: 'receipt', key: 'FinanceQueueRow', id: 'receiptId' },
+  ],
+  query: ['tab'],
+},
+```
 
-- `GET /api/expense/finance-queue` → a `LIST_PAGES` entry to `/expense/expenses`,
-  once its rows carry expense ids.
-- `GET /api/expense/expenses/[id]/signoffs` → a `DETAIL_PAGES` entry to
-  `/expense/expenses`, once the expense id is in `recordIds` (or the tab and the
-  search read it from `params`; see option D).
-- `GET /api/receipts/[id]/duplicate-group` → a `DETAIL_PAGES` entry for the path
-  `id`, on the same condition. Member ids are receipts too, so they could link
-  to `/receipts/<id>` as a list does.
-- `GET /api/income/items` → no entry. It stops being an audited read, so it
-  writes no rows. Its existing rows stay, labelled "payout records" by the
-  `/api/income` prefix.
-- The `payouts` kind matches every path under `/api/income`. "Payout record"
-  means a Shopify payout only (decided below), and two other audited reads fall
-  under that prefix: `GET /api/income/qb-exclusions` (QuickBooks transactions
-  excluded from matching) and `GET /api/income/reconciliation/[id]/candidates`
-  (QuickBooks deposits offered as a match). The payout routes are
-  `GET /api/income/payouts`, `GET /api/income/payouts/[gid]` and
-  `GET /api/income/reconciliation`.
-- `GET /api/finance-ops/payment-plans` → the `payments` kind. Its ids are
-  `programId:personId` (decided below), so the tab and the search take that
-  format, and the tab needs a page to link it to, if any.
+- `kind` comes from a closed list of record kinds (§3).
+- `key` is the bag key whose rows hold the records. A row of any other key is
+  never recorded or counted.
+- `id` is a field on the row, a nested path (`members[].id`), a list of fields
+  joined into one id (`['programId', 'personId']`), or a path param
+  (`{ param: 'id' }`). A row whose field is null contributes nothing for that
+  kind.
+- `query` lists the query parameters that pick the screen (§2).
 
-## Options
+Ids are still read from the **stripped** response, so the log names only what
+left the server.
 
-### A. Registry entry names the id field: `auditedId`
+**Checked when the server starts.** Registration throws when:
 
-An optional field on `RouteSpec` (and `FileRouteSpec`) that tells the handler
-where a top-level row's record id is, in place of `id`. The handler still reads
-the stripped bag, so only an id the caller actually received is recorded.
+- an audited route has no `records`;
+- a declared field is not classified on its model;
+- a declared field's tier is not visible to every role in the route's
+  `orderedView` that reaches others' rows. If it were not, that role's views
+  would log nothing, silently.
 
-Shapes, smallest first:
+The guard test that keeps the audited list complete stays as it is.
 
-1. **One field name** (`auditedId: 'expenseId'`). Covers the finance queue. Retires the `payoutGid` special case into
-   the payouts entry. Does not cover the duplicate group (nested) or payment
-   plans (composite).
-2. **A list of field names joined into one id** (`auditedId: ['programId',
-   'personId']`, recorded as `programId:personId`). Adds payment plans.
-3. **Paths into the row** (`auditedId: ['members[].id', 'dismissed[]']`). Adds
-   the duplicate group's members. Needs a small path grammar in the handler, and
-   tests for it.
+### 2. Log the exact request
 
-A per-route key filter (`auditedKeys: ['ProgramParticipant']`) would fix the
-`BoardSettings` count, with the same reasoning.
+Each row stores:
 
-Trade-offs: one declaration per route, read where the policy is already read;
-the logged ids are what left. It grows the registry's grammar, and every grammar
-addition is something a reviewer must learn. **Boundary change** (`core.ts`,
-`handler.ts`, the registry entries, their tests). Then **app code** for
-`financeViewKinds.ts`, in a separate PR.
+- the registry key, as now, for grouping;
+- the **concrete path** (`GET /api/expense/expenses/e_123/signoffs`);
+- the **declared query parameters only**, for example `{ "tab": "holds" }`.
 
-### B. Routes return an `id` on each row
+Undeclared query parameters stay out. The reason is in the original B11 design:
+a search box carries whatever the viewer typed, often a donor's or vendor's
+name, which is content. The audit found no audited route that reads free text
+today; the allowlist keeps it that way when one is added. The declared query
+parameters go into the view key, so two tabs are two views.
 
-Each handler adds `id` to its rows: `id: expenseId` on `FinanceQueueRow`, and so
-on. The handler stays as it is.
+### 3. Store kind-qualified record ids
 
-Trade-offs: no new grammar. But:
+`recordIds` holds `kind:id` strings: `expense:e_123`, `receipt:r_9`,
+`payment-plan:12:345`. That:
 
-- The stripper drops any unclassified field, so each new `id` needs a
-  classification entry. The synthetic classification files are boundary
-  artifacts, so it is a **boundary change** per model plus **app code** per route
-  (in `packages/expense`, `packages/income`, `packages/receipt`, and the
-  payment-plans route).
-- `ProgramParticipant` is a Prisma model with no `id` column. An `id` there means
-  a new view model or a schema column, much more than this gap needs.
-- It duplicates a field the response already carries, in a public contract.
-- It cannot name the duplicate group's members: the group is one row with one
-  `id`.
+- tells two tables' ids apart (`gift-of-goods-receipt:5`, `gift-of-goods-manual:5`);
+- lets the tab label and link each id from its kind, with no path-prefix guess;
+- keeps "who looked at this expense" one indexed `has` query on `expense:e_123`.
 
-### C. The route hands the handler its ids
+`rowCount` becomes the number of distinct records named, not the number of
+top-level rows.
 
-`HandlerFn` returns the ids alongside the bag (a reserved bag key, or a
-`recordViewed(ids)` callback on the context).
+The kind list lives in `core.ts` (a boundary file). Its labels and page links
+live in `financeViewKinds.ts` (app code), which drops its prefix table.
 
-Trade-offs: handles any shape, including nested and composite. But the ids come
-from the **unstripped** data, so the log can name a record the caller never
-received, or miss one they did; and every route must remember to do it.
-**Boundary change** (`handler.ts`) and **app code** per route.
+### 4. Response changes the declarations need
 
-### D. The path `id` as the record, for the detail routes
+- **finance-queue:** a row for a receipt with no expense yet carries neither
+  `expenseId` nor the receipt id (`rowsOf` in
+  `packages/expense/src/services/financeQueueService.ts`). It needs `receiptId`
+  added to `FinanceQueueRow`, with a classification entry.
+- **in-kind queue and by-bucket:** each row's kind depends on its `source`. The
+  grammar needs a kind chosen per row, or the response splits into two keys
+  (Q7).
 
-For signoffs and the duplicate group, the path `id` already names the record the
-screen is about, and it is stored in `params`. A `DETAIL_PAGES` entry alone does
-nothing: the tab and the search read `recordIds` only. Two ways to use it:
+### 5. Own records
 
-1. **The handler records the path `id`.** A registry flag (for example
-   `auditedPathId: 'id'`) makes the handler add `params.id` to `recordIds`. The
-   file handler already does this for file routes (`result.row.id ?? params.id`
-   in `fileHandler.ts`), so there is a precedent. The tab links it through a
-   `DETAIL_PAGES` entry, and the search finds it with the existing index.
-   **Boundary change**, then **app code** for `financeViewKinds.ts`.
-2. **The tab and the search read `params.id`.** `RecordIds` renders the detail
-   record from `params` when `recordIds` lacks it, and the search also matches
-   `params.id` for detail endpoints. **App code only.** The `params` match is a
-   JSON-path filter that the `recordIds` GIN index does not serve, and the search
-   needs to know which endpoints are detail endpoints.
+On a route that shows a person their own records beside others', the handler
+drops the caller's own records from the ids before writing. A view that showed
+only their own writes nothing. This needs each declared kind to name its owner
+field where it has one (`uploadedByUserId` on a receipt). Today only
+confirmations needs it.
 
-Either way, D records neither the line ids nor the other receipts in the
-duplicate group. Those need A.3 or C.
+## What each route would declare
 
-## Recommendation
+Kinds proposed in §3: `expense`, `receipt`, `mail-item`, `workflow-mapping`,
+`qb-transaction`, `donated-capital-line`, `donation`, `donation-file`,
+`disbursement`, `gift-of-goods-receipt`, `gift-of-goods-manual`, `payout`,
+`payment-exception`, `payment-plan`, `membership-payment-plan`. The final list
+is Q1.
 
-A.1 (one field name) for the finance queue, with `payoutGid` moved into its
-registry entry. That closes the gap on the finance queue, the
-most-used screen, with the smallest grammar. Signoffs record only the path's
-expense id (decided below), so D covers them; which variant is Q1a.
+"Today" is what the current handler records: ✓ the right ids, ✗ wrong or none.
 
-Income items need no id mechanism: dropping `auditedRead: true` from their
-registry entry is a **boundary change** on its own.
+| Route | Records shown → declared id | Today |
+|---|---|---|
+| `GET /api/expense/expenses` | expense ← `Expense.id`; query `view`, `active` | ✓ |
+| `GET /api/expense/queue` | expense ← `Expense.id`; query `view` | ✓ |
+| `GET /api/expense/expenses/[id]` | expense ← param `id`; lines: Q2 | ✓ expense; reasons inflate count |
+| `GET /api/expense/expenses/[id]/line-item-approvals` | expense ← param `id` | ✗ approval and bucket ids |
+| `GET /api/expense/expenses/[id]/signoffs` | expense ← param `id` (decided) | ✗ none |
+| `GET /api/expense/expenses/[id]/reimbursee-vendor` | expense ← param `id` | ✗ link-row id; nothing when empty |
+| `GET /api/expense/expenses/[id]/qb-candidates` | expense ← param `id`; qb-transaction ← `ExpenseQbCandidateView.id` | ✗ expense missing; nothing when empty |
+| `GET /api/expense/finance-queue` | expense ← `expenseId`; receipt ← `receiptId` (§4); query `tab` | ✗ none |
+| `GET /api/expense/expense-events` | expense ← `ExpenseEvent.expenseId` | ✗ event and expense ids mixed |
+| `GET /api/expense/received-expense-payloads` | receipt ← `receiptId` (Q4) | ✗ payload ids |
+| `GET /api/expense/qb-exclusions` | qb-transaction ← `qbTxnId` (Q4) | ✗ exclusion ids |
+| `GET /api/expense/donated-capital` | donated-capital-line ← `id` | ✓ |
+| `GET /api/expense/provisional-items` | Q5: a catalog proposal, not a finance record | ✗ mixed |
+| `GET /api/receipts` | receipt ← `id`; query `state`, `pushed` | ✓ |
+| `GET /api/receipts/needs-attention` | receipt ← `id` | ✓ |
+| `GET /api/receipts/confirmations` | receipt ← `id`, minus own (§5) | ✓ ids, but logs own |
+| `GET /api/receipts/[id]` | receipt ← param `id` | ✓ |
+| `GET /api/receipts/[id]/file` (file) | receipt ← param `id` | ✓ |
+| `GET /api/receipts/[id]/audit-logs` | receipt ← param `id` (Q3) | ✗ history-entry ids |
+| `GET /api/receipts/[id]/duplicate-group` | receipt ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) | ✗ none |
+| `GET /api/receipts/duplicate-queue` | registered, but no route or handler exists | — |
+| `GET /api/receipts/mail-items` | mail-item ← `id` | ✓ |
+| `GET /api/receipts/mail-items/[id]/file` (file) | mail-item ← param `id` | ✓ |
+| `GET /api/receipts/ignored-files` | Q5: an ignore-list entry, not a finance record | ✗ |
+| `GET /api/workflow-mapping/receipts` | workflow-mapping ← `id`; query `state`, `receiptId` | ✓ |
+| `GET /api/workflow-mapping/receipts/[id]` | workflow-mapping ← param `id` | ✓ id; helper and line rows inflate |
+| `GET /api/workflow-mapping/audit-log` | workflow-mapping ← `receivedReceiptId` (Q3); query `receiptId` | ✗ history-entry ids |
+| `GET /api/donations/transactions` | donation ← `id`; query `assigned` | ✓ |
+| `GET /api/donations/transactions/unassigned` | donation ← `id` | ✓ |
+| `GET /api/donations/transactions/[id]` | donation ← param `id` | ✓ |
+| `GET /api/donations/uploaded-files` | donation-file ← `id` | ✓ |
+| `GET /api/donations/uploaded-files/[id]/blob` (file) | donation-file ← param `id` | ✓ |
+| `GET /api/donations/comment-rules` | Q5: a matching rule, but it carries donor comment text | ✗ rule ids |
+| `GET /api/donations/disbursement-holds` | disbursement ← `disbursementId`; donation ← `transactionId` (Q4) | ✗ hold ids |
+| `GET /api/donations/disbursement-events` | disbursement ← `disbursementId` (Q4) | ✗ event ids |
+| `GET /api/donations/in-kind/manual` | gift-of-goods-manual ← `id` | ✓ |
+| `GET /api/donations/in-kind/manual/[id]` | gift-of-goods-manual ← param `id` | ✓ |
+| `GET /api/donations/in-kind/receipt/[id]` | gift-of-goods-receipt ← param `id` | ✓ |
+| `GET /api/donations/in-kind/queue` | gift of goods, kind by `source` ← `id` (Q7) | ✗ ids collide |
+| `GET /api/donations/in-kind/by-bucket` | gift of goods, kind by `source` ← `id` (Q7) | ✗ ids collide |
+| `GET /api/income/payouts` | payout ← `payoutGid` | ✓ |
+| `GET /api/income/payouts/[gid]` | payout ← param `gid` | ✓ payout; reconciliation id and balance rows mixed in |
+| `GET /api/income/reconciliation` | payout or disbursement by `source` ← `payoutGid` (Q4) | ✗ reconciliation ids |
+| `GET /api/income/reconciliation/[id]/candidates` | qb-transaction ← `IncomeQbDepositView.id` | ✓ deposits; the payout only in the path |
+| `GET /api/income/qb-exclusions` | qb-transaction ← `qbTxnId` (Q4) | ✗ exclusion ids |
+| `GET /api/income/items` | not audited (decided) | — |
+| `GET /api/finance-ops/payments` | payment-exception ← `id` | ✓ |
+| `GET /api/finance-ops/payment-plans` | payment-plan ← `['programId','personId']` (decided) | ✗ none; `BoardSettings` as `"1"` |
+| `GET /api/finance-ops/membership-payment-plans` | membership-payment-plan ← `id` | ✓ |
 
-Two of the decisions below need more than A.1. Payment plans need joined fields
-(A.2) or C. The duplicate review needs paths into the row (A.3) or C, because its
-ids are nested in one group row. Which one is Q1.
+## The PR split
+
+1. **Boundary:** the declaration grammar and the start-up checks in `core.ts`;
+   the handler and file handler reading declarations; the concrete path and
+   declared query on the log row; kind-qualified ids; every audited registry
+   entry's declaration; `receiptId` in `FinanceQueueRow`'s classification;
+   dropping `auditedRead` from `GET /api/income/items`. With its migration for
+   the new columns.
+2. **App code:** `receiptId` in the finance-queue rows; `financeViewKinds.ts`
+   labels and links by kind; the tab shows the path and query.
+
+Until (2) adds `receiptId`, the declared field is absent and an intake row
+records nothing, as today.
 
 ## Decided
 
 - **Payment plans record `programId:personId`.** One id per pending request
-  shown, the program id and the person id joined by a colon.  [Decision — owner]
-- **The duplicate review records everything it displays.** Every receipt id the
-  group shows: each member's `id`, each member's `copyOfId`, and each id in
-  `dismissed`, as well as the receipt in the path.  [Decision — owner]
-- **Signoffs record the expense in the path, not its lines.** One id, the
-  expense's; the line ids the response carries are not recorded.  [Decision — owner]
-- **`GET /api/income/items` is not logged.** Its rows map Shopify variants to
+  shown.  [Decision — owner]
+- **The duplicate review records everything it displays:** each member's `id`
+  and `copyOfId`, each id in `dismissed`, and the receipt in the path.
+  [Decision — owner]
+- **Signoffs record the expense in the path, not its lines.**  [Decision — owner]
+- **`GET /api/income/items` is not logged.** It maps Shopify variants to
   buckets; that mapping is not a finance record.  [Decision — owner]
-- **"Payout record" means a payout from Shopify, and nothing else.** No other
-  income read is labelled a payout record on the Board's tab.  [Decision — owner]
+- **"Payout record" means a payout from Shopify, and nothing else.**
+  [Decision — owner]
 
 ## Open questions for @thpr
 
-- **Q1.** **Which mechanism?** A (registry field), B (routes return `id`), C (route
-  hands over ids), or D only for the detail routes. If A, which shape: one
-  field name, joined fields, or paths.
-- **Q1a.** **The detail routes' path `id`.** D.1 (the handler records it in
-  `recordIds`, a boundary change) or D.2 (the tab and the search read it from
-  `params`, app code only, unindexed)?
-- **Q2.** **Payment plans' `BoardSettings`.** Should it stop counting as a row and
-  being recorded as id `"1"`?
-- **Q5.** **QuickBooks reads under `/api/income`.** `GET /api/income/qb-exclusions`
-  and `GET /api/income/reconciliation/[id]/candidates` are logged and show as
-  "payout records" today. Which label should the Board's tab give them?
-- **Q6.** **Sibling keys on other audited routes.** Should the count exclude rows that
-  are not records (such as `ExpenseQueueReason` on the expense detail), or is
-  that a separate change?
+- **Q1. The kind list.** Are the fifteen kinds in "What each route would
+  declare" the right list and the right names? Each becomes a label on the
+  Board's tab ("viewed 3 expenses", "viewed 1 gift of goods").
+- **Q2. Lines inside a record.** Expense detail shows the expense and its lines;
+  a bucket approver sees only their buckets' lines. Should the log name only the
+  expense (as decided for signoffs), or the lines shown too?
+- **Q3. History screens.** `GET /api/receipts/[id]/audit-logs` and
+  `GET /api/workflow-mapping/audit-log` show the change history of one receipt or
+  mapping. Should the log name only that receipt or mapping, and not each
+  history entry?
+- **Q4. Bookkeeping rows.** Six routes list a bookkeeping row about a finance
+  record: QuickBooks exclusions (expense and income), received expense
+  payloads, disbursement holds, disbursement events and income reconciliation.
+  Should the log name the finance record each row is about (the QuickBooks
+  transaction, the receipt, the disbursement, the payout) instead of the
+  bookkeeping row's own id?
+- **Q5. Not finance records?** Like the income item mapping, three audited
+  routes show something other than a finance record:
+  - `GET /api/expense/provisional-items`: proposed catalog items and part-to-bucket mappings;
+  - `GET /api/receipts/ignored-files`: the mailbox's list of ignored files;
+  - `GET /api/donations/comment-rules`: rules for matching donor comments, which
+    carry the donors' comment text.
 
-Log rows written before the change keep their count only; there is nothing to
-backfill them from.
+  Which of these stop being logged?
+- **Q6. Empty detail screens.** Opening an expense's reimbursee or QuickBooks
+  candidates when there are none logs nothing today. With the expense declared
+  from the path, should that view be logged?
+- **Q7. Gifts of goods from two tables.** The in-kind queue and by-bucket list
+  gifts from two tables. Should the grammar choose the kind per row from
+  `source`, or should those routes return the two kinds under two keys?
+- **Q8. Log rows written before the change.** Their ids carry no kind, so
+  searching for `expense:e_123` will not find them. Should the search also match
+  the bare id on rows from before the cutover, or leave old rows to the date and
+  person filters?
+
+## Follow-ups outside this design
+
+- `GET /api/receipts/duplicate-queue` is registered and audited but has no route
+  or handler. Removing the entry is a boundary decommission of its own.
