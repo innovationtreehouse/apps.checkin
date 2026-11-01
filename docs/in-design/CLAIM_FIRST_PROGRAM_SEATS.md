@@ -22,7 +22,7 @@ The refund change ships first and does not depend on the trial.
 
 | Option | Result | Why or why not |
 |---|---|---|
-| Draft (chosen) | The store page and old cart links stop working. | The Board said "hidden". The code exists and is retried until Shopify confirms (`hideEndedProducts`, `saleSweep.ts:55`). Draft keeps the item for old orders and for reversal. |
+| Draft (chosen) | The store page and old cart links stop working. | The Board said "hidden". The code exists and is retried until Shopify confirms (`hideEndedProducts`, `saleSweep.ts:55`), though today only for ended sales; section 6 extends it to the switch. Draft keeps the item for old orders and for reversal. |
 | Listed but unbuyable | Stock 0 shows "Sold out". A real pointer to the app needs a store theme edit. | "Sold out" is false while seats are open. An uncapped item has no stock to zero, so it stays buyable. The Board's earlier option text said "visible for information", but its ruling says hidden. |
 | Deleted | Same as draft for a shopper. | It can't be undone, and turn-off would have to re-create items. |
 
@@ -93,7 +93,7 @@ At the switch and after:
 
 | What | What happens |
 |---|---|
-| Programs on sale now | The switch hides each public item at once, and the daily sweep retries any failure. Enrollment stays open in the app. |
+| Programs on sale now | The switch hides each public item at once, and the daily sweep retries any failure (section 6 has the sweep change). Enrollment stays open in the app. |
 | Enrolled and claimed families | Nothing changes. Their rows stand, and the app already checks out on the hidden item. |
 | Paid public orders, past and in flight | Still honored. `programVariantIds` keeps matching both variants, so `shopifyVariantId` and `shopifyProductId` stay for good, as do income mapping (`income/appItems.ts:22`) and the audit. A paid webhook arriving late for a claim activates normally; one with no claim goes to the Board. |
 | Refund on an old public order | Flagged only. Shopify may raise a draft item's stock, which nobody can buy. |
@@ -171,6 +171,7 @@ The trial is all programs, in a narrow window with a set end date. A person turn
 **The trial's mechanism:**
 
 - `BoardSettings.programStoreClosedAt`, nullable, set and cleared by the Board. Setting it is audited and hides the public items.
+- `hideEndedProducts` selects only programs with `saleEndedAt` set (`saleSweep.ts:56`). It also selects every program while the switch is set, and the switch calls it at once. It stamps `productHiddenAt` only after Shopify confirms, so a failed hide is retried on the next daily run.
 - A guard in the stock writer: while set, no carry is recorded and no push is made. `changeProgramStock`, `changeProgramStockWith` (its row change still commits) and `pushProgramStock` all check it. That one spot also covers heal, nudge and re-arm.
 - Callers keep stamping `inventoryHeldAt` and `seatTakenWithoutSaleAt`. Those stamps are what makes the re-count and later seat returns exact.
 - New paid programs create the public item as draft, so `shopifyVariantId` stays filled and turn-off needs no new item.
@@ -234,8 +235,9 @@ Per `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`. Each line is one PR unle
 |---|---|---|---|
 | 1 | Refund flags only, with the rule text | none | No schema |
 | 2 | Sign-in returns to the program | none | No schema |
+| 2a | Hold-failed deny fix with its own rule text (`programs.md:368-379`). Separate work already drafted; this design doesn't build it | none | Should land before the switch, so nobody clears the queue with the old deny |
 | 3 | Add `programStoreClosedAt` with its `@sensitivity` tag | 1, expand | Inert. If the settings route's grant must change, that goes first in its own boundary PR |
-| 4 | Guard, checkout predicate, draft on create, hide and re-count actions | 2 | Off until the switch |
+| 4 | Guard, checkout predicate, draft on create, hide and re-count actions, sweep selecting programs while the switch is set | 2 | Off until the switch |
 | — | Dev-store checks; section 4's three steps on production | | People |
 | 5 | **Switch on for the window.** A short dated note goes in `programs.md` and `revenue.md`: which rules are paused and until when | | Board |
 | — | Window ends: turn off and re-count (section 6). Note removed | | Board and a person; expected |
@@ -268,7 +270,7 @@ Per `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`. Each line is one PR unle
 
 **`docs/in-design/PROGRAM_INSTANCE_RESTRUCTURE.md` (on hold).** This design doesn't depend on it, and the two conflict in one place. Its §2 and §2a move the stock columns to the instance and call for one public item and one stock writer per instance. If this trial is kept, those rows disappear and that plan gets smaller. If that work resumes during the trial, it should not copy the stock columns until the Board decides. The reserved-seat item per instance and the capacity lock moving to the instance are unaffected.
 
-**Rules that change if the design is kept.** During the window a dated note covers them. All are Decision tier, none Policy: `programs.md:190-198` (returning seats), `:290-295` (fallback to the public item), `:303-309`, `:315-328`, `:330-349`, `:354-379`; `revenue.md:110-127`.
+**Rules that change if the design is kept.** During the window a dated note covers them. The hold-failed deny ruling changes `programs.md:368-379` on its own, whatever happens to this design, and ships with its fix (rollout step 2a). All are Decision tier, none Policy: `programs.md:190-198` (returning seats), `:290-295` (fallback to the public item), `:303-309`, `:315-328`, `:330-349`, `:354-379`; `revenue.md:110-127`.
 
 **Board doc wording.** It says the Board's policy needs each purchase matched to a checked Member and a completed background check before joining a program. The register says a public workshop needs no agreement. This design doesn't change either, and claims apply the same checks as today.
 
