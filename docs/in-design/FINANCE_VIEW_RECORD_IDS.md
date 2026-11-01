@@ -4,9 +4,59 @@ Design for making the finance view record (the finance-view rule in
 `docs/rules/revenue.md`) name the records each view showed and the screen it
 came through. No code changes with this doc.
 
-**Status: under discussion, nothing is being built.** Q9 (which fields make a
-view a finance view) may change how the design decides what to log. The
-route-by-route design below stands only until Q9 is settled.
+**Status: under discussion, nothing is being built.** Two framing questions
+come first and may change everything below:
+
+- **Q10. One log entry per page view, not per API route call** (next section).
+- **Q9. Which fields make a view a finance view** (at the end).
+
+The route-by-route design below stands only until both are settled.
+
+## Q10. The unit of logging: a page view
+
+**The problem.** A page in the app loads its data from several API routes. The
+expense page for e_123 calls the expense detail route, then signoffs, line-item
+approvals, the reimbursee panel and the QuickBooks candidates. That is five
+calls. Each audited route writes its own log row, so one look at one expense
+can write up to five rows. The Board wants one entry: "Pat Lee viewed expense
+e_123 on the expense page". The routes still decide what is sensitive, but the
+entry is the page view.
+
+**What the server can see.** The server sees only API calls. It does not know
+which page made a call, or that five calls came from one page load. The
+browser has no shared place where API calls go out: pages call `fetch()`
+directly, about 200 times across `checkin-app/src`.
+
+**Options.**
+
+- **(a) The browser tags each call with its page view; the server merges.**
+  Each page load mints a page-view id. Every API call from that page carries the
+  id and the page's path in a header. The server merges every audited call
+  carrying the same id into one log row: one page, every record seen on it. A
+  call with no tag (a script, a direct API call) still writes its own row, so
+  nothing goes unlogged and the fail-closed rule holds. The page path comes from
+  the browser, but the records named still come from what the server sent.
+  Cost: one global wrapper installed in the app shell that tags every
+  same-origin `/api` call, instead of editing 200 call sites.
+- **(b) Log per call, and group on the Board's tab.** The log stays as it is,
+  and the tab folds rows from the same person within a few seconds into one
+  entry. That is a guess again: two pages opened in two tabs fold into one.
+- **(c) The page reports its own view.** The page posts one "I showed these
+  records" event. A client can skip the post, so a view can go unlogged. This
+  breaks the rule that a view whose record cannot be written is refused, so it
+  cannot stand alone.
+
+Proposed: (a).
+
+**Effect on the other questions.** Under (a), the panels on a record's page fold
+into that page's single entry:
+
+- Q3 (a receipt's change-history panel) goes away. The receipt page's entry
+  already names r_9.
+- Q6 (an empty reimbursee panel) goes away. The expense page's entry already
+  names e_123.
+
+Is one entry per page view what you want, and is (a) the way to get it?
 
 ## The problem
 
@@ -240,7 +290,7 @@ Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
   gift of goods (entered by hand), payout, payment exception, payment plan,
   membership payment plan. Are these the right nouns? Q9 may shorten the list.
 
-- **Q3. A receipt's change history.** This is not about the view log itself:
+- **Q3. A receipt's change history.** *(Goes away if Q10 is (a).)* This is not about the view log itself:
   the view log is only shown on System status → Finance Views.
   Receipts have a separate **change history**: who uploaded a receipt, who
   approved it, and each edited field with its value before and after. Finance
@@ -283,7 +333,7 @@ Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
 
   Log the record each row points at, as proposed?
 
-- **Q6. A detail panel with nothing in it.** Expense e_123 has no reimbursee set.
+- **Q6. A detail panel with nothing in it.** *(Goes away if Q10 is (a).)* Expense e_123 has no reimbursee set.
   Finance opens its reimbursee panel
   (`GET /api/expense/expenses/[id]/reimbursee-vendor`), which comes back empty.
   Today nothing is logged, because nothing was returned. The panel sits on
