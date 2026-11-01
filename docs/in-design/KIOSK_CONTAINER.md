@@ -94,8 +94,9 @@ even without containers.
   two cannot disagree after a power cut.
 - A roster fetch writes the snapshot only if it changed, which limits SD card
   wear. A resting kiosk writes nothing.
-- On start: load the snapshot, overlay pending scans as today, leave "known empty"
-  false, then let the first good roster replace it all as today.
+- On start: load the snapshot, overlay pending scans above the snapshot's "cleared
+  through queue id N", leave "known empty" false, then let the first good roster
+  replace it all as today.
 - A snapshot version the code does not know is ignored. The kiosk then behaves as
   it does today after a restart.
 - A corrupt database is moved aside as today, which also loses the snapshot.
@@ -105,10 +106,10 @@ even without containers.
   sample only widens its uncertainty. If the boot id matches, monotonic time is still
   valid, so the kiosk clears on restore only when the latest 23:00 falls after the
   snapshot's write time. A badge saved after that night's clear is therefore kept.
-  After a reboot the sample
-  cannot be aged, so the kiosk does nothing, as S1 states. A clear already applied is
-  in the snapshot, so the nightly reboot does not undo it. The model variant checks
-  this rule.
+  After a reboot the sample cannot be aged, so the kiosk does nothing, as S1 states.
+  A clear already applied is in the snapshot, so the nightly reboot does not undo it.
+  The model holds this rule with the fixes in S1, though the all-fixes run is not
+  complete.
 
 **Personal data.** The Pi now keeps names on disk, not only badge numbers. The
 register already limits what the kiosk receives: no whole last names, emails,
@@ -378,6 +379,12 @@ rollback.
 - Clock: a kiosk 10 minutes off still signs and delivers scans, and the panel and
   door notice show the skew; a badge during the notice behaves normally; the notice
   clears when the clocks agree; a stale request with a bad signature changes nothing on the panel.
+- Clear: a pre-23:00 queued check-in stays out of the view after a clear and an
+  offline restart, and still sends. A reply with `lastNightlyCloseAt` before 23:00
+  changes neither view nor snapshot until the wait cap. A badge at 23:00 with the
+  timer not yet run clears first. A clock-suspect row stays out of the overlay once
+  the reply says the close ran.
+- Reboot: a fallback stamp is never earlier than the snapshot's write time.
 - Bench or door, by hand: scanner replug, power pull during a scan, reboot.
 
 ## Open questions
@@ -399,7 +406,30 @@ rollback.
   - **Depends on** protocol 8's server-time stamps, so it ships with or after the
     presence kiosk release. One offset mechanism serves scan stamps, signing, the
     skew warning and this clear. The saved view must keep the sample.
-  - **Model:** re-check the fast-clock "Welcome" case against this time source.
+  - **Queued rows:** a clear drops every row already queued from the view and saves
+    "cleared through queue id N" in the snapshot; the overlay uses only rows above
+    N. The rows still send. Queue position is used because no clock can upset it.
+  - **Hearing tonight:** the roster reply and scan acknowledgement carry
+    `lastNightlyCloseAt`. A reply counts as hearing tonight only when that is at or
+    after the latest 23:00 by kiosk time. Otherwise it is a clock sample and leaves
+    view and snapshot alone. The wait is capped, then the kiosk believes the roster.
+    The cap is 10 minutes past 23:00, proposed and not yet modelled.
+  - **After the close:** once a reply says the close ran, the overlay uses only rows
+    stamped after it, and treats clock-suspect rows as before it. The second half is
+    not yet modelled. Those rows are hidden only until the queue drains.
+  - **Reboot stamps:** a fallback stamp is never earlier than the snapshot's write
+    time, and a clock-suspect close flags any visit it leaves open. Not yet modelled.
+  - **Scan path:** a badge checks for a due clear before it reads the view, as well
+    as the timer, since the model assumes the clear comes first.
+  - **Model:** a fast Pi clock gives no wrong "Welcome" to anyone not inside at 23:00
+    (complete run). Findings: `checkin-analysis/kiosk-design/findings-2026-10-31.md`.
+    Not reached: the all-fixes run, a second night, a late or failed server run,
+    real times, timezone and daylight saving.
+- **S2. The door empties just before the web each night. Open, for the owner.** An
+  online kiosk's timer clears at 23:00, before the server's run lands and the next
+  poll arrives, so door and web briefly disagree. Accept it (recommended: it is brief,
+  late at night and matches the ruling), or skip the clear when the last contact is
+  under one poll old, which needs a model run.
 
 Rejected alternatives: Postgres on the Pi (one writer and a small table; adds a
 server); Docker socket in the container (equals root); Balena or a reflash
