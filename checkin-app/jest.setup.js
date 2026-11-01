@@ -38,30 +38,14 @@ if (process.env.INTEGRATION_DB && process.env.TEST_BASE_URL && process.env.TEST_
 // credential login (both local-only) off, just as NODE_ENV=test did.
 process.env.CHECKIN_ENV = 'dev';
 
-// The scan concurrency suite must exercise the advisory lock, not the
-// single-connection serialization that a pool of 1 gives for free. Give just
-// that suite a pool of 2 so its two scan transactions run on separate
-// connections — then the per-participant advisory lock is the only thing that
-// serializes them (as in production), and dropping the lock makes the suite
-// fail. testPath is populated before setup runs (the prisma mock below relies
-// on it too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
+// A suite that races transactions needs a pool of 2: on one connection they take
+// turns, so the test passes with the lock removed. Name a racing suite
+// *Concurrency.integration.test.ts to get the pool; the list holds racing suites
+// named otherwise. testPath is populated before setup runs (the prisma mock below
+// relies on it too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
 {
   const { testPath } = expect.getState();
-  // Same reasoning for the program-capacity concurrency suites: they need a
-  // pool of >= 2 so their two enroll transactions run on separate connections,
-  // making the program-row FOR UPDATE lock (not pool-1 serialization) the thing
-  // that serializes them — matching production.
-  // mintId is the same shape again: its two mints must run on separate
-  // connections so the IdCounter row lock is what serializes them.
-  // scanFlushRace commits a racing visit from a second connection mid-scan.
-  // cronNightlyLock holds a departure open on one connection while the sweep runs on another.
-  // programStockLockConcurrency runs two stock writers on separate connections.
-  // certificationsConcurrency holds a level change open on one connection while a certifier writes on another.
-  // programRefundRace records a refund on one connection while activation's transaction is open on another.
-  // membershipRefundGate holds a payment open on one connection while a refund waits on the order's reversal lock on another.
-  // membershipPaymentPlanRace holds a deny open on one connection while an approve waits on the process row on another.
-  // intakeConcurrency races two first-ever application starts on creating the household's membership row.
-  if (testPath && /(scanConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency|programRefundRace|membershipRefundGate|membershipPaymentPlanRace|intakeConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  if (testPath && /(Concurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programRefundRace|membershipRefundGate|membershipPaymentPlanRace)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }
