@@ -10,6 +10,7 @@ import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
+import { liveIdOf, withLiveParties, withLiveParty } from "../lib/livePeople";
 import { APPROVABLE_STATUSES, CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
 import {
   approveLine,
@@ -114,7 +115,7 @@ async function visibleExpense(principal: ExpensePrincipal, id: string) {
 export const list: ExpenseRouteHandler = async ({ req, principal }) => {
   const sp = query(req);
   const where = await listWhere(principal, await parseView(principal, sp.get("view"), "all"), activeOnly(sp));
-  return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) }) };
+  return { Expense: await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) })) };
 };
 
 export const count: ExpenseRouteHandler = async ({ req, principal }) => {
@@ -126,7 +127,7 @@ export const count: ExpenseRouteHandler = async ({ req, principal }) => {
 export const queue: ExpenseRouteHandler = async ({ req, principal }) => {
   const sp = query(req);
   const where = await listWhere(principal, await parseView(principal, sp.get("view")));
-  return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) }) };
+  return { Expense: await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) })) };
 };
 
 export const counts: ExpenseRouteHandler = async ({ principal }) => {
@@ -142,7 +143,7 @@ export const counts: ExpenseRouteHandler = async ({ principal }) => {
 export const detail: ExpenseRouteHandler = async ({ params, principal }) => {
   const { scope } = await visibleExpense(principal, params.id);
   const lines = scopedLines(scope);
-  const Expense = await db.expense.findFirst({
+  const stored = await db.expense.findFirst({
     where: { id: params.id },
     include: {
       lineItems: { where: lines, orderBy: { lineNumber: "asc" }, include: { signoffs: true } },
@@ -157,7 +158,7 @@ export const detail: ExpenseRouteHandler = async ({ params, principal }) => {
         : {}),
     },
   });
-  return { Expense, ExpenseQueueReason: scope.all ? await expenseReasons(principal, params.id) : [] };
+  return { Expense: await withLiveParty(stored), ExpenseQueueReason: scope.all ? await expenseReasons(principal, params.id) : [] };
 };
 
 export const lineItemApprovals: ExpenseRouteHandler = async ({ params, principal }) => {
@@ -235,7 +236,7 @@ export const signoffs: ExpenseRouteHandler = async ({ params, principal }) => {
 async function maySign(principal: ExpensePrincipal, line: { expense: { submitterId: number }; approvals: { ownerId: number | null }[] }) {
   if (principal.isFinance || principal.isBoard) return true;
   const me = callerId(principal);
-  if (line.expense.submitterId === me) return true;
+  if ((await liveIdOf(line.expense.submitterId)) === me) return true;
   const buckets = new Set(await getExpenseRuntime().signoff.bucketsApprovedBy(me));
   return line.approvals.some((a) => a.ownerId !== null && buckets.has(a.ownerId));
 }
@@ -270,7 +271,7 @@ export const boardAuthorization: ExpenseRouteHandler = async ({ req, params, pri
 };
 
 async function expenseWithLines(id: string) {
-  return db.expense.findFirst({ where: { id }, include: { lineItems: { orderBy: { lineNumber: "asc" } } } });
+  return withLiveParty(await db.expense.findFirst({ where: { id }, include: { lineItems: { orderBy: { lineNumber: "asc" } } } }));
 }
 
 export const capitalReview: ExpenseRouteHandler = async ({ req, params, principal }) => {
@@ -295,7 +296,7 @@ export const reimbursee: ExpenseRouteHandler = async ({ req, params, principal }
   const choice = await parseBody(req, reimburseeChoiceSchema);
   const orgId = await getOrgId();
   await mapServiceErrors(() => setReimbursee(orgId, params.id, choice, principal));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId } })) };
 };
 
 export const reimburseePeople: ExpenseRouteHandler = async ({ req, params, principal }) => {
@@ -336,11 +337,11 @@ export const linkVendor: ExpenseRouteHandler = async ({ req, params, principal }
 export const testData: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { isTestData } = await parseBody(req, z.object({ isTestData: z.boolean() }));
   await mapServiceErrors(() => setTestData(principal, params.id, isTestData));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
 };
 
 export const taxApproval: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { note } = await parseBody(req, z.object({ note: z.string().nullish() }));
   await mapServiceErrors(() => approveTax(principal, params.id, note?.trim() || null));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
 };

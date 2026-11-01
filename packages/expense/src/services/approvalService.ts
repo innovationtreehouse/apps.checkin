@@ -7,7 +7,7 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
-import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
+import { isConflicted, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
 import { APPROVABLE_STATUSES, approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
@@ -51,7 +51,7 @@ function requireStatus(approval: { status: string }, status: string): void {
 
 /** Refuses an exception's raising or rejection by the submitter, the reimbursee, or anyone in their households. */
 async function refuseConflicted(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
-  if ((await conflictedParties(expense)).includes(callerId(principal))) {
+  if (await isConflicted(expense, callerId(principal))) {
     throw new ServiceError(403, "You cannot decide a line on an expense that you or your household submitted or would be reimbursed for");
   }
 }

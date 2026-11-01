@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import type { Person } from "@/generated/prisma/client";
-import { MAX_MERGE_HOPS } from "@/lib/person/filters";
+import { LIVE_PERSON, MAX_MERGE_HOPS } from "@/lib/person/filters";
 
 export { MAX_MERGE_HOPS };
 
@@ -56,4 +56,21 @@ export async function mergedAwayIdsOf(id: number): Promise<number[]> {
 /** The live Person an id resolves to; see walkMergeChain. */
 export async function resolveMergedPerson(id: number): Promise<MergeResolution> {
     return (await walkMergeChain(id)).resolution;
+}
+
+/** Who each stored id names today, null for nobody. One query when nobody was merged; only the others walk the merge chain. */
+export async function liveIdsOf(personIds: number[]): Promise<Map<number, number | null>> {
+    const live = await prisma.person.findMany({ where: { id: { in: personIds }, ...LIVE_PERSON }, select: { id: true } });
+    const out = new Map<number, number | null>(live.map(({ id }) => [id, id]));
+    for (const id of personIds) {
+        if (out.has(id)) continue;
+        const resolved = await resolveMergedPerson(id);
+        out.set(id, resolved.kind === "live" ? resolved.person.id : null);
+    }
+    return out;
+}
+
+/** Every id a library row may hold for a live person: their own and each id merged into them. */
+export async function storedIdsOf(personId: number): Promise<number[]> {
+    return [personId, ...(await mergedAwayIdsOf(personId))];
 }

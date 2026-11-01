@@ -8,7 +8,7 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchedBaseline } from "../lib/expense-qb-drift";
 import { actorOf, callerId } from "../lib/caller";
-import { conflictedParties, lockExpense, unsignedLines } from "../lib/signoff-facts";
+import { isConflicted, lockExpense, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
 import { SKIPPED_CHECK_OFF, checkOffHeldOnPost } from "./flagService";
@@ -274,7 +274,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
 const SKIPPABLE_STATES = ["UNBOOKED", "AMBIGUOUS", "NEEDS_FINANCE"];
 
 async function refuseConflictedSkip(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
-  if ((await conflictedParties(expense)).includes(callerId(principal))) {
+  if (await isConflicted(expense, callerId(principal))) {
     throw new ServiceError(403, "You cannot skip an expense that you or your household submitted or would be reimbursed for");
   }
 }

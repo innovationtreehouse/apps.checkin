@@ -9,7 +9,7 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
 import { approvableByCallerWhere, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { boardApprovalNeeded, conflictedParties, signoffFactsByLine } from "../lib/signoff-facts";
+import { boardApprovalNeeded, isConflicted, signoffFactsByLine } from "../lib/signoff-facts";
 import { callerLinesFor } from "./signoffService";
 
 /** The most expenses a sign-off badge or list reports for one caller. */
@@ -118,7 +118,8 @@ export async function expenseActionCounts(principal: ExpensePrincipal, awaiting 
 /**
  * QB pending expenses the caller can move toward QuickBooks, across at most
  * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE) or record
- * the Board authorization. Treasurer and Board signatures are the finance queue's To sign and
+ * the Board authorization. The query reads stored ids, so a merged-away submitter's expense stays a
+ * candidate here and canMoveQbPending refuses it. Treasurer and Board signatures are the finance queue's To sign and
  * Board counts; a line's approval, the program approver's sign-off, is signoffsAwaitingCount's.
  */
 export async function qbPendingActionCount(principal: ExpensePrincipal): Promise<number> {
@@ -134,7 +135,7 @@ export async function qbPendingActionCount(principal: ExpensePrincipal): Promise
 }
 
 async function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense): Promise<boolean> {
-  if (reimburseeUnknown(expense)) return principal.isFinance && !(await conflictedParties(expense)).includes(me);
+  if (reimburseeUnknown(expense)) return principal.isFinance && !(await isConflicted(expense, me));
   const [facts, approvalNeeded] = await Promise.all([signoffFactsByLine(db, expense, { readOnly: true }), boardApprovalNeeded(db, expense)]);
   const lines = [...facts.values()];
   const takesAuthorization = expense.boardAuthorization === null && (approvalNeeded || lines.some((f) => f.boardSeat));
