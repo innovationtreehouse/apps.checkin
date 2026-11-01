@@ -2,7 +2,8 @@
 
 Design for the gap in the finance view record (the finance-view rule in
 `docs/rules/revenue.md`): five audited routes write a row that names no record.
-No code changes with this doc.
+One of them, `GET /api/income/items`, is not a finance record and should not be
+logged at all (decided below). That leaves four. No code changes with this doc.
 
 ## The gap
 
@@ -19,7 +20,7 @@ a count and the path params only:
 |---|---|---|---|
 | `GET /api/expense/expenses/[id]/signoffs` | `ExpenseLineSignoffStatus`, one per visible line | The expense is the path `id`, already in `params`. Each row's `lineItemId` names the line. | `lineItemId` is `internal`. Every audience in `APPROVER_VIEW` holds `everyones:internal` (Finance, Board, and the bucket approver as `authenticated`). Yes for all. |
 | `GET /api/expense/finance-queue` | `FinanceQueueRow`, one per expense on the chosen tab | `expenseId` | `expenseId` is `internal`; Finance and Board both hold it. Yes for all. |
-| `GET /api/income/items` | `IncomeItemView`, one per Shopify variant | `variantId` (a catalog variant and its bucket mapping, not a payout) | `variantId` is `internal`; Finance and Board both hold it. Yes for all. |
+| `GET /api/income/items` | `IncomeItemView`, one per Shopify variant | None: a row is a catalog variant and the bucket its sales book to, a mapping, not a finance record. Not to be logged (decided below). | — |
 | `GET /api/receipts/[id]/duplicate-group` | One `ReceiptDuplicateGroup` | The path `id` names the receipt asked about. The receipts shown are `members[].id`, plus the ids in `dismissed`. | `members[].id`, `copyOfId` and `dismissed` are `pii`. Finance and Board both hold `everyones:pii` in `FINANCE_READ_VIEW`. Yes for all. |
 | `GET /api/finance-ops/payment-plans` | `ProgramParticipant`, one per pending request, plus one `BoardSettings` | The enrollment's composite key, `programId` + `personId`. There is no single id column. | Both are `public`. Yes for all. |
 
@@ -60,15 +61,16 @@ mechanism lands, it needs these entries:
 - `GET /api/receipts/[id]/duplicate-group` → a `DETAIL_PAGES` entry for the path
   `id`, on the same condition. Member ids are receipts too, so they could link
   to `/receipts/<id>` as a list does.
-- `GET /api/income/items` → falls under the `payouts` kind by its `/api/income`
-  prefix, so the tab reads "viewed 40 payout records". "Payout record" means a
-  Shopify payout only (decided below), so items need a kind of their own. A
-  variant has no page of its own. The same prefix also labels two other
-  non-payout audited reads as payout records: `GET /api/income/qb-exclusions`
-  (QuickBooks transactions excluded from matching) and
-  `GET /api/income/reconciliation/[id]/candidates` (QuickBooks deposits offered
-  as a match). The payout routes are `GET /api/income/payouts`,
-  `GET /api/income/payouts/[gid]` and `GET /api/income/reconciliation`.
+- `GET /api/income/items` → no entry. It stops being an audited read, so it
+  writes no rows. Its existing rows stay, labelled "payout records" by the
+  `/api/income` prefix.
+- The `payouts` kind matches every path under `/api/income`. "Payout record"
+  means a Shopify payout only (decided below), and two other audited reads fall
+  under that prefix: `GET /api/income/qb-exclusions` (QuickBooks transactions
+  excluded from matching) and `GET /api/income/reconciliation/[id]/candidates`
+  (QuickBooks deposits offered as a match). The payout routes are
+  `GET /api/income/payouts`, `GET /api/income/payouts/[gid]` and
+  `GET /api/income/reconciliation`.
 - `GET /api/finance-ops/payment-plans` → the `payments` kind. Its ids are
   `programId:personId` (decided below), so the tab and the search take that
   format, and the tab needs a page to link it to, if any.
@@ -83,8 +85,7 @@ the stripped bag, so only an id the caller actually received is recorded.
 
 Shapes, smallest first:
 
-1. **One field name** (`auditedId: 'expenseId'`). Covers finance-queue, income
-   items and signoffs (`lineItemId`). Retires the `payoutGid` special case into
+1. **One field name** (`auditedId: 'expenseId'`). Covers the finance queue. Retires the `payoutGid` special case into
    the payouts entry. Does not cover the duplicate group (nested) or payment
    plans (composite).
 2. **A list of field names joined into one id** (`auditedId: ['programId',
@@ -153,10 +154,13 @@ duplicate group. Those need A.3 or C.
 
 ## Recommendation
 
-A.1 (one field name) for the finance queue and income items, with `payoutGid`
-moved into its registry entry. That closes the gap on the finance queue, the
+A.1 (one field name) for the finance queue, with `payoutGid` moved into its
+registry entry. That closes the gap on the finance queue, the
 most-used screen, with the smallest grammar. Signoffs record only the path's
 expense id (decided below), so D covers them; which variant is Q1a.
+
+Income items need no id mechanism: dropping `auditedRead: true` from their
+registry entry is a **boundary change** on its own.
 
 Two of the decisions below need more than A.1. Payment plans need joined fields
 (A.2) or C. The duplicate review needs paths into the row (A.3) or C, because its
@@ -171,7 +175,8 @@ ids are nested in one group row. Which one is Q1.
   `dismissed`, as well as the receipt in the path.  [Decision — owner]
 - **Signoffs record the expense in the path, not its lines.** One id, the
   expense's; the line ids the response carries are not recorded.  [Decision — owner]
-- **Income items stay an audited read.**  [Decision — owner]
+- **`GET /api/income/items` is not logged.** Its rows map Shopify variants to
+  buckets; that mapping is not a finance record.  [Decision — owner]
 - **"Payout record" means a payout from Shopify, and nothing else.** No other
   income read is labelled a payout record on the Board's tab.  [Decision — owner]
 
@@ -185,10 +190,9 @@ ids are nested in one group row. Which one is Q1.
   `params`, app code only, unindexed)?
 - **Q2.** **Payment plans' `BoardSettings`.** Should it stop counting as a row and
   being recorded as id `"1"`?
-- **Q5.** **Income kind labels.** Which label does the Board's tab give
-  `GET /api/income/items` (a Shopify variant and its bucket), and the two
-  QuickBooks reads under `/api/income` (`qb-exclusions` and reconciliation
-  `candidates`)?
+- **Q5.** **QuickBooks reads under `/api/income`.** `GET /api/income/qb-exclusions`
+  and `GET /api/income/reconciliation/[id]/candidates` are logged and show as
+  "payout records" today. Which label should the Board's tab give them?
 - **Q6.** **Sibling keys on other audited routes.** Should the count exclude rows that
   are not records (such as `ExpenseQueueReason` on the expense detail), or is
   that a separate change?
