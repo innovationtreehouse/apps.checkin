@@ -1,4 +1,4 @@
-import { nextBoundary, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched } from '@/lib/programYear';
+import { nextBoundary, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched, variantSlotYears } from '@/lib/programYear';
 import { calculateAge } from '@/lib/time';
 
 // Anchor "now" so the rollover branch is deterministic.
@@ -85,5 +85,15 @@ describe('membership years', () => {
 
     it('a one-day program on the boundary day is in the year it starts', () => {
         expect(programYearsTouched(b, d('2026-09-01'), d('2026-09-01'))).toEqual([2026]);
+    });
+});
+
+describe('variantSlotYears', () => {
+    const boundary = new Date('2000-09-01T00:00:00.000Z');
+
+    it('turns over on the boundary day, not when the renewal window opens', () => {
+        expect(variantSlotYears(boundary, new Date('2027-07-15T00:00:00.000Z'))).toEqual([2026, 2027]);
+        expect(variantSlotYears(boundary, new Date('2027-08-31T23:59:59.000Z'))).toEqual([2026, 2027]);
+        expect(variantSlotYears(boundary, new Date('2027-09-01T00:00:00.000Z'))).toEqual([2027, 2028]);
     });
 });

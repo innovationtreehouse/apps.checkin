@@ -33,7 +33,7 @@ type State = {
     external: { bgCleared: boolean } | null;
 };
 type RenewalStatus = { renewalDue: boolean; dueDate?: string | null };
-type Settings = { settings: { orgMembershipYearBoundary: string | null } };
+type Settings = { settings: { BoardSettings: { orgMembershipYearBoundary: string | null } } };
 type Sweep = { opened: number; skipped: number };
 type ReviewQueue = {
     queue: { id: number; orgMembership: { household: { householdMembers: { id: number }[] } | null } | null }[];
@@ -49,7 +49,7 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         board = await loginAs("boardmember@example.com");
         const before = await api<Settings>(board, "/api/settings/membership");
         expect(before.status).toBe(200);
-        originalBoundary = before.json.settings.orgMembershipYearBoundary;
+        originalBoundary = before.json.settings.BoardSettings.orgMembershipYearBoundary;
     });
 
     afterAll(async () => {

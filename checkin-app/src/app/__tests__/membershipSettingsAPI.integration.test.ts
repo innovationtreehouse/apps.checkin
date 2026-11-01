@@ -9,6 +9,7 @@ import { GET as SETTINGS_GET, PUT as SETTINGS_PUT } from '@/app/api/settings/mem
 import { GET as DESIG_GET, POST as DESIG_POST, DELETE as DESIG_DELETE } from '@/app/api/settings/membership/volunteer-designations/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { variantSlotYears } from '@/lib/programYear';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -109,7 +110,26 @@ describe('Membership settings + volunteer designations API', () => {
         // Old value survives untouched.
         const getRes = await SETTINGS_GET(jsonReq('GET'));
         const { settings } = await getRes.json();
-        expect(settings.standardMembershipFeeCents).toBe(12000);
+        expect(settings.BoardSettings.standardMembershipFeeCents).toBe(12000);
+    });
+
+    it('upserts a year variant by year, returns it to the board, and refuses a variant another year holds', async () => {
+        asBoard(boardId);
+        await prisma.membershipYearVariant.deleteMany({});
+        await SETTINGS_PUT(jsonReq('PUT', { orgMembershipYearBoundary: '2000-09-01' }));
+        const [inProgress, coming] = variantSlotYears(new Date('2000-09-01'), new Date());
+        const save = (membershipYear: number, shopifyVariantId: string) =>
+            SETTINGS_PUT(jsonReq('PUT', { membershipYearVariants: [{ membershipYear, shopifyVariantId, productUrl: null }] }));
+
+        expect((await save(inProgress, '1001')).status).toBe(200);
+        expect((await save(inProgress, '1002')).status).toBe(200);
+        expect((await save(coming, '1002')).status).toBe(409);
+        expect((await save(coming + 1, '1003')).status).toBe(400);
+        expect((await save(coming, 'abc')).status).toBe(400);
+
+        const { settings } = await (await SETTINGS_GET(jsonReq('GET'))).json();
+        expect(settings.MembershipYearVariant).toEqual([{ membershipYear: inProgress, shopifyVariantId: '1002', productUrl: null }]);
+        await prisma.membershipYearVariant.deleteMany({});
     });
 
     it('accepts a positive scholarshipDenialGraceDays and clears it back to null', async () => {

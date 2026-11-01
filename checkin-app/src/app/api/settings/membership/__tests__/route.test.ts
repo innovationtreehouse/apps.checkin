@@ -3,17 +3,23 @@
  */
 import { PUT } from '../route';
 import { getServerSession } from 'next-auth/next';
+import prisma from '@/lib/prisma';
+import { variantSlotYears } from '@/lib/programYear';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const tx = {
     boardSettings: { upsert: jest.fn(), findUniqueOrThrow: jest.fn() },
+    membershipYearVariant: { upsert: jest.fn() },
     $executeRaw: jest.fn(),
     auditLog: { create: jest.fn() },
 };
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
-    default: { $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)) },
+    default: {
+        $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
+        boardSettings: { findUnique: jest.fn() },
+    },
 }));
 
 function asUser(user: { isSysadmin: boolean; isBoardMember: boolean }) {
@@ -50,5 +56,52 @@ describe('PUT /api/settings/membership releaseLibrary', () => {
         asUser({ isSysadmin: true, isBoardMember: false });
         expect((await put({ releaseLibrary: { library: 'catalog', released: true } })).status).toBe(403);
         expect(tx.$executeRaw).not.toHaveBeenCalled();
+    });
+});
+
+describe('PUT /api/settings/membership membershipYearVariants', () => {
+    const boundary = new Date('2000-09-01T00:00:00.000Z');
+    const [inProgress, coming] = variantSlotYears(boundary, new Date());
+    const row = (over = {}) => ({ membershipYear: coming, shopifyVariantId: ' 222 ', productUrl: ' https://x/y ', ...over });
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        tx.boardSettings.findUniqueOrThrow.mockResolvedValue({ id: 1 });
+        tx.membershipYearVariant.upsert.mockReset();
+        (prisma.boardSettings.findUnique as jest.Mock).mockResolvedValue({ orgMembershipYearBoundary: boundary });
+        asUser({ isSysadmin: false, isBoardMember: true });
+    });
+
+    it('upserts by year, trimmed, and audits the write', async () => {
+        expect((await put({ membershipYearVariants: [row()] })).status).toBe(200);
+        const written = { membershipYear: coming, shopifyVariantId: '222', productUrl: 'https://x/y' };
+        expect(tx.membershipYearVariant.upsert).toHaveBeenCalledWith({
+            where: { membershipYear: coming },
+            create: written,
+            update: { shopifyVariantId: '222', productUrl: 'https://x/y' },
+        });
+        expect(tx.auditLog.create.mock.calls[0][0].data.newData).toEqual({ membershipYearVariants: [written] });
+    });
+
+    it.each([
+        ['non-numeric variant', [row({ shopifyVariantId: 'abc' })]],
+        ['empty variant', [row({ shopifyVariantId: ' ' })]],
+        ['year before the two slots', [row({ membershipYear: inProgress - 1 })]],
+        ['year past the coming year', [row({ membershipYear: coming + 1 })]],
+        ['null entry', [null]],
+        ['not a list', 'nope'],
+    ])('refuses %s', async (_name, membershipYearVariants) => {
+        expect((await put({ membershipYearVariants })).status).toBe(400);
+        expect(tx.membershipYearVariant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a row while no boundary is set', async () => {
+        (prisma.boardSettings.findUnique as jest.Mock).mockResolvedValue({ orgMembershipYearBoundary: null });
+        expect((await put({ membershipYearVariants: [row()] })).status).toBe(400);
+    });
+
+    it('answers 409 when another year holds the variant', async () => {
+        tx.membershipYearVariant.upsert.mockRejectedValue({ code: 'P2002' });
+        expect((await put({ membershipYearVariants: [row()] })).status).toBe(409);
     });
 });
