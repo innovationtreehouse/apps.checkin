@@ -67,6 +67,8 @@ it("once the match moves to another receipt, shows no reject control until that 
 
   expect(screen.queryByText("R-AAA")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Reject the original" })).not.toBeInTheDocument();
+  expect(await screen.findByText("Loading the suspected original…")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Not this one" })).not.toBeInTheDocument();
 
   await act(async () => { releaseB(ok(receipt("rB", "R-BBB", "submitter_review", 3))); });
   expect(await screen.findByText("R-BBB")).toBeInTheDocument();

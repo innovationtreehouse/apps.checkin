@@ -308,6 +308,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
         <DuplicateCompare
           receipt={r}
           original={original.data}
+          originalError={original.error}
+          onRetryOriginal={original.reload}
           originalHref={originalHref}
           isFinance={isFinance}
           own={own}
