@@ -31,7 +31,7 @@ echo "systemctl $* urgent=$(cat "$KIOSK_STATE_DIR/urgent" 2>/dev/null)" >>"$FAKE
 """,
     "date": 'cat "$FAKE/hour"\n',
     "sleep": "",
-    "flock": "",
+    "flock": 'echo "flock $*" >>"$FAKE/log"\n[ ! -e "$FAKE/lock_held" ]\n',
 }
 
 
@@ -233,6 +233,36 @@ class KioskctlTest(unittest.TestCase):
         self.run_ctl("check-release")
         rmis = [line for line in self.log() if line.startswith("docker rmi")]
         self.assertEqual(rmis, [f"docker rmi ghcr.io/example/kiosk@{C}"])
+
+    def reboot_steps(self):
+        return [line.split(" urgent=")[0] for line in self.log()]
+
+    def test_reboot_waits_for_the_update_lock_first(self):
+        self.assertEqual(self.run_ctl("reboot"), 0)
+        self.assertEqual(self.reboot_steps(), ["flock -w 1800 9", "systemctl reboot"])
+        self.assertTrue(os.path.exists(os.path.join(self.state, "lock")))
+
+    def test_reboot_still_happens_when_the_lock_stays_held(self):
+        self.write(self.fake, "lock_held", "")
+        self.assertEqual(self.run_ctl("reboot"), 0)
+        self.assertEqual(self.reboot_steps(), ["flock -w 1800 9", "systemctl reboot"])
+
+    def test_reboot_does_not_need_a_health_command(self):
+        self.write_conf(health="")
+        self.assertEqual(self.run_ctl("reboot"), 0)
+        self.assertIn("systemctl reboot", self.reboot_steps())
+
+    def test_reboot_unit_goes_through_kioskctl(self):
+        with open(os.path.join(HERE, "host", "kiosk-reboot.service")) as f:
+            self.assertIn("ExecStart=/usr/local/bin/kioskctl reboot\n", f.read())
+
+    def test_example_health_command_runs_the_script_in_the_image(self):
+        with open(os.path.join(HERE, "host", "host.conf.example")) as f:
+            self.assertIn('KIOSK_HEALTH_CMD="python /app/healthcheck.py"\n', f.read())
+        with open(os.path.join(HERE, "Dockerfile")) as f:
+            copies = [line for line in f if line.startswith("COPY") and "healthcheck.py" in line]
+        self.assertEqual(len(copies), 1)
+        self.assertTrue(copies[0].rstrip().endswith(" /app/"))
 
 
 if __name__ == "__main__":
