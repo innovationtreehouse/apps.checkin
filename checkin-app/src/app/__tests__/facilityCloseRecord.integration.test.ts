@@ -16,6 +16,8 @@ import { authenticateRequest } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
 import type { FacilityCloseVia, Person, Visit } from '@/generated/prisma/client';
 import type { NextRequest } from 'next/server';
+import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { lockFacility } from '@/lib/facilityLock';
 
 jest.mock('@/lib/auth', () => ({
     ...jest.requireActual('@/lib/auth'),
@@ -498,11 +500,80 @@ describe('facility close record and departure log (real DB)', () => {
             await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
         });
 
-        it('writes no close when nobody is inside', async () => {
-            process.env.CRON_SECRET = 'test-secret';
-            const res = await nightlyGET(cronReq());
-            expect(res.status).toBe(200);
-            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+        describe('with nobody inside', () => {
+            const closesSinceFloor = () => prisma.facilityClose.findMany({ where: { id: { gt: closeIdFloor } } });
+
+            // Rows left by other suites would read as tonight's sweep or as a fence.
+            beforeEach(async () => {
+                process.env.CRON_SECRET = 'test-secret';
+                await prisma.visit.updateMany({ where: { facilityCloseId: { not: null } }, data: { facilityCloseId: null } });
+                await prisma.facilityClose.deleteMany();
+            });
+
+            it('still records the close, logging no departures', async () => {
+                expect((await nightlyGET(cronReq())).status).toBe(200);
+                const close = await expectOneClose('NIGHTLY_SWEEP', null, []);
+                expect(close.executedAt).not.toBeNull();
+            });
+
+            it('fences a check-in scanned before it that arrives after it', async () => {
+                expect((await nightlyGET(cronReq())).status).toBe(200);
+                const [close] = await closesSinceFloor();
+
+                asKiosk();
+                const scannedAt = new Date(close.closedAt.getTime() - 60_000);
+                const res = await scanPOST(req('/api/scan', 'POST', {
+                    participantId: keyholder.id, clientEventId: `evt-${TAG}-fenced`, scannedAt: scannedAt.toISOString(),
+                    replay: true, intent: 'IN', protocolVersion: SCAN_PROTOCOL_VERSION,
+                }));
+                expect((await res.json()).type).toBe('checkin');
+
+                const visit = await visitOf(keyholder);
+                expect(visit.arrivedAt).toEqual(scannedAt);
+                expect(visit).toMatchObject({ departedAt: close.closedAt, departedVia: 'FACILITY_CLOSE', facilityCloseId: close.id });
+                const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: `evt-${TAG}-fenced` } });
+                expect(log?.reviewReason).toBe('closed_before_delivery');
+            });
+
+            it('waits for a check-in holding the facility lock, then sweeps it', async () => {
+                let nightly: ReturnType<typeof nightlyGET> | undefined;
+                const visit = await prisma.$transaction(async (tx) => {
+                    await lockFacility(tx);
+                    const visit = await tx.visit.create({ data: { personId: member.id, arrivedAt: new Date() } });
+                    nightly = nightlyGET(cronReq());
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    return visit;
+                });
+                expect((await nightly!).status).toBe(200);
+
+                const [close] = await closesSinceFloor();
+                expect(await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } })).toMatchObject({ departedVia: 'AUTO_CLOSE', facilityCloseId: close.id });
+                await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
+            });
+
+            it('records no second close when the run is retried the same night', async () => {
+                await nightlyGET(cronReq());
+                expect((await nightlyGET(cronReq())).status).toBe(200);
+                await expectOneClose('NIGHTLY_SWEEP', null, []);
+            });
+
+            it('gives a retry its own close when it does find someone inside', async () => {
+                await nightlyGET(cronReq());
+                await open(member);
+                await nightlyGET(cronReq());
+
+                const closes = await closesSinceFloor();
+                expect(closes).toHaveLength(2);
+                expect((await visitOf(member)).facilityCloseId).toBe(Math.max(...closes.map(c => c.id)));
+                await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
+            });
+
+            it('records its own close after a keyholder closed earlier that evening', async () => {
+                await prisma.facilityClose.create({ data: { closedAt: new Date(Date.now() - 3 * HOUR), closedById: keyholder.id, via: 'KIOSK' } });
+                await nightlyGET(cronReq());
+                const closes = await closesSinceFloor();
+                expect(closes.map(c => c.via).sort()).toEqual(['KIOSK', 'NIGHTLY_SWEEP']);
+            });
         });
     });
 });
