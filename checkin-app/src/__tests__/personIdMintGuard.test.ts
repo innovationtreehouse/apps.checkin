@@ -2,9 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 /**
- * Person-id mint guard (lib/person/mintId.ts) — the write-path sibling of
- * livePersonDriftGuard.test.ts, whose scanner mechanics (walk/skip dirs,
- * comment-masked brace capture) this lifts wholesale.
+ * Person-id mint guard (lib/person/mintId.ts): a source scanner (walk/skip dirs,
+ * comment-masked brace capture) over every Person create.
  *
  * A person id is printed on a physical badge (the QR payload in
  * facility-ops/print-badges and the human-readable "ID:" on BadgeDocument), and
@@ -64,7 +63,7 @@ const ALLOWLIST: Record<string, string> = {
         'The twelve debug personas are `person.upsert`s. An eagerly-minted id in an upsert\'s create branch is BURNED on every re-run where the row already exists, so seeding would put a gap in the counter each time the dev seed runs — the opposite of the point. They are a fixed, run-once set, dev databases print no badges, and the helper\'s GREATEST clause absorbs whatever the sequence does there anyway. The `+ Family` macro in the same file is the unbounded, click-repeatable one and DOES mint (see createFamily) — this entry covers the personas only, and the file is listed whole because the allowlist is keyed by file.',
 };
 
-// ── scanner (walk / maskComments / captureObject from livePersonDriftGuard) ───
+// ── scanner (walk / maskComments / captureObject) ─────────────────────────────
 
 function walk(dir: string, out: string[] = []): string[] {
     for (const e of readdirSync(dir, { withFileTypes: true })) {

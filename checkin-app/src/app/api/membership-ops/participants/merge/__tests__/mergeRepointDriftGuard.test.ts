@@ -2,9 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Merge-repoint exhaustiveness guard — the Person-FK analogue of
- * livePersonDriftGuard.test.ts, and the same two-assertion shape (nothing
- * unlisted, nothing stale).
+ * Merge-repoint exhaustiveness guard over every Person foreign key, in two
+ * assertions: nothing unlisted, nothing stale.
  *
  * A participant merge has to decide something about EVERY foreign key pointing
  * at `Person`. A relation the merge's control flow skips is invisible: no compiler
@@ -124,8 +123,7 @@ describe('merge repoint drift guard', () => {
     const keys = personForeignKeys();
 
     // An empty/short parse would make both assertions below pass vacuously, so
-    // the schema read is asserted rather than trusted (same reason
-    // livePersonDriftGuard asserts its relation-name parse).
+    // the schema read is asserted rather than trusted.
     it('derives the Person foreign keys from the schema', () => {
         expect(keys).toEqual(expect.arrayContaining([
             'PersonRole.personId', 'RawBadgeLog.personId', 'BackgroundCheckAttestation.subjectPersonId',
