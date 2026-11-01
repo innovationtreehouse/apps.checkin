@@ -110,11 +110,11 @@ Rollout step 6 stops looking at `inventoryHeldAt`, which changes how two kinds o
 | Hold failed: PENDING, no hold, request flag set, no denial | Holds queue | An ordinary request | None; it joins the payment-plan queue |
 | **Denied with no hold:** PENDING, no hold, no request flag, denial stamped (invariant I4 broken) | Only the nightly report; `classify()` returns null | "Denied" | **The grace sweep deletes the enrollment on its first run if the denial is older than the grace period.** Its filter requires a hold today, which is the only thing protecting these rows (`cron/scholarship-grace-expiry/route.ts:38`). A family could lose a place without anyone deciding it |
 
-The second kind is what the holds screen's "Override & deny anyway" button writes (proposal: "denying a scholarship request whose seat hold failed").
+The second kind is what the holds screen's deny-without-a-hold button writes today (proposal: "denying a scholarship request whose seat hold failed"). The fix for that button is not settled or shipped. Whichever way it lands, it doesn't touch rows already written, so they still need clearing here.
 
 Before step 6, in order:
 
-1. A person clears the hold-failed queue. If that proposal's fix has not shipped, "clear" must not mean pressing that deny button, because it writes the second kind of row.
+1. A person clears the hold-failed queue. Until the fix ships, "clear" must not mean pressing that deny button, because it writes the second kind of row.
 2. A person resolves every denied-with-no-hold row, using the nightly `lifecycle-reconcile` report or a production query: keep the family on the normal path, or remove them with a stated decision.
 3. **Gate:** step 6 does not merge until `scanLifecycleViolations` reports no enrollment violations in production. Other off-diagram rows have the same problem: the merged states would name them without anyone having looked.
 
