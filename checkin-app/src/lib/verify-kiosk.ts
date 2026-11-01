@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { config } from "./config";
-import { parseQueueDepth, stampKioskSeen } from "./kioskSeen";
+import { noteKioskClockSkew, parseQueueDepth, stampKioskSeen } from "./kioskSeen";
 
 /**
  * Verify an Ed25519 signature from the kiosk client.
@@ -14,6 +14,10 @@ import { parseQueueDepth, stampKioskSeen } from "./kioskSeen";
  *  - Timestamp older than MAX_AGE_SECONDS
  *  - Invalid signature against ALL configured public keys
  *  - Nonce already seen within the freshness window (replay)
+ *
+ * A correctly signed request also notes the kiosk's clock skew for the status
+ * panel, even when refused as stale, because a wrong clock is why it is refused.
+ * The signature is checked first so a stranger cannot raise a false warning.
  *
  * The nonce is bound INTO the signed message (so it can't be swapped) AND
  * checked against a recently-seen set (so a captured request can't be replayed
@@ -56,6 +60,37 @@ export type VerifyResult =
     | { ok: true }
     | { ok: false; status: number; error: string };
 
+function signatureMatches(message: Buffer, signatureHex: string, keys: Buffer[]): boolean {
+    const sigBytes = Buffer.from(signatureHex, "hex");
+
+    // Try each public key — succeed if ANY matches
+    for (const publicKey of keys) {
+        try {
+            const ok = crypto.verify(
+                null, // Ed25519 doesn't use a separate hash algorithm
+                message,
+                {
+                    key: crypto.createPublicKey({
+                        key: Buffer.concat([
+                            // Ed25519 DER prefix for a 32-byte public key
+                            Buffer.from("302a300506032b6570032100", "hex"),
+                            publicKey,
+                        ]),
+                        format: "der",
+                        type: "spki",
+                    }),
+                },
+                sigBytes
+            );
+            if (ok) return true;
+        } catch (e) {
+            // Key failed — try next one
+            console.error("Signature verification error with key:", e);
+        }
+    }
+    return false;
+}
+
 export function verifyKioskSignature(
     method: string,
     path: string,
@@ -78,50 +113,19 @@ export function verifyKioskSignature(
     if (isNaN(ts)) {
         return { ok: false, status: 401, error: "Invalid timestamp" };
     }
-    const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - ts) > MAX_AGE_SECONDS) {
-        return { ok: false, status: 401, error: "Timestamp too old or too far in the future" };
-    }
-
     // Reconstruct signed message (nonce is part of the signed payload)
     const message = Buffer.from(`${timestampHeader}:${nonceHeader}:${method}:${path}:${body}`);
 
-    // Decode signature from hex
-    let sigBytes: Buffer;
-    try {
-        sigBytes = Buffer.from(signatureHeader, "hex");
-    } catch {
-        return { ok: false, status: 401, error: "Malformed signature" };
-    }
-
-    // Try each public key — succeed if ANY matches
-    let verified = false;
-    for (const publicKey of keys) {
-        try {
-            const ok = crypto.verify(
-                null, // Ed25519 doesn't use a separate hash algorithm
-                message,
-                {
-                    key: crypto.createPublicKey({
-                        key: Buffer.concat([
-                            // Ed25519 DER prefix for a 32-byte public key
-                            Buffer.from("302a300506032b6570032100", "hex"),
-                            publicKey,
-                        ]),
-                        format: "der",
-                        type: "spki",
-                    }),
-                },
-                sigBytes
-            );
-            if (ok) { verified = true; break; }
-        } catch (e) {
-            // Key failed — try next one
-            console.error("Signature verification error with key:", e);
+    const now = Math.floor(Date.now() / 1000);
+    const skewSeconds = ts - now;
+    if (Math.abs(skewSeconds) > MAX_AGE_SECONDS) {
+        if (signatureMatches(message, signatureHeader, keys)) {
+            noteKioskClockSkew(skewSeconds);
         }
+        return { ok: false, status: 401, error: "Timestamp too old or too far in the future" };
     }
 
-    if (!verified) {
+    if (!signatureMatches(message, signatureHeader, keys)) {
         return { ok: false, status: 401, error: "Invalid signature" };
     }
 
@@ -136,6 +140,7 @@ export function verifyKioskSignature(
     }
     seenNonces.set(nonceHeader, nowMs + MAX_AGE_SECONDS * 1000);
     stampKioskSeen(nowMs, parseQueueDepth(queueDepthHeader));
+    noteKioskClockSkew(skewSeconds, nowMs);
 
     return { ok: true };
 }

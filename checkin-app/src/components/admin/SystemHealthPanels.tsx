@@ -393,6 +393,16 @@ export function SystemVersionBox() {
 
 type HeartbeatRow = { metric: string; timestamp: string; value: number };
 
+const CLOCK_WARN_SECONDS = 30;
+
+function clockLine(skewSeconds: number | undefined): string {
+  if (skewSeconds === undefined) return "Kiosk clock: can't confirm, nothing recent to compare.";
+  const off = Math.abs(skewSeconds);
+  if (off < CLOCK_WARN_SECONDS) return "Kiosk clock agrees with the server.";
+  const amount = off < 120 ? `${off}s` : `${Math.floor(off / 60)}m`;
+  return `Kiosk clock is ${amount} ${skewSeconds > 0 ? "ahead of" : "behind"} the server. The server refuses kiosk requests more than 60s off, and scans queue until the clock is fixed.`;
+}
+
 export function KioskHeartbeatBox() {
   const [rows, setRows] = useState<HeartbeatRow[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -407,12 +417,16 @@ export function KioskHeartbeatBox() {
       .finally(() => setLoading(false));
   }, []);
 
+  const lastSeen = rows?.find((r) => r.metric === "kiosk_last_seen");
+  const skew = rows?.find((r) => r.metric === "kiosk_clock_skew")?.value;
+  const clockOff = skew !== undefined && Math.abs(skew) >= CLOCK_WARN_SECONDS;
+
   let body: string;
   if (loading) body = "Checking…";
   else if (rows == null) body = "Unable to read kiosk last-seen.";
-  else if (rows.length === 0) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
+  else if (!lastSeen) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
   else {
-    const age = rows[0].value;
+    const age = lastSeen.value;
     const minutes = Math.floor(age / 60);
     body = minutes < 1 ? `Kiosk last seen ${age}s ago` : `Kiosk last seen ${minutes}m ago`;
   }
@@ -421,6 +435,9 @@ export function KioskHeartbeatBox() {
     <Card withBorder radius="md" padding="lg">
       <Title order={4} mb="xs">Kiosk last seen</Title>
       <Text size="sm" c="dimmed">{body}</Text>
+      {!loading && rows != null && (
+        <Text size="sm" c={clockOff ? "red" : "dimmed"} fw={clockOff ? 700 : undefined}>{clockLine(skew)}</Text>
+      )}
     </Card>
   );
 }
