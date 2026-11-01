@@ -129,8 +129,9 @@ async function testOrderStockReturned(orderLegacyId: string, programId: number):
 
 /**
  * Shopify takes stock for a test-mode order like any other, but a test order moves
- * no stock in the app's books: give back the public seats it took, once per order
- * and program (Shopify redelivers webhooks). The claimant variant tracks no stock.
+ * no stock in the app's books: give back the public seats it took, less those an
+ * earlier refund already restocked, once per order and program (Shopify redelivers
+ * webhooks). The claimant variant tracks no stock.
  */
 export async function returnTestOrderStock(orderLegacyId: string, lines: { variantId: string; quantity: number }[]): Promise<void> {
     if (lines.length === 0) return;
@@ -142,8 +143,9 @@ export async function returnTestOrderStock(orderLegacyId: string, lines: { varia
         const k = publicSeats(program, lines);
         if (k === 0) continue;
         if (!(await claimOnce(TEST_ORDER_STOCK_TABLE, "webhook:shopify-order", testOrderKey(orderLegacyId, program.id), program.id, { orderLegacyId, programId: program.id }))) continue;
-        logger.info(`[reconcile] test order ${orderLegacyId} took ${k} seat(s) of program ${program.id}: giving them back`);
-        await adjustProgramInventory(program, k, "test-order", { deferred: true });
+        const owed = k - await claimRecordedRestocks(orderLegacyId, program);
+        logger.info(`[reconcile] test order ${orderLegacyId} took ${k} seat(s) of program ${program.id}: giving back ${owed}`);
+        if (owed > 0) await adjustProgramInventory(program, owed, "test-order", { deferred: true });
     }
 }
 
@@ -223,16 +225,11 @@ function restockRow(data: Prisma.JsonValue): { refundId: string; variantId: stri
 }
 
 /**
- * Take back off sale the public seats a refund restocked on an order that was
- * refused activation. Each refund is settled once per program, shared with
- * settleRestockedSeats. Returns the seats taken back.
- *
- * ponytail: reads only refunds already recorded; a refund webhook arriving after
- * the refusal finds no enrolled row, so its restock stays on sale while the sale is
- * open. The Board still has the CRITICAL flag.
+ * Claim this order's recorded refunds not yet settled on `program` and return the
+ * public seats they restocked. Each refund is settled once per program, shared with
+ * settleRestockedSeats.
  */
-export async function takeBackRestockedSeats(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }): Promise<number> {
-    if (!program.shopifyVariantId) return 0;
+async function claimRecordedRestocks(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }): Promise<number> {
     const rows = await prisma.auditLog.findMany({
         where: { tableName: REFUND_RESTOCK_TABLE, newData: { path: ["orderLegacyId"], equals: orderLegacyId } },
         select: { newData: true },
@@ -246,6 +243,20 @@ export async function takeBackRestockedSeats(orderLegacyId: string, program: { i
     for (const [refundId, seats] of byRefund) {
         if (await claimRefundSettlement(refundId, orderLegacyId, program.id)) k += seats;
     }
+    return k;
+}
+
+/**
+ * Take back off sale the public seats a refund restocked on an order that was
+ * refused activation. Returns the seats taken back.
+ *
+ * ponytail: reads only refunds already recorded; a refund webhook arriving after
+ * the refusal finds no enrolled row, so its restock stays on sale while the sale is
+ * open. The Board still has the CRITICAL flag.
+ */
+export async function takeBackRestockedSeats(orderLegacyId: string, program: { id: number; shopifyVariantId: string | null }): Promise<number> {
+    if (!program.shopifyVariantId) return 0;
+    const k = await claimRecordedRestocks(orderLegacyId, program);
     if (k === 0) return 0;
     logger.warn(`[reconcile] refunded order ${orderLegacyId} restocked ${k} seat(s) of program ${program.id} before activation: taking them back off sale, the board decides`);
     await adjustProgramInventory(program, -k, "refund-before-activation", { deferred: true });
