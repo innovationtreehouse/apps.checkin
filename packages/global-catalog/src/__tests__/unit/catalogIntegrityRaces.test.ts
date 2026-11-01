@@ -115,7 +115,7 @@ describeDb("one lookup key points at one item", () => {
       data: { itemReferenceId: moved.id, existingGtin13: G1, proposedGtin13: G2, receiptId: "r-1", lineItemId: 1 },
     });
 
-    await expect(resolveConflict(conflict.id, 1, "use_proposed")).rejects.toMatchObject({ status: 409 });
+    await expect(resolveConflict(conflict.id, 1, "use_proposed", G1)).rejects.toMatchObject({ status: 409 });
 
     expect((await prisma.itemReference.findUnique({ where: { id: moved.id } }))?.gtin13).toBe(G1);
     expect((await prisma.referenceConflict.findUnique({ where: { id: conflict.id } }))?.resolvedAt).toBeNull();
@@ -127,7 +127,7 @@ describeDb("one lookup key points at one item", () => {
       data: { itemReferenceId: moved.id, existingGtin13: G1, proposedGtin13: G2, receiptId: "r-1", lineItemId: 1 },
     });
 
-    await resolveConflict(conflict.id, 1, "use_proposed");
+    await resolveConflict(conflict.id, 1, "use_proposed", G1);
 
     expect((await prisma.itemReference.findUnique({ where: { id: moved.id } }))?.gtin13).toBe(G2);
   });
@@ -195,7 +195,7 @@ describeDb("a reference that changes while a write is on its way", () => {
     const { ref, conflict } = await seed({ gtin13: G1, ...PART_ROW, retailer: "Shop B", archivedAt: new Date() });
     const result = await racing(
       (tx) => tx.itemReference.update({ where: { id: ref.id }, data: { archivedAt: null } }),
-      () => resolveConflict(conflict.id, 1, "use_proposed"),
+      () => resolveConflict(conflict.id, 1, "use_proposed", G1),
     );
     expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
     expect((await prisma.itemReference.findUniqueOrThrow({ where: { id: ref.id } })).gtin13).toBe(G1);
