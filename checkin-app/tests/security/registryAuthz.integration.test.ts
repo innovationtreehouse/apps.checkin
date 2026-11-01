@@ -81,17 +81,17 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer') {
         return { gate: 'program-scoped', requiredRoles: null };
     }
-    // Catalog (#1286 §6): 'catalog-viewer' admits any staff relationship (a plain
+    // Catalog: 'catalog-viewer' admits any staff relationship (a plain
     // authenticated user is rejected); 'inventory-manager' admits the role only.
     if (authorize === 'catalog-viewer') return { gate: 'catalog-viewer', requiredRoles: null };
     // Receipt submission: an adult with an ACTIVE membership; a non-member adult, youth or unknown age is rejected.
     if (authorize === 'receipt-submitter') return { gate: 'receipt-submitter', requiredRoles: null };
     if (authorize === 'inventory-manager') return { gate: 'inventory-manager', requiredRoles: null };
-    // Finance (#1272 §6): neither admits a plain authenticated user or a sysadmin.
+    // Finance: neither admits a plain authenticated user or a sysadmin.
     if (authorize === 'finance') return { gate: 'finance', requiredRoles: null };
     if (authorize === 'finance-or-board') return { gate: 'finance-or-board', requiredRoles: null };
     if (authorize === 'expense-approver') return { gate: 'expense-approver', requiredRoles: null };
-    // Sign-off (#1272 §6): catalog-viewer OR expense-approver; a plain user is neither.
+    // Sign-off: catalog-viewer OR expense-approver; a plain user is neither.
     if (authorize === 'expense-signer') return { gate: 'expense-signer', requiredRoles: null };
     // A scheduled job: only a Bearer of the route's own named secret admits.
     if (typeof authorize === 'object' && authorize !== null && 'cronSecret' in authorize) {

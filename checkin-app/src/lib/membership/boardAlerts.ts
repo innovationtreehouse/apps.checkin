@@ -26,7 +26,7 @@ export async function notifyBoardPaidReject(processId: number): Promise<void> {
 const EXCEPTION_BLURB: Record<string, string> = {
     PAID_WHILE_BLOCKED: "a household paid but its application is blocked at background check — a refund may be needed",
     NO_ITEM: "a paid order did not contain the membership/program product",
-    UNMATCHED_ORDER: "a paid order could not be attributed to an application awaiting payment (no or ambiguous match, a duplicate payment, or a payment after the application was closed or certified)",
+    UNMATCHED_ORDER: "a paid order could not be attributed to an application awaiting payment (no or ambiguous match, a duplicate payment, a payment after the application was closed or certified), or a paid program order can't be shown to come from the named children's own household — nobody was activated",
     REFUND: "a membership/enrollment's order was refunded (an application still waiting on its check is held, not activated)",
     CHARGEBACK: "a chargeback/dispute was filed against an active membership/enrollment's payment",
     CANCELLED: "an active membership/enrollment's order was cancelled",

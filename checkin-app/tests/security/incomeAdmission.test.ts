@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Income route admission (#1283 §6): the exact endpoint set and gates, the
+ * Income route admission: the exact endpoint set and gates, the
  * FINANCE/BOARD views with no sysadmin, and the persona matrix — including an
  * id-less session, which the handler answers 401 before any income code runs.
  */

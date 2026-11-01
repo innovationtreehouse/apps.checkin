@@ -14,6 +14,7 @@ import { Client } from "pg";
 import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
+import { signCheckout } from "@/lib/programs/checkoutSignature";
 
 jest.mock("@/lib/email", () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -21,6 +22,7 @@ jest.mock("@/lib/email", () => ({
 }));
 
 const TAG = "reconcile-mirror-source-test";
+process.env.NEXTAUTH_SECRET ||= "integration-test-nextauth-secret";
 // One mirror per integration worker DB, so parallel workers never share it.
 const MIRROR_DB = `${new URL(process.env.DATABASE_URL!).pathname.slice(1)}_mirror`;
 const MIGRATIONS = path.resolve(__dirname, "../../../../../packages/s-ingest-core/prisma/migrations");
@@ -102,7 +104,7 @@ async function enrollment(email: string) {
         data: { appliesToYear: 2026, name: `Program ${TAG} ${email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
     });
     await prisma.programParticipant.create({ data: { programId: program.id, personId: person.id, status: "PENDING" } });
-    return { programId: program.id, personId: person.id, variantId };
+    return { programId: program.id, personId: person.id, variantId, checkoutSig: signCheckout(program.id, [person.id], hh.id) };
 }
 
 const processStatus = async (id: number) => (await prisma.orgMembershipProcess.findUnique({ where: { id } }))?.status;
@@ -164,7 +166,7 @@ describe("reconcile reads only API-synced mirror rows", () => {
         });
         await mirrorOrder({
             source: "INCREMENTAL",
-            attrs: { Program_ID: String(apiPrg.programId), CheckMeIn_Account_ID: String(apiPrg.personId) },
+            attrs: { Program_ID: String(apiPrg.programId), CheckMeIn_Account_ID: String(apiPrg.personId), CheckMeIn_Checkout_Sig: apiPrg.checkoutSig },
             variantId: apiPrg.variantId,
         });
 

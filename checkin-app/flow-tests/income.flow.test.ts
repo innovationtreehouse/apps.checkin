@@ -1,5 +1,5 @@
 /**
- * Income (#1283): the route + auth matrix (FINANCE vs BOARD vs a plain member vs
+ * Income: the route + auth matrix (FINANCE vs BOARD vs a plain member vs
  * anonymous) and one finance journey through every write. Real HTTP against the
  * running dev server and the seeded income DB (docker-compose.flow.yml +
  * packages/income/prisma/seed.ts). The flow stack has no store mirror and no

@@ -64,17 +64,46 @@ const headerValues = (headers: Headers | undefined, name: string): string[] =>
 
 const ADDR_SPEC = /^[^\s@<>"(),;:]+@[^\s@<>"(),;:]+\.[^\s@<>"(),;:]+$/;
 
+/**
+ * An RFC 5322 header with comments as whitespace and each quoted string as a lone `"`, which no
+ * addr-spec may hold. Comments nest and both forms read quoted pairs. Null when either is
+ * unterminated, or a `)` or `\` stands outside them.
+ */
+function withoutCommentsAndQuotes(value: string): string | null {
+  let bare = "";
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (c === ")" || c === "\\") return null;
+    if (c === "(") {
+      for (let depth = 1; depth > 0; ) {
+        i++;
+        if (i >= value.length) return null;
+        if (value[i] === "\\") i++;
+        else if (value[i] === "(") depth++;
+        else if (value[i] === ")") depth--;
+      }
+      bare += " ";
+    } else if (c === '"') {
+      for (i++; value[i] !== '"'; i++) {
+        if (value[i] === "\\") i++;
+        if (i >= value.length) return null;
+      }
+      bare += '"';
+    } else bare += c;
+  }
+  return bare;
+}
+
 /** The addr-spec of the message's single `From` header holding a single address, lowercased; else null. */
 export function fromAddress(headers: Headers | undefined): string | null {
   const froms = headerValues(headers, "From");
   if (froms.length !== 1) return null;
-  const bare = froms[0].replace(/"(?:[^"\\]|\\.)*"/g, "").replace(/\([^()]*\)/g, "");
+  const bare = withoutCommentsAndQuotes(froms[0]);
   // A comma lists two addresses; a colon or semicolon is group syntax.
-  if (/[,;:]/.test(bare)) return null;
-  const angles = [...bare.matchAll(/<([^<>]*)>/g)];
-  const spec = angles.length === 1 ? angles[0][1] : angles.length === 0 && !/[<>]/.test(bare) ? bare : null;
-  const trimmed = spec?.trim().toLowerCase();
-  return trimmed && ADDR_SPEC.test(trimmed) ? trimmed : null;
+  if (bare === null || /[,;:]/.test(bare)) return null;
+  // A display name holds no `@`: one there would be a second candidate address.
+  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim().toLowerCase();
+  return ADDR_SPEC.test(spec) ? spec : null;
 }
 
 type AuthResToken = { word: string } | { sep: ";" | "=" };

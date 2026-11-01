@@ -52,8 +52,7 @@ describe("buildLabel", () => {
   });
 
   it("falls back to tag+sha for an image built before describe existed", () => {
-    // A running image predating this change has no NEXT_PUBLIC_GIT_DESCRIBE.
-    // It must keep its old label, not regress to "dev".
+    // An image with no NEXT_PUBLIC_GIT_DESCRIBE shows tag+sha, not "dev".
     expect(buildLabel("0123456789abcdef0123456789abcdef01234567", "v1.0.0", undefined)).toBe(
       "v1.0.0 0123456",
     );

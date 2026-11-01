@@ -114,7 +114,7 @@ describe('wiring', () => {
         await freshClient().latestSyncRun();
 
         // min 0 + a fast idle reap is what lets the shared Aurora cluster auto-pause;
-        // a pool that holds a connection open would keep it awake forever (PR #1030).
+        // a pool that holds a connection open would keep it awake forever.
         expect(poolCtor).toHaveBeenCalledTimes(1);
         expect(poolCtor.mock.calls[0][0]).toMatchObject({
             connectionString: MIRROR_URL,

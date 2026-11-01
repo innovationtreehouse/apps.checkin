@@ -45,10 +45,10 @@ describe('pageRegistry drift guard', () => {
   });
 });
 
-// Operations reaches Facility Ops in aggregate only (#1633): Print ID Badges and
+// Operations reaches Facility Ops in aggregate only: Print ID Badges and
 // Participation Trends. Each directory row must agree with the tab's own gate, or
-// the directory advertises a page that ejects the viewer — the same fork #1569 is
-// about, so the expectation is read off FACILITY_NAV_LINKS rather than retyped.
+// the directory advertises a page that ejects the viewer, so the expectation is
+// read off FACILITY_NAV_LINKS rather than retyped.
 describe('Facility Ops directory agrees with the section gates', () => {
   const ops = { isOperations: true };
   const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
@@ -68,7 +68,7 @@ describe('Facility Ops directory agrees with the section gates', () => {
     }
   });
 
-  // Q15: keyholders review unsynced scans; operations stay at aggregate only.
+  // Keyholders review unsynced scans; operations stay at aggregate only.
   it('lists /system-status/unsynced-scans to keyholders and not to operations', () => {
     const entry = entryFor('/system-status/unsynced-scans');
     expect(entry.visible({ isKeyholder: true }, null)).toBe(true);
@@ -76,7 +76,7 @@ describe('Facility Ops directory agrees with the section gates', () => {
   });
 });
 
-// #1569: the two divergences this change closed. Each row must match the section
+// Each row must match the section
 // gate it reads from, not the section's coarse "board" default.
 describe('Membership Ops directory agrees with the section gates', () => {
   const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;

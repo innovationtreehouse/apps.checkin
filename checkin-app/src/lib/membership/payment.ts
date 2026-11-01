@@ -3,6 +3,7 @@ import { ServiceError } from "@checkin/component-kit";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
+import { logBackendError, logger } from "@/lib/logger";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
@@ -246,11 +247,14 @@ async function settle(
     // Side effects outside the transaction: a slow/failed send must not roll back
     // the write, and only the call that actually recorded the change emits one.
     if (result.outcome === "active" && "isInitial" in result) {
-        await sendCongrats(result.householdId, result.isInitial);
+        const { householdId, isInitial } = result;
+        await afterActivationCommitted("congrats email", processId, householdId, () => sendCongrats(householdId, isInitial));
         // A brand-new (INITIAL) member just activated: open PERSON_BG for the
         // household's check-obligated adults, and the per-adult agreements.
-        if (result.isInitial) await openPersonBgForNewMember(result.householdId, new Date());
-        if (result.isInitial) await openPersonAgreementForNewMember(result.householdId, new Date());
+        if (isInitial) {
+            await afterActivationCommitted("person background-check trigger", processId, householdId, () => openPersonBgForNewMember(householdId, new Date()));
+            await afterActivationCommitted("person agreement trigger", processId, householdId, () => openPersonAgreementForNewMember(householdId, new Date()));
+        }
     }
     if (result.outcome === "denied") {
         await raiseDeniedHouseholdActivity({
@@ -261,6 +265,21 @@ async function settle(
     }
     if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
     return result;
+}
+
+/**
+ * Runs a step whose failure must not change what the settlement reports: the payment
+ * has committed, and a retry finds it already recorded, so a throw would only report a
+ * saved payment as failed.
+ */
+async function afterActivationCommitted(step: string, processId: number, householdId: number, run: () => Promise<unknown>): Promise<void> {
+    try {
+        await run();
+    } catch (error) {
+        const context = { processId, householdId };
+        logger.error(`activation ${step} failed:`, context, error);
+        await logBackendError(error, `activation ${step}`, context);
+    }
 }
 
 async function auditNoItem(tx: Prisma.TransactionClient, processId: number, status: "BLOCKED" | "PENDING_PAYMENT", shopifyOrderId?: string) {

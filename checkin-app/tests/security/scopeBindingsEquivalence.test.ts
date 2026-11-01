@@ -1,46 +1,34 @@
 /**
- * S1 — the equivalence gate (the proof the SCOPE_BINDINGS port is behavior-neutral).
- *
- * Asserts the new data-driven resolver (`scopesHeldNext`, scopeBindings.ts) is
- * SET-EQUAL to the live imperative switch (`scopesHeld`, access-resolvers.ts)
- * for every combination of:
+ * The equivalence gate: the data-driven resolver (`scopesHeld`, scopeBindings.ts)
+ * is SET-EQUAL to a frozen imperative oracle (`referenceScopesHeld`, below), plus
+ * its listed deltas, for every combination of:
  *   - 8 caller personas (anonymous … sysadmin),
  *   - every model in SCOPE_BINDINGS plus unbound + unknown models,
  *   - representative rows: caller's own / another's / in-program /
  *     out-of-program / active-visit / departed-visit / missing-key / non-object.
  *
  * Pure unit test — no DB, no seed. Both resolvers are pure functions of
- * (modelName, row, ctx), and buildCallerContext (which builds the ctx from the
- * DB) is UNCHANGED by this refactor, so hand-built CallerContexts are a complete
- * and deterministic proof: if the two diverge it is the binding, not the ctx.
+ * (modelName, row, ctx), so hand-built CallerContexts are a complete and
+ * deterministic proof: if the two diverge it is the binding, not the ctx.
  *
  * On a mismatch the BINDING is wrong — fix scopeBindings.ts, never this test.
- * EXCEPTION: a binding deliberately added after the S2 snapshot (e.g. AuditLog,
- * Blocker 2) is encoded as an explicit expected delta in `expectedFromSnapshot`,
- * not by editing the frozen oracle below.
+ * EXCEPTION: a binding the oracle deliberately lacks (e.g. AuditLog) is encoded
+ * as an explicit expected delta in `expectedFromSnapshot`, not by editing the
+ * frozen oracle below.
  *
- * The old switch has been deleted (S2). `referenceScopesHeld` below is a FROZEN
- * copy of it (the snapshot), so this stays a live regression guard: any future
+ * `referenceScopesHeld` is FROZEN and independent of scopeBindings.ts, so any
  * change to scopeBindings.ts that diverges from the intended behavior fails here.
  *
- * DIVERGENCE FROM THE ORIGINAL SWITCH (one, deliberate): RSVP.
- * The original switch grouped RSVP with ProgramParticipant/ProgramVolunteer
- * and read `row.programId` — but RSVP has no programId column, so that grant was
- * DEAD. The resolver now grants `their_program_participants` on RSVP via
- * eventId → ctx.eventIdsInScopePrograms (§7.5 / §9 Step 3 Blocker 1). The RSVP
- * branch of this oracle encodes that NEW intended behavior, not the dead switch
- * read — so the equivalence assertion holds against the corrected resolver.
+ * RSVP has no programId column: both the resolver and the oracle grant
+ * `their_program_participants` on RSVP via eventId → ctx.eventIdsInScopePrograms.
  */
 import { type CallerContext } from '@/security/access-resolvers';
 import { scopesHeld, SCOPE_BINDINGS } from '@/security/scopeBindings';
 import type { Scope } from '@/security/core';
 
-// ─── FROZEN reference oracle: snapshot of the deleted switch ───────────────────
+// ─── FROZEN reference oracle ───────────────────────────────────────────────────
 // Do NOT "simplify" or sync this to scopeBindings.ts — its whole value is being
-// an independent snapshot of the pre-refactor behavior. ONE deliberate edit:
-// the RSVP dead read (RSVP.programId — a column that model lacks) was dropped to
-// match the schema-correct binding. That is behavior-identical on every
-// reachable row; see the case body below.
+// an independent statement of the intended behavior.
 const ROW_SCOPE_KEY: Record<string, string> = { EmergencyContact: 'householdId' };
 
 function referenceScopesHeld(
@@ -73,17 +61,14 @@ function referenceScopesHeld(
             break;
         }
         case 'EmergencyContact': {
-            // Post-snapshot delta (deliberate): the original switch bound only
-            // their_households. their_program_households was added (mirrors
-            // TrustedAdult) so a program lead/core-vol overseeing a child's
-            // household sees the emergency contacts on GET /api/programs/[id].
+            // their_program_households mirrors TrustedAdult: a program lead/core-vol
+            // overseeing a child's household sees the emergency contacts on
+            // GET /api/programs/[id].
             const householdId = num(row.householdId);
             if (householdId !== undefined && householdId === ctx.householdId) scopes.add('their_households');
             if (householdId !== undefined && ctx.householdIdsInScopePrograms.has(householdId)) scopes.add('their_program_households');
             break;
         }
-        // 'HouseholdLead': model dropped in the a1 contract phase (superseded by
-        // Person.isHouseholdLead). No binding, no rows, no case — gone entirely.
         case 'OrgMembership': {
             const householdId = num(row.householdId);
             if (householdId !== undefined && householdId === ctx.householdId) scopes.add('their_households');
@@ -103,8 +88,7 @@ function referenceScopesHeld(
             break;
         }
         // RSVP has no programId column; the program-lead grant resolves via
-        // eventId → eventIdsInScopePrograms, a deliberate divergence from the
-        // frozen switch's dead row.programId read (see header).
+        // eventId → eventIdsInScopePrograms.
         case 'RSVP': {
             const eventId = num(row.eventId);
             const participantId = num(row.participantId);
@@ -244,7 +228,7 @@ const ROWS: Array<{ label: string; row: unknown }> = [
 ];
 
 const MODELS = [
-    ...Object.keys(SCOPE_BINDINGS), // includes AuditLog (now bound — Blocker 2)
+    ...Object.keys(SCOPE_BINDINGS), // includes AuditLog
     // unbound-but-sensitive, structurally-unscopable, and unknown — all must
     // resolve identically (everyones-only, or {} via fail-closed) under both.
     'Tool',
@@ -260,52 +244,41 @@ function eq(a: Set<string>, b: Set<string>): boolean {
 }
 
 /**
- * The frozen switch is the S2 snapshot of pre-refactor behavior. A binding added
- * AFTER that snapshot legitimately diverges from it; this wraps the oracle with
+ * The bindings the frozen oracle deliberately lacks. This wraps the oracle with
  * those intentional, documented deltas so the test stays an explicit contract
  * (not a silenced mismatch).
  *
- * AuditLog.their_own (Blocker 2, §7.5.1): the switch had no AuditLog case, so it
- * yields {everyones}. AuditLog was later bound `their_own: actorId` purely so the
- * coverage validator passes — runtime-inert (no route grants their_own:internal
- * on AuditLog). On a row whose actorId === selfId the table therefore adds
- * their_own where the snapshot did not. That is the one expected diff.
+ * AuditLog.their_own: the oracle has no AuditLog case, so it yields {everyones}.
+ * AuditLog is bound `their_own: actorId` purely so the coverage validator passes —
+ * runtime-inert (no route grants their_own:internal on AuditLog). On a row whose
+ * actorId === selfId the resolver adds their_own.
  *
- * Person.keyholders: the switch's Person case had no keyholders grant, so it
- * yields no 'keyholders'. Person was later bound `keyholders: { flag }` — an
- * unconditional per-row grant mirroring TrustedAdult — so that
- * GET /api/safety/board-contacts can hand keyholders the board's email/phone
- * via a 'keyholders:pii' token instead of a blanket 'everyones:pii'. On any
- * object row, a keyholder caller therefore holds 'keyholders' where the
- * snapshot did not. That is the second expected diff.
+ * Person.keyholders: the oracle's Person case has no keyholders grant. Person is
+ * bound `keyholders: { flag }` — an unconditional per-row grant mirroring
+ * TrustedAdult — so that GET /api/safety/board-contacts can hand keyholders the
+ * board's email/phone via a 'keyholders:pii' token instead of a blanket
+ * 'everyones:pii'. On any object row, a keyholder caller holds 'keyholders'.
  *
- * Visit.led_households (#1254): the switch's Visit case bound only their_own +
- * all_current_visitors, so a household lead held nothing on a member's visit —
- * which would strip arrivedAt/departedAt from exactly the rows the AT3
- * act-for-members capability returns. Visit carries no householdId, so the
- * binding matches personId against ctx.ledHouseholdMemberIds (populated only
- * for leads). On a Visit row whose personId is in that roster, a lead therefore
- * holds 'led_households' where the snapshot did not. That is the third
- * expected diff.
+ * Visit.led_households: the oracle's Visit case binds only their_own +
+ * all_current_visitors. Without this grant a household lead holds nothing on a
+ * member's visit, which would strip arrivedAt/departedAt from exactly the rows the
+ * act-for-members capability returns. Visit carries no householdId, so the binding
+ * matches personId against ctx.ledHouseholdMemberIds (populated only for leads). On
+ * a Visit row whose personId is in that roster, a lead holds 'led_households'.
  *
- * Person.their_program_households: the switch's Person case had no household-
- * scoped program grant, so a lead held nothing on a parent's row. Person was
- * later bound `their_program_households` on (householdId ∈
- * householdIdsInScopePrograms AND isHouseholdLead), so GET /api/programs/[id]
- * can hand a program lead the parents' phone/email on the roster. On a
- * household-lead row in an in-scope household the resolver therefore adds
- * their_program_households where the snapshot did not. That is the fourth
- * expected diff.
+ * Person.their_program_households: the oracle's Person case has no household-scoped
+ * program grant. Person is bound `their_program_households` on (householdId ∈
+ * householdIdsInScopePrograms AND isHouseholdLead), so GET /api/programs/[id] can
+ * hand a program lead the parents' phone/email on the roster. On a household-lead
+ * row in an in-scope household the resolver adds their_program_households.
  *
- * Receipt / ReceiptView / ReceiptLineView.their_own (#1265 §6): receipt models
- * postdate the switch, which has no case for them. Each is bound `their_own` on
- * uploadedByUserId === selfId, so on such a row the resolver adds their_own
- * where the snapshot did not. That is the fifth expected diff.
+ * Receipt / ReceiptView / ReceiptLineView.their_own: the oracle has no case for
+ * receipt models. Each is bound `their_own` on uploadedByUserId === selfId, so on
+ * such a row the resolver adds their_own.
  *
- * KeyVolunteerSelfStatus / KeyVolunteerSigning.their_own: Key Volunteer
- * Agreement models postdate the switch. Each is bound `their_own` on
- * personId === selfId, so on such a row the resolver adds their_own where the
- * snapshot did not. That is the sixth expected diff.
+ * KeyVolunteerSelfStatus / KeyVolunteerSigning.their_own: the oracle has no case for
+ * Key Volunteer Agreement models. Each is bound `their_own` on personId === selfId,
+ * so on such a row the resolver adds their_own.
  */
 function expectedFromSnapshot(
     model: string,
@@ -388,6 +361,6 @@ describe('S1 — scopesHeld ≡ frozen switch + intentional deltas (personas × 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(25); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop) +3 receipt (#1265) +2 receipt confirmation (#2432) +1 reimbursed (#2467) +2 key volunteer (#1317)
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(25);
     });
 });

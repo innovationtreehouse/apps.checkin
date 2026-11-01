@@ -116,8 +116,8 @@ describe('persona-mint authorize() glue', () => {
     it('stays registered on a prod BUILD (NODE_ENV=production) when CHECKIN_ENV is dev — the cloud dev instance', () => {
         // The cloud dev instance runs the prod image: NODE_ENV=production + CHECKIN_ENV=dev
         // (Dockerfile pins NODE_ENV; deploy-dev.yml ships that image). Registration must key on
-        // CHECKIN_ENV alone — a NODE_ENV clause here (#280) unregistered the provider on cloud
-        // dev and every mint failed. Prod SAFETY is the policy's job: see the "prod env →
+        // CHECKIN_ENV alone — a NODE_ENV clause here would unregister the provider on cloud
+        // dev and fail every mint. Prod SAFETY is the policy's job: see the "prod env →
         // returns null even if the provider runs" test below.
         const env = process.env as Record<string, string | undefined>;
         const before = env.NODE_ENV;
