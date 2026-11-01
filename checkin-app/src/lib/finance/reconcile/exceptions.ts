@@ -33,6 +33,8 @@ interface ExceptionRef {
     severity?: Severity;
     /** What the raiser sees on the order now; a resolved row reopens when it differs from what was stored. */
     evidence?: string;
+    /** A person asked for this row to be tracked: reopen it even with no new evidence. */
+    reopen?: boolean;
 }
 
 /** The board escalation a recorded exception owes, sent once its row has committed. */
@@ -42,7 +44,8 @@ export type PaymentExceptionNotice = { kind: PaymentExceptionKind; severity: Sev
  * Upsert a PaymentException, idempotent across daily runs. One row per (kind, order,
  * person). A resolved row on an order reopens only when its stored evidence changes,
  * so seeing the same condition again leaves the Board's resolution alone. A raise with
- * no order is itself a new event (a denial, a Board click) and always reopens.
+ * no order is itself a new event (a denial, a Board click) and always reopens, as does
+ * a ref with `reopen`.
  * Returns the notice owed by a newly-opened, reopened or newly-critical row. Inside a
  * transaction, pass an orderless ref: a unique violation would abort the transaction.
  */
@@ -62,17 +65,18 @@ export async function recordPaymentException(db: DbClient, kind: PaymentExceptio
         const evidence = ref.evidence ?? existing.evidence;
         if (existing.status === "RESOLVED") {
             const changed = !!ref.evidence && !!existing.evidence && ref.evidence !== existing.evidence;
-            if (orderId && !changed) {
+            if (orderId && !changed && !ref.reopen) {
                 // ponytail: a row with no stored evidence adopts the first it sees, so a further
                 // refund between its resolution and the next daily pass does not reopen it.
                 if (evidence !== existing.evidence) await db.paymentException.update({ where: { id: existing.id }, data: { evidence } });
                 return null;
             }
-            await db.paymentException.update({
-                where: { id: existing.id },
+            // Conditional, so of two concurrent raises only one reopens and notifies.
+            const { count } = await db.paymentException.updateMany({
+                where: { id: existing.id, status: "RESOLVED", evidence: existing.evidence },
                 data: { status: "OPEN", severity, evidence, resolvedAt: null, resolvedById: null, resolutionNote: null, detectedAt: new Date() },
             });
-            return { kind, severity, exceptionId: existing.id };
+            return count > 0 ? { kind, severity, exceptionId: existing.id } : null;
         }
         const escalated = severity === "CRITICAL" && existing.severity !== "CRITICAL";
         if (escalated || evidence !== existing.evidence) {

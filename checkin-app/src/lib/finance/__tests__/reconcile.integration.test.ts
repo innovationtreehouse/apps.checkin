@@ -12,6 +12,7 @@ import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
+import { recordPaymentException } from "@/lib/finance/reconcile/exceptions";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
@@ -1595,6 +1596,27 @@ describe("a resolved exception and the next day's pass", () => {
 
         await runReconcile();
         expectStillResolved(await row(oid, "AMOUNT_MISMATCH"));
+    });
+
+    it("reopens a resolved order when a person tracks it, but not when a pass sees it again", async () => {
+        const oid = `${TAG}-710`;
+        await prisma.paymentException.create({
+            data: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid, status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Board: child keeps the place" },
+        });
+        expect(await recordPaymentException(prisma, "UNMATCHED_ORDER", { shopifyOrderId: oid })).toBeNull();
+
+        const notice = await recordPaymentException(prisma, "UNMATCHED_ORDER", { shopifyOrderId: oid, reopen: true });
+        expect(notice?.kind).toBe("UNMATCHED_ORDER");
+        expect((await prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId: oid } })).status).toBe("OPEN");
+    });
+
+    it("sends one notice when two raises reopen the same row together", async () => {
+        const oid = `${TAG}-711`;
+        await prisma.paymentException.create({
+            data: { kind: "REFUND", shopifyOrderId: oid, status: "RESOLVED", resolvedAt: new Date(), evidence: "refunded=500" },
+        });
+        const notices = await Promise.all([1, 2].map(() => recordPaymentException(prisma, "REFUND", { shopifyOrderId: oid, evidence: "refunded=800" })));
+        expect(notices.filter(Boolean)).toHaveLength(1);
     });
 
     it("keeps a resolved volunteer-code flag on an activated order resolved", async () => {
