@@ -248,6 +248,13 @@ async function voidConfirmation(
   });
 }
 
+/** The host's refusal hook for a typed-in donor (it throws to refuse). "I am the donor" never reaches it: the person deciding the gift is the independent check. */
+export type DonorCheck = (donor: { lastName: string }) => Promise<void>;
+
+async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput }, checkDonor?: DonorCheck) {
+  if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
+}
+
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
   return "self" in donor
     ? { donorFirstName: actor.firstName, donorLastName: actor.lastName, donorCompanyName: null }
@@ -660,12 +667,13 @@ export const receiptService = {
    * Upload a receipt. With `details` it is manual: insert at `uploaded` and run the pipeline.
    * Without, it is auto: insert at `auto_upload` and read it with OCR in this request.
    */
-  async upload(file: Buffer, declaredType: string, rawInput: unknown) {
+  async upload(file: Buffer, declaredType: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
     const input = parse(UploadInputSchema, rawInput);
     const check = checkReceiptFile(file, declaredType);
     if (!check.ok) throw new ServiceError(400, check.error);
     if (input.needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
+    await checkTypedDonor(input, checkDonor);
 
     const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input) : null;
     const reimbursement = reimbursee
@@ -1114,11 +1122,12 @@ export const receiptService = {
   },
 
   /** Set or clear the in-kind mark and its donor, then tell donations (X13). */
-  async setInKind(id: string, rawInput: unknown) {
+  async setInKind(id: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
     const input = parse(InKindInputSchema, rawInput);
     const row = await loadForChange(id, "submitter", actor);
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, EDIT_STATE_MESSAGE);
+    await checkTypedDonor(input, checkDonor);
 
     const donor = input.isInKind && input.donor
       ? donorNames(input.donor, actor)

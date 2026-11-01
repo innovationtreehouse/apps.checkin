@@ -1,3 +1,4 @@
+import { ServiceError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { repushUnpushed, resendDonorSync } from "../../services/catchUp";
@@ -21,6 +22,35 @@ const donorSync = async (id: string) => (await db.receipt.findUniqueOrThrow({ wh
 const badMath = () => manualDetails({ receiptTotal: "1" });
 
 describeDb("in-kind mark and donor (X13)", () => {
+  it("refuses a typed-in donor the host's check refuses, before anything is written", async () => {
+    const refuse = vi.fn(async () => {
+      throw new ServiceError(403, "own household");
+    });
+    const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...typed }, refuse)).rejects.toMatchObject({ status: 403 });
+    expect(await db.receipt.count()).toBe(0);
+
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
+    await expect(receiptService.setInKind(r.id, typed, refuse)).rejects.toMatchObject({ status: 403 });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: false, donorLastName: null });
+    expect(refuse).toHaveBeenCalledTimes(2);
+  });
+
+  it("records a typed-in donor the check passes", async () => {
+    const pass = vi.fn(async () => undefined);
+    const typed = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } }, pass);
+    expect(pass).toHaveBeenCalledTimes(1);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: typed.id } })).toMatchObject({ isInKind: true, donorLastName: "Donor" });
+  });
+
+  it("never checks \"I am the donor\" or a cleared mark", async () => {
+    const pass = vi.fn(async () => undefined);
+    const self = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } }, pass);
+    await receiptService.setInKind(self.id, { isInKind: true, donor: { self: true } }, pass);
+    await receiptService.setInKind(self.id, { isInKind: false }, pass);
+    expect(pass).not.toHaveBeenCalled();
+  });
+
   it("requires a donor and forbids reimbursement", async () => {
     await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true })).rejects.toMatchObject({
       status: 400,
