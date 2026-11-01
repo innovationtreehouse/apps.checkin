@@ -4,6 +4,10 @@ Design for making the finance view record (the finance-view rule in
 `docs/rules/revenue.md`) name the records each view showed and the screen it
 came through. No code changes with this doc.
 
+**Status: under discussion, nothing is being built.** Q9 (which fields make a
+view a finance view) may change how the design decides what to log. The
+route-by-route design below stands only until Q9 is settled.
+
 ## The problem
 
 The rule says the record holds "who looked, which records, through which screen,
@@ -113,9 +117,13 @@ live in `financeViewKinds.ts` (app code), which drops its prefix table.
   `expenseId` nor the receipt id (`rowsOf` in
   `packages/expense/src/services/financeQueueService.ts`). It needs `receiptId`
   added to `FinanceQueueRow`, with a classification entry.
-- **in-kind queue and by-bucket:** each row's kind depends on its `source`. The
-  grammar needs a kind chosen per row, or the response splits into two keys
-  (Q7).
+- **in-kind queue and by-bucket:** these lists mix gifts of goods from two
+  tables. A gift that came in on a receipt is row 5 of `InKindDonation`; a gift
+  entered by hand is row 5 of `ManualInKindDonation`. Both reach the list as
+  `id: 5`, told apart only by the row's `source` field (`receipt` or `manual`),
+  so today the log records `5` for either. The declaration reads `source` and
+  records `gift-of-goods-receipt:5` or `gift-of-goods-manual:5`. This is a
+  mechanism detail, not a question.
 
 ### 5. Own records
 
@@ -139,7 +147,7 @@ is Q1.
 |---|---|---|
 | `GET /api/expense/expenses` | expense ← `Expense.id`; query `view`, `active` | ✓ |
 | `GET /api/expense/queue` | expense ← `Expense.id`; query `view` | ✓ |
-| `GET /api/expense/expenses/[id]` | expense ← param `id`; lines: Q2 | ✓ expense; reasons inflate count |
+| `GET /api/expense/expenses/[id]` | expense ← param `id`, not its lines (decided) | ✓ expense; reasons inflate count |
 | `GET /api/expense/expenses/[id]/line-item-approvals` | expense ← param `id` | ✗ approval and bucket ids |
 | `GET /api/expense/expenses/[id]/signoffs` | expense ← param `id` (decided) | ✗ none |
 | `GET /api/expense/expenses/[id]/reimbursee-vendor` | expense ← param `id` | ✗ link-row id; nothing when empty |
@@ -149,7 +157,7 @@ is Q1.
 | `GET /api/expense/received-expense-payloads` | receipt ← `receiptId` (Q4) | ✗ payload ids |
 | `GET /api/expense/qb-exclusions` | qb-transaction ← `qbTxnId` (Q4) | ✗ exclusion ids |
 | `GET /api/expense/donated-capital` | donated-capital-line ← `id` | ✓ |
-| `GET /api/expense/provisional-items` | Q5: a catalog proposal, not a finance record | ✗ mixed |
+| `GET /api/expense/provisional-items` | not logged: catalog, not finance (decided) | ✗ mixed |
 | `GET /api/receipts` | receipt ← `id`; query `state`, `pushed` | ✓ |
 | `GET /api/receipts/needs-attention` | receipt ← `id` | ✓ |
 | `GET /api/receipts/confirmations` | receipt ← `id`, minus own (§5) | ✓ ids, but logs own |
@@ -160,7 +168,7 @@ is Q1.
 | `GET /api/receipts/duplicate-queue` | registered, but no route or handler exists | — |
 | `GET /api/receipts/mail-items` | mail-item ← `id` | ✓ |
 | `GET /api/receipts/mail-items/[id]/file` (file) | mail-item ← param `id` | ✓ |
-| `GET /api/receipts/ignored-files` | Q5: an ignore-list entry, not a finance record | ✗ |
+| `GET /api/receipts/ignored-files` | depends on Q9: an ignore-list entry (file hash and reason) | ✗ |
 | `GET /api/workflow-mapping/receipts` | workflow-mapping ← `id`; query `state`, `receiptId` | ✓ |
 | `GET /api/workflow-mapping/receipts/[id]` | workflow-mapping ← param `id` | ✓ id; helper and line rows inflate |
 | `GET /api/workflow-mapping/audit-log` | workflow-mapping ← `receivedReceiptId` (Q3); query `receiptId` | ✗ history-entry ids |
@@ -169,14 +177,14 @@ is Q1.
 | `GET /api/donations/transactions/[id]` | donation ← param `id` | ✓ |
 | `GET /api/donations/uploaded-files` | donation-file ← `id` | ✓ |
 | `GET /api/donations/uploaded-files/[id]/blob` (file) | donation-file ← param `id` | ✓ |
-| `GET /api/donations/comment-rules` | Q5: a matching rule, but it carries donor comment text | ✗ rule ids |
+| `GET /api/donations/comment-rules` | depends on Q9: a matching rule that carries donor comment text | ✗ rule ids |
 | `GET /api/donations/disbursement-holds` | disbursement ← `disbursementId`; donation ← `transactionId` (Q4) | ✗ hold ids |
 | `GET /api/donations/disbursement-events` | disbursement ← `disbursementId` (Q4) | ✗ event ids |
 | `GET /api/donations/in-kind/manual` | gift-of-goods-manual ← `id` | ✓ |
 | `GET /api/donations/in-kind/manual/[id]` | gift-of-goods-manual ← param `id` | ✓ |
 | `GET /api/donations/in-kind/receipt/[id]` | gift-of-goods-receipt ← param `id` | ✓ |
-| `GET /api/donations/in-kind/queue` | gift of goods, kind by `source` ← `id` (Q7) | ✗ ids collide |
-| `GET /api/donations/in-kind/by-bucket` | gift of goods, kind by `source` ← `id` (Q7) | ✗ ids collide |
+| `GET /api/donations/in-kind/queue` | gift of goods, kind by `source` ← `id` (§4) | ✗ ids collide |
+| `GET /api/donations/in-kind/by-bucket` | gift of goods, kind by `source` ← `id` (§4) | ✗ ids collide |
 | `GET /api/income/payouts` | payout ← `payoutGid` | ✓ |
 | `GET /api/income/payouts/[gid]` | payout ← param `gid` | ✓ payout; reconciliation id and balance rows mixed in |
 | `GET /api/income/reconciliation` | payout or disbursement by `source` ← `payoutGid` (Q4) | ✗ reconciliation ids |
@@ -209,47 +217,98 @@ records nothing, as today.
   and `copyOfId`, each id in `dismissed`, and the receipt in the path.
   [Decision — owner]
 - **Signoffs record the expense in the path, not its lines.**  [Decision — owner]
+- **Expense detail records the expense, not its lines.** The lines always belong
+  to that expense, so naming the expense says what was seen.  [Decision — owner]
 - **`GET /api/income/items` is not logged.** It maps Shopify variants to
   buckets; that mapping is not a finance record.  [Decision — owner]
+- **Catalog items and mappings are not logged.** They are inventory, not finance
+  information. This covers `GET /api/expense/provisional-items`.  [Decision — owner]
 - **"Payout record" means a payout from Shopify, and nothing else.**
   [Decision — owner]
+- **Log rows written before the change stay as they are.** Nothing converts
+  them, and the search does not match their bare ids.  [Decision — owner]
 
 ## Open questions for @thpr
 
-- **Q1. The kind list.** Are the fifteen kinds in "What each route would
-  declare" the right list and the right names? Each becomes a label on the
-  Board's tab ("viewed 3 expenses", "viewed 1 gift of goods").
-- **Q2. Lines inside a record.** Expense detail shows the expense and its lines;
-  a bucket approver sees only their buckets' lines. Should the log name only the
-  expense (as decided for signoffs), or the lines shown too?
-- **Q3. History screens.** `GET /api/receipts/[id]/audit-logs` and
-  `GET /api/workflow-mapping/audit-log` show the change history of one receipt or
-  mapping. Should the log name only that receipt or mapping, and not each
-  history entry?
-- **Q4. Bookkeeping rows.** Six routes list a bookkeeping row about a finance
-  record: QuickBooks exclusions (expense and income), received expense
-  payloads, disbursement holds, disbursement events and income reconciliation.
-  Should the log name the finance record each row is about (the QuickBooks
-  transaction, the receipt, the disbursement, the payout) instead of the
-  bookkeeping row's own id?
-- **Q5. Not finance records?** Like the income item mapping, three audited
-  routes show something other than a finance record:
-  - `GET /api/expense/provisional-items`: proposed catalog items and part-to-bucket mappings;
-  - `GET /api/receipts/ignored-files`: the mailbox's list of ignored files;
-  - `GET /api/donations/comment-rules`: rules for matching donor comments, which
-    carry the donors' comment text.
+Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
 
-  Which of these stop being logged?
-- **Q6. Empty detail screens.** Opening an expense's reimbursee or QuickBooks
-  candidates when there are none logs nothing today. With the expense declared
-  from the path, should that view be logged?
-- **Q7. Gifts of goods from two tables.** The in-kind queue and by-bucket list
-  gifts from two tables. Should the grammar choose the kind per row from
-  `source`, or should those routes return the two kinds under two keys?
-- **Q8. Log rows written before the change.** Their ids carry no kind, so
-  searching for `expense:e_123` will not find them. Should the search also match
-  the bare id on rows from before the cutover, or leave old rows to the date and
-  person filters?
+- **Q1. The kind list.** Each kind is the noun on the Board's tab. For example,
+  a row reads "Pat Lee (Finance) viewed 3 **expenses** on the finance queue" or
+  "viewed 1 **gift of goods (from a receipt)**". Proposed kinds: expense,
+  receipt, mail item, workflow mapping, QuickBooks transaction, donated capital
+  line, donation, donation file, disbursement, gift of goods (from a receipt),
+  gift of goods (entered by hand), payout, payment exception, payment plan,
+  membership payment plan. Are these the right nouns? Q9 may shorten the list.
+
+- **Q3. A receipt's change history.** This is not about the view log itself:
+  the view log is only shown on System status → Finance Views.
+  Receipts have a separate **change history**: who uploaded a receipt, who
+  approved it, and each edited field with its value before and after. Finance
+  and the Board read it in a panel on the receipt's page, through
+  `GET /api/receipts/[id]/audit-logs`. A row of that history looks like:
+
+  > id 101, receipt r_9, Pat Lee, 3 Oct, changed `totalCents` from 4210 to 4120
+
+  That panel shows dollars and names, so reading it is a finance view. When
+  Finance opens receipt r_9's history panel with 3 entries, the view log
+  records today: "viewed 3 receipts", ids `101, 102, 103` (the history entries'
+  ids, which name no receipt). The options:
+  - (a) record "viewed receipt r_9", the receipt whose history was read;
+  - (b) record nothing, because the history panel is not itself a finance
+    record.
+
+  `GET /api/workflow-mapping/audit-log` is the same panel for a receipt's
+  QuickBooks mapping. Which of (a) or (b)?
+
+- **Q4. Rows that point at a finance record.** Some screens list rows whose
+  own id is just a list entry, and the finance record sits in another field.
+  Example, Income → QuickBooks exclusions (`GET /api/income/qb-exclusions`),
+  the list of QuickBooks deposits finance said never to match to a payout:
+
+  > id 7, qbTxnId "4412", reason "owner's personal deposit"
+
+  Today the log records `7`, the exclusion list's own row number. Nobody can
+  search for 7: finance and QuickBooks know the deposit as 4412. Proposed: record
+  QuickBooks transaction 4412.
+
+  The same shape on five more screens:
+
+  | Screen | Row today logs | Proposed to log |
+  |---|---|---|
+  | Expense QuickBooks exclusions | the exclusion's row id | the QuickBooks transaction (`qbTxnId`) |
+  | Received expense payloads | the payload's row id | the receipt it came from (`receiptId`) |
+  | Disbursement holds | the hold's row id | the disbursement (`disbursementId`) and the donation (`transactionId`) |
+  | Disbursement events | the event's row id | the disbursement (`disbursementId`) |
+  | Income reconciliation | the reconciliation's row id | the payout or disbursement (`payoutGid`) |
+
+  Log the record each row points at, as proposed?
+
+- **Q6. A detail panel with nothing in it.** Expense e_123 has no reimbursee set.
+  Finance opens its reimbursee panel
+  (`GET /api/expense/expenses/[id]/reimbursee-vendor`), which comes back empty.
+  Today nothing is logged, because nothing was returned. The panel sits on
+  expense e_123's page and shows no dollars or names. Log "viewed expense
+  e_123", or log nothing?
+
+- **Q9. Which fields make a view a finance view.** You said what matters is the
+  fields shown, not the screens: dollars or a donor's name make a view a
+  finance view, and the views follow from that. The design above instead
+  flags each route by hand. Deriving the views from fields would work like
+  this: fields carry a mark, and a view is logged when the response sent
+  contains a marked field on a record that is not the viewer's own. The
+  records named are the rows carrying those fields.
+
+  To get there, the mark needs a list. Candidates from the schema, for you to
+  confirm or cut:
+  - money amounts: every `…Cents` field (totals, line amounts, payouts,
+    deposits, gift values);
+  - donor identity: a donor's name, email and address on a donation, and a
+    donor's comment text;
+  - payee identity: who is reimbursed, and the vendor on an expense;
+  - anything else: bank or card details, QuickBooks account names?
+
+  Which fields are on the list? Until this is settled the design does not
+  change, and nothing is built.
 
 ## Follow-ups outside this design
 
