@@ -84,7 +84,7 @@ export const POST = withAuth({}, async (req, auth) => {
 
         // Same per-person advisory xact lock as every other visit write, keyed on
         // the SUBJECT.
-        const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit; overlappedIds: number[] }> => {
+        const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit }> => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(subjectId)})`;
 
             const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: arrivalTime, departedAt: departureTime });
@@ -116,29 +116,28 @@ export const POST = withAuth({}, async (req, auth) => {
                 classification: PresenceClass.PROJECTED,
                 visitId: created.id,
             });
-            return { visit: created, overlappedIds: overlaps.closedIds };
+            // actorId ≠ secondaryAffectedEntity is what marks a lead's entry for a
+            // household member as acting-for-another, without a join.
+            await tx.auditLog.create({
+                data: {
+                    actorId: userId,
+                    action: "CREATE",
+                    tableName: "Visit",
+                    affectedEntityId: created.id,
+                    secondaryAffectedEntity: Number(subjectId),
+                    newData: { arrivedAt, departedAt, type: "manual_entry", ...overlapFlag(overlaps.closedIds) }
+                }
+            });
+            return { visit: created };
         }, {
             maxWait: 5000,
             timeout: 15000,
         });
 
         if ('openSince' in result) return apiError(await openOverlapRefusal(result.openSince), 409);
-        const { visit, overlappedIds } = result;
+        const { visit } = result;
 
         invalidateAttendanceCache();
-
-        // actorId ≠ secondaryAffectedEntity is what marks a lead's entry for a
-        // household member as acting-for-another, without a join.
-        await prisma.auditLog.create({
-            data: {
-                actorId: userId,
-                action: "CREATE",
-                tableName: "Visit",
-                affectedEntityId: visit.id,
-                secondaryAffectedEntity: Number(subjectId),
-                newData: { arrivedAt, departedAt, type: "manual_entry", ...overlapFlag(overlappedIds) }
-            }
-        });
 
         return NextResponse.json({ message: "Manual visit recorded successfully.", visit }, { status: 201 });
     } catch (error: unknown) {
