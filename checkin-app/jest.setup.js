@@ -59,7 +59,8 @@ process.env.CHECKIN_ENV = 'dev';
   // certificationsConcurrency holds a level change open on one connection while a certifier writes on another.
   // programRefundRace records a refund on one connection while activation's transaction is open on another.
   // membershipRefundGate holds a payment open on one connection while a refund waits on the order's reversal lock on another.
-  if (testPath && /(scanConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency|programRefundRace|membershipRefundGate)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  // membershipPaymentPlanRace holds a deny open on one connection while an approve waits on the process row on another.
+  if (testPath && /(scanConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency|programRefundRace|membershipRefundGate|membershipPaymentPlanRace)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }
