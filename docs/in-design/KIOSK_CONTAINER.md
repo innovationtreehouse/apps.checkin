@@ -139,6 +139,10 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
   badge in that gap gets no acknowledgement and is not recorded. The closed window
   already exists for this kind of work. A release waits at most a day.
 - **Queue stays put.** Unsent scans wait in the file, so no drain is needed first.
+- **Registry: Amazon ECR Public (owner, 2026-11-01).** Publishing uses a short-lived
+  OIDC login for a role that trusts only the `production` and `kiosk-force`
+  environments, so a workflow on a committer's branch cannot publish and no token is
+  stored. The Pi pulls anonymously.
 - **The tag moves only after the image passes (owner, 2026-11-01).** After the prod
   deploy, the image is pushed by digest with no tag, and the flow and Playwright
   tiers run against that digest with the same release's server code. A failure
@@ -169,8 +173,8 @@ For a real problem at the door, with no VPN or SSH needed.
   approves, with self-review blocked. The run records who started and who approved.
 - **On the Pi.** A second timer checks `kiosk-urgent` every five minutes, all day.
   If its digest differs from the last urgent digest recorded on the Pi, the Pi
-  records it and then swaps at once, skipping the window. The check goes to GHCR
-  only, so it cannot wake the server or defer its curfew.
+  records it and then swaps at once, skipping the window. The check goes to the
+  registry only, so it cannot wake the server or defer its curfew.
 - **No loop.** The digest is recorded before the swap, so a forced image that fails
   its health check rolls back once and is not retried. A later force with a new
   digest still applies. Because `kiosk-release` moves too, the nightly check does
@@ -195,7 +199,7 @@ docker run --name kiosk-client --rm --network host \
   -v /etc/kiosk/config.json:/data/config.json:ro \
   -v /etc/localtime:/etc/localtime:ro \
   --log-driver journald \
-  ghcr.io/innovationtreehouse/kiosk@sha256:<digest>
+  public.ecr.aws/<alias>/kiosk@sha256:<digest>
 ```
 
 To confirm on the Pi: scanner replug, and whether holding the scanner needs write
