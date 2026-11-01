@@ -115,9 +115,9 @@ describe('Membership renewal', () => {
         const now = new Date(Date.UTC(2026, 6, 1)); // Jul 1 — within the window
         const m = await makeActiveMembership('Renewed', null, `renewed-lead-${TAG}@example.com`);
         // A completed renewal this cycle (early finisher, or the admin coming-year
-        // override): terminal ACTIVE RENEWAL with stageEnteredAt inside the window.
+        // override): terminal ACTIVE RENEWAL recording the live year.
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: now },
+            data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: now, appliesToYear: 2026 },
         });
 
         await runRenewalSweep(now);
@@ -129,6 +129,25 @@ describe('Membership renewal', () => {
         expect(opened).toBeNull();
         const count = await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.orgMembershipId } });
         expect(count).toBe(1);
+    });
+
+    it.each([
+        ['the year in progress', 2025],
+        ['no year', null],
+    ])('opens a renewal for a process cleared in-window that records %s', async (_name, appliesToYear) => {
+        await setBoundary(new Date(Date.UTC(2000, 7, 1))); // Aug 1
+        const now = new Date(Date.UTC(2026, 6, 1)); // Jul 1 — within the window
+        const m = await makeActiveMembership(`Cleared ${appliesToYear}`, null, `cleared-${appliesToYear}-lead-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: m.orgMembershipId, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: now, appliesToYear },
+        });
+
+        await runRenewalSweep(now);
+
+        const opened = await prisma.orgMembershipProcess.findFirst({
+            where: { orgMembershipId: m.orgMembershipId, status: 'PENDING_RENEWAL' },
+        });
+        expect(opened).not.toBeNull();
     });
 
     it('beginRenewal with a valid parent background check: re-sign only — bgClearedAt stamped, signature opens payment', async () => {

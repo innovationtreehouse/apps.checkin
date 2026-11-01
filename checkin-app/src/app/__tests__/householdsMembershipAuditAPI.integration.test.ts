@@ -15,7 +15,7 @@
 import { POST } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
-import { grantableYears } from '@/lib/membership/renewal';
+import { grantableYears, liveMembershipYear } from '@/lib/membership/renewal';
 import { membershipYearOf } from '@/lib/programYear';
 import { getServerSession } from 'next-auth/next';
 
@@ -268,7 +268,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         const householdId = await makeHousehold('paidactive');
         const m = await prisma.orgMembership.create({ data: { householdId, status: 'ACTIVE' } });
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'ACTIVE', paidAt: new Date(), bgClearedAt: new Date(), stageEnteredAt: new Date() },
+            data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'ACTIVE', paidAt: new Date(), bgClearedAt: new Date(), stageEnteredAt: new Date(), appliesToYear: liveMembershipYear(BOUNDARY, new Date()) },
         });
 
         const res = await post({ householdId, year: YEAR, reason: 'Paid by check' });

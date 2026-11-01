@@ -90,9 +90,9 @@ describe('outreach recipient snapshot', () => {
         const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
         const email = `settled-${TAG}@example.com`;
         await makeLead(hh.id, email);
-        // A terminal ACTIVE RENEWAL stamped inside the in-season window — "settled for the coming cycle".
+        // A terminal ACTIVE RENEWAL recording the coming year — "settled for the coming cycle".
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW },
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
         });
 
         const inSeason = await computeRecipientSnapshot('a', IN_SEASON_NOW);
@@ -108,7 +108,7 @@ describe('outreach recipient snapshot', () => {
         const staleEmail = `settled-prior-${TAG}@example.com`;
         await makeLead(staleHh.id, staleEmail);
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: staleMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2024, 6, 15)) },
+            data: { orgMembershipId: staleMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2024, 6, 15)), appliesToYear: 2024 },
         });
         const offSeason = await computeRecipientSnapshot('a', OFF_SEASON_NOW);
         expect(offSeason.items.find((i) => i.email === staleEmail)?.variant).toBe('renew');
@@ -145,7 +145,7 @@ describe('outreach recipient snapshot', () => {
         const email = `settled-c-${TAG}@example.com`;
         await makeLead(hh.id, email);
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW },
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
         });
 
         const c = await computeRecipientSnapshot('c', IN_SEASON_NOW);

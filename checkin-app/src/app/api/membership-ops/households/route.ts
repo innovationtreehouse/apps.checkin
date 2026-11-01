@@ -5,7 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears, MAX_DATE } from "@/lib/membership/renewal";
+import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears } from "@/lib/membership/renewal";
 import { grantableApplicationWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
 import { grantMembership } from "@/lib/membership/grant";
@@ -86,16 +86,15 @@ export const GET = withAuth(
                     ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
                     : null;
                 // "Settled for the live year" = ANY fee-paid process (settledThisCycleWhere)
-                // stamped since the year's window opened — a family that JOINS in-window
-                // buys the coming year exactly as a renewer does, so INITIAL counts too.
-                // ARCHIVED never completed payment and does not extend the horizon (the
-                // sweep alone treats it as handled). Same test the list branch and
-                // membershipValidThrough use. No boundary ⇒ "never" (matches nothing).
+                // recording that year, INITIAL or RENEWAL. ARCHIVED never completed payment
+                // and does not extend the horizon (the sweep alone treats it as handled).
+                // Same test the list branch and membershipValidThrough use. No boundary
+                // matches nothing.
                 const detailSettled = household.orgMembership
                     ? (await prisma.orgMembershipProcess.findFirst({
                           where: {
                               orgMembershipId: household.orgMembership.id,
-                              ...settledThisCycleWhere(detailCycle?.settledSince ?? MAX_DATE),
+                              ...settledThisCycleWhere(detailCycle?.cycleStart.getUTCFullYear() ?? null),
                           },
                           select: { id: true },
                       })) !== null
@@ -180,8 +179,8 @@ export const GET = withAuth(
                     },
                     // ONE probe serves both flags computed below: grantableApplicationWhere
                     // (an application a grant can pay) and settledThisCycleWhere (a fee-paid
-                    // process stamped since the live year's window opened; ARCHIVED never
-                    // paid). No boundary ⇒ "never" (matches no row), keeping one query shape.
+                    // process recording the live year; ARCHIVED never paid). No boundary
+                    // matches no row, keeping one query shape.
                     // orgMembership's own scalars (status, memberSince) still ride along.
                     orgMembership: {
                         include: {
@@ -189,7 +188,7 @@ export const GET = withAuth(
                                 where: {
                                     OR: [
                                         grantableApplicationWhere,
-                                        settledThisCycleWhere(cycle?.settledSince ?? MAX_DATE),
+                                        settledThisCycleWhere(cycle?.cycleStart.getUTCFullYear() ?? null),
                                     ],
                                 },
                                 select: { id: true, status: true },

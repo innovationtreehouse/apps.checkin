@@ -108,8 +108,8 @@ export function orgMembershipStatusBlocksLogin(
  * no horizon can be computed (membership fee not settled, or the board hasn't set
  * {@link BoardSettings.orgMembershipYearBoundary}). A membership always runs
  * boundary-to-boundary. A household settled for the live membership year
- * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL stamped since the
- * year's renewal window opened) is covered to the boundary that closes the year;
+ * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL that records that
+ * year) is covered to the boundary that closes the year;
  * one that did not settle is covered only to the boundary that opened it, so off
  * season it reads as lapsed. Coverage is what was bought: a membership with no
  * fee-paid process (a bare manual grant, an import) has bought nothing the app
@@ -145,7 +145,7 @@ export async function membershipValidThrough(householdId: number, now = new Date
 
     const cycle = membershipYearCycle(settings.orgMembershipYearBoundary, now);
     const settled = (await prisma.orgMembershipProcess.findFirst({
-        where: { orgMembershipId: membership.id, ...settledThisCycleWhere(cycle.settledSince) },
+        where: { orgMembershipId: membership.id, ...settledThisCycleWhere(cycle.cycleStart.getUTCFullYear()) },
         select: { id: true },
     })) !== null;
 

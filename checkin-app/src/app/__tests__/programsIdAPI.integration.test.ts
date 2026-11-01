@@ -598,7 +598,7 @@ describe('Individual Program API Integration Tests', () => {
                                 orgMembership: {
                                     create: {
                                         status: 'NONE',
-                                        processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: paidBeforeWindow, stageEnteredAt: paidBeforeWindow } },
+                                        processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: paidBeforeWindow, stageEnteredAt: paidBeforeWindow, appliesToYear: boundary.getUTCFullYear() - 1 } },
                                     },
                                 },
                             },

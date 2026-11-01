@@ -14,6 +14,7 @@
 
 import { GET } from '@/app/api/people/search/route';
 import prisma from '@/lib/prisma';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -37,11 +38,12 @@ describe('GET /api/people/search?roster=active', () => {
 
     // Anchor the renewal window to the run date rather than a fixed calendar date, so
     // the suite means the same thing whenever CI runs it: a boundary one month out puts
-    // `now` inside the 2-month lead window, with settledSince about a month behind.
+    // `now` inside the 2-month lead window.
     const now = new Date();
     const BOUNDARY = shiftMonths(now, 1);
     const INSIDE_WINDOW = shiftMonths(now, 0);
     const BEFORE_WINDOW = shiftMonths(now, -6);
+    const LIVE_YEAR = liveMembershipYear(BOUNDARY, now)!;
 
     async function setBoundary(boundary: Date | null) {
         await prisma.boardSettings.upsert({
@@ -77,7 +79,7 @@ describe('GET /api/people/search?roster=active', () => {
         name: string,
         slug: string,
         status: 'ACTIVE' | 'NONE',
-        process?: { kind: 'INITIAL' | 'RENEWAL'; status: 'ACTIVE' | 'ARCHIVED'; stageEnteredAt: Date },
+        process?: { kind: 'INITIAL' | 'RENEWAL'; status: 'ACTIVE' | 'ARCHIVED'; stageEnteredAt: Date; appliesToYear?: number },
     ) =>
         prisma.person.create({
             data: {
@@ -124,10 +126,10 @@ describe('GET /api/people/search?roster=active', () => {
 
         // The renewal cohort. Every one of these is an ACTIVE member — status cannot be
         // what separates them, only whether they settled the current cycle.
-        await makePerson('Renewed Rita', 'rita', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
-        await makePerson('Joined Jo', 'jo', 'ACTIVE', { kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
-        await makePerson('Stale Sam', 'sam', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: BEFORE_WINDOW });
-        await makePerson('Archived Al', 'al', 'ACTIVE', { kind: 'RENEWAL', status: 'ARCHIVED', stageEnteredAt: INSIDE_WINDOW });
+        await makePerson('Renewed Rita', 'rita', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW, appliesToYear: LIVE_YEAR });
+        await makePerson('Joined Jo', 'jo', 'ACTIVE', { kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW, appliesToYear: LIVE_YEAR });
+        await makePerson('Stale Sam', 'sam', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: BEFORE_WINDOW, appliesToYear: LIVE_YEAR - 1 });
+        await makePerson('Archived Al', 'al', 'ACTIVE', { kind: 'RENEWAL', status: 'ARCHIVED', stageEnteredAt: INSIDE_WINDOW, appliesToYear: LIVE_YEAR });
 
         (getServerSession as jest.Mock).mockResolvedValue({
             user: { id: adminId, isSysadmin: true, isBoardMember: false },

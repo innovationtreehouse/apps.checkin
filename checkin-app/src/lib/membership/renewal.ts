@@ -98,14 +98,6 @@ export function bgValidUntilBoundary(
 }
 
 /**
- * Off-season / boundary-unset sentinel. Every caller reads the same shape —
- * `stageEnteredAt: { gte: window?.windowStart ?? MAX_DATE }` — where "no window"
- * must match nobody rather than everybody. Named once here, beside the window
- * functions that return the null it stands in for.
- */
-export const MAX_DATE = new Date(8.64e15);
-
-/**
  * From a configured boundary date, the next boundary occurrence and whether `now`
  * sits inside the renewal lead window before it. Pure; the single source of the
  * "are we in renewal season" calc.
@@ -118,8 +110,8 @@ export function renewalWindow(configuredBoundary: Date, now: Date): { boundary: 
 
 /**
  * The membership year now in effect: its label, the boundary that opened it
- * (`cycleStart`), the boundary that closes it (`cycleEnd`), and the date a household
- * must have settled on or after to have bought it (`settledSince`). The year flips
+ * (`cycleStart`), the boundary that closes it (`cycleEnd`), and the day its renewal
+ * window opened (`settledSince`). The year flips
  * at windowStart — the coming year becomes "live" exactly when it becomes renewable
  * and stays live until the next window opens — so in season the live year is the
  * one about to begin, and off season it is the one that began at the last boundary.
@@ -207,19 +199,18 @@ export async function runRenewalSweep(now: Date) {
     const memberships = await prisma.orgMembership.findMany({
         where: { status: "ACTIVE" },
         // "Handled this cycle" = an in-flight RENEWAL by status (matches the partial
-        // unique index), OR any process terminal in-window
-        // (handledThisCycleWhere): a finished renewal, a board grant, an INITIAL that activated inside the window (that family just
-        // bought the coming year; opening a renewal would bill them twice), or a
-        // board archive (already looked at — reopening would pester a family the
-        // board just declined). ARCHIVED counts HERE only; money horizons use the
-        // narrower settledThisCycleWhere.
+        // unique index), OR handledThisCycleWhere: an ACTIVE process that bought the
+        // live year (opening a renewal would bill them twice), or a board archive
+        // in-window (already looked at — reopening would pester a family the board
+        // just declined). ARCHIVED counts HERE only; money horizons use the narrower
+        // settledThisCycleWhere.
         select: {
             id: true,
             processes: {
                 where: {
                     OR: [
                         { kind: "RENEWAL", status: { in: [...IN_FLIGHT_RENEWAL] } },
-                        handledThisCycleWhere(windowStart),
+                        handledThisCycleWhere(liveMembershipYear(settings.orgMembershipYearBoundary, now), windowStart),
                     ],
                 },
                 select: { id: true },

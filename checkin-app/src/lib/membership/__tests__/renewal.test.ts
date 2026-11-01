@@ -356,7 +356,7 @@ describe('runRenewalSweep skip-probe shape', () => {
         expect(arg.select.processes.where).toEqual({
             OR: [
                 { kind: 'RENEWAL', status: { in: [...IN_FLIGHT_RENEWAL] } },
-                handledThisCycleWhere(windowStart),
+                handledThisCycleWhere(2026, windowStart),
             ],
         });
     });
