@@ -17,6 +17,11 @@ function streamed(text: string): Request {
 }
 
 describe("parseBodyCapped reads at most 64 KB", () => {
+  it("names the refused field on a schema failure, not its value", async () => {
+    const err = await parseBodyCapped(streamed(JSON.stringify({ note: 7 })), schema).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 400, fields: ["note"] });
+  });
+
   it("parses a body under the cap", async () => {
     await expect(parseBodyCapped(streamed(JSON.stringify({ note: "ok" })), schema)).resolves.toEqual({ note: "ok" });
   });
