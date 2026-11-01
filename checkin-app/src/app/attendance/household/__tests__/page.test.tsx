@@ -65,4 +65,13 @@ describe("HouseholdCheckins", () => {
         expect(await screen.findByText("Kid One")).toBeInTheDocument();
         expect(screen.getByText("Open Shop")).toBeInTheDocument();
     });
+
+    it("shows the failure, not an empty history, when the load fails", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderWithProviders(<HouseholdCheckins />);
+
+        expect(await screen.findByText("Couldn't load your household's visits")).toBeInTheDocument();
+        expect(screen.queryByText("No historical visits found for your household.")).not.toBeInTheDocument();
+    });
 });

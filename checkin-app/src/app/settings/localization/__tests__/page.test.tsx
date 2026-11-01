@@ -23,4 +23,13 @@ describe("LocalizationSettingsPage", () => {
 
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Settings saved." })));
     });
+
+    it("shows the failure and no form when the load fails", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        mockFetchJson({});
+        renderWithProviders(<LocalizationSettingsPage />);
+
+        expect(await screen.findByText("Couldn't load the localization settings")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /save settings/i })).not.toBeInTheDocument();
+    });
 });

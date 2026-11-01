@@ -1,11 +1,14 @@
 "use client";
 
 import { centsToDecimalString } from "@checkin/money";
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { Alert, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { useLoad } from "@/lib/api";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -62,48 +65,16 @@ export default function MembershipSettingsPage() {
 
   const [confirmOpenRenewalsOpened, { open: openConfirmOpenRenewals, close: closeConfirmOpenRenewals }] = useDisclosure(false);
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
-  const [releasedLibraries, setReleasedLibraries] = useState<string[]>([]);
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
-  const load = useCallback(() => fetch("/api/settings/membership")
-    .then(async (sRes) => {
-      if (sRes.ok) {
-        const { settings } = (await sRes.json()) as { settings: Settings };
-        const snap = {
-          standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
-          volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
-          bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
-          scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
-          boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
-          variantId: settings.orgMembershipVariantId ?? "",
-          productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerFamilyDiscountCode ?? "",
-          signingTarget: settings.devSigningTarget ?? "zoho",
-        };
-        setStandardFee(snap.standardFee);
-        setVolunteerFee(snap.volunteerFee);
-        setBgRecheckMonths(snap.bgRecheckMonths);
-        setScholarshipGraceDays(snap.scholarshipGraceDays);
-        setBoundary(snap.boundary);
-        setVariantId(snap.variantId);
-        setProductUrl(snap.productUrl);
-        setDiscountCode(snap.discountCode);
-        setSigningTarget(snap.signingTarget);
-        setReleasedLibraries(settings.releasedLibraries ?? []);
-        setInitial(snap);
-      }
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  const { data, error, reload } = useLoad<{ settings: Settings }>("/api/settings/membership");
+  const releasedLibraries = data?.settings.releasedLibraries ?? [];
 
-  useEffect(() => { load(); }, [load]);
+  const current = { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget };
 
   // Confirm-checkbox gate only matters when a boundary already exists — changing
   // it shifts every household's cycle. First-time set has nothing to shift.
@@ -141,7 +112,7 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setLoading(true); await load(); }
+      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setInitial(current); reload(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
@@ -185,17 +156,40 @@ export default function MembershipSettingsPage() {
     finally { setSaving(false); }
   };
 
-  const isDirty =
-    !!initial &&
-    !shallowEqual(initial, { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget });
+  const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
+  useSeedForm(data, isDirty, ({ settings }) => {
+    const snap = {
+      standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
+      volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
+      bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
+      scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
+      boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
+      variantId: settings.orgMembershipVariantId ?? "",
+      productUrl: settings.orgMembershipProductUrl ?? "",
+      discountCode: settings.volunteerFamilyDiscountCode ?? "",
+      signingTarget: settings.devSigningTarget ?? "zoho",
+    };
+    setStandardFee(snap.standardFee);
+    setVolunteerFee(snap.volunteerFee);
+    setBgRecheckMonths(snap.bgRecheckMonths);
+    setScholarshipGraceDays(snap.scholarshipGraceDays);
+    setBoundary(snap.boundary);
+    setVariantId(snap.variantId);
+    setProductUrl(snap.productUrl);
+    setDiscountCode(snap.discountCode);
+    setSigningTarget(snap.signingTarget);
+    setInitial(snap);
+  });
 
   return (
     <Stack>
       <SettingsTabs active="membership" />
 
-      {loading ? (
-        <Center py="xl"><Loader /></Center>
+      {error && <LoadError what="the membership settings" message={error} onRetry={reload} />}
+
+      {!data ? (
+        !error && <Center py="xl"><Loader /></Center>
       ) : (
         <>
           <Card withBorder radius="md" padding="lg">
@@ -360,7 +354,7 @@ export default function MembershipSettingsPage() {
             </Button>
           </Card>
 
-          {isBoardMember && <LibraryReleaseCard initial={releasedLibraries} />}
+          {isBoardMember && <LibraryReleaseCard key={releasedLibraries.join()} initial={releasedLibraries} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

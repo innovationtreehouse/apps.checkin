@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Card, Flex, ScrollArea, Stack, Text, TextInput } from "@mantine/core";
 import { AlertBanner, type AlertTone } from "@/components/admin/AlertBanner";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 type ToolListItem = {
   id: number;
@@ -17,18 +19,7 @@ export default function CreateToolPage() {
   const [newToolGuide, setNewToolGuide] = useState("");
   const [saving, setSaving] = useState(false);
   const [createMessage, setCreateMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
-  const [tools, setTools] = useState<ToolListItem[]>([]);
-
-  const loadTools = useCallback(
-    () => fetch("/api/shop/tools").then(async (res) => {
-      if (res.ok) setTools(await res.json());
-    }),
-    [],
-  );
-
-  useEffect(() => {
-    loadTools();
-  }, [loadTools]);
+  const { data: tools, error, reload } = useLoad<ToolListItem[]>("/api/shop/tools");
 
   const handleCreateTool = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,7 +37,7 @@ export default function CreateToolPage() {
         notifications.show({ message: "New tool added successfully!" });
         setNewToolName("");
         setNewToolGuide("");
-        loadTools();
+        reload();
       } else {
         const data = await res.json();
         setCreateMessage({ text: data.error || "Failed to create tool.", tone: "error" });
@@ -92,9 +83,10 @@ export default function CreateToolPage() {
 
       <Card withBorder radius="md" padding="md" w={260}>
         <Text fw={700} size="sm" mb="xs">Existing tools</Text>
+        {error && <LoadError what="the tools" message={error} onRetry={reload} />}
         <ScrollArea.Autosize mah={420} type="auto">
           <Stack gap={4}>
-            {tools.map((t) => (
+            {tools?.map((t) => (
               <Text key={t.id} size="sm">{t.name}</Text>
             ))}
           </Stack>

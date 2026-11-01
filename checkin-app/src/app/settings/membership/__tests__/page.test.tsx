@@ -184,9 +184,9 @@ describe("MembershipSettingsPage", () => {
     );
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
     expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ orgMembershipYearBoundary: "2026-10-15" }));
-    // A successful save re-locks the boundary field and reloads from the (unchanged)
-    // mock settings; wait for that full reload so no state update leaks past the test.
-    await waitFor(() => expect(screen.getByDisplayValue("2025-09-01")).toBeDisabled());
+    // A successful save re-locks the boundary field, keeps what was saved, and re-reads the settings.
+    await waitFor(() => expect(screen.getByDisplayValue("2026-10-15")).toBeDisabled());
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url, opts]) => url === "/api/settings/membership" && opts?.method !== "PUT")).toHaveLength(2));
   });
 
   it("shows 'not set' and rolls the boundary label to next year when the stored date has already passed", async () => {
@@ -207,11 +207,20 @@ describe("MembershipSettingsPage", () => {
     expect(screen.getByText("January 15, 2027")).toBeInTheDocument();
   });
 
-  it("leaves the defaults in place when the initial load fails, then shows a save-failure message", async () => {
+  it("shows the failure and offers no form to save when the load fails", async () => {
     setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({}); // unmatched -> res.ok false, load() leaves state at its initial defaults
+    mockFetchJson({});
     renderWithProviders(<MembershipSettingsPage />);
-    await waitFor(() => expect(screen.getByLabelText("Standard annual membership fee")).toHaveValue("0"));
+
+    expect(await screen.findByText("Couldn't load the membership settings")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Standard annual membership fee")).not.toBeInTheDocument();
+  });
+
+  it("shows a save-failure message", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/settings/membership": { settings: SETTINGS } });
+    renderWithProviders(<MembershipSettingsPage />);
+    await screen.findByDisplayValue("150.00");
 
     global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Save blocked." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));

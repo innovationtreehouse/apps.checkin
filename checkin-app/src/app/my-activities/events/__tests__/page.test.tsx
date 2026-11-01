@@ -35,7 +35,7 @@ describe("ParticipantEventsDashboard", () => {
             if (url.includes("/api/events/10/rsvp")) {
                 return { ok: false, status: 403, json: async () => ({ error: "Not allowed." }) } as Response;
             }
-            return { ok: true, status: 200, json: async () => [event] } as Response;
+            return { ok: true, status: 200, text: async () => JSON.stringify([event]) } as Response;
         });
         global.fetch = fetchMock as unknown as typeof fetch;
         const showSpy = jest.spyOn(notifications, "show");
@@ -47,8 +47,9 @@ describe("ParticipantEventsDashboard", () => {
 
         // Error surfaced with the server message...
         await waitFor(() => expect(showSpy).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Not allowed.", autoClose: false })));
-        // ...and the revert refetched /mine (initial load + revert = 2 calls).
-        expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/api/events/mine"))).toHaveLength(2);
+        // ...the card reverted, and /mine was re-read (initial load + refresh = 2 calls).
+        await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/api/events/mine"))).toHaveLength(2));
+        expect(screen.getByRole("button", { name: "Yes" })).toHaveAttribute("data-variant", "default");
     });
 
     it("shows an empty state with no upcoming events", async () => {
@@ -71,5 +72,14 @@ describe("ParticipantEventsDashboard", () => {
         expect(await screen.findByText("Robotics Meet")).toBeInTheDocument();
         // One badge, on the volunteered event only.
         expect(screen.getAllByText("Volunteer")).toHaveLength(1);
+    });
+
+    it("shows the failure, not an empty state, when the load fails", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderWithProviders(<ParticipantEventsDashboard />);
+
+        expect(await screen.findByText("Couldn't load your events")).toBeInTheDocument();
+        expect(screen.queryByText("No Upcoming Events")).not.toBeInTheDocument();
     });
 });
