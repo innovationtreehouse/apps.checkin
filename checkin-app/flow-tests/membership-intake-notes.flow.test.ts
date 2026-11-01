@@ -3,11 +3,10 @@
  */
 /**
  * Flow test: the intake "Anything else we should know?" note reaches the
- * background-check reviewer's queue.
+ * Board's review queue.
  *
- * This is the whole point of the field — a would-be volunteer-only household
- * types the note during intake, and the reviewer (who also sets the volunteer
- * bit) must actually see it. Drives the real journey over HTTP against a running
+ * A would-be volunteer-only household types the note during intake, and the
+ * Board (the only role that reads it) must actually see it. Drives the real journey over HTTP against a running
  * seeded dev server: applicant fills intake WITH the note, board records the two
  * external actions (which puts the application into the parallel BG-review
  * track), then GET /api/membership/reviews returns the note on that row.
@@ -28,7 +27,7 @@ type State = { process: { id: number; status: string } | null };
 type QueueRow = { id: number; orgMembership: { household: { name: string | null; intakeNotes: string | null } | null } | null };
 type Reviews = { queue: QueueRow[] };
 
-describe("flow: intake notes surface to the BG-review queue", () => {
+describe("flow: intake notes surface to the Board's review queue", () => {
     it("applicant's intake note comes back in GET /api/membership/reviews", async () => {
         const applicant = await loginAs("parent.family3@example.com"); // dedicated non-member household3 lead
         const reviewer = await loginAs("boardmember@example.com");      // sysadmin + board = implicit reviewer
@@ -56,7 +55,7 @@ describe("flow: intake notes surface to the BG-review queue", () => {
         await api(reviewer, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
         await api(reviewer, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-bg-consent" }) });
 
-        // The reviewer's queue must carry the applicant's note, unhidden.
+        // The Board's queue must carry the applicant's note, unhidden.
         const reviews = await api<Reviews>(reviewer, "/api/membership/reviews");
         expect(reviews.status).toBe(200);
         const row = reviews.json.queue.find((r) => r.id === processId);

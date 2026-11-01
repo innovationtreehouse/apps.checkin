@@ -191,9 +191,10 @@ Procedure below is built on them.
 
 ### Application and review
 
-- An intake note does not hold the application. It is shown to the reviewers,
-  who read it while the family pays.
-  (`checkin-app/src/lib/membership/external.ts`)  [Decision]
+- An intake note does not hold the application. The Board reads it while the
+  family pays; a reviewer who is not on the Board never sees it, so the Board
+  sets a volunteer-only household's volunteer flag.
+  (`checkin-app/src/lib/membership/external.ts`)  [Decision — Board ruling B20, 2026-10-27]
 
 - An application in background-check review is the reviewers' work, not the
   board's. Board queues count blocked applications only.  [Decision]
@@ -458,12 +459,12 @@ Procedure below is built on them.
 - Treehouse accounts are not program families: no self-service member add, no
   membership grant. Only the member add is enforced server-side.  [Decision]
 
-- An intake note is readable by the household's leads and the reviewers, not by
-  its other members.  [Decision — *Policy: Membership Policy, Art. VI §VI.2; Records Policy, Art. IV*]
+- An intake note is read by the Board only. No other role reads it: not
+  sysadmin, finance, operations, or a background-check reviewer.
+  [Decision — Board ruling B20, 2026-10-27; *Policy: Membership Policy, Art. VI §VI.2; Records Policy, Art. IV*]
 
-- The sysadmin role never shows a household's intake note; a sysadmin sees it
-  only through another role they hold (a lead of that household, the Board, a
-  reviewer).  [Decision]
+- The household's leads, who write the intake note, read their own household's
+  note back. Its other members do not.  [Decision — Board ruling B20, 2026-10-27]
 
 ### Compliance
 

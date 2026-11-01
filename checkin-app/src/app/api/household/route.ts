@@ -43,9 +43,8 @@ export const GET = withAuth(
             if (!user) return apiError("User not found", 404);
 
             // intakeNotes is the family's free-text "anything else we should know?"
-            // note written BY the lead TO the board/BG reviewers — schema classifies
-            // it 'pii' for the reviewer queue, and guards against it reaching any
-            // other household-scoped view. Household peers (incl. youth with their
+            // note written BY the lead TO the Board, and guarded against reaching
+            // any other household-scoped view. Household peers (incl. youth with their
             // own logins) have no business reading a note a parent wrote about them.
             // Only the lead sees it, matching the lead-gated editor on /my-household
             // and the 403 on PATCH /api/household/settings. Address stays: shared
