@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * Admission and file-only coverage for the bulk-donation registry (#1280,
- * registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
+ * Admission and file-only coverage for the bulk-donation registry
+ * (registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
  * except the in-kind decision and the settings PATCH, which admit FINANCE or
  * BOARD. Ops (OPERATIONS,
  * INVENTORY_MANAGER) reaches only the no-receipt in-kind entry routes, and never
@@ -12,7 +12,7 @@
  * leaves only through the file route.
  *
  * Callers sign in through the real authenticateRequest: only getServerSession
- * is mocked, so an id-less session takes the production path (plan rule 6).
+ * is mocked, so an id-less session takes the production path.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';

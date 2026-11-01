@@ -1,5 +1,5 @@
 /**
- * In-kind donations with a receipt (FR5): the money side (X9) and the donor (X13) join on
+ * In-kind donations with a receipt: the money side (X9) and the donor (X13) join on
  * receiptId in either order; money first waits as "donor needed", then waits to be accepted;
  * the money side is written once; a withdrawal after money is an anomaly finance settles.
  */

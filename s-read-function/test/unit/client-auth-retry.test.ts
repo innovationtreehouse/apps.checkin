@@ -2,7 +2,7 @@
  * Integration between the request loop (client.ts) and token acquisition (token.ts): a
  * warm Lambda can hold a token that's since expired or been rotated, so a 401 mid-run must
  * invalidate the cache, re-mint once, and retry the same request — not fail outright, and
- * not loop forever on a persistently-bad credential (#237).
+ * not loop forever on a persistently-bad credential.
  *
  * client-request.test.ts covers the retry/throttle loop with a static adminToken (which
  * never mints, so it never exercises this path); shopify-token.test.ts covers minting in

@@ -3,7 +3,7 @@
  * trickiest pure function in the package — it merges INLINE children with `__parentId`
  * flattened children across `{nodes}` / `{edges}` / bare-array shapes, and must NOT
  * double-count a child returned in both representations (the explicit design goal in
- * bulkOrders.ts). Previously it was exercised only indirectly through one DB test.
+ * bulkOrders.ts).
  */
 import { describe, it, expect } from "vitest";
 import { parseBulkJsonl, reassembleOrders, ingestBulkOrders } from "../../src/ingest/bulkOrders.js";

@@ -1,5 +1,5 @@
 /**
- * #4 (part 2) — Financial-flow auto-transitions against the real database.
+ * Financial-flow auto-transitions against the real database.
  *
  * These functions decide when an expense advances stages based on approval and
  * threshold state. checkAndProcessExpense (the QB side-effect at qb_pending) is

@@ -1,4 +1,4 @@
-/** Line decisions: associate (CI3), propose, non-inventory, the 409 rule, auto-proceed, actor attribution. */
+/** Line decisions: associate, propose, non-inventory, the 409 rule, auto-proceed, actor attribution. */
 import { beforeEach, expect, it, vi } from "vitest";
 import type { CatalogItemReferenceProposal, CatalogProvisionalItemProposal, CatalogReferenceConflict } from "@checkin/receipt-types";
 import { db } from "../../db";

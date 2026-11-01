@@ -2,16 +2,15 @@
  * @jest-environment node
  */
 /**
- * RSVP.their_program_participants via eventId (deliberate behavior change).
+ * RSVP.their_program_participants via eventId.
  *
- * RSVP has no programId column (PK [eventId, participantId]); the old switch read
- * row.programId, which was always undefined on a real RSVP — the program-lead
- * grant was DEAD. The resolver now reaches a program via eventId →
- * ctx.eventIdsInScopePrograms. These guards pin the new capability:
+ * RSVP has no programId column (PK [eventId, participantId]), so the resolver
+ * reaches a program via eventId → ctx.eventIdsInScopePrograms. These guards pin
+ * that capability:
  *   - a lead / core-vol holds their_program_participants on an RSVP whose event
  *     is in their program; a non-lead does not;
- *   - the RSVP owner still holds their_own (participantId === selfId);
- *   - the stale programId read no longer grants anything.
+ *   - the RSVP owner holds their_own (participantId === selfId);
+ *   - a programId on the row grants nothing.
  * See docs/security/auth-consistency-analysis.md §7.5 + §9 Step 3 Blocker 1.
  */
 import { scopesHeld, type CallerContext } from '../access-resolvers';
@@ -70,8 +69,8 @@ describe('RSVP their_program_participants via eventId', () => {
     });
 
     it('the stale programId read no longer grants — a row carrying only programId is inert', () => {
-        // Old dead binding: a lead of program 100 with a row {programId: 100} used
-        // to (try to) match. With the eventId binding it grants nothing.
+        // A lead of program 100 with a row {programId: 100}: the binding reads eventId,
+        // so this grants nothing.
         const held = scopesHeld('RSVP', { programId: 100, personId:99 }, lead);
         expect(held.has('their_program_participants')).toBe(false);
     });
