@@ -6,6 +6,7 @@ import type {
   ReceiptFileStore,
   MailboxReader,
   ReceiptHouseholds,
+  ReceiptPersonIds,
   ReceiptAlerts,
   ReceiptPeople,
   ReceiptReplies,
@@ -59,6 +60,12 @@ export const inertSubmitterConfirmations: SubmitterConfirmations = {
 /** Knows no households: only the uploader and the reimbursee themselves are refused. */
 export const inertHouseholds: ReceiptHouseholds = {
   householdOf: async () => [],
+};
+
+/** Knows no merges: every id names itself. */
+export const inertPersonIds: ReceiptPersonIds = {
+  liveIds: async (personIds) => new Map(personIds.map((id) => [id, id])),
+  storedIdsOf: async (personId) => [personId],
 };
 
 /** Knows nobody: every mailed receipt is held for finance. */
@@ -125,6 +132,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     submitterConfirmations: r.submitterConfirmations ?? inertSubmitterConfirmations,
     purchaseOutcomes: r.purchaseOutcomes ?? inertPurchaseOutcomes,
     households: r.households ?? inertHouseholds,
+    personIds: r.personIds ?? inertPersonIds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
     reimbursees: r.reimbursees ?? inertReimbursees,
