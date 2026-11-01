@@ -453,6 +453,13 @@ export const classifications = {
         success: 'internal',
         error: 'internal',
     },
+    LifecycleDriftReport: {
+        id: 'internal',
+        model: 'internal',
+        key: 'internal',
+        invariant: 'internal',
+        firstReportedAt: 'internal',
+    },
     PersonMerge: {
         id: 'internal',
         fromId: 'internal',
@@ -704,6 +711,8 @@ export const relations = {
     IntegrationErrorLog: {
     },
     CronRunLog: {
+    },
+    LifecycleDriftReport: {
     },
     PersonMerge: {
         to: { model: 'Person', isList: false },

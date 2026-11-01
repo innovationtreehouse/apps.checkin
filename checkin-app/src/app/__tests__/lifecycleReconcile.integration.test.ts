@@ -10,17 +10,21 @@
  *    adjustProgramInventory, an AuditLog row records the heal, and the row then
  *    validates clean.
  *  - report-only: a non-I1 violation (membership `paidAt` on an INTAKE process)
- *    is reported through the reused Shopify-failure channel but NEVER mutated.
+ *    is reported in the drift digest but NEVER mutated.
+ *  - digest: one email per run for many rows, split into new and still present,
+ *    nothing through the Shopify failure channel.
+ *  - job history: a thrown heal records a failed item on the cron run.
  *  - clean: a row that validates clean produces no violation.
  *  - authz: the System Status GET rejects anon (401) and a plain user (403) —
  *    the negative-authz coverage authzRegistry.test.ts requires.
  *
- * Shopify is mocked (no network): the reconciler imports only adjustProgramInventory
- * (@/lib/shopify/stock) and reportShopifyFailure (@/lib/shopify/client), so replacing
- * both modules with a jest.fn() each is sufficient (SWC's non-configurable exports block jest.spyOn).
+ * Shopify and email are mocked (no network). The Shopify client mock exists to prove
+ * the reconciler never reports through it (SWC's non-configurable exports block jest.spyOn).
  */
 import { reportShopifyFailure } from '@/lib/shopify/client';
-import { adjustProgramInventory } from '@/lib/shopify/stock';
+import { adjustProgramInventory, changeProgramStockWith } from '@/lib/shopify/stock';
+import { sendTemplated } from '@/lib/email-templates/send';
+import { GET as CRON_GET } from '@/app/api/cron/lifecycle-reconcile/route';
 import { runLifecycleReconcile, scanLifecycleViolations } from '@/lib/lifecycleDrift';
 import { GET as LIFECYCLE_GET } from '@/app/api/system-status/lifecycle/route';
 import prisma from '@/lib/prisma';
@@ -38,11 +42,23 @@ jest.mock('@/lib/shopify/client', () => ({
     reportShopifyFailure: jest.fn(),
 }));
 
+jest.mock('@/lib/email-templates/send', () => ({
+    __esModule: true,
+    sendTemplated: jest.fn(),
+}));
+
 const adjustSpy = adjustProgramInventory as jest.Mock;
 const reportSpy = reportShopifyFailure as jest.Mock;
+const sendSpy = sendTemplated as jest.Mock;
 
 const TAG = 'lifecycle-reconcile-test';
 const VARIANT = `dev-mock-variant-${TAG}`;
+const ADMIN_EMAIL = `self-${TAG}@example.com`;
+
+/** The digests the seeded sysadmin received in this test. */
+const digests = () => sendSpy.mock.calls
+    .filter((c) => c[0] === 'lifecycle.driftDigest' && c[1] === ADMIN_EMAIL)
+    .map((c) => c[2] as { newList: string; stillPresentList: string });
 
 describe('lifecycle reconciler — invariant-driven sweep over a real DB', () => {
     let programId: number;
@@ -51,7 +67,7 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
 
     beforeAll(async () => {
         const self = await prisma.person.create({
-            data: { name: 'LCR Self', email: `self-${TAG}@example.com`, household: { create: { name: 'HH' } } },
+            data: { name: 'LCR Self', email: ADMIN_EMAIL, isSysadmin: true, household: { create: { name: 'HH' } } },
         });
         selfId = self.id;
         const program = await prisma.program.create({
@@ -64,6 +80,8 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: processIds } } });
         await prisma.auditLog.deleteMany({ where: { tableName: 'ProgramParticipant', secondaryAffectedEntity: programId } });
+        await prisma.integrationErrorLog.deleteMany({ where: { source: 'lifecycle-drift' } });
+        await prisma.cronRunLog.deleteMany({ where: { job: 'lifecycle-reconcile' } });
         await prisma.program.delete({ where: { id: programId } });
         const person = await prisma.person.findUnique({ where: { id: selfId }, select: { householdId: true } });
         await prisma.person.delete({ where: { id: selfId } });
@@ -75,12 +93,14 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
         // Default: no network, calls succeed. Individual specs assert against these.
         adjustSpy.mockResolvedValue(true);
         reportSpy.mockResolvedValue(undefined);
+        sendSpy.mockResolvedValue(true);
     });
 
     afterEach(async () => {
         await prisma.programParticipant.deleteMany({ where: { programId } });
         if (processIds.length) await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: processIds } } });
         processIds.length = 0;
+        await prisma.lifecycleDriftReport.deleteMany({});
     });
 
     it('I1: heals ACTIVE + stranded hold — clears held, fires +1, audit-logs, validates clean', async () => {
@@ -113,9 +133,7 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
 
         // A healed row is NOT also reported to the board.
         expect(summary.healed).toBeGreaterThanOrEqual(1);
-        const reportedMine = reportSpy.mock.calls.some(
-            (c) => typeof c[1]?.message === 'string' && c[1].message.includes(`person ${selfId}`),
-        );
+        const reportedMine = digests().some((d) => d.newList.includes(`person ${selfId}`));
         expect(reportedMine).toBe(false);
     });
 
@@ -146,17 +164,96 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
 
         await runLifecycleReconcile();
 
-        // Reported through the reused channel, keyed to this row + its invariant.
-        const reportedMine = reportSpy.mock.calls.some((c) => {
-            const ctx = c[2] as { key?: string; invariant?: string } | undefined;
-            return ctx?.key === `process ${proc.id}` && ctx?.invariant === 'intake-is-unpaid';
-        });
-        expect(reportedMine).toBe(true);
+        expect(digests()[0].newList).toContain(`process ${proc.id}: invariant intake-is-unpaid`);
 
         // NOT mutated — a human resolves ambiguous violations.
         const after = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: proc.id } });
         expect(after.status).toBe('INTAKE');
         expect(after.paidAt).not.toBeNull();
+    });
+
+    const offDiagramProcess = async () => {
+        const proc = await prisma.orgMembershipProcess.create({
+            data: { kind: 'PERSON_BG', status: 'INTAKE', subjectPersonId: selfId, paidAt: new Date() },
+        });
+        processIds.push(proc.id);
+        return proc.id;
+    };
+
+    it('sends one digest for many rows, and nothing through the Shopify channel', async () => {
+        const first = await offDiagramProcess();
+        const second = await offDiagramProcess();
+
+        await runLifecycleReconcile();
+
+        expect(digests()).toHaveLength(1);
+        expect(digests()[0].newList).toContain(`process ${first}:`);
+        expect(digests()[0].newList).toContain(`process ${second}:`);
+        expect(reportSpy).not.toHaveBeenCalled();
+        const logged = await prisma.integrationErrorLog.findMany({ where: { source: 'shopify', message: { contains: `process ${first}` } } });
+        expect(logged).toEqual([]);
+        expect(await prisma.integrationErrorLog.count({ where: { source: 'lifecycle-drift' } })).toBeGreaterThanOrEqual(1);
+    });
+
+    it('a second run lists an unchanged row as still present and a later one as new', async () => {
+        const first = await offDiagramProcess();
+        await runLifecycleReconcile();
+        const second = await offDiagramProcess();
+        sendSpy.mockClear();
+
+        await runLifecycleReconcile();
+
+        const [digest] = digests();
+        expect(digest.stillPresentList).toContain(`process ${first}:`);
+        expect(digest.newList).not.toContain(`process ${first}:`);
+        expect(digest.newList).toContain(`process ${second}:`);
+    });
+
+    it('a row that leaves and returns is new again', async () => {
+        const id = await offDiagramProcess();
+        await runLifecycleReconcile();
+
+        await prisma.orgMembershipProcess.update({ where: { id }, data: { paidAt: null } });
+        await runLifecycleReconcile();
+        expect(await prisma.lifecycleDriftReport.count({ where: { key: `process ${id}` } })).toBe(0);
+
+        await prisma.orgMembershipProcess.update({ where: { id }, data: { paidAt: new Date() } });
+        sendSpy.mockClear();
+        await runLifecycleReconcile();
+
+        expect(digests()[0].newList).toContain(`process ${id}:`);
+    });
+
+    it('a digest nobody received fails the run and stays new', async () => {
+        const id = await offDiagramProcess();
+        sendSpy.mockResolvedValue(false);
+
+        const summary = await runLifecycleReconcile();
+
+        expect(summary.failed).toBe(1);
+        expect(summary.reported).toBe(0);
+        expect(await prisma.lifecycleDriftReport.count({ where: { key: `process ${id}` } })).toBe(0);
+    });
+
+    it('a thrown heal is a failed item on the job history, and the row stays in the digest', async () => {
+        process.env.CRON_SECRET = 'test-secret';
+        await prisma.programParticipant.create({
+            data: { programId, personId: selfId, status: 'ACTIVE', inventoryHeldAt: new Date() },
+        });
+        (changeProgramStockWith as jest.Mock).mockRejectedValueOnce(new Error('heal failed'));
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        const res = await CRON_GET(new Request('http://localhost/api/cron/lifecycle-reconcile', {
+            headers: { authorization: 'Bearer test-secret' },
+        }));
+
+        expect(errorSpy).toHaveBeenCalled();
+        errorSpy.mockRestore();
+        expect((await res.json()).failed).toBe(1);
+        const run = await prisma.cronRunLog.findFirstOrThrow({ where: { job: 'lifecycle-reconcile' }, orderBy: { id: 'desc' } });
+        expect(run.success).toBe(true);
+        expect(run.error).toBe('1 item(s) failed');
+        expect(digests()[0].newList).toContain(`program ${programId} / person ${selfId}:`);
     });
 
     it('a settled PERSON_AGREEMENT is not a violation — the signature alone completes it', async () => {

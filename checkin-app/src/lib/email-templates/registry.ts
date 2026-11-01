@@ -302,6 +302,15 @@ export const REGISTRY = {
         defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
     },
 
+    // ── lifecycle ───────────────────────────────────────────────────────────
+    "lifecycle.driftDigest": {
+        allowedTokens: { newCount: text, stillPresentCount: text, newList: text, stillPresentList: text, actionLink: link("Open the Lifecycle panel") },
+        sampleCtx: { newCount: "1", stillPresentCount: "1", newList: "OrgMembershipProcess process 12: invariant intake-is-unpaid (status INTAKE)", stillPresentList: "ProgramParticipant program 3 / person 45: invariant I2 (status PENDING)", actionLink: SAMPLE_URL },
+        defaultSubject: "Lifecycle drift: {{newCount}} new, {{stillPresentCount}} still present",
+        defaultBody: "These records are off their lifecycle diagram and need a person to resolve them. Nothing was changed automatically.\n\n"
+            + "New since the last report\n{{newList}}\n\nStill present\n{{stillPresentList}}\n\n{{actionLink}}",
+    },
+
     // ── shopify ─────────────────────────────────────────────────────────────
     "shopify.error": {
         allowedTokens: { intro: text, errorDetail: text },
