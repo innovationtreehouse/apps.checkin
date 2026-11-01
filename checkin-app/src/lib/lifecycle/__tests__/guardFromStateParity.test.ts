@@ -188,8 +188,8 @@ describe('CAS guard ↔ TRANSITIONS from-state parity', () => {
     });
 });
 
-/** Every site that performs a declared enrollment write. */
-const ENROLLMENT_WRITE_SITES: Record<EnrollmentWriteName, string> = {
+/** Every site that performs a declared enrollment write by name; re-enrolment picks its write first. */
+const ENROLLMENT_WRITE_SITES: Record<Exclude<EnrollmentWriteName, 'reenrollPaid' | 'reenrollComp'>, string> = {
     requestFlag: 'app/api/programs/[id]/request-payment-plan/route.ts',
     takeHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
     reapply: 'app/api/programs/[id]/request-payment-plan/route.ts',
@@ -204,8 +204,6 @@ const ENROLLMENT_WRITE_SITES: Record<EnrollmentWriteName, string> = {
     denyUnheld: 'app/api/finance-ops/payment-plans/refuse/route.ts',
     withdraw: 'lib/program/capacity.ts',
     releaseWithdrawnHold: 'lib/program/capacity.ts',
-    reenrollPaid: 'app/api/programs/[id]/participants/route.ts',
-    reenrollComp: 'app/api/programs/[id]/participants/route.ts',
 };
 
 describe('enrollment guards ↔ TRANSITIONS', () => {
@@ -236,5 +234,13 @@ describe('enrollment guards ↔ TRANSITIONS', () => {
         for (const [name, file] of Object.entries(ENROLLMENT_WRITE_SITES)) {
             expect({ name, used: read(file).includes(`ENROLLMENT_WRITES.${name}.data(`) }).toEqual({ name, used: true });
         }
+    });
+
+    it('re-enrolment takes its filter and its data from the one write it picks', () => {
+        const route = read('app/api/programs/[id]/participants/route.ts');
+        expect(route).toContain("const reenroll = initialStatus === 'ACTIVE' ? ENROLLMENT_WRITES.reenrollComp : ENROLLMENT_WRITES.reenrollPaid;");
+        expect(route).toContain('...reenroll.where');
+        expect(route).toContain('...reenroll.data()');
+        expect(route).not.toMatch(/ENROLLMENT_WRITES\.reenroll(Paid|Comp)\.(where|data)/);
     });
 });

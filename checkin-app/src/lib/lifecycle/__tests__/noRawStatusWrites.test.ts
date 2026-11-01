@@ -11,7 +11,7 @@ import { TRANSITIONS as PROCESS_TX } from '../../membership/lifecycle';
  *
  * Declared, so not counted:
  * - ProgramParticipant: a write taking both `where` and `data` from one ENROLLMENT_WRITES
- *   entry, with no machine column written beside it.
+ *   entry, named or picked into a const by a ternary, with no machine column written beside it.
  * - OrgMembership: `setHouseholdStatus`, its one status writer.
  * - OrgMembershipProcess: a status write that is a CAS on the table (`...fromWhere(<from>)`
  *   or a StateSet's `...x.where`), or a create landing on a ∅-entry state.
@@ -91,9 +91,12 @@ const opaqueData = (args: string) => {
 const touchesMachine = (args: string, table: Table) => setsColumn(args, MACHINE_COLUMNS[table]) || opaqueData(args);
 
 /** Both halves from one ENROLLMENT_WRITES entry, and no machine column written beside it. */
-function declaredEnrollmentWrite(args: string): boolean {
+function declaredEnrollmentWrite(args: string, src = ''): boolean {
+    if (setsColumn(args, MACHINE_COLUMNS.ProgramParticipant)) return false;
     const name = /ENROLLMENT_WRITES\.(\w+)\.where\b/.exec(args)?.[1];
-    return name !== undefined && args.includes(`ENROLLMENT_WRITES.${name}.data(`) && !setsColumn(args, MACHINE_COLUMNS.ProgramParticipant);
+    if (name !== undefined) return args.includes(`ENROLLMENT_WRITES.${name}.data(`);
+    const picked = /\.\.\.(\w+)\.where\b/.exec(args)?.[1];
+    return picked !== undefined && args.includes(`...${picked}.data(`) && new RegExp(`const ${picked} = [^;?]+\\? ENROLLMENT_WRITES\\.\\w+ : ENROLLMENT_WRITES\\.\\w+;`).test(src);
 }
 
 /** Statuses an OrgMembershipProcess may be created at: the ∅-edges' targets. */
@@ -127,7 +130,7 @@ function scan(): Map<string, number> {
         for (const m of src.matchAll(CALL)) {
             const args = block(src, m.index! + m[0].length - 1);
             const table = tableOf(m[1]);
-            if (table === 'ProgramParticipant' && declaredEnrollmentWrite(args)) continue;
+            if (table === 'ProgramParticipant' && declaredEnrollmentWrite(args, src)) continue;
             if (table === 'OrgMembershipProcess' && declaredProcessWrite(m[2], args)) continue;
             if (touchesMachine(args, table)) bump(file, table);
         }
@@ -178,6 +181,16 @@ describe('no raw machine-column writes', () => {
         expect(declared(`{ ...ENROLLMENT_WRITES.denyHeld.data(now), pendingSince: null }`)).toBe(true);
         expect(declared(`ENROLLMENT_WRITES.takeHold.data(now)`)).toBe(false);
         expect(declared(`{ ...ENROLLMENT_WRITES.denyHeld.data(now), status: "ACTIVE" }`)).toBe(false);
+    });
+
+    it('a picked enrollment write takes both halves from the const a ternary picks between entries', () => {
+        const pick = `const w = comp ? ENROLLMENT_WRITES.reenrollComp : ENROLLMENT_WRITES.reenrollPaid;`;
+        const write = `{ where: { id, ...w.where }, data: { ...w.data(), endedAt: null } }`;
+        expect(declaredEnrollmentWrite(write, pick)).toBe(true);
+        expect(declaredEnrollmentWrite(write, `const w = comp ? ENROLLMENT_WRITES.reenrollComp : rawWrite;`)).toBe(false);
+        expect(declaredEnrollmentWrite(write)).toBe(false);
+        expect(declaredEnrollmentWrite(`{ where: { id, ...w.where }, data: { ...x.data() } }`, pick)).toBe(false);
+        expect(declaredEnrollmentWrite(`{ where: { id, ...w.where }, data: { ...w.data(), status: "ACTIVE" } }`, pick)).toBe(false);
     });
 
     it('the household-status helper is the one OrgMembership status writer it claims to be', () => {
