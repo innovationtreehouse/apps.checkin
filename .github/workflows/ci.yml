@@ -753,9 +753,8 @@ jobs:
           python-version: '3.11'
 
       # client.py / badge.py import nacl and requests at module scope, so the
-      # tests can't run without them. evdev is NOT installed: it needs real
-      # input devices, and the client imports it lazily inside the USB-scanner
-      # listener, which no test exercises.
+      # tests can't run without them. Tests replace evdev with a fake, since it
+      # needs real input devices.
       - name: Install dependencies
         if: needs.changes.outputs.client == 'true'
         run: pip install -r client/requirements.txt

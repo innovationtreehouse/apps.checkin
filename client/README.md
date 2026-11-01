@@ -135,8 +135,49 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 - `generate_keys.py` — One-time Ed25519 keypair generator
 - `kiosk.sh` — Pi startup script (updates the checkout, launches client.py, reads port from config, opens Chromium)
 - `migrate.sh` — One-time migration script for Pis on the old standalone `checkin-client` repo
+- `Dockerfile`, `healthcheck.py` — The container image and its local health check (see below)
 - `config.json` — Runtime configuration (not committed)
 - `client.key` — Ed25519 private key (not committed)
+
+## Container image
+
+`Dockerfile` builds the client alone, for arm64 and a 64-bit OS. To change the
+platform, change the one `ARG PLATFORM` at the top. Chromium stays on the host, and
+the image holds no key or config.
+
+```bash
+docker build -t kiosk-client client/
+```
+
+```bash
+docker run --name kiosk-client --rm --network host \
+  --read-only --tmpfs /tmp --cap-drop ALL \
+  --device-cgroup-rule 'c 13:* rm' -v /dev/input:/dev/input:ro \
+  --group-add <input gid> --user <kiosk uid> \
+  -v /var/lib/kiosk:/data \
+  -v /etc/kiosk/client.key:/data/client.key:ro \
+  -v /etc/kiosk/config.json:/data/config.json:ro \
+  -v /etc/localtime:/etc/localtime:ro \
+  --log-driver journald \
+  kiosk-client
+```
+
+The container runs from `/data`, so `outbox.db` and the marker files live in the
+host's `/var/lib/kiosk`. `private_key_path` and `outbox_path` in the config must be
+relative or point under `/data`. The client asks for a Chromium restart by writing
+`/var/lib/kiosk/.chromium-bounce`; a host loop acts on the file and deletes it.
+
+**Health check.** A host script runs this and reads the exit code:
+
+```bash
+docker exec kiosk-client python /app/healthcheck.py
+```
+
+It exits 0 when the proxy answers, the database opens and the scanner is held, and
+otherwise prints what failed to stderr. It never contacts the server. Retry for
+about a minute after a start: the proxy binds only after the first roster fetch,
+which takes up to 10 seconds with the server down, so failures until then are
+normal. A missing `evdev` or scanner, or an empty `usb_device`, never passes.
 
 ## Update channel
 
