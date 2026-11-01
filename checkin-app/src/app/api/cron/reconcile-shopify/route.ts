@@ -26,15 +26,15 @@ async function isolated<T>(name: string, failureName: string, step: () => Promis
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
- * 09:00 UTC sync (infra#129), so it reads a mirror that was just refreshed.
+ * 09:00 UTC sync, so it reads a mirror that was just refreshed.
  *
  * DAILY, NOT HOURLY, and the cadence is a scale-to-zero constraint, not a taste
  * call: checkin and shopify_read share one Aurora cluster that auto-pauses at
  * min-capacity 0 after ~5 minutes with zero connections and zero queries. Every
  * run of this job opens connections and queries, i.e. WAKES that cluster — which
- * is exactly why infra#129 dropped s-read from hourly to daily. Running this
- * hourly would re-impose the cost that PR removes, and would re-read an unchanged
- * mirror 23 times out of 24. Sitting just behind s-read's sync piggybacks on the
+ * is exactly why s-read syncs daily. Running this hourly would pay that wake
+ * cost every hour, and would re-read an unchanged mirror 23 times out of 24.
+ * Sitting just behind s-read's sync piggybacks on the
  * wake s-read already causes (worst case one extra resume, absorbed by the
  * aurora-resume-retry extension — this is a background job, latency is free).
  *
