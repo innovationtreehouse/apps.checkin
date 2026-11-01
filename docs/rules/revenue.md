@@ -388,7 +388,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts
-  as part of that household.  [Decision — owner; *Principle: fail closed*]
+  as part of that household. This covers a gift recorded without a receipt and a
+  donor typed in on a receipt.  [Decision — owner, 2026-10-31; *Principle: fail closed*]
+
+- Someone uploading a receipt may name themselves as the donor by choosing "I am
+  the donor". The person who decides the gift is the independent check.
+  [Decision — owner, 2026-11-01]
 
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]
