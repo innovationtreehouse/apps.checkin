@@ -223,6 +223,7 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T4 activate(payment)', from: 'PENDING_UNPAID', to: 'ACTIVE', actor: 'shopify-webhook', guardSite: 'activateEnrollment.ts — CAS status:PENDING; release CAS held:{not:null}→null (fires on any PENDING)' },
     { event: 'T5 approve', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'admin', guardSite: 'finance-ops/payment-plans/route.ts — CAS req:true,status:PENDING; held→null WITHOUT +1, stamping seatTakenWithoutSaleAt only when a hold was held (T11); COI guard' },
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard' },
+    { event: 'T6f deny(no hold)', from: 'PENDING_HOLD_FAILED', to: 'PENDING_UNPAID', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,held:null,status:PENDING; clears req, stamps nothing, denial kept in the audit row; COI guard' },
     { event: 'T7 non-payment kick', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/pending-participants/route.ts — delete(); query filters req:false,den:null' },
     { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 remove', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete() = atomicity boundary; +1 iff held' },

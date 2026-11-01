@@ -374,9 +374,12 @@ Things the app takes as true because they are handled outside it.
 
 - A request whose seat hold failed waits for a board member to take the seat off
   sale by hand. It can still be approved or denied without one, deliberately: the
-  queue offers each as a named override behind a confirmation that states the
+  queue offers each as a named action behind a confirmation that states the
   oversell risk. A failed store call is the organisation's fault, and stranding
   the family is the worse outcome.  [Decision — deliberate limit]
+
+- Denying a request whose seat hold failed returns the enrollment to unpaid. The
+  family goes back to paying normally, and the denial is kept in the audit log.  [Decision — Owner ruling, 2026-11-01]
 
 ### Access to program information
 

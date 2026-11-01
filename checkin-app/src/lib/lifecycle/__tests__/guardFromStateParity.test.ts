@@ -64,6 +64,7 @@ const GUARDS: GuardSite[] = [
     { file: 'app/api/programs/[id]/request-payment-plan/route.ts', machine: 'enrollment', from: 'PENDING_HELD_DENIED', edge: ['PENDING_HELD_DENIED', 'PENDING_HELD'], mode: 'spread' },
     { file: 'app/api/finance-ops/payment-plans/route.ts', machine: 'enrollment', from: 'PENDING_HELD', edge: ['PENDING_HELD', 'ACTIVE'], mode: 'spread' },
     { file: 'app/api/finance-ops/payment-plans/refuse/route.ts', machine: 'enrollment', from: 'PENDING_HELD', edge: ['PENDING_HELD', 'PENDING_HELD_DENIED'], mode: 'spread' },
+    { file: 'app/api/finance-ops/payment-plans/refuse/route.ts', machine: 'enrollment', from: 'PENDING_HOLD_FAILED', edge: ['PENDING_HOLD_FAILED', 'PENDING_UNPAID'], mode: 'spread' },
     { file: 'app/api/finance-ops/payment-plans/manual-hold/route.ts', machine: 'enrollment', from: 'PENDING_HOLD_FAILED', edge: ['PENDING_HOLD_FAILED', 'PENDING_HELD'], mode: 'spread' },
 
     // ── membership (OrgMembershipProcess) ──
