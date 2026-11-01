@@ -1,4 +1,4 @@
-import type { Prisma } from "../../generated/prisma/client";
+import type { OrgItem, Prisma } from "../../generated/prisma/client";
 import { isRecordNotFoundError, type Db } from "../db/index";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
@@ -52,6 +52,29 @@ export async function applyQtyChangeIn(
   });
 
   return newQty;
+}
+
+/** Log a copy of a removed org item, inside the transaction that removed it, so its count can be recovered. */
+export async function logRemovedOrgItem(
+  tx: Prisma.TransactionClient,
+  removed: OrgItem,
+  userId: number,
+  username?: string,
+): Promise<void> {
+  await tx.inventoryLog.create({
+    data: {
+      orgId: removed.orgId, userId, username: username ?? null, changedAt: new Date(), changeType: "manual", gtin13: removed.gtin13,
+      fieldChanged: "deleted",
+      valueBefore: JSON.stringify({
+        existingQuantity: removed.existingQuantity,
+        desiredQuantity: removed.desiredQuantity,
+        locationId: removed.locationId,
+        backstockLocationId: removed.backstockLocationId,
+      }),
+      valueAfter: null,
+      receiptId: null,
+    },
+  });
 }
 
 export function createInventoryService({
@@ -193,20 +216,7 @@ export function createInventoryService({
           if (isRecordNotFoundError(err)) throw new ServiceError(404, "Organization item not found");
           throw err;
         }
-        await tx.inventoryLog.create({
-          data: {
-            orgId, userId, username: username ?? null, changedAt: new Date(), changeType: "manual", gtin13,
-            fieldChanged: "deleted",
-            valueBefore: JSON.stringify({
-              existingQuantity: removed.existingQuantity,
-              desiredQuantity: removed.desiredQuantity,
-              locationId: removed.locationId,
-              backstockLocationId: removed.backstockLocationId,
-            }),
-            valueAfter: null,
-            receiptId: null,
-          },
-        });
+        await logRemovedOrgItem(tx, removed, userId, username);
       });
     },
 

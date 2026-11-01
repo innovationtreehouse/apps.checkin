@@ -5,6 +5,7 @@ import type { ProvisionalResolutionRepository } from "../repositories/provisiona
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
 import { methodsFor, type QuantityMethod } from "../mergeConflictMethods";
+import { logRemovedOrgItem } from "./inventoryService";
 import {
   assertProvisionalTransition,
   assertMergeConflictTransition,
@@ -394,9 +395,10 @@ export function createProvisionalItemService({
         }
 
         if (provisionalRow) {
-          await tx.orgItem.delete({
+          const removed = await tx.orgItem.delete({
             where: { orgGtin: { orgId, gtin13: conflict.provisionalGtin13 } },
           });
+          await logRemovedOrgItem(tx, removed, userId, username);
         }
 
         await tx.inventoryLog.create({
