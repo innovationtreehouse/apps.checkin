@@ -1,8 +1,9 @@
 /**
  * Integration test for the stale-run reaper. Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  */
-import { it, expect, beforeEach, afterAll } from "vitest";
+import { it, expect, vi, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
+import { withAdvisoryLock } from "../../src/sync/locks.js";
 import { reapStaleRuns } from "../../src/sync/run.js";
 import { SyncKind, SyncStatus } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
@@ -45,5 +46,25 @@ describeDb("reapStaleRuns", () => {
   it("is a no-op when nothing is stale", async () => {
     await mkRun(SyncStatus.RUNNING, new Date());
     expect(await reapStaleRuns(prisma)).toBe(0);
+  });
+
+  it("pushes no beat while another session holds the store's run lock, and pushes one once it is free", async () => {
+    const sink = vi.fn();
+    const staleStart = new Date(Date.now() - 30 * 60 * 1000);
+    const staleRun = () => mkRun(SyncStatus.RUNNING, staleStart);
+
+    await staleRun();
+    await withAdvisoryLock(`sync_run:${STORE}`, async () => {
+      expect(await reapStaleRuns(prisma, sink)).toBe(1);
+    });
+    expect(sink).not.toHaveBeenCalled();
+
+    // Proves the silence above came from the lock, not from a sink that never fires.
+    await staleRun();
+    expect(await reapStaleRuns(prisma, sink)).toBe(1);
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink).toHaveBeenCalledWith(
+      expect.objectContaining({ storeId: STORE, status: SyncStatus.ABANDONED, finishedAt: staleStart }),
+    );
   });
 });
