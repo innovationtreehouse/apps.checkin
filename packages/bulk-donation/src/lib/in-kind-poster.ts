@@ -3,6 +3,8 @@
 // clearing account, which the drain matches instead. Claim, call, settle, as the other lanes.
 import { dollarsToCents } from "@checkin/money";
 import {
+  MAX_CONSECUTIVE_FAILURES,
+  MAX_POST_ATTEMPTS,
   STALE_CLAIM_MS,
   SWEEP_DAYS,
   appKeyOf,
@@ -80,6 +82,8 @@ export interface Settlement {
   note: string | null;
   entries: Entry[];
   booked?: { totalCents: number; txnDate: string };
+  /** The post failed at MAX_POST_ATTEMPTS, so the gift went to finance. */
+  exhausted?: boolean;
 }
 
 /** Everything one run reads once. */
@@ -101,7 +105,7 @@ export interface Run {
   settings: DonationSettings;
 }
 
-export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "failed" | "waiting";
+export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "exhausted" | "failed" | "waiting";
 
 const POSTABLE: readonly string[] = [QB_MATCH_STATE.POST_FAILED];
 /** The states finance resolves: book it, skip it, or match it by id. */
@@ -270,8 +274,20 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
   }
 }
 
-/** Saves the outcome only while the claim is still this post's; a lost claim after a create leaves finance a note. */
-async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement): Promise<boolean> {
+/**
+ * Counts a failed post on the gift, and hands the gift to finance at the limit. A run that could not
+ * read the closing date creates nothing, so its failures say nothing about the gift and do not count.
+ */
+async function countFailure(tx: DbOrTx, run: Run, postingId: number, attemptsBefore: number, s: Settlement): Promise<Settlement> {
+  if (s.state !== QB_MATCH_STATE.POST_FAILED || !run.close.ok) return s;
+  const attempts = attemptsBefore + 1;
+  await tx.inKindPosting.update({ where: { id: postingId }, data: { qbPostAttempts: attempts } });
+  if (attempts < MAX_POST_ATTEMPTS) return s;
+  return { ...s, state: QB_MATCH_STATE.NEEDS_FINANCE, exhausted: true, note: `The app stopped trying after ${attempts} failed attempts: ${s.note}` };
+}
+
+/** Saves the outcome only while the claim is still this post's, and returns what it saved; a lost claim after a create leaves finance a note. */
+async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement): Promise<Settlement | null> {
   return db.$transaction(async (tx) => {
     const posting = await lockPosting(tx, run.orgId, gift.source, gift.id);
     const created = s.entries.find((e) => e.entity === "JournalEntry" && s.state === QB_MATCH_STATE.CREATED);
@@ -279,10 +295,11 @@ async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement
       if (created && posting) {
         await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote: `QuickBooks JournalEntry ${created.id} was created by a post that lost its claim; void it or link it` } });
       }
-      return false;
+      return null;
     }
-    await writeSettlement(tx, run.orgId, gift, posting.id, s, run.actor, { from: QB_MATCH_STATE.POSTING });
-    return true;
+    const counted = await countFailure(tx, run, posting.id, posting.qbPostAttempts, s);
+    await writeSettlement(tx, run.orgId, gift, posting.id, counted, run.actor, { from: QB_MATCH_STATE.POSTING });
+    return counted;
   });
 }
 
@@ -320,17 +337,19 @@ export async function writeSettlement(
 export async function postGift(run: Run, source: GiftToBook["source"], id: number, now = new Date()): Promise<InKindPostOutcome | "not_ready" | "busy"> {
   const claimed = await claim(run, source, id, now);
   if (typeof claimed === "string") return claimed;
-  let s = await call(run, claimed.gift, claimed.txnDate, claimed.gate, claimed.attemptedBefore);
+  const s = await call(run, claimed.gift, claimed.txnDate, claimed.gate, claimed.attemptedBefore);
+  let saved: Settlement | null;
   try {
-    if (!(await settle(run, claimed.gift, now, s))) return "waiting";
+    saved = await settle(run, claimed.gift, now, s);
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
     const ids = s.entries.map((e) => `${e.entity} ${e.id}`).join(", ");
     const voidIt = s.state === QB_MATCH_STATE.CREATED ? "; the app's entry needs voiding" : "";
-    s = needsFinance(`QuickBooks ${ids} is already held by another gift${voidIt}`);
-    if (!(await settle(run, claimed.gift, now, s))) return "waiting";
+    saved = await settle(run, claimed.gift, now, needsFinance(`QuickBooks ${ids} is already held by another gift${voidIt}`));
   }
-  switch (s.state) {
+  if (!saved) return "waiting";
+  if (saved.exhausted) return "exhausted";
+  switch (saved.state) {
     case QB_MATCH_STATE.CREATED:
       return "posted";
     case QB_MATCH_STATE.MATCHED:
@@ -430,6 +449,7 @@ export interface InKindDrainCounts {
   matched: number;
   unbooked: number;
   needs_finance: number;
+  exhausted: number;
   failed: number;
   waiting: number;
   capped: boolean;
@@ -442,7 +462,7 @@ export interface InKindDrainCounts {
  * The in-kind drain, run from the daily cron. It runs only with QuickBooks bound and every in-kind
  * role in the books map, then switches the lane on (once, for good) and reads the books closing
  * date once for the run. Each gift waiting on nothing but booking posts, oldest first, until the
- * per-run create limit or the failure streak; the orphan sweep runs last.
+ * per-run create limit or the failure streak, which alerts finance; the orphan sweep runs last.
  */
 export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | "unconfigured"> {
   const posting = getInKindQbPosting();
@@ -459,13 +479,14 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open, settings };
 
   const counts: InKindDrainCounts = {
-    posted: 0, matched: 0, unbooked: 0, needs_finance: 0, failed: 0, waiting: 0,
+    posted: 0, matched: 0, unbooked: 0, needs_finance: 0, exhausted: 0, failed: 0, waiting: 0,
     capped: false, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
   const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
     counts,
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
-    failures: ["failed"],
+    // A gift's last failure is still a failure: an outage that exhausts gifts must not clear the streak.
+    failures: ["failed", "exhausted"],
     post: async (gift) => {
       const result = await postGift(run, gift.source, gift.id, new Date());
       return result === "not_ready" || result === "busy" ? "waiting" : result;
@@ -473,6 +494,13 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   });
   counts.capped = stop?.by === "count";
   counts.stoppedAfterFailures = stop?.by === "failures";
+  if (stop?.by === "failures") {
+    try {
+      await posting.drainStopped({ orgId, failures: MAX_CONSECUTIVE_FAILURES, remaining: stop.remaining });
+    } catch (err) {
+      console.warn("[bulk-donation] in-kind drain stopped on its failure streak, and the finance alert failed", err);
+    }
+  }
   // After the posts, so a gift this run linked to its own entry is not reported as a stray.
   counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
   return counts;

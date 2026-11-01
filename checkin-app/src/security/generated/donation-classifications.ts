@@ -208,6 +208,7 @@ export const classifications = {
         matchState: 'internal',
         claimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
+        qbPostAttempts: 'internal',
         qbNote: 'internal',
         bookedTotalCents: 'internal',
         bookedTxnDate: 'internal',
