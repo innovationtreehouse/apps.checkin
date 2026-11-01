@@ -13,6 +13,9 @@
  * is thanked for renewing, not welcomed as if it were new.
  */
 import { activate, activateByProcessId, certifyPaymentPlan } from '@/lib/membership/payment';
+import { logBackendError } from '@/lib/logger';
+import { openPersonBgForNewMember } from '@/lib/membership/personBgTriggers';
+import { openPersonAgreementForNewMember } from '@/lib/membership/personAgreementTriggers';
 
 jest.mock('@/lib/prisma', () => {
     const mock = {
@@ -29,7 +32,9 @@ jest.mock('@/lib/prisma', () => {
     return { __esModule: true, default: mock };
 });
 jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
-jest.mock('@/lib/logger', () => ({ logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() } }));
+jest.mock('@/lib/logger', () => ({ logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() }, logBackendError: jest.fn() }));
+jest.mock('@/lib/membership/personBgTriggers', () => ({ openPersonBgForNewMember: jest.fn() }));
+jest.mock('@/lib/membership/personAgreementTriggers', () => ({ openPersonAgreementForNewMember: jest.fn() }));
 jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/emailRecipients', () => ({ emailHouseholdLeads: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
@@ -122,6 +127,50 @@ it('thanks a RENEWAL household for renewing instead of welcoming it', async () =
     await activateByProcessId(PROCESS_ID, 'order-4', { appliesToYear: 2026 });
 
     expect(emailHouseholdLeads.mock.calls[0][1]).toBe('membership.renewed');
+});
+
+describe('work after the payment commits', () => {
+    const openBg = openPersonBgForNewMember as jest.Mock;
+    const openAgreement = openPersonAgreementForNewMember as jest.Mock;
+
+    beforeEach(() => {
+        openBg.mockResolvedValue(undefined);
+        openAgreement.mockResolvedValue(undefined);
+    });
+
+    it('a failed trigger leaves the activation reported, logs it, and still runs the next trigger', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        });
+        const failure = new Error('trigger failed');
+        openBg.mockRejectedValue(failure);
+
+        const { outcome } = await activateByProcessId(PROCESS_ID, 'order-5', { appliesToYear: 2026 });
+
+        expect(outcome).toBe('active');
+        expect(openAgreement).toHaveBeenCalledWith(3, expect.any(Date));
+        expect(logBackendError).toHaveBeenCalledWith(failure, expect.stringContaining('background-check trigger'), { processId: PROCESS_ID, householdId: 3 });
+    });
+
+    it('a board certify succeeds when a trigger fails', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        });
+        openAgreement.mockRejectedValue(new Error('trigger failed'));
+
+        await expect(activate(PROCESS_ID, { via: 'manual', actorId: 1 })).resolves.toBeDefined();
+    });
+
+    it('a failed raise on a DENIED household still throws, so the webhook redelivers', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+            id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
+        });
+        household.status = 'DENIED';
+        const failure = new Error('raise failed');
+        raiseDeniedHouseholdActivity.mockRejectedValueOnce(failure);
+
+        await expect(activateByProcessId(PROCESS_ID, 'order-6', { appliesToYear: 2026 })).rejects.toBe(failure);
+    });
 });
 
 it('a manual (board) activation is exempt from the membership-item check', async () => {
