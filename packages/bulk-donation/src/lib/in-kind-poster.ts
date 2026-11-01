@@ -82,6 +82,8 @@ export interface Settlement {
   note: string | null;
   entries: Entry[];
   booked?: { totalCents: number; txnDate: string };
+  /** This post's own call created the entry; a key match or lookup settles CREATED without it. */
+  createdNow?: boolean;
   /** The post failed at MAX_POST_ATTEMPTS, so the gift went to finance. */
   exhausted?: boolean;
 }
@@ -226,7 +228,7 @@ function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): 
   switch (r.kind) {
     case "found":
     case "created":
-      return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: r.id }], booked: { totalCents: gift.totalCents, txnDate: r.kind === "found" ? r.txnDate : txnDate } };
+      return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: r.id }], booked: { totalCents: gift.totalCents, txnDate: r.kind === "found" ? r.txnDate : txnDate }, createdNow: r.kind === "created" };
     case "ambiguous":
       return needsFinance(`The app may already have booked this gift: JournalEntries ${r.ids.join(", ")} carry its key`);
     case "closed":
@@ -286,14 +288,15 @@ async function countFailure(tx: DbOrTx, run: Run, postingId: number, attemptsBef
   return { ...s, state: QB_MATCH_STATE.NEEDS_FINANCE, exhausted: true, note: `The app stopped trying after ${attempts} failed attempts: ${s.note}` };
 }
 
-/** Saves the outcome only while the claim is still this post's, and returns what it saved; a lost claim after a create leaves finance a note. */
+/** Saves the outcome only while the claim is still this post's, and returns what it saved; a lost claim after a create the gift does not hold leaves finance a note. */
 async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement): Promise<Settlement | null> {
   return db.$transaction(async (tx) => {
     const posting = await lockPosting(tx, run.orgId, gift.source, gift.id);
-    const created = s.entries.find((e) => e.entity === "JournalEntry" && s.state === QB_MATCH_STATE.CREATED);
     if (posting?.matchState !== QB_MATCH_STATE.POSTING || posting.claimedAt?.getTime() !== claimedAt.getTime()) {
+      const created = s.createdNow ? s.entries.find((e) => e.entity === "JournalEntry") : undefined;
       if (created && posting) {
-        await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote: `QuickBooks JournalEntry ${created.id} was created by a post that lost its claim; void it or link it` } });
+        const held = await tx.inKindBooking.findFirst({ where: { orgId: run.orgId, source: gift.source, giftId: gift.id, qbEntity: created.entity, qbTxnId: created.id } });
+        if (!held) await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote: `QuickBooks JournalEntry ${created.id} was created by a post that lost its claim; void it or link it` } });
       }
       return null;
     }
