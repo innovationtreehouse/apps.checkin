@@ -158,6 +158,13 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
   tiers run against that digest with the same release's server code. A failure
   leaves the tag where it is and fails the run visibly. A forced update skips this:
   it is for a door already wrong, and two people approve it.
+- **Publishing is its own job, with its own approval (owner, 2026-11-01).** It runs
+  after the deploy job in the `production` environment, and pushes, tests and moves
+  the tag as one job, so each release takes one extra approval. Publishing needs an
+  approved environment because the role trusts only approved environments. Keeping
+  it apart from the deploy job means a kiosk failure does not fail the server deploy,
+  and a retry reruns only this job. Folding it into the deploy job would save the
+  approval and lose both of those.
 - **The tag moves after the prod deploy.** The existing protocol hold still
   protects any skew. The server must keep accepting the protocol of a kiosk up to
   a day behind, which the presence rollout already requires.
