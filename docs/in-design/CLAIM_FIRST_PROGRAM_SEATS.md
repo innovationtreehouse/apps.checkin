@@ -73,7 +73,7 @@ Nothing that worked is lost for walk-up buyers: a store purchase has never enrol
 
 **One fix is needed.** An anonymous shopper who presses Enroll is sent to `/` and loses the program (`useProgramEnrollment.ts:181`, also `:202` and `:257`). They must go to `/signin?callbackUrl=/programs/<id>`, which the sign-in page already honors. Without this fix the redirect from the store is a dead end. Open PR #2804 changes first sign-in, so it may need rebasing.
 
-**How long a claim lasts: with no automatic end (owner ruling: people talk to people).** Automating it may come someday, not soon. One existing exception is open: the grace sweep removes a denied family's claim automatically, if a grace period is set and the job is scheduled. An owner note of 2026-10-12 says scheduling it wasn't needed. The rules say overdue is a classification, not an action (`programs.md:164`), and the warnings at days 1, 3 and 6, the Board digest and the off-sale reminder all stay. Check that `cron/pending-participants` is actually scheduled: its schedule lives outside this repo, and an earlier note says only two jobs were scheduled. If it isn't, nobody is being warned, which matters more under this design.
+**How long a claim lasts: with no automatic end (owner ruling: people talk to people).** Automating it may come someday, not soon. The owner confirmed on 2026-11-01 that production runs no grace period and no automation removes a family, so the grace sweep does nothing there; its code goes after a keep. A family denied after a failed hold goes back on the unpaid reminders and the Board digest, which makes the scheduling check below more important. The rules say overdue is a classification, not an action (`programs.md:164`), and the warnings at days 1, 3 and 6, the Board digest and the off-sale reminder all stay. Check that `cron/pending-participants` is actually scheduled: its schedule lives outside this repo, and an earlier note says only two jobs were scheduled. If it isn't, nobody is being warned, which matters more under this design.
 
 The new cost is that an unpaid claim now really does block the last seat from everyone, where before a store buyer could overtake it. That is the point of the decision, and section 6 measures it.
 
@@ -108,9 +108,9 @@ Rollout step 6 stops looking at `inventoryHeldAt`, which changes how two kinds o
 | Row today | Who sees it today | After the merge | Risk |
 |---|---|---|---|
 | Hold failed: PENDING, no hold, request flag set, no denial | Holds queue | An ordinary request | None; it joins the payment-plan queue |
-| **Denied with no hold:** PENDING, no hold, no request flag, denial stamped (invariant I4 broken) | Only the nightly report; `classify()` returns null | "Denied" | **The grace sweep deletes the enrollment on its first run if the denial is older than the grace period.** Its filter requires a hold today, which is the only thing protecting these rows (`cron/scholarship-grace-expiry/route.ts:38`). A family could lose a place without anyone deciding it |
+| **Denied with no hold:** PENDING, no hold, no request flag, denial stamped (invariant I4 broken) | Only the nightly report; `classify()` returns null | "Denied" | **If a grace period were ever set, the grace sweep would delete the enrollment on its first run when the denial is older than that period.** Its filter requires a hold today (`cron/scholarship-grace-expiry/route.ts:38`). Production runs no grace period, so the risk is latent until the sweep is removed. Either way, these rows sit in no queue and nobody is reminded about them |
 
-The second kind is what the holds screen's deny-without-a-hold button writes today (proposal: "denying a scholarship request whose seat hold failed"). The fix for that button is not settled or shipped. Whichever way it lands, it doesn't touch rows already written, so they still need clearing here.
+The second kind is what the holds screen's deny-without-a-hold button writes today (proposal: "denying a scholarship request whose seat hold failed"). The fix is settled (owner ruling, 2026-11-01) but not shipped: denying a hold-failed request returns the row to unpaid and keeps the denial in the audit log, and the normal deny refuses a hold-failed row. A row denied after the fix stays unpaid through the state merge. Only rows written before the fix need the clearing step.
 
 Before step 6, in order:
 
@@ -118,7 +118,7 @@ Before step 6, in order:
 2. A person resolves every denied-with-no-hold row, using the nightly `lifecycle-reconcile` report or a production query: keep the family on the normal path, or remove them with a stated decision.
 3. **Gate:** step 6 does not merge until `scanLifecycleViolations` reports no enrollment violations in production. Other off-diagram rows have the same problem: the merged states would name them without anyone having looked.
 
-The same rows must be cleared before that proposal's fix if it ships first, since it exposes them to the same sweep. Its step 0 and step 2 here are the same work, done once.
+That proposal's step 0 and step 2 here are the same work, done once.
 
 ## 5. Refunds
 
@@ -256,6 +256,7 @@ Per `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`. Each line is one PR unle
 - **`program/capacity.ts`:** `countStockTakenSeats` and `seatReturnDelta`.
 - **`lifecycleDrift.ts`:** the repair for an active row with a hold.
 - **Program create:** the public item, for new programs.
+- **Grace sweep:** `cron/scholarship-grace-expiry`, its Board setting `scholarshipDenialGraceDays` and the grace rules. It could also be removed separately sooner; nothing here depends on it.
 - **Screens and routes:** Revenue Ops > Unconfirmed Shopify stock, Shopify Hold Reconciliation, `payment-plans/manual-hold`, the capped/uncapped warning.
 - **Enrollment states:** `PENDING_HELD` and `PENDING_HOLD_FAILED` become one "requested" state, and `PENDING_HELD_DENIED` becomes "denied", which no longer looks at a hold. Six states become five, and invariants I1 to I4 mostly fall away. This runs only after the section 4 gate.
 - **Columns:** `Program.shopifyStockCarry`, `PendingWrite`, `Unconfirmed`, `Parked`, `PushNeededAt`, `LeaseUntil`, `LeaseToken`; `ProgramParticipant.inventoryHeldAt`, `seatTakenWithoutSaleAt`. `productHiddenAt` and the switch column can go with them.
@@ -294,7 +295,7 @@ Start from `ProgImpl_main.tla`. The `MCCand_closed_*` configs already cover a cl
 3. **Cutover.** Start with store buyers holding no row, a pending write in flight, a parked write, and a late paid webhook on the public item. Find what over-enrollment appears if the Board skips clearing unclaimed orders. This is the design's main remaining risk.
 4. **Turn-off, as a normal step.** Run the window with programs mid-sale: claims, comps, holds, denials, withdrawals and paid removals, then turn it off. After the re-count, `StockMatches` must hold, including a pending write older than the 23-hour resend limit, a re-count racing a seat change, an off-sale date passing inside the window, and a later sweep hiding a re-listed item. Also later seat returns for rows stamped in the window (each exactly once), and how many window claims can end up over-promised once the store reopens. Then run on after turn-off, and a second window on top of the first.
 5. **Switch race.** A push that passed the guard just before the switch, and a hide that fails and retries while a store sale lands.
-6. **State merge.** Start with denied-with-no-hold and other off-diagram rows present, run the merge and the grace sweep, and confirm the gate is what prevents a removal nobody decided. Check again with the proposed declared denied state shipped first.
+6. **State merge.** Start with denied-with-no-hold and other off-diagram rows present, run the merge and the grace sweep, and confirm the gate is what prevents a removal nobody decided.
 7. **Freed seat.** Paid-place removal puts the seat back on sale in the app, against `NoOverEnroll` and the off-sale rule.
 
 Not worth modeling: Google sign-in, the redirects, or the price sync.
@@ -303,7 +304,8 @@ Not worth modeling: Google sign-in, the redirects, or the price sync.
 
 - The hidden item's cart link: no recorded test result.
 - A Shopify redirect firing on a draft item's path.
-- Whether `cron/pending-participants` is scheduled in production.
+- Whether `cron/pending-participants` is scheduled in production. If it isn't, nobody sees unpaid claims, including families denied after a failed hold.
+- How many hold-failed and denied-with-no-hold rows exist in production.
 - How many programs are on sale, or how many unclaimed orders exist, so the hand work at each end of the window is not sized. No production data was read.
 - Line references are to `8f77baf1c`; open PRs #2912, #2913 and #2804 touch nearby code.
 
