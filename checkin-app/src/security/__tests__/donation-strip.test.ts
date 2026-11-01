@@ -159,6 +159,7 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             state: 'decision',
             waitingOn: ['decision'],
             inventorySourceKey: null,
+            inventoryLoadFailureReason: null,
             lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null }],
             events: [{ id: 8, eventType: 'IN_KIND_MONEY_RECEIVED', actorUsername: null, occurredAt: '2026-10-02T00:00:00.000Z', payload: null }],
         };
