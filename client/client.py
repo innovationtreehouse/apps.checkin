@@ -14,6 +14,7 @@ import email.utils
 import json
 import os
 import secrets
+import sqlite3
 import subprocess
 import sys
 import time
@@ -112,6 +113,7 @@ log = logging.getLogger("kiosk")
 # layout. Overridable per-Pi via config.json.
 DEFAULT_KIOSK_PATH = "/attendance/current?mode=kiosk"
 DEFAULT_OUTBOX_PATH = "outbox.db"
+LOCAL_HEALTH_PATH = "/local-health"
 
 # Self-update loop guard (see version_poller): remote head we already exited
 # for. Relative path -- kiosk.sh cds into client/ before launching client.py.
@@ -334,6 +336,7 @@ class AttendanceState:
         self.last_attendance_ok = None
         self.attendance_auth_fail = False
         self.scanner_ok = True
+        self.scanner_held = False    # True only while this process holds the grab
         # Local presence view: the direction the kiosk displays is the intent
         # of record. Seeded from the last attendance fetch; updated on each
         # badge so offline scans still carry IN/OUT.
@@ -649,6 +652,9 @@ class KioskHandler(BaseHTTPRequestHandler):
     disable_blackout = False
 
     def do_GET(self):
+        if self.path == LOCAL_HEALTH_PATH:
+            self._serve_local_health()
+            return
         if self.state is not None:
             self.state.last_browser_seen = time.monotonic()
         if self.path == "/":
@@ -662,6 +668,23 @@ class KioskHandler(BaseHTTPRequestHandler):
     def do_PUT(self): self._proxy_request("PUT")
     def do_DELETE(self): self._proxy_request("DELETE")
     def do_PATCH(self): self._proxy_request("PATCH")
+
+    def _serve_local_health(self):
+        """Answers from this process alone: healthcheck.py's probe must never
+        reach the server, or an outage would roll back a good image."""
+        try:
+            self.outbox.pending_count()
+            database_ok = True
+        except sqlite3.Error as e:
+            log.error(f"Local health: database check failed: {e}")
+            database_ok = False
+        checks = {"database": database_ok, "scanner": self.state.scanner_held}
+        body = json.dumps(checks).encode()
+        self.send_response(200 if all(checks.values()) else 503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_wrapper(self):
         html = f"""<!DOCTYPE html>
@@ -1123,6 +1146,7 @@ def usb_scanner_listener(backend, state, outbox, device_path):
         import evdev
     except ImportError:
         log.warning("evdev not installed — USB scanner disabled")
+        state.scanner_ok = False
         return
 
     def find_device(pattern):
@@ -1156,6 +1180,7 @@ def usb_scanner_listener(backend, state, outbox, device_path):
             dev.grab()
             log.info(f"Listening on: {dev.name} ({dev.path})")
             state.scanner_ok = True
+            state.scanner_held = True
         else:
             log.error(f"No device found matching: {device_path}")
             state.scanner_ok = False
@@ -1178,6 +1203,7 @@ def usb_scanner_listener(backend, state, outbox, device_path):
                 dev.grab()
                 log.info(f"Re-grabbed scanner: {dev.name} ({dev.path})")
                 state.scanner_ok = True
+                state.scanner_held = True
             except Exception as regrab_err:
                 log.warning(f"Scanner re-grab failed: {regrab_err}")
                 dev = None
@@ -1203,6 +1229,7 @@ def usb_scanner_listener(backend, state, outbox, device_path):
                     buffer += KEY_MAP[key_event.scancode]
         except Exception as e:
             state.scanner_ok = False
+            state.scanner_held = False
             log.warning(f"Scanner lost ({e}); re-grab in {backoff:.0f}s")
             try:
                 dev.ungrab()
@@ -1610,7 +1637,10 @@ def version_poller(backend, state, outbox, interval=60, state_path=SELF_UPDATE_S
                 state.push_event({"reload": True})
                 initial_server_version = sv  # Update to prevent spam
 
-        # 2. Check Client Version Update
+        # 2. Check Client Version Update. In a container the host updater owns
+        # this, and there is no git or checkout to look at.
+        if os.environ.get("KIOSK_CONTAINER"):
+            continue
         try:
             fetch_update_refs()
 
