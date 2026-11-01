@@ -116,6 +116,44 @@ describe("buildDepositLines", () => {
     expect(sum(lines)).toBe(-1000);
   });
 
+  it.each([
+    { unitsLeft: 2, weight: 33 },
+    { unitsLeft: 1, weight: 67 },
+  ])("rounds a 100-cent line of 3 units to $weight cents with $unitsLeft left", ({ unitsLeft, weight }) => {
+    const lines = buildDepositLines({
+      payoutNetCents: -100,
+      txns: [txn("refund", "O1", -100)],
+      orderLines: [{ ...line("O1", "V-shirt", 100, 3, 200), currentQuantity: unitsLeft }],
+      categories,
+    });
+    expect(find(lines, "income", 7)).toBe(-weight);
+    expect(find(lines, "charge_remainder")).toBe(-(100 - weight));
+  });
+
+  it("gives no refund weight to a mirror row with more units now than sold", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -2000,
+      txns: [txn("refund", "O1", -2000)],
+      orderLines: [{ ...line("O1", "V-shirt", 1000, 3), currentQuantity: 5 }, { ...line("O1", "V-camp", 2000), currentQuantity: 0 }],
+      categories,
+    });
+    expect(find(lines, "income", 9)).toBe(-2000);
+    expect(find(lines, "income", 7)).toBeUndefined();
+    expect(sum(lines)).toBe(-2000);
+  });
+
+  it("gives no refund weight to a mirror row of quantity 0", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -2000,
+      txns: [txn("refund", "O1", -2000)],
+      orderLines: [line("O1", "V-shirt", 1000, 0), { ...line("O1", "V-camp", 2000), currentQuantity: 0 }],
+      categories,
+    });
+    expect(find(lines, "income", 9)).toBe(-2000);
+    expect(find(lines, "income", 7)).toBeUndefined();
+    expect(sum(lines)).toBe(-2000);
+  });
+
   it("leaves refund rounding at org level so the lines sum exactly to the refund", () => {
     const lines = buildDepositLines({
       payoutNetCents: -1000,

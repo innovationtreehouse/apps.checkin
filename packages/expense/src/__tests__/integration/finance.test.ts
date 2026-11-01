@@ -500,10 +500,10 @@ describeDb("QuickBooks match", () => {
    */
   async function qbExpense(
     qb: { purchases?: Entry[]; bills?: Entry[] },
-    opts: { signed?: boolean; reimbursement?: boolean; refs?: boolean } = {},
+    opts: { signed?: boolean; reimbursement?: boolean; refs?: boolean; nonMembers?: number[] } = {},
   ) {
     bindPorts({
-      signoff: directory({ finance: [3], board: [5] }),
+      signoff: directory({ finance: [3], board: [5], nonMembers: opts.nonMembers }),
       quickbooks: {
         reader: {
           ...inertQbReader,
@@ -529,6 +529,18 @@ describeDb("QuickBooks match", () => {
     const id = await qbExpense({ purchases: ["42"] });
     await matchExpenseToQb(FINANCE, id, "42");
     expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
+  it("matches a closed expense whose reimbursee's membership lapsed after close, with no Board seat", async () => {
+    const id = await qbExpense({ bills: ["42"] }, { reimbursement: true, nonMembers: [1] });
+    await db.expenseLineSignoff.deleteMany({ where: { expenseId: id, seat: "BOARD" } });
+
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
+    expect((await linked(id))?.qbTxnId).toBeNull();
+
+    await db.expense.update({ where: { id }, data: { state: "qb_complete" } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Bill" });
   });
 
   it("checks off the expense's open held-post review once it is linked", async () => {
