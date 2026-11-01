@@ -451,21 +451,21 @@ describe('Admin Roles API Integration Tests', () => {
 
         it('refuses a gated role to someone who is not a signed Key Volunteer -> 409', async () => {
             asSession({ id: kvBoardId, isBoardMember: true });
-            for (const flag of ['isBoardMember', 'isBackgroundCheckReviewer']) {
+            for (const flag of ['isBoardMember', 'isBackgroundCheckReviewer', 'isFinance']) {
                 const res = await PATCH(patchReq({ targetUserId: kvTargetId, [flag]: true }));
                 expect(res.status).toBe(409);
                 expect((await res.json()).error).toContain('Key Volunteer agreement');
             }
         });
 
-        it('grants Keyholder and Finance with no Key Volunteer role or agreement', async () => {
+        it('grants Keyholder with no Key Volunteer role or agreement', async () => {
             asSession({ id: kvBoardId, isBoardMember: true });
-            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: true, isFinance: true }));
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: true }));
             expect(res.status).toBe(200);
-            expect((await res.json()).user).toMatchObject({ isKeyholder: true, isFinance: true, isKeyVolunteer: false });
+            expect((await res.json()).user).toMatchObject({ isKeyholder: true, isKeyVolunteer: false });
             expect(await openKva()).toBeNull();
 
-            const revoke = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: false, isFinance: false }));
+            const revoke = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: false }));
             expect(revoke.status).toBe(200);
         });
 

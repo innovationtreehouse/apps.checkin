@@ -561,9 +561,11 @@ Procedure below is built on them.
   the merged-away record already held, which is not a new grant.  [Decision —
   @thpr, 2026-10-30; *Policy: Membership Policy, Art. VI §VI.2*]
 
-- Keyholder and Finance are not gated on the agreement. Finance is held entirely by
-  the Board today, so gating it would add nothing.  [Decision — deliberate limit,
+- Finance is granted on the same terms as BOARD and BG reviewer.  [Decision —
   @thpr, 2026-10-31]
+
+- Keyholder is not gated on the agreement.  [Decision — deliberate limit, @thpr,
+  2026-10-31]
 
 - Using a role is not gated on the agreement. A person who holds one of those roles
   keeps using it while a re-sign is outstanding, and the app does not block review
@@ -572,8 +574,8 @@ Procedure below is built on them.
   deliberate limit, @thpr, 2026-10-30, against *Membership Policy, Art. VI §VI.2*]
 
 - The Key Volunteer role is granted and removed by the Board alone. It cannot be
-  removed while the person holds BOARD or BG reviewer; that role is removed
-  first. It grants no access of its own: the Board grants it to whoever owes the
+  removed while the person holds BOARD, BG reviewer or Finance; that role is
+  removed first. It grants no access of its own: the Board grants it to whoever owes the
   agreement, and the app records the role, not the reason.  [Decision — @thpr,
   2026-10-30]
 
@@ -602,6 +604,6 @@ Procedure below is built on them.
   removes no one's role. A wording fix that is not material leaves the version
   alone.  [Decision — @thpr, 2026-10-30]
 
-- Everyone who held BOARD or BG reviewer when the gate went live was recorded as a
-  Key Volunteer who had signed version 1, on the date of that migration, without a
+- Everyone who held BOARD, BG reviewer or Finance when the gate went live was
+  recorded as a Key Volunteer who had signed version 1, on the date of that migration, without a
   signing request.  [Decision — @thpr, 2026-10-30]

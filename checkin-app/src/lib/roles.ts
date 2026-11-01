@@ -48,7 +48,7 @@ export const KIND_TO_MIRROR: Partial<Record<PersonRoleKind, RoleFlag>> = {
  * Roles granted only to a Key Volunteer who has signed the current agreement.
  * `KEY_VOLUNTEER` cannot be removed while the person holds any of them.
  */
-export const KEY_VOLUNTEER_GATED_FLAGS: readonly RoleFlag[] = ["isBoardMember", "isBackgroundCheckReviewer"];
+export const KEY_VOLUNTEER_GATED_FLAGS: readonly RoleFlag[] = ["isBoardMember", "isBackgroundCheckReviewer", "isFinance"];
 
 /**
  * The order one request's role changes are written in, so a single request can

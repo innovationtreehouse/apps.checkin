@@ -90,11 +90,11 @@ describe("RolesEditModal", () => {
 
     it("gated roles grant only to a Key Volunteer signed at the current version", () => {
         const { unmount } = renderWithProviders(<RolesEditModal target={jane} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />);
-        // Not a Key Volunteer: Board and BG reviewer can't be granted; Keyholder and Finance can.
+        // Not a Key Volunteer: Board, BG reviewer and Finance can't be granted; Keyholder can.
         expect(screen.getByLabelText("Board")).toBeDisabled();
         expect(screen.getByLabelText("BG Reviewer")).toBeDisabled();
+        expect(screen.getByLabelText("Finance")).toBeDisabled();
         expect(screen.getByLabelText("Keyholder")).toBeEnabled();
-        expect(screen.getByLabelText("Finance")).toBeEnabled();
         unmount();
 
         renderWithProviders(

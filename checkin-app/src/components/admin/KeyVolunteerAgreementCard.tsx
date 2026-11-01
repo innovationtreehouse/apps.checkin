@@ -56,7 +56,7 @@ export function KeyVolunteerAgreementCard({ initialVersion }: { initialVersion: 
         Use this only for a material change, after the new document is in place.{" "}
         {holders === null ? "Every Key Volunteer" : `${holders} Key Volunteer${holders === 1 ? "" : "s"}`} will be
         asked to sign version {version + 1}. Nobody loses a role, but someone who has not re-signed can&apos;t be
-        granted Board or BG reviewer until they do.
+        granted Board, BG reviewer or Finance until they do.
       </Text>
     ),
     labels: { confirm: "Start new version", cancel: "Cancel" },

@@ -13,9 +13,9 @@ describe("orderRoleChanges", () => {
             ["isKeyVolunteer", false],
             ["isOperations", true],
         ]);
-        expect(orderRoleChanges({ isBoardMember: true, isKeyVolunteer: true })).toEqual([
+        expect(orderRoleChanges({ isFinance: true, isKeyVolunteer: true })).toEqual([
             ["isKeyVolunteer", true],
-            ["isBoardMember", true],
+            ["isFinance", true],
         ]);
     });
 
