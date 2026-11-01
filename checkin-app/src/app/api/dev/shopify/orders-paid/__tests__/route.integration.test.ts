@@ -23,6 +23,7 @@ import { getServerSession } from 'next-auth/next';
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const TAG = 'dev-shopify-route-test';
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 function asSession(id = 1) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id, isSysadmin: false, isBoardMember: false } });

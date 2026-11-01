@@ -6,6 +6,9 @@ import { POST as EnrollParticipant } from '@/app/api/programs/[id]/participants/
 import { POST as ShopifyWebhook } from '@/app/api/webhooks/shopify/route';
 import prisma from '@/lib/prisma';
 import crypto from 'crypto';
+import { signCheckout } from '@/lib/programs/checkoutSignature';
+
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 // Mocking dependencies
 jest.mock('next-auth/next', () => ({
@@ -224,12 +227,14 @@ describe('Full Program Signup Integration Flow', () => {
         (prisma.programParticipant.count as jest.Mock).mockResolvedValue(1);
         (prisma.programParticipant.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
+        (prisma.person.findMany as jest.Mock).mockResolvedValue([{ householdId }]);
         const webhookPayload = JSON.stringify({
             financial_status: 'paid',
             line_items: [{ variant_id: 'mock-claimant-variant-id', quantity: 1 }],
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: String(childParticipantId) },
                 { name: 'Program_ID', value: String(programId) },
+                { name: 'CheckMeIn_Checkout_Sig', value: signCheckout(programId, [childParticipantId], householdId) },
             ],
         });
         const hmac = crypto.createHmac('sha256', SHOPIFY_SECRET).update(webhookPayload).digest('base64');

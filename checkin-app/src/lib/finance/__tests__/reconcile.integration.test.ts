@@ -15,6 +15,7 @@ import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reco
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
+import { signCheckout } from "@/lib/programs/checkoutSignature";
 import type { IncomeMirrorLineRow, MirrorOrder } from "@/lib/shopifyRead/client";
 
 jest.mock("@/lib/email", () => ({
@@ -78,6 +79,15 @@ function order(overrides: Partial<MirrorOrder> & { legacyId: string }): MirrorOr
 
 /** Cart attributes as the mirror stores them (#1029). */
 const attrs = (o: Record<string, string>) => Object.entries(o).map(([key, value]) => ({ key, value }));
+
+process.env.NEXTAUTH_SECRET ||= "integration-test-nextauth-secret";
+
+/** Program cart attributes, signed as the program page's checkout signs them for the first person's household. */
+async function signedAttrs(programId: number, ids: string) {
+    const personIds = ids.split(",").map(Number);
+    const { householdId } = await prisma.person.findUniqueOrThrow({ where: { id: personIds[0] }, select: { householdId: true } });
+    return attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: ids, CheckMeIn_Checkout_Sig: signCheckout(programId, personIds, householdId) });
+}
 
 /** A household whose lead has `email`, an OrgMembership, and one process. */
 async function makeApplicant(opts: {
@@ -684,7 +694,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
                 legacyId: oid,
                 customerEmail: null,
                 discountCodes: [`prg${programId}-abcd1234`],
-                noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }),
+                noteAttributes: await signedAttrs(programId, String(personId)),
             }),
         ]);
 
@@ -706,7 +716,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
                 legacyId: oid,
                 customerEmail: null,
                 discountCodes: [`PRG${programId}-ABCD1234`],
-                noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }),
+                noteAttributes: await signedAttrs(programId, String(personId)),
             }),
         ]);
 
@@ -739,7 +749,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-600`;
         const { personId, programId } = await makeProgramEnrollment({ email: `ent-noitem-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, String(personId)) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -754,7 +764,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) })]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -770,7 +780,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const other = await prisma.person.create({ data: { email: `other-${email}`, name: `Other ${email}`, householdId: otherHh.id } });
         await prisma.programParticipant.create({ data: { programId, personId: other.id, status: "PENDING" } });
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${other.id}` }) })]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${other.id}`) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -784,7 +794,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) })]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("ACTIVE");
@@ -797,7 +807,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const email = `ent-editdown-${TAG}@ex.com`;
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
-        const o = order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) });
+        const o = order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) });
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
         ordersChangedSince.mockResolvedValue([o]);
         await runReconcile();
@@ -858,15 +868,15 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-603-${label}`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-rev-${label}-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, ...over, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, ...over, noteAttributes: await signedAttrs(programId, String(personId)) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
         expect(await kinds(oid)).toEqual(["REVERSED_BEFORE_ACTIVATION"]);
     });
 
-    const attributed = (oid: string, programId: number, ids: string) =>
-        order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: ids }) });
+    const attributed = async (oid: string, programId: number, ids: string) =>
+        order({ legacyId: oid, noteAttributes: await signedAttrs(programId, ids) });
 
     it.each([
         ["already paid on another order", `${TAG}-old-order`],
@@ -875,7 +885,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-607-${priorOrder ? "paid" : "comp"}`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-dup-${priorOrder ? "paid" : "comp"}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: priorOrder });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         await runReconcile();
         const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
@@ -891,7 +901,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-gone-${TAG}@ex.com`, status: "PENDING" });
         await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBeUndefined();
@@ -906,7 +916,7 @@ describe("program order entitlement (same check as the webhook)", () => {
             data: { actorId: personId, action: "DELETE", tableName: "ProgramParticipant", affectedEntityId: personId, secondaryAffectedEntity: programId, oldData: enrollment },
         });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         try {
             await runReconcile();
@@ -927,7 +937,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         // Re-enrolment clears the old order from the row.
         await prisma.programParticipant.update({ where, data: { status: "ACTIVE", endedAt: null, shopifyOrderId: null } });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         try {
             await runReconcile();
@@ -941,7 +951,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-609`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 3, currentQuantity: 3 }]);
-        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("ACTIVE");
@@ -953,7 +963,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([attributed(`${TAG}-610a`, programId, String(personId)), attributed(`${TAG}-610b`, programId, String(sibId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(`${TAG}-610a`, programId, String(personId)), await attributed(`${TAG}-610b`, programId, String(sibId))]);
 
         await runReconcile();
         await runReconcile();
@@ -983,8 +993,8 @@ describe("program order entitlement (same check as the webhook)", () => {
         return audit.id;
     }
 
-    const paidOrder = (oid: string, lines: EntitlementOrder["lines"]): EntitlementOrder =>
-        ({ legacyId: oid, financialStatus: "PAID", cancelledAt: null, totalRefundedCents: 0, lines });
+    const paidOrder = (oid: string, lines: EntitlementOrder["lines"], checkoutSig: string | null = null): EntitlementOrder =>
+        ({ legacyId: oid, financialStatus: "PAID", cancelledAt: null, totalRefundedCents: 0, lines, checkoutSig });
 
     it.each([
         ["withdrew", withdrawAndReenrol],
@@ -994,7 +1004,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-spent-${label.replace(/ /g, "-")}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const auditId = await leave(programId, personId);
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         try {
             await runReconcile();
@@ -1033,7 +1043,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         // The edit arrives as a new line beside the original one.
         const lines = [{ variantId, quantity: 1, currentQuantity: 1 }, { variantId, quantity: 1, currentQuantity: 1 }];
 
-        const judged = await orderEntitlesEnrollment(paidOrder(oid, lines), programId, [sibId]);
+        const judged = await orderEntitlesEnrollment(paidOrder(oid, lines, signCheckout(programId, [sibId], householdId)), programId, [sibId]);
         expect(judged).toEqual({ ok: true, surplus: undefined });
         await activateProgramEnrollment({ programId, personIds: [sibId], shopifyOrderId: oid, lines });
         expect(await statusOf(programId, sibId)).toBe("ACTIVE");
@@ -1081,7 +1091,7 @@ describe("program order entitlement (same check as the webhook)", () => {
 
         try {
             // A redelivered orders/paid carries the order as it was paid: three seats, nothing refunded.
-            const replay = await orderEntitlesEnrollment(paidOrder(oid, [{ variantId, quantity: 3, currentQuantity: 3 }]), programId, [sibId]);
+            const replay = await orderEntitlesEnrollment(paidOrder(oid, [{ variantId, quantity: 3, currentQuantity: 3 }], signCheckout(programId, [sibId], householdId)), programId, [sibId]);
             expect(replay).toEqual({ ok: true, surplus: undefined });
             // The mirror sees the refund, and a refunded order activates nobody.
             const mirrored = { ...paidOrder(oid, [{ variantId, quantity: 3, currentQuantity: 2 }]), financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 5000 };
@@ -1096,7 +1106,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_PAID", noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_PAID", noteAttributes: await signedAttrs(programId, String(personId)) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -1122,7 +1132,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT, variantId]);
         orderLines.mockResolvedValue([{ variantId: MEMBERSHIP_VARIANT, quantity: 1, currentQuantity: 1 }, { variantId, quantity: 1, currentQuantity: 1 }]);
         ordersChangedSince.mockResolvedValue([
-            order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId), Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) }),
+            order({ legacyId: oid, noteAttributes: [...attrs({ Membership_Process_ID: String(processId) }), ...await signedAttrs(programId, String(personId))] }),
         ]);
 
         await runReconcile();
@@ -1134,7 +1144,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual([]);
     });
 
-    it("email fallback activates when the order carries the pending program's variant", async () => {
+    it("email fallback raises UNMATCHED_ORDER and activates nobody: an unsigned order can't show which household paid", async () => {
         const oid = `${TAG}-606`;
         const email = `ent-fallback-${TAG}@ex.com`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
@@ -1142,8 +1152,23 @@ describe("program order entitlement (same check as the webhook)", () => {
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
 
         await runReconcile();
-        expect(await statusOf(programId, personId)).toBe("ACTIVE");
-        expect(await kinds(oid)).toEqual([]);
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual(["UNMATCHED_ORDER"]);
+    });
+
+    it("raises UNMATCHED_ORDER and activates nobody when the signature was made for another household", async () => {
+        const oid = `${TAG}-699`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-foreign-${TAG}@ex.com`, status: "PENDING" });
+        const foreignHh = await prisma.household.create({ data: { name: `HH ${TAG} foreign` } });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({
+            legacyId: oid,
+            noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId), CheckMeIn_Checkout_Sig: signCheckout(programId, [personId], foreignHh.id) }),
+        })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual(["UNMATCHED_ORDER"]);
     });
 });
 
