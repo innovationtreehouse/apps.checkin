@@ -153,8 +153,13 @@ Things the app takes as true because they are handled outside it.
 
 - After a merge, an expense's submitter, reimbursee and signers count as the
   surviving person, so the conflict and one-step-per-person rules still bind
-  them. If a submitter or reimbursee names nobody the app can find, nobody may
-  act on the expense until that is repaired.
+  them. If a submitter or reimbursee names nobody the app can find, everyone
+  counts as conflicted on the expense until that is repaired. Nobody may approve
+  a line, raise or reject an exception, sign a seat, confirm the receipt, or
+  record Board authorization, and finance may not approve its tax, close its
+  reviews, name its reimbursee, link a QuickBooks Vendor, or skip it in
+  QuickBooks. Choosing a line's bucket and bookkeeping, QuickBooks matching
+  included, still run.
   [Decision — owner; *Principle: fail closed*]
 
 - Choosing a line's bucket before sign-off is not a conflicted step. A

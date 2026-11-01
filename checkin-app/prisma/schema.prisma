@@ -162,10 +162,10 @@ model Person {
   /// leads/household enforced at write, not in schema. @sensitivity:public
   isHouseholdLead Boolean @default(false)
 
-  /// Provenance: when this record was merged into another Person, the surviving
-  /// Person.id. Null == a live record. Set once by the merge route; the row is
-  /// tombstoned, never deleted. Drives the double-merge CAS guard and the
-  /// live-person filter (lib/person/filters.ts). @sensitivity:internal
+  /// Provenance: the surviving Person.id of a merged-away record. Null == a live
+  /// record. A merge sets it and then deletes the row, leaving a PersonMerge
+  /// archive; only older merged-away rows still carry it. Drives the double-merge
+  /// CAS guard and the live-person filter (lib/person/filters.ts). @sensitivity:internal
   mergedIntoId Int?
   // Label is "PersonTombstone" because "PersonMerge" would collide with the model
   // of that name. Code-only: a named self-relation emits no SQL artifact — the

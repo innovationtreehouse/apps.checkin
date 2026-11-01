@@ -302,7 +302,7 @@ export default function MergeParticipants() {
     <Card withBorder radius="md" padding="lg" style={{ borderColor: isKept ? "var(--mantine-color-green-6)" : "var(--mantine-color-red-6)", borderWidth: 2 }}>
       <Group gap="xs" mb="sm">
         <Title order={4} c={isKept ? "green" : "red"}>
-          {isKept ? "Keep and augment" : "Merge and tombstone"}
+          {isKept ? "Keep and augment" : "Merge and delete"}
         </Title>
         <MergedBadge person={p} />
       </Group>
@@ -379,7 +379,7 @@ export default function MergeParticipants() {
       <div>
         <Text c="dimmed">
           Combine two participant records. The data from the merged record (visits, programs, etc)
-          will be moved to the kept record. The merged record will be tombstoned.
+          will be moved to the kept record. The merged record will be deleted, and an archive of it names the kept record.
         </Text>
         <Anchor component={Link} href="/membership-ops/participants/tombstones" size="sm">
           View tombstone census
@@ -484,10 +484,10 @@ export default function MergeParticipants() {
           <Text my="sm"><strong>This action is extremely difficult to undo.</strong> Please review the changes below.</Text>
 
           <List spacing="xs" my="lg">
-            <List.Item><strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong> will be tombstoned.</List.Item>
+            <List.Item><strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong> will be deleted, and an archive of the record will name the kept participant.</List.Item>
             <List.Item>All visits, program enrollments, RSVPs, and fee payments will be transferred to <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong>.</List.Item>
             <List.Item>Missing personal info on the kept participant will be filled in from the merged participant.</List.Item>
-            <List.Item>Raw badge scans will remain on the tombstoned record for audit purposes.</List.Item>
+            <List.Item>Raw badge scans will move to the kept participant.</List.Item>
           </List>
 
           {bgNotice && (
@@ -515,7 +515,7 @@ export default function MergeParticipants() {
 
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setPreviewMode(false)} disabled={merging}>Cancel</Button>
-            <Button color="red" onClick={handleMerge} disabled={merging} loading={merging}>Confirm Merge &amp; Tombstone</Button>
+            <Button color="red" onClick={handleMerge} disabled={merging} loading={merging}>Confirm Merge &amp; Delete</Button>
           </Group>
         </Card>
       ) : null}
