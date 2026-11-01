@@ -377,6 +377,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   board. Each change is recorded. Gifts of goods have no daily or dollar limit.
   [Decision — owner]
 
+- A gift of goods that keeps failing to book stops retrying and goes to finance,
+  so it can't hold back newer gifts. When a run stops because several gifts in a
+  row failed, finance is alerted.  [Decision]
+
 - A gift of goods withdrawn after its money arrived is raised for finance, booked
   or not. Finance reverses it by hand only if it booked; the app changes nothing
   in the books. When finance settles a withdrawal, the donor's details are cleared
