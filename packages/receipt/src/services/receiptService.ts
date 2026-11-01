@@ -16,7 +16,8 @@ import {
   type ReimburseeOption,
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
-import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
+import { EXPENSE_REJECTED, REJECTED_AS_COPY } from "../lib/describeReceipt";
+import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, liveGroup, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
@@ -662,6 +663,72 @@ async function decideGroup(
   return after;
 }
 
+/**
+ * What only a read adds to a group: each uploader's name, and how a finalized member's expense
+ * ended. Kept apart from the group itself, which also runs under a decision's row locks.
+ */
+async function readableGroup(orgId: string, group: DuplicateGroup): Promise<DuplicateGroup> {
+  const ids = group.members.map((m) => m.id);
+  const [parties, outcomes] = await Promise.all([receiptRepo.listParties({ orgId, id: { in: ids } }), purchaseOutcomes(group.members)]);
+  const uploaderOf = new Map(parties.map((p) => [p.id, p.uploadedByUserId]));
+  const names = await ports().personNames.namesOf([...new Set(uploaderOf.values())]);
+  const label = (m: DuplicateMember): string => {
+    if (m.state !== "receipt_finalized") return m.label;
+    if (!outcomes) return `${m.label} · expense status unavailable`;
+    const money = outcomes.get(m.id)?.money;
+    if (money?.status !== "line_rejected") return m.label;
+    return money.notes.length > 0 ? `${EXPENSE_REJECTED}: ${money.notes.join("; ")}` : EXPENSE_REJECTED;
+  };
+  return {
+    ...group,
+    members: group.members.map((m) => ({ ...m, label: label(m), uploaderName: names.get(uploaderOf.get(m.id) ?? -1) ?? null })),
+  };
+}
+
+type WaitingGroup = { held: ReceiptRow; heldAt: Date | null; members: Array<{ id: string; state: string }> };
+
+/** The groups waiting on finance, oldest hold first. A held receipt with no match left is a group of one. */
+async function waitingGroups(orgId: string): Promise<WaitingGroup[]> {
+  const held = await receiptRepo.list({ orgId, details: { state: "duplicate_flagged" } });
+  held.sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime());
+  const seen = new Set<string>();
+  const groups: WaitingGroup[] = [];
+  for (const row of held) {
+    if (seen.has(row.id)) continue;
+    const members = await liveGroup(orgId, row.id);
+    members.forEach((m) => seen.add(m.id));
+    const ids = new Set(members.map((m) => m.id));
+    const times = held.filter((h) => ids.has(h.id) && h.duplicateFlaggedAt).map((h) => (h.duplicateFlaggedAt as Date).getTime());
+    groups.push({ held: row, heldAt: times.length > 0 ? new Date(Math.min(...times)) : null, members });
+  }
+  return groups.sort((a, b) => (a.heldAt?.getTime() ?? 0) - (b.heldAt?.getTime() ?? 0));
+}
+
+/** The viewer's own other copy of an open receipt they uploaded, earliest first; never another person's. */
+async function ownCopyNotice(row: ReceiptRow, actor: ReceiptPrincipal): Promise<{ matchId: string; uploadedAt: Date } | null> {
+  if (ENDED.has(row.state)) return null;
+  const others = ((await computeGroup(row.orgId, row.id))?.members ?? []).filter((m) => m.id !== row.id && m.state !== "discarded").map((m) => m.id);
+  if (others.length === 0) return null;
+  const mine = await receiptRepo.list({ orgId: row.orgId, id: { in: others }, uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } });
+  const [first] = mine.sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime());
+  return first ? { matchId: first.id, uploadedAt: first.uploadedAt } : null;
+}
+
+/** The kept receipt of each row rejected as a copy, as the group labels it. */
+async function copiesOf(orgId: string, rows: ReceiptRow[]): Promise<Map<string, { copyOfId: string; copyOfLabel: string }>> {
+  const rejected = rows.filter((r) => r.state === "rejected").map((r) => r.id);
+  const found = new Map<string, { copyOfId: string; copyOfLabel: string }>();
+  if (rejected.length === 0) return found;
+  const copies = await db.receiptPairDecision.findMany({ where: { orgId, kind: "copy_of", copyReceiptId: { in: rejected } }, select: { copyReceiptId: true } });
+  for (const id of new Set(copies.flatMap((c) => c.copyReceiptId ?? []))) {
+    const member = (await computeGroup(orgId, id))?.members.find((m) => m.id === id);
+    if (member?.copyOfId && member.label.startsWith(REJECTED_AS_COPY)) {
+      found.set(id, { copyOfId: member.copyOfId, copyOfLabel: member.label.slice(REJECTED_AS_COPY.length) });
+    }
+  }
+  return found;
+}
+
 export const receiptService = {
   /**
    * Upload a receipt. With `details` it is manual: insert at `uploaded` and run the pipeline.
@@ -1179,7 +1246,22 @@ export const receiptService = {
     await requireActor();
     const group = await computeGroup(await getOrgId(), id);
     if (!group) throw new ServiceError(404, "Receipt not found");
-    return group;
+    return readableGroup(await getOrgId(), group);
+  },
+
+  /** One row per group waiting on finance, for Finance review's Duplicates tab (§5.4). */
+  async duplicateQueue() {
+    await requireActor();
+    const groups = await waitingGroups(await getOrgId());
+    return groups.map(({ held, heldAt, members }) => ({
+      id: held.id,
+      retailer: held.retailer,
+      receiptDate: held.receiptDate,
+      receiptTotalCents: held.receiptTotalCents,
+      memberCount: members.length,
+      includesRejected: members.some((m) => m.state === "rejected"),
+      oldestHeldAt: heldAt,
+    }));
   },
 
   async get(id: string, access: Access) {
@@ -1189,7 +1271,8 @@ export const receiptService = {
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const receipt = access === "finance" ? { ...row, rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
     const purchaseOutcome = outcomeOf(row, await purchaseOutcomes([row]));
-    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome };
+    const duplicateNotice = row.uploadedByUserId === actor.id ? await ownCopyNotice(row, actor) : null;
+    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome, duplicateNotice };
   },
 
   /**
@@ -1274,8 +1357,8 @@ export const receiptService = {
     const orgId = await getOrgId();
     const rows = await receiptRepo.list(listFilterWhere(orgId, filter));
     const undelivered = rows.filter((r) => r.state === "receipt_finalized" && !r.pushedAt).map((r) => r.id);
-    const records = await pushRecords(orgId, undelivered);
-    return rows.map((r) => ({ ...r, ...records.get(r.id) }));
+    const [records, copies] = await Promise.all([pushRecords(orgId, undelivered), copiesOf(orgId, rows)]);
+    return rows.map((r) => ({ ...r, ...records.get(r.id), ...copies.get(r.id) }));
   },
 
   /**
@@ -1294,6 +1377,7 @@ export const receiptService = {
     const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
     const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
     if (finance) for (const state of FINANCE_ACTION_STATES) byState[state] = finance.byState[state] ?? 0;
+    else if (byState.duplicate_flagged) byState.duplicate_flagged = (await waitingGroups(orgId)).length;
     return {
       byState,
       notPushed: undelivered.length,
@@ -1303,8 +1387,9 @@ export const receiptService = {
 
   /**
    * How many of the org's receipts wait on this FINANCE viewer, for the host's nav pill and the
-   * review queues. The total also holds undelivered receipts catch-up gave up on, which have no
-   * queue state of their own. A receipt the viewer is conflicted on is left out.
+   * review queues. Duplicates count once per group, and a group with any member the viewer is
+   * conflicted on is left out. The total also holds undelivered receipts catch-up gave up on,
+   * which have no queue state of their own. A receipt the viewer is conflicted on is left out.
    */
   async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
     const orgId = await getOrgId();
@@ -1317,14 +1402,24 @@ export const receiptService = {
       ports().households.householdOf([viewerId]),
     ]);
     const conflicted = new Set([viewerId, ...household]);
-    const rows = [...queued, ...undelivered.filter((r) => stopped.has(r.id))];
+    const isParty = (r: { uploadedByUserId: number; reimburseePersonId: number | null }) =>
+      conflicted.has(r.uploadedByUserId) || (r.reimburseePersonId != null && conflicted.has(r.reimburseePersonId));
+    const rows = [...queued.filter((r) => r.state !== "duplicate_flagged"), ...undelivered.filter((r) => stopped.has(r.id))];
     const byState: Record<string, number> = Object.fromEntries(FINANCE_ACTION_STATES.map((s) => [s, 0]));
     let total = 0;
     rows.forEach((r) => {
-      if (conflicted.has(r.uploadedByUserId) || (r.reimburseePersonId != null && conflicted.has(r.reimburseePersonId))) return;
+      if (isParty(r)) return;
       if (r.state in byState) byState[r.state] += 1;
       total += 1;
     });
+    if (queued.some((r) => r.state === "duplicate_flagged")) {
+      for (const { members } of await waitingGroups(orgId)) {
+        const parties = await receiptRepo.listParties({ orgId, id: { in: members.map((m) => m.id) } });
+        if (parties.some(isParty)) continue;
+        byState.duplicate_flagged += 1;
+        total += 1;
+      }
+    }
     return { total, byState };
   },
 

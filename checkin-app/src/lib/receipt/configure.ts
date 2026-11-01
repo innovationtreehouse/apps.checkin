@@ -82,6 +82,13 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
  * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
  * holder who typed it.
  */
+/** Merged and deleted people keep their name here, so an old receipt still says who uploaded it. */
+async function personNames(personIds: number[]): Promise<Map<number, string>> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
+  return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
+}
+
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
   const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
@@ -270,6 +277,7 @@ export function configureRuntime(): void {
     households: { householdOf },
     personIds: { liveIds, storedIdsOf },
     people: { submitterByEmail },
+    personNames: { namesOf: personNames },
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),

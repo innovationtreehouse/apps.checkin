@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Mark, Modal, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
-import DuplicateCompare from "../components/DuplicateCompare";
+import DuplicateCompare, { type CompareReceipt } from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
@@ -13,6 +13,8 @@ import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_L
 import { formatCents } from "@checkin/money";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
+import { useReceipts } from "../components/useReceipts";
+import { day } from "../lib/describeReceipt";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { missingDetails } from "../lib/missingDetails";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
@@ -44,6 +46,8 @@ interface Receipt extends ReceiptListRow {
   duplicateFlagClearedAt?: string | null;
   financialReviewReasons: string[];
   lineItems: ServerLine[];
+  /** The viewer's own other copy of this receipt; never another person's. */
+  duplicateNotice?: { matchId: string; uploadedAt: string } | null;
 }
 
 interface AuditRow {
@@ -103,20 +107,50 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
-  const held = (isFinance || isBoard) && receipt.data?.state === "duplicate_flagged";
-  const group = useLoad<DuplicateGroup>(held ? `/${id}/duplicate-group` : null);
-  // The panel compares two receipts, so a group-wide decision is offered only when they are the whole group.
+  const open = receipt.data != null && !TERMINAL.has(receipt.data.state);
+  const held = receipt.data?.state === "duplicate_flagged";
+  const group = useLoad<DuplicateGroup>((isFinance || isBoard) && open ? `/${id}/duplicate-group` : null);
+  const otherMembers = group.data?.members.filter((m) => m.id !== id) ?? [];
   const liveIds = group.data?.members.filter((m) => m.state !== "discarded").map((m) => m.id) ?? [];
-  const matchId = liveIds.find((m) => m !== id) ?? null;
-  const comparing = held && matchId !== null;
-  const suspectId = comparing ? matchId : (receipt.data?.duplicateSuspectReceiptId ?? null);
-  const original = useLoad<Receipt>(comparing ? `/${matchId}` : null);
+  const comparing = open && liveIds.some((m) => m !== id);
+  const compared = useReceipts<CompareReceipt>([...otherMembers.map((m) => m.id), ...(group.data?.dismissed ?? [])]);
+  const suspectId = receipt.data?.duplicateSuspectReceiptId ?? null;
+  const memberKey = group.data ? group.data.members.map((m) => m.id).join(",") : null;
+  const seen = useRef<Set<string> | null>(null);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set<string>());
+  // A column that wasn't on the first drawing of the panel is tagged New until the page is left.
+  useEffect(() => {
+    if (memberKey === null) return;
+    const ids = memberKey.split(",");
+    if (seen.current) {
+      const known = seen.current;
+      const arrived = ids.filter((m) => !known.has(m));
+      if (arrived.length > 0) setFresh((prior) => new Set([...prior, ...arrived]));
+    }
+    seen.current = new Set([...(seen.current ?? []), ...ids]);
+  }, [memberKey]);
+  const redrawCompare = () => {
+    group.reload();
+    compared.reload();
+  };
+  // A screen left open is usually current again before anyone clicks; the server still refuses a stale decision.
+  useEffect(() => {
+    if (!open) return;
+    const refresh = () => {
+      receipt.reload();
+      group.reload();
+      compared.reload();
+    };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [open, receipt.reload, group.reload, compared.reload]);
   useEffect(() => {
     if (group.error) notifications.show({ title: "Couldn't load the possible copies", message: group.error, color: "red", autoClose: false });
   }, [group.error]);
+  const loadErrors = [...compared.errors.values()].join("; ");
   useEffect(() => {
-    if (original.error) notifications.show({ title: "Couldn't load the suspected original", message: original.error, color: "red", autoClose: false });
-  }, [original.error]);
+    if (loadErrors) notifications.show({ title: "Couldn't load a possible copy", message: loadErrors, color: "red", autoClose: false });
+  }, [loadErrors]);
   const [note, setNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -165,24 +199,30 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       audit.reload();
     }
   };
-  const rejectOriginal = async (reason: string) => {
-    if (!suspectId) return;
-    if (await send(`/${suspectId}/reject`, "POST", { reason }, "The original is rejected", "Couldn't reject the original")) {
+  const rejectMatch = async (otherId: string, reason: string) => {
+    if (await send(`/${otherId}/reject`, "POST", { reason }, "That copy is rejected", "Couldn't reject that copy")) {
       receipt.reload();
-      group.reload();
-      original.reload();
       audit.reload();
     }
+    redrawCompare();
   };
   /** Not this one: the match is a different purchase, and the panel redraws from the fresh group. */
   const notThisOne = async (otherId: string) => {
     if (await send(`/${id}/not-this-one`, "POST", { otherId }, "Dismissed as a different purchase", "Couldn't dismiss this match")) {
       receipt.reload();
-      group.reload();
       audit.reload();
-    } else group.reload();
+    }
+    redrawCompare();
   };
-  const originalHref = suspectId ? reviewDetailHref(suspectId, returnQueue(queueParam, r.state)) : "";
+  const undoNotThisOne = async (otherId: string) => {
+    if (await send(`/${id}/not-this-one/${encodeURIComponent(otherId)}`, "DELETE", {}, "Dismissal undone", "Couldn't undo this dismissal")) {
+      receipt.reload();
+      audit.reload();
+    }
+    redrawCompare();
+  };
+  const hrefOf = (other: string) => reviewDetailHref(other, returnQueue(queueParam, r.state));
+  const originalHref = suspectId ? hrefOf(suspectId) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
   const totalsOff = r.state === "validation_failed";
@@ -305,21 +345,34 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
         <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>
       )}
       {comparing && (
+        <Badge color="orange" variant="light" w="fit-content">Possible duplicate: in a group of {liveIds.length}</Badge>
+      )}
+      {own && r.duplicateNotice ? (
+        <Alert color="yellow">
+          You already sent this receipt on{" "}
+          <Anchor component={Link} href={`/receipts/${encodeURIComponent(r.duplicateNotice.matchId)}`}>{day(new Date(r.duplicateNotice.uploadedAt))}</Anchor>.
+          {" "}You can discard this copy if it is the same purchase.
+        </Alert>
+      ) : (
+        own && held && <Alert color="yellow">Finance will check this for a possible duplicate.</Alert>
+      )}
+      {comparing && group.data && (
         <DuplicateCompare
           receipt={r}
-          original={original.data}
-          originalError={original.error}
-          onRetryOriginal={original.reload}
-          originalHref={originalHref}
+          group={group.data}
+          loaded={compared.loaded}
+          loadErrors={compared.errors}
+          onRetry={compared.reload}
+          fresh={fresh}
+          hrefOf={hrefOf}
           isFinance={isFinance}
           own={own}
-          wholeGroup={liveIds.length === 2}
-          onNotThisOne={() => {
-            if (matchId) void notThisOne(matchId);
-          }}
-          onDifferentPurchases={() => void act("/different-purchases", "POST", { shownIds: liveIds }, "Recorded as different purchases", "Couldn't record different purchases", true).then(group.reload)}
-          onKeepThisOne={() => void act("/keep-this-one", "POST", { shownIds: liveIds }, "Kept; the other copy is rejected", "Couldn't keep this receipt", true).then(group.reload)}
-          onRejectOriginal={(reason) => void rejectOriginal(reason)}
+          onNotThisOne={(otherId) => void notThisOne(otherId)}
+          onUndo={(otherId) => void undoNotThisOne(otherId)}
+          onDifferentPurchases={() => void act("/different-purchases", "POST", { shownIds: liveIds }, "Recorded as different purchases", "Couldn't record different purchases", true).then(redrawCompare)}
+          onKeepThisOne={() => void act("/keep-this-one", "POST", { shownIds: liveIds }, "Kept; the other copies are rejected", "Couldn't keep this receipt", true).then(redrawCompare)}
+          onRejectMatch={(otherId, reason) => void rejectMatch(otherId, reason)}
+          onRejectAsCopy={(reason) => void act("/reject", "POST", { reason }, "Rejected", "Couldn't reject this receipt", true).then(redrawCompare)}
         />
       )}
       {!comparing && suspectId && (
@@ -405,7 +458,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
-                {held && group.data && !comparing && !own && (
+                {held && (isFinance || isBoard) && group.data && !comparing && !own && (
                   <Group gap="xs">
                     <Text size="sm">No other receipt matches this one now.</Text>
                     <Button size="xs" w="fit-content" onClick={() => void act("/different-purchases", "POST", { shownIds: [id] }, "Released from the duplicate hold", "Couldn't release this receipt", true)}>Different purchases</Button>
