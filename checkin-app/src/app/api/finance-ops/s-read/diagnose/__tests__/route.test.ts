@@ -179,7 +179,7 @@ describe('latest-run + clock steps', () => {
         expect(latest.detail).toContain('Shopify 429: throttled');
     });
 
-    it('a future startedAt fails the clock step as a timezone regression — the #1041/#1042 bug class', async () => {
+    it('a future startedAt fails the clock step as a timezone regression', async () => {
         latestSyncRunMock.mockResolvedValue({
             status: 'COMPLETED', kind: 'INCREMENTAL',
             startedAt: new Date(Date.now() + 5 * 3600_000), finishedAt: null, counts: null, error: null,
