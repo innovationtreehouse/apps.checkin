@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Card, Center, Group, Loader, Modal, Radio, Stack, Table, Text, Title } from "@mantine/core";
+import { Button, Card, Center, Group, Loader, Modal, Stack, Table, Text, Title } from "@mantine/core";
 import { relTime } from "@/lib/time";
 import { useOrgTime } from "@/components/TimezoneProvider";
 
@@ -54,7 +54,6 @@ export function UnsyncedScansPanel() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [dismissing, setDismissing] = useState<Set<number>>(new Set());
   const [recording, setRecording] = useState<UnsyncedScan | null>(null);
-  const [outcome, setOutcome] = useState<"open" | "closed">("closed");
   const [departedAt, setDepartedAt] = useState("");
   const [recordBusy, setRecordBusy] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
@@ -72,14 +71,12 @@ export function UnsyncedScansPanel() {
 
   function openRecord(scan: UnsyncedScan) {
     setRecording(scan);
-    setOutcome("closed");
     setDepartedAt("");
     setRecordError(null);
   }
 
-  // Q3/B4 (ruled): the Visit is written at the scan's own time, and an IN with
-  // no OUT is the reviewer's call — leave it open (only while the facility is
-  // open) or close it at a departure they supply. The server enforces both.
+  // The Visit is written at the scan's own time and closed at a departure the
+  // reviewer supplies. The server enforces both.
   async function record() {
     if (!recording) return;
     setRecordBusy(true);
@@ -90,9 +87,7 @@ export function UnsyncedScansPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "record",
-          ...(outcome === "closed" && departedAt
-            ? { departedAt: new Date(departedAt).toISOString() }
-            : {}),
+          departedAt: new Date(departedAt).toISOString(),
         }),
       });
       if (!res.ok) {
@@ -222,31 +217,22 @@ export function UnsyncedScansPanel() {
               {new Date(recording.timestamp).toLocaleString()} (your local time) — the scan&apos;s own
               time, not now.
             </Text>
-            <Radio.Group
-              value={outcome}
-              onChange={(v) => setOutcome(v as "open" | "closed")}
-              aria-label="Visit outcome"
-            >
-              <Stack gap="xs">
-                <Radio value="closed" label="They left — close the visit at (your local time):" />
-                {outcome === "closed" && (
-                  <input
-                    type="datetime-local"
-                    aria-label="Departure time"
-                    value={departedAt}
-                    onChange={(e) => setDepartedAt(e.currentTarget.value)}
-                  />
-                )}
-                <Radio value="open" label="They are still here — leave the visit open" />
-              </Stack>
-            </Radio.Group>
+            <label>
+              <Text size="sm" span>They left at (your local time): </Text>
+              <input
+                type="datetime-local"
+                aria-label="Departure time"
+                value={departedAt}
+                onChange={(e) => setDepartedAt(e.currentTarget.value)}
+              />
+            </label>
             {recordError && <Text c="red" size="sm">{recordError}</Text>}
             <Group justify="flex-end" gap="xs">
               <Button variant="subtle" onClick={() => setRecording(null)}>Cancel</Button>
               <Button
                 onClick={record}
                 loading={recordBusy}
-                disabled={outcome === "closed" && !departedAt}
+                disabled={!departedAt}
               >
                 Record visit
               </Button>

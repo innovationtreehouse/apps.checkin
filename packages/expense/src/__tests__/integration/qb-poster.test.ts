@@ -966,15 +966,6 @@ describeDb("QB closed books — book it", () => {
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_book_requested", userId: 500 } })).toBe(1);
   });
 
-  it("a BEFORE_LINE expense is booked exactly as UNBOOKED", async () => {
-    const { id } = await outboxed("2026-09-10");
-    await db.expense.update({ where: { id }, data: { qbMatchState: "BEFORE_LINE" } });
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0 });
-
-    await resubmitHeldExpense(finance, id);
-    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
-  });
-
   it("refuses to book into closed books, and the expense stays UNBOOKED", async () => {
     const { id } = await outboxed("2026-09-10");
     await db.expense.update({ where: { id }, data: { qbMatchState: "UNBOOKED" } });
@@ -1126,7 +1117,7 @@ describeDb("QB closed books — a create that may have landed", () => {
       return id;
     };
 
-    it.each(["UNBOOKED", "BEFORE_LINE", "AMBIGUOUS", "NEEDS_FINANCE"])("skips a %s expense, audited with who and why, and the drain never takes it", async (state) => {
+    it.each(["UNBOOKED", "AMBIGUOUS", "NEEDS_FINANCE"])("skips a %s expense, audited with who and why, and the drain never takes it", async (state) => {
       const id = await unbooked(state);
 
       await skipExpenseQb(finance, id, "  booked by hand in 2025  ");

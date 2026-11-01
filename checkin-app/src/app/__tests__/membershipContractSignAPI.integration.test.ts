@@ -201,7 +201,7 @@ describe('POST /api/membership/contract/sign', () => {
         asUser(leadId);
         const res = await SIGN(signReq());
         expect(res.status).toBe(200);
-        // No re-create: the stored request is reused exactly as before the check existed.
+        // No re-create: the stored request is reused.
         expect(zoho.createRequest).not.toHaveBeenCalled();
         expect((zoho.getEmbeddedSignUrl as jest.Mock).mock.calls[0][0].requestId).toBe('REQ-1');
         const p = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });

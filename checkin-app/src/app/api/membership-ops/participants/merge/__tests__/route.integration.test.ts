@@ -9,6 +9,8 @@ import { POST } from "../route";
 import { GET as analyzeGET } from "../analyze/route";
 import { GET as searchGET } from "@/app/api/people/search/route";
 import prisma from "@/lib/prisma";
+import type { TxClient } from "@/lib/db-client";
+import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { getServerSession } from "next-auth/next";
 
 jest.mock("next-auth/next");
@@ -51,6 +53,12 @@ function mergeReq(keepId: number, mergeId: number, fieldChoices: Record<string, 
 
 function analyzeReq(a: number, b: number) {
     return new Request(`http://localhost/api/membership-ops/participants/merge/analyze?a=${a}&b=${b}`) as unknown as import("next/server").NextRequest;
+}
+
+/** The merged-away Person row is gone and the archive names its survivor. */
+async function expectMergedAway(id: number, survivorId: number): Promise<void> {
+    expect(await prisma.person.findUnique({ where: { id } })).toBeNull();
+    expect((await prisma.personMerge.findUnique({ where: { fromId: id } }))?.toId).toBe(survivorId);
 }
 
 describe("Merge Participants API", () => {
@@ -163,13 +171,7 @@ describe("Merge Participants API", () => {
         const kept = await prisma.person.findUnique({ where: { id: pKeepId } });
         expect(kept?.phone).toBe("123-456-7890");
 
-        const merged = await prisma.person.findUnique({ where: { id: pMergeId } });
-        expect(merged?.email).toContain("merged-");
-        expect(merged?.email).toContain("@deleted.invalid");
-        expect(merged?.phone).toBeNull();
-        // decision 5: tombstone identity keeps its ORIGINAL name — no mangling.
-        expect(merged?.name).toBe("Merge User");
-        expect(merged?.mergedIntoId).toBe(pKeepId);
+        await expectMergedAway(pMergeId, pKeepId);
     });
 
     it("refuses with 409 when the keeper is merged away between the pre-check and the transaction", async () => {
@@ -288,8 +290,8 @@ describe("Merge Participants API", () => {
         expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: process.id } })).zohoSignerPersonId).toBe(pKeepId);
     });
 
-    // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
-    // written here; 2b-3 deletes it and this table becomes the only record.
+    // #1456 phase 2b — the PersonMerge archive, the only record a merge leaves of
+    // the merged-away person once its Person row is deleted.
     describe("PersonMerge archive", () => {
         it("writes exactly one archive row, snapshotting identity as it stood", async () => {
             // UTC midnight: lastBackgroundCheck is @db.Date, so that is what the
@@ -341,19 +343,78 @@ describe("Merge Participants API", () => {
             expect(row?.snapshot).toMatchObject({ lastBackgroundCheck: null });
         });
 
-        // The 2b-3 rehearsal: 2b-0 repointed every RESTRICT relation off the loser,
-        // so the tombstone row is finally deletable — including for someone who had
-        // scanned a badge, which is what RawBadgeLog used to make impossible. If this
-        // starts failing, a new Person FK arrived without a merge disposition.
-        it("leaves the tombstone Person row deletable, badge history and all", async () => {
+        // Someone who scanned a badge and visited: every RESTRICT relation moves
+        // first, so the delete goes through. If this starts failing, a new Person
+        // FK arrived without a merge disposition.
+        it("deletes the merged-away Person row, badge history and all", async () => {
             await prisma.rawBadgeLog.create({ data: { personId: pMergeId, location: "Main Entrance" } });
             await prisma.visit.create({ data: { personId: pMergeId, arrivedAt: new Date() } });
 
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
-            await expect(prisma.person.delete({ where: { id: pMergeId } })).resolves.toMatchObject({ id: pMergeId });
-            // ...and the archive outlives it, which is the whole point.
-            expect(await prisma.personMerge.findUnique({ where: { fromId: pMergeId } })).not.toBeNull();
+            await expectMergedAway(pMergeId, pKeepId);
+            expect(await prisma.rawBadgeLog.count({ where: { personId: pKeepId } })).toBe(1);
+            expect(await prisma.visit.count({ where: { personId: pKeepId } })).toBe(1);
+        });
+
+        // The badge scan path: an id with no Person row resolves through the archive.
+        it("resolves a badge for the merged-away id to the survivor through the archive", async () => {
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            const resolved = await resolveMergedPerson(pMergeId);
+            expect(resolved).toMatchObject({ kind: "live", first: null, hops: 1 });
+            expect(resolved.kind === "live" && resolved.person.id).toBe(pKeepId);
+        });
+
+        // A legacy tombstone pointing at the record being merged away: its
+        // mergedIntoId is SET NULL, so leaving it would resurrect it as a live
+        // person when the row it points at is deleted.
+        it("repoints a legacy tombstone's mergedIntoId before deleting the row it names", async () => {
+            const legacy = await prisma.person.create({ data: { name: "Legacy Tombstone", householdId, mergedIntoId: pMergeId } });
+            extraPersonIds.push(legacy.id);
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            expect((await prisma.person.findUnique({ where: { id: legacy.id } }))?.mergedIntoId).toBe(pKeepId);
+            await expectMergedAway(pMergeId, pKeepId);
+        });
+
+        // A row that lands on the merged-away record after the moves read their
+        // sources would block the delete; the merge refuses and rolls back.
+        it("refuses with 409 and rolls back when a RESTRICT reference arrives after the moves", async () => {
+            // The merge's own transaction client, except that archiving the merge
+            // first writes a badge scan for the merged-away id.
+            const bound = (target: object, prop: string | symbol): unknown => {
+                const value: unknown = Reflect.get(target, prop);
+                return typeof value === "function" ? value.bind(target) : value;
+            };
+            const withLateScan = (tx: TxClient) => new Proxy(tx, {
+                get(target, prop) {
+                    if (prop !== "personMerge") return bound(target, prop);
+                    return new Proxy(target.personMerge, {
+                        get(delegate, method) {
+                            if (method !== "create") return bound(delegate, method);
+                            return async (args: Parameters<typeof delegate.create>[0]) => {
+                                await target.rawBadgeLog.create({ data: { personId: pMergeId, location: "Late Scan" } });
+                                return delegate.create(args);
+                            };
+                        },
+                    });
+                },
+            });
+            const realTransaction = prisma.$transaction.bind(prisma) as (fn: (tx: TxClient) => Promise<unknown>) => Promise<unknown>;
+            const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: (tx: TxClient) => Promise<unknown>) =>
+                realTransaction((tx) => fn(withLateScan(tx)))) as unknown as typeof prisma.$transaction);
+            try {
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(409);
+                expect((await res.json()).error).toContain("changed while merging");
+            } finally {
+                spy.mockRestore();
+            }
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            expect(await prisma.personMerge.findUnique({ where: { fromId: pMergeId } })).toBeNull();
+            expect(await prisma.rawBadgeLog.count({ where: { personId: pMergeId } })).toBe(0);
         });
 
         // A→B then B→C. The archive answers "where is this person now", so A's row
@@ -413,9 +474,9 @@ describe("Merge Participants API", () => {
         expect(oldData.id).toBe(pMergeId);
         expect(oldData.email).toBe("merge@example.com");
         expect(oldData.phone).toBe("123-456-7890");
-        // Recoverable authority: true in the pre-image, false on the row itself.
+        // Recoverable authority: true in the pre-image, and the row itself is gone.
         expect(oldData.isKeyholder).toBe(true);
-        expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.isKeyholder).toBe(false);
+        expect(await prisma.person.findUnique({ where: { id: pMergeId } })).toBeNull();
 
         // …and the keeper's own pre-image, since a field choice can overwrite it.
         const keeper = oldData.keeper as Record<string, unknown>;
@@ -457,10 +518,7 @@ describe("Merge Participants API", () => {
         expect(kept?.googleId).toBe("google-conflict-id");
         expect(kept?.email).toBe("conflict@example.com");
 
-        const merged = await prisma.person.findUnique({ where: { id: pMergeId } });
-        expect(merged?.googleId).toBeNull();
-        expect(merged?.email).toContain("merged-");
-        expect(merged?.email).toContain("@deleted.invalid");
+        await expectMergedAway(pMergeId, pKeepId);
     });
 
     // Matrix 1a (#1456): decision-bearing collisions refuse the merge.
@@ -677,7 +735,7 @@ describe("Merge Participants API", () => {
         const res = await POST(mergeReq(pKeepId, lead.id, { name: "keep" }));
         expect({ status: res.status, data: await res.json() }).toEqual({ status: 200, data: { success: true } });
 
-        expect((await prisma.person.findUnique({ where: { id: lead.id } }))?.mergedIntoId).toBe(pKeepId);
+        await expectMergedAway(lead.id, pKeepId);
         // ghost stays put — a tombstone is never cleaned up by a merge.
         expect((await prisma.person.findUnique({ where: { id: ghost.id } }))?.householdId).toBe(hh.id);
     });
@@ -755,7 +813,7 @@ describe("Merge Participants API", () => {
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBe(pKeepId);
+            await expectMergedAway(pMergeId, pKeepId);
         });
 
         it("400s when the merged-away record's household is DENIED and the keeper's is NONE (restriction laundered)", async () => {
@@ -814,7 +872,7 @@ describe("Merge Participants API", () => {
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBe(pKeepId);
+            await expectMergedAway(pMergeId, pKeepId);
         });
 
         it("allows the merge when one household has an explicit NONE row and the other has no membership at all", async () => {
@@ -904,7 +962,7 @@ describe("Merge Participants API", () => {
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBe(pKeepId);
+            await expectMergedAway(pMergeId, pKeepId);
         });
     });
 
@@ -980,7 +1038,7 @@ describe("Merge Participants API", () => {
         const res1 = await POST(mergeReq(pKeepId, pMergeId));
         expect(res1.status).toBe(200);
 
-        // Third participant to attempt merging with the now-tombstoned pMergeId.
+        // Third participant to attempt merging with the now merged-away pMergeId.
         const third = await prisma.person.create({ data: { name: "Third", householdId } });
         extraPersonIds.push(third.id);
 
@@ -1074,9 +1132,9 @@ describe("Merge Participants API", () => {
         const statuses = [resA.status, resB.status].sort();
         expect(statuses).toEqual([200, 409]);
 
-        const tombstone = await prisma.person.findUnique({ where: { id: pMergeId } });
         const winnerId = resA.status === 200 ? pKeepId : keep2.id;
-        expect(tombstone?.mergedIntoId).toBe(winnerId);
+        await expectMergedAway(pMergeId, winnerId);
+        expect(await prisma.personMerge.count({ where: { fromId: pMergeId } })).toBe(1);
     });
 
     // Matrix 7
@@ -1094,10 +1152,9 @@ describe("Merge Participants API", () => {
         const res2 = await POST(mergeReq(c.id, pKeepId));
         expect(res2.status).toBe(200);
 
-        const a = await prisma.person.findUnique({ where: { id: pMergeId } });
-        const b = await prisma.person.findUnique({ where: { id: pKeepId } });
-        expect(a?.mergedIntoId).toBe(pKeepId);
-        expect(b?.mergedIntoId).toBe(c.id);
+        // Both archive rows name the terminal record: the second merge repoints the first's.
+        await expectMergedAway(pMergeId, c.id);
+        await expectMergedAway(pKeepId, c.id);
 
         // A's visit moved to B on the first merge, then on to C on the second.
         const visitsOnC = await prisma.visit.findMany({ where: { personId: c.id } });
@@ -1204,9 +1261,7 @@ describe("Merge Participants API", () => {
             // The stale keeper stamp must NOT ride along on the swapped-in address.
             expect(kept?.emailVerified?.getTime()).not.toBe(keepVerified.getTime());
 
-            // Tombstone carries no verified stamp for the sentinel address.
-            const tomb = await prisma.person.findUnique({ where: { id: pMergeId } });
-            expect(tomb?.emailVerified).toBeNull();
+            await expectMergedAway(pMergeId, pKeepId);
         });
 
         it("magic-link keeper (email, no googleId) + Google merge, identity 'merge': all three move as a unit", async () => {
@@ -1476,7 +1531,7 @@ describe("Merge Participants API", () => {
         // migrated BG_REVIEWER whose mirror stayed false could not attest
         // (canReviewBackgroundChecks reads the mirror) and dropped out of the
         // reviewer notification list.
-        it("syncs Person's role mirrors on a migrated role, and clears the tombstone's", async () => {
+        it("syncs Person's role mirrors on a migrated role, and deletes the merged-away row", async () => {
             await prisma.personRole.create({ data: { personId: pMergeId, role: "BG_REVIEWER" } });
             await prisma.person.update({ where: { id: pMergeId }, data: { isBackgroundCheckReviewer: true } });
 
@@ -1484,16 +1539,14 @@ describe("Merge Participants API", () => {
             expect(res.status).toBe(200);
 
             const kept = await prisma.person.findUnique({ where: { id: pKeepId } });
-            const tombstone = await prisma.person.findUnique({ where: { id: pMergeId } });
             expect(kept?.isBackgroundCheckReviewer).toBe(true);
-            expect(tombstone?.isBackgroundCheckReviewer).toBe(false);
             // End-to-end: the single predicate the API gate, the review service and
-            // the UI all read (review.ts) — false here is ReviewError('not_reviewer').
+            // the UI all read (review.ts).
             expect(canReviewBackgroundChecks(kept!)).toBe(true);
-            expect(canReviewBackgroundChecks(tombstone!)).toBe(false);
+            await expectMergedAway(pMergeId, pKeepId);
         });
 
-        it("leaves the survivor's mirror set when the role is deduped, and still clears the tombstone's", async () => {
+        it("leaves the survivor's mirror set when the role is deduped", async () => {
             for (const personId of [pKeepId, pMergeId]) {
                 await prisma.personRole.create({ data: { personId, role: "KEYHOLDER" } });
                 await prisma.person.update({ where: { id: personId }, data: { isKeyholder: true } });
@@ -1503,7 +1556,7 @@ describe("Merge Participants API", () => {
             expect(res.status).toBe(200);
 
             expect((await prisma.person.findUnique({ where: { id: pKeepId } }))?.isKeyholder).toBe(true);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.isKeyholder).toBe(false);
+            await expectMergedAway(pMergeId, pKeepId);
         });
 
         // Written from the survivor's whole FINAL role set rather than patched per

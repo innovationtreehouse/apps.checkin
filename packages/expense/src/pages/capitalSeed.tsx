@@ -22,8 +22,15 @@ export default function CapitalSeedPage() {
 
   async function submit() {
     setError(null);
+    let seed: unknown;
     try {
-      setResult(await api<SeedResult>("/capital-assets/seed", { method: "POST", body: JSON.stringify(JSON.parse(text)) }));
+      seed = JSON.parse(text);
+    } catch {
+      setError("That isn't valid JSON.");
+      return;
+    }
+    try {
+      setResult(await api<SeedResult>("/capital-assets/seed", { method: "POST", body: JSON.stringify(seed) }));
     } catch (e) {
       setError(errorMessage(e));
     }

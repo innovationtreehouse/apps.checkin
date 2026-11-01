@@ -7,7 +7,8 @@
  * the donor sink (bound to donations in-process) and the purchase outcome (receiving, expense
  * and donations, joined here). Mail intake is bound only on a deployed
  * instance with both the token refresher and the mailbox configured; each mailed receipt is
- * acknowledged by email (mailReply.ts).
+ * acknowledged by email (mailReply.ts). A receipt finance rejects is emailed to its uploader and
+ * the person reimbursed (purchaseOutcomeMail.ts).
  */
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
@@ -19,6 +20,7 @@ import {
   createGmailReader,
   fixtureOcr,
   type MailboxReader,
+  type OutcomeMail,
   type PurchaseOutcome,
   type ReceiptAlerts,
   type ReceiptReplies,
@@ -246,6 +248,13 @@ const replies: ReceiptReplies = {
   },
 };
 
+const outcomeMail: OutcomeMail = {
+  async send(notice, to) {
+    const { sendPurchaseOutcome } = await import("@/lib/purchaseOutcomeMail");
+    return sendPurchaseOutcome(notice, to);
+  },
+};
+
 export function configureRuntime(): void {
   configureReceipt({
     auth: { getPrincipal },
@@ -256,6 +265,7 @@ export function configureRuntime(): void {
     alerts,
     mailbox: receiptMailbox(),
     replies,
+    outcomeMail,
     reimbursementStatus,
     submitterConfirmations,
     purchaseOutcomes: { forReceipts: purchaseOutcomes },

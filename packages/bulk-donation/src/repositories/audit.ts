@@ -6,7 +6,6 @@ export type EntityType =
   | "account_map"
   | "uploaded_file"
   | "comment_rule"
-  | "qb_exclusion"
   | "in_kind"
   | "manual_in_kind"
   | "donation_org_settings";

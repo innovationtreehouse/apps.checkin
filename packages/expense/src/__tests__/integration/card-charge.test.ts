@@ -107,7 +107,7 @@ describeDb("card charges", () => {
     await holder;
     await drain;
 
-    expect(await voiding).not.toBe("qb_pending");
+    expect(await voiding).toBe("qb_complete");
     expect(await events(id)).toBe(1);
   });
 

@@ -32,7 +32,8 @@ describe("attendance/my-visits page", () => {
     renderWithProviders(<MyVisits />);
 
     expect(await screen.findByText("Open Gym")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Edit visit" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Edit visit" })).toHaveLength(1);
+    expect(screen.getByText("Still checked in")).toBeInTheDocument();
     expect(router.push).not.toHaveBeenCalled();
   });
 

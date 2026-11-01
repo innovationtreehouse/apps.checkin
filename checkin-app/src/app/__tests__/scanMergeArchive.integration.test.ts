@@ -2,21 +2,17 @@
  * @jest-environment node
  */
 /**
- * POST /api/scan against a badge whose Person row NO LONGER EXISTS (#1456 2b).
+ * POST /api/scan against a badge whose Person row does not exist.
  *
- * This is the branch the phase-2 plan caught. The merge redirect that ships today
- * only works because the tombstone Person row still loads: `person.findUnique`
- * returns it, `mergedIntoId` is non-null, and the walk follows it. Once 2b-3
- * deletes that row the same lookup returns null and the 404 fires first — the
- * badge is rejected at the door, which is the precise failure the redirect exists
- * to prevent. So the archive lookup lives in the not-found branch, and this suite
- * is what stops it being dead code until then: every case here deletes the Person
- * row by hand, which is exactly the state 2b-3 produces.
+ * With the merged-away Person row gone, `person.findUnique` returns null and the 404
+ * would reject the badge at the door — the failure the merge redirect exists to
+ * prevent. So the archive lookup lives in the not-found branch. Every case here
+ * deletes the Person row by hand to reach that state.
  *
- * Deleting it is only possible at all because 2b-0 (#1697) repointed the RESTRICT
- * relations — RawBadgeLog above all, which pinned every tombstone that had ever
- * scanned. The first test scans the loser BEFORE deleting it, so the fixture would
- * fail with P2003 if that repointing regressed.
+ * The delete works only because the RESTRICT relations are repointed — RawBadgeLog
+ * above all, which otherwise pins every tombstone that has scanned. The first test
+ * scans the loser BEFORE deleting it, so the fixture fails with P2003 if that
+ * repointing regresses.
  *
  * Real lib/attendance scan services, real DB; only auth and notifications are stubbed.
  */
@@ -87,7 +83,7 @@ describe('POST /api/scan — badge whose Person row was deleted', () => {
             data: { name, email: `${name}-${TAG}@example.com`, householdId },
         });
         if (opts.scanFirst) {
-            // A badge log on the loser is what used to make the delete impossible.
+            // A badge log on the loser blocks the delete unless repointed.
             await prisma.rawBadgeLog.create({ data: { personId: loser.id, location: 'Main Entrance' } });
             // Repointed exactly as the merge does, and backdated past the 3s debounce
             // so the scan under test is not swallowed as a double-read.

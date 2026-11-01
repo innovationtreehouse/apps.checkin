@@ -214,7 +214,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   });
   const settledPayouts = new Map<string, MirrorPayout | null>();
   for (const { source, payoutGid } of settled) {
-    settledPayouts.set(payoutGid, source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
+    settledPayouts.set(rowKey({ source, payoutGid }), source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
   }
 
   // Reads only each payout's match window and each settled deposit's booked day, never history.
@@ -235,15 +235,15 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
       const result = { status: "ran" as const, matched: 0, opened: 0, drifted: 0 };
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
-      const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
+      const byKey = new Map(rows.map((r) => [rowKey(r), r]));
       const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
       const exclusions = await tx.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } });
       const excluded = new Set(exclusions.map((e) => e.qbTxnId));
 
       // Settled rows whose payout or deposit moved reopen for finance; never re-matched silently.
       for (const row of rows) {
-        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(row.payoutGid)) continue;
-        const payout = settledPayouts.get(row.payoutGid) ?? null;
+        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(rowKey(row))) continue;
+        const payout = settledPayouts.get(rowKey(row)) ?? null;
         const cause = driftCause(row, payout, depositsById);
         if (!cause) continue;
 
@@ -261,7 +261,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             payoutNetCents: payout?.netCents ?? row.payoutNetCents,
           },
         });
-        byGid.set(row.payoutGid, updated);
+        byKey.set(rowKey(row), updated);
         await audit(tx, orgId, "reconciliation.drift", row, updated, { userId: null, reason: cause });
         result.drifted++;
       }
@@ -270,7 +270,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
       // never disagree. A hit on the payout's own key is a deposit income created.
       const candidates = deposits.map(depositMatchCandidate);
       for (const fact of facts) {
-        const row = byGid.get(fact.payoutGid);
+        const key = rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid });
+        const row = byKey.get(key);
         const open = row?.status === RECON_STATUS.OPEN && row.kind !== RECON_KIND.DRIFT;
         if (row && row.status !== RECON_STATUS.WAITING && !open) continue;
         // A post holds this payout; its settle decides it.
@@ -282,7 +283,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
               date: fact.payoutDate,
               amountCents: fact.netCents,
               ref: bankOf(fact.depositSource),
-              key: rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid }),
+              key,
               window: matchWindow(fact.payoutDate, fact.depositSource),
               claimedIds: claimed,
               excludedIds: excluded,
@@ -388,6 +389,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 function base(orgId: string, fact: PayoutFact, now: Date) {
   return {
     orgId,
+    source: fact.depositSource,
     payoutGid: fact.payoutGid,
     payoutDate: fact.payoutDate,
     payoutNetCents: fact.netCents,

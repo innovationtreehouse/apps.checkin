@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 /**
- * Negative-auth coverage for protected routes that previously had NO 401/403
- * test. Two shapes:
+ * Negative-auth coverage for protected routes. Two shapes:
  *
  *  1. ROLE-GATED — reject both the unauthenticated caller (401) and a plain
  *     authenticated user with no privileged role (403). Table-driven; the auth
@@ -166,8 +165,8 @@ describe('Protected-route role rejection', () => {
         { name: 'GET /api/safety/trusted-adults', invoke: () => ADMIN_TA_GET(nreq('http://localhost/api/safety/trusted-adults')) },
         { name: 'POST /api/safety/trusted-adults/override', invoke: () => TA_OVERRIDE_POST(nreq('http://localhost/api/safety/trusted-adults/override', 'POST', {})) },
         { name: 'PATCH /api/shop/tools/[id]', invoke: () => SHOP_TOOL_PATCH(nreq('http://localhost/api/shop/tools/1', 'PATCH', {}), idCtx(1)) },
-        // P0-B2: routes collapsed from getServerSession onto the withAuth roles gate.
-        // (finance-ops/payment-plans POST is covered in programPaymentPlansAPI; its GET is now a handler().)
+        // Routes on the withAuth roles gate.
+        // (finance-ops/payment-plans POST is covered in programPaymentPlansAPI; its GET is a handler().)
         { name: 'GET /api/events (standalone list)', invoke: () => EVENTS_LIST_GET(nreq('http://localhost/api/events')) },
         { name: 'POST /api/programs', invoke: () => PROGRAMS_POST(nreq('http://localhost/api/programs', 'POST', {})) },
         { name: 'POST /api/programs/[id]/sync-shopify', invoke: () => PROGRAM_SYNC_SHOPIFY_POST(nreq('http://localhost/api/programs/1/sync-shopify', 'POST', {}), idCtx(1)) },
@@ -274,7 +273,7 @@ describe('Protected-route role rejection', () => {
     });
 
     // ---- Facility Ops — operations reaches the aggregate, not the record ------
-    // #1633 [Decision]: operations reach attendance in aggregate only — the
+    // Operations reach attendance in aggregate only — the
     // trends, and printing the ID badges (whose /api/people/search + /api/programs
     // already admit them). One person's record sits outside that reach: they do
     // not record, correct or remove a visit, and do not read the raw badge events
@@ -350,10 +349,10 @@ describe('Protected-route role rejection', () => {
             const res = await EVENT_PATCH(nreq(`http://localhost/api/events/${eventId}`, 'PATCH', { action: 'cancel' }), idCtx(eventId));
             expect(res.status).toBe(401);
         });
-        // IDOR boundary (route migrated in #571): the gate is the inline
+        // IDOR boundary: the gate is the inline
         // `event.program.leadMentorId === caller` check. A lead of a DIFFERENT
         // program must be 403'd AND must not mutate the event — a 403 that still
-        // wrote would be the real bug. Re-read to pin it. Mirrors fd192fc.
+        // wrote would be the real bug. Re-read to pin it.
         it('PATCH 403 for a lead of a DIFFERENT program (confirmAttendance) — and the event is untouched', async () => {
             as(foreignLeadId);
             const before = await prisma.event.findUnique({ where: { id: ownedEventId }, select: { attendanceConfirmedAt: true, attendanceConfirmedById: true } });

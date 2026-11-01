@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepStuckUploaded } from "@checkin/receipt";
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -67,9 +67,12 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, swee
  * Then it re-sends in-kind donor changes the receipt library has not yet delivered to
  * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  *
- * Last, it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
+ * Then it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
  * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
  * that could not read the mailbox counts toward the top-level `failed`, so the cron run records it.
+ *
+ * Last, it retries the receipt outcome emails still owed (sweepOutcomeNotices). Isolated the same
+ * way; counts only.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -164,8 +167,16 @@ export const GET = withCron(async () => {
         receiptMail = { status: "error" };
     }
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
+    let receiptOutcomes: Awaited<ReturnType<typeof sweepOutcomeNotices>> | { status: "error" };
+    try {
+        receiptOutcomes = await sweepOutcomeNotices();
+    } catch (err) {
+        logger.error("[reconcile] receipt outcome emails failed:", err);
+        receiptOutcomes = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt outcome emails ${JSON.stringify(receiptOutcomes)}`);
     const mailUnread = receiptMail.status === "error" || receiptMail.status === "listing_failed";
     const sweepRowsFailed = [receipt, receiptStuck].reduce((sum, sweep) => sum + ("failed" in sweep ? sweep.failed : 0), 0);
     const reconcileFailed = "reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0;
-    return NextResponse.json({ success: true, ...result, failed: result.failed + sweepRowsFailed + reconcileFailed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail });
+    return NextResponse.json({ success: true, ...result, failed: result.failed + sweepRowsFailed + reconcileFailed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes });
 });

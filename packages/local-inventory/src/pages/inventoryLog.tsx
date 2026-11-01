@@ -140,8 +140,8 @@ function LogViews({ receivedReceiptIds }: { receivedReceiptIds?: ReceivedReceipt
 function PartsView({ receiptId, onReceipt }: { receiptId: string; onReceipt: (id: string) => void }) {
   const [page, setPage] = useState(1);
   const filter = receiptId ? new URLSearchParams({ receiptId }).toString() : "";
-  const rows = useLoad<LogRow[]>(`/inventory-log?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`);
-  const count = useLoad<{ total: number }>(`/inventory-log/count${filter && `?${filter}`}`);
+  const rows = useLoad<LogRow[]>(`/inventory-log?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`, { keepPrevious: true });
+  const count = useLoad<{ total: number }>(`/inventory-log/count${filter && `?${filter}`}`, { keepPrevious: true });
   return (
     <>
       {receiptId && (
@@ -213,9 +213,9 @@ function AppliesView({ status, onStatus, onReceipt, receivedReceiptIds }: {
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
   const filter = status && `status=${status}`;
-  const rows = useLoad<ApplyRow[]>(`/received-inventory-deltas?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`);
+  const rows = useLoad<ApplyRow[]>(`/received-inventory-deltas?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`, { keepPrevious: true });
   const partMappingIds = usePartMappingIds(rows.data, receivedReceiptIds);
-  const count = useLoad<{ total: number }>(`/received-inventory-deltas/count${filter && `?${filter}`}`);
+  const count = useLoad<{ total: number }>(`/received-inventory-deltas/count${filter && `?${filter}`}`, { keepPrevious: true });
   return (
     <>
       <SegmentedControl

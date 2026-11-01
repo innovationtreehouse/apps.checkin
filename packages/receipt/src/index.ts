@@ -16,6 +16,7 @@ export { createGmailReader } from "./lib/gmail";
 export { createMemoryFileStore } from "./lib/fileStorage";
 export { backfillFiles, verifyFiles, type FileBackfillReport, type FileVerifyReport } from "./services/fileBackfill";
 export { readMailbox, type MailIntakeResult } from "./services/mailIntake";
+export { sweepOutcomeNotices } from "./services/outcomeNotices";
 export { repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepStuckUploaded } from "./services/catchUp";
 export { mailQueueService } from "./services/mailQueueService";
 export { receiptStateCounts, RECEIPT_STATES, type ReceiptStateCount } from "./services/stateCounts";
