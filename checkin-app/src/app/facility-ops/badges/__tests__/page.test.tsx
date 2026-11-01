@@ -95,6 +95,6 @@ describe("facility-ops/badges page", () => {
     mockFetchJson({});
     renderWithProviders(<AdminBadgesPage />);
 
-    expect(await screen.findByText("Failed to load badge events.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load badge events")).toBeInTheDocument();
   });
 });

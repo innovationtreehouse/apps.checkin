@@ -1,7 +1,9 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useState } from "react";
 import { Card, Center, Code, Loader, Stack, Table, Text, Title } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 type ErrorLogRow = {
   id: number;
@@ -13,28 +15,18 @@ type ErrorLogRow = {
 };
 
 export function ErrorLogPanel() {
-  const [errors, setErrors] = useState<ErrorLogRow[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { data, error, reload } = useLoad<{ errors?: ErrorLogRow[] }>("/api/system-status/errors");
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  useEffect(() => {
-    fetch("/api/system-status/errors")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => setErrors(data.errors ?? []))
-      .catch(() => setFailed(true));
-  }, []);
-
-  if (failed) return <Text c="red">Failed to load error log.</Text>;
-  if (!errors) {
+  if (error) return <LoadError what="the error log" message={error} onRetry={reload} />;
+  if (!data) {
     return (
       <Center mih="30vh">
         <Loader />
       </Center>
     );
   }
+  const errors = data.errors ?? [];
 
   if (errors.length === 0) {
     return (

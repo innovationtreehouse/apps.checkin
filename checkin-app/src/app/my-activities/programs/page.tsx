@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Alert, Badge, Button, Card, Container, Group, SimpleGrid, Text, Title } from '@mantine/core';
+import { Badge, Button, Card, Container, Group, SimpleGrid, Text, Title } from '@mantine/core';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 import { formatDateOnly } from '@/lib/time';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -38,27 +40,13 @@ export default function MyProgramsDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  const [enrollments, setEnrollments] = useState<UserProgram[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: enrollments, error, reload } = useLoad<UserProgram[]>(status === "authenticated" ? '/api/programs/mine' : null);
 
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push('/');
     }
   }, [status, router]);
-
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    fetch('/api/programs/mine')
-      .then(res => {
-        if (!res.ok) throw new Error();
-        return res.json();
-      })
-      .then(setEnrollments)
-      .catch(() => setError("Failed to load your programs."))
-      .finally(() => setLoading(false));
-  }, [status]);
 
   if (status === "loading") {
     return (
@@ -82,13 +70,9 @@ export default function MyProgramsDashboard() {
           : 'Manage the programs you are currently enrolled in.'}
       </Text>
 
-      {error && (
-        <Alert color="red" variant="light" mb="lg">
-          {error}
-        </Alert>
-      )}
-
-      {loading ? (
+      {error ? (
+        <LoadError what="your programs" message={error} onRetry={reload} />
+      ) : !enrollments ? (
         <PageLoader minHeight="30vh" />
       ) : enrollments.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
