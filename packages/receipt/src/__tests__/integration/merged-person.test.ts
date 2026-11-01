@@ -151,6 +151,23 @@ describeDb("after merging A into B", () => {
     expect(ports.calls.pushes[0]).toMatchObject({ submitterId: SURVIVOR.id, submitterConfirmation: { confirmedByPersonId: SURVIVOR.id, onBehalfByPersonId: undefined } });
   });
 
+  it.each([
+    ["the survivor", ALICE.id, SURVIVOR.id],
+    ["the stored id when it names nobody live", GONE, GONE],
+  ])("an approval travels naming %s, and the push goes through", async (_label, stored, pushed) => {
+    const id = await aliceUploads();
+    await db.receipt.update({ where: { id }, data: { uploadedByUserId: BOB.id, pushedAt: null } });
+    await db.receiptDetail.update({ where: { id }, data: { state: "receipt_finalized" } });
+    await db.receiptFinanceReview.create({ data: { receiptId: id, outcome: "approved", reasons: ["tax"], decidedByUserId: stored } });
+    ports.calls.pushes.length = 0;
+    afterMerge();
+    actAs(FINANCE);
+    await receiptService.push(id);
+    expect(ports.calls.pushes[0].financeReview?.decidedByPersonId).toBe(pushed);
+    expect((await db.receipt.findUniqueOrThrow({ where: { id } })).pushedAt).not.toBeNull();
+    expect((await db.receiptFinanceReview.findUniqueOrThrow({ where: { receiptId: id } })).decidedByUserId).toBe(stored);
+  });
+
   it("an outcome notice names the survivor, once when they are both uploader and reimbursee", async () => {
     const id = await aliceUploads({ needsReimbursement: true });
     await db.receipt.update({ where: { id }, data: { reimburseePersonId: SURVIVOR.id } });

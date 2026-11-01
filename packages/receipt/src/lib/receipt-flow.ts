@@ -6,6 +6,7 @@ import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type Receipt
 import { getOrgId, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
+import { liveIds } from "./livePeople";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
 import { receiptMath, type MathLine } from "./lineMath";
@@ -147,6 +148,8 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     }
     const lineItems = await receiptRepo.listLineItems(receiptId);
     const review = await db.receiptFinanceReview.findUnique({ where: { receiptId } });
+    // Like the receipt's own person columns, an id naming nobody live goes as stored: expense keeps it as a record.
+    const decider = review && (await liveIds([review.decidedByUserId])).get(review.decidedByUserId);
     const { taxReview } = computeFinancialReviewFlags(await getOrgSettings(orgId), row.taxCents, row.receiptDate ?? "", row.isInKind);
     const payload = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
       message: "receipt orgId does not match this org",
@@ -177,7 +180,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
           ? {
               outcome: review.outcome,
               reasons: review.reasons,
-              decidedByPersonId: review.decidedByUserId,
+              decidedByPersonId: decider ?? review.decidedByUserId,
               note: review.note,
               taxCents: review.taxCents ?? undefined,
               decidedAt: review.decidedAt.toISOString(),
