@@ -48,17 +48,18 @@ export async function handler(event: unknown = {}): Promise<Record<string, unkno
   const shopifyCfg = loadShopifyConfig();
   const client = createShopifyClient(shopifyCfg);
 
+  // Push run freshness to the monitoring DB so the watchdog reads it there, instead of
+  // reaching into this service's own database. No-op when monitoring isn't configured.
+  const heartbeat = buildHeartbeatSink();
+
   // Relabel any run left RUNNING by a previously-killed process, so a dead run never
-  // looks in-flight. Cosmetic — the watermark already reflects what truly completed.
-  await reapStaleRuns(prisma);
+  // looks in-flight, and tell the watchdog it died. The watermark already reflects what
+  // truly completed.
+  await reapStaleRuns(prisma, heartbeat);
 
   // The store_id stamped on rows is resolved from the live store (its permanent
   // myshopifyDomain) and recorded in the `store` registry — not trusted from config.
   const { storeId } = await ensureStore(prisma, client, dbCfg.storeId);
-
-  // Push run freshness to the monitoring DB so the watchdog reads it there, instead of
-  // reaching into this service's own database. No-op when monitoring isn't configured.
-  const heartbeat = buildHeartbeatSink();
 
   // If another invocation already holds this store's run lock (reserved-concurrency = 1 was
   // bypassed, or a previous run is still in flight), skip cleanly rather than running a second
