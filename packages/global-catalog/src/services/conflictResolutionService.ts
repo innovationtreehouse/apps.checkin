@@ -47,10 +47,21 @@ export async function reportConflict(params: ReportConflictParams): Promise<{ id
   return { id: row.id };
 }
 
+function auditNote(raisedGtin13: string, currentGtin13: string, proposedGtin13: string): string | undefined {
+  if (currentGtin13 === proposedGtin13) return `Raised against ${raisedGtin13}; the part is already on ${proposedGtin13}, so there was nothing left to decide.`;
+  if (currentGtin13 !== raisedGtin13) return `Raised against ${raisedGtin13}; decided against ${currentGtin13}, where the part was when resolved.`;
+  return undefined;
+}
+
+/**
+ * Resolves a conflict against `shownExistingGtin13`, the item the reviewer saw.
+ * The row keeps the item it was decided against; the audit note keeps the one raised.
+ */
 export async function resolveConflict(
   conflictId: number,
   userId: number,
-  resolution: ConflictResolution
+  resolution: ConflictResolution,
+  shownExistingGtin13: string,
 ): Promise<void> {
   const conflict = await itemRefRepo.findConflictById(conflictId);
   if (!conflict) throw new ServiceError(404, "Conflict not found");
@@ -63,15 +74,20 @@ export async function resolveConflict(
   }
 
   await db.$transaction(async (tx) => {
+    const ref = await createItemReferenceRepository(tx).findByIdForUpdate(conflict.itemReferenceId);
+    if (!ref) throw new ServiceError(404, "Conflict not found");
+
     const { count } = await tx.referenceConflict.updateMany({
       where: { id: conflictId, resolvedAt: null },
-      data: { resolvedAt: new Date(), resolution: nextState as ConflictResolution, resolvedByUserId: userId },
+      data: { resolvedAt: new Date(), resolution: nextState as ConflictResolution, resolvedByUserId: userId, existingGtin13: ref.gtin13 },
     });
     if (count === 0) throw new ServiceError(409, "Conflict was already resolved");
+    if (ref.gtin13 !== shownExistingGtin13) {
+      throw new ServiceError(409, "This part moved to another item while the conflict was open. The conflict has been reloaded; please review it again.");
+    }
 
-    if (nextState === "use_proposed") {
-      const ref = await createItemReferenceRepository(tx).findByIdForUpdate(conflict.itemReferenceId);
-      if (ref && !ref.archivedAt) {
+    if (nextState === "use_proposed" && ref.gtin13 !== conflict.proposedGtin13) {
+      if (!ref.archivedAt) {
         await assertNoReferenceConflict(
           tx,
           conflict.proposedGtin13,
@@ -85,6 +101,6 @@ export async function resolveConflict(
       });
     }
 
-    await recordTransition(tx, "reference_conflict", conflictId, currentState, nextState, userId);
+    await recordTransition(tx, "reference_conflict", conflictId, currentState, nextState, userId, auditNote(conflict.existingGtin13, ref.gtin13, conflict.proposedGtin13));
   });
 }
