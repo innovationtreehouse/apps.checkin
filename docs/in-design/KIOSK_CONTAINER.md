@@ -296,19 +296,19 @@ safer channel rather than the one breaking today.
 
 Presence server PRs do not depend on this and can run alongside.
 
-**Website check-in removal lands first** (#2806). It changes no kiosk client code,
+**Website check-in removal has landed** (#2806). It changed no kiosk client code,
 and the kiosk's signed scan and roster calls keep working, so this order stands.
 Three things follow:
 
-- **Saved state matters more.** After #2806 staff cannot edit, end or remove an
+- **Saved state matters more.** Staff cannot edit, end or remove an
   open visit on the website, and nobody can close the building there. A wrong
   direction from an offline restart then stays until the person badges again or
   the 23:00 close, and a keyholder denied the close has no web fallback. Step 5
   therefore follows cutover directly and is not deferred.
-- **Protocol check.** #2806 leaves the door's protocol unconfirmed, and the status
-  page reports only the server's. Read it on the Pi during step 1, since the
-  presence rollout needs it too.
-- **Contract fixtures** start from the scan route as #2806 leaves it.
+- **Protocol check.** The door's protocol is unconfirmed, and the status page
+  reports only the server's. Read it on the Pi during step 1, since the presence
+  rollout needs it too.
+- **Contract fixtures** start from the scan route as it stands now.
 
 **Going back during the soak:** restore the autostart lines and move the files
 back. Scans queued in the meantime move with them. This route is why the old
