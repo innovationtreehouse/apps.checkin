@@ -256,6 +256,14 @@ class KioskctlTest(unittest.TestCase):
         with open(os.path.join(HERE, "host", "kiosk-reboot.service")) as f:
             self.assertIn("ExecStart=/usr/local/bin/kioskctl reboot\n", f.read())
 
+    def test_state_stays_outside_the_containers_data_mount(self):
+        with open(KIOSKCTL) as f:
+            self.assertIn("STATE=${KIOSK_STATE_DIR:-/var/lib/kiosk-host}\n", f.read())
+        with open(os.path.join(HERE, "host", "kiosk-client.service")) as f:
+            unit = f.read()
+        self.assertIn("EnvironmentFile=/var/lib/kiosk-host/current.env\n", unit)
+        self.assertIn("-v /var/lib/kiosk:/data \\\n", unit)
+
     def test_example_health_command_runs_the_script_in_the_image(self):
         with open(os.path.join(HERE, "host", "host.conf.example")) as f:
             self.assertIn('KIOSK_HEALTH_CMD="python /app/healthcheck.py"\n', f.read())
