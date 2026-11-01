@@ -668,14 +668,14 @@ export async function runExpirySweep(now: Date) {
         // the email a courtesy on top, so a slow or failing provider can't hold the tx.
         // The flip is its own dedup — an EXPIRED row is no longer selected by this query —
         // and it also excludes this row from the authorization check below.
-        const stillAuthorized = await prisma.trustedAdultReview.findFirst({
-            where: { trustedAdultId: r.trustedAdultId, ...authorizedReview(now) },
+        const approvalLeft = await prisma.trustedAdultReview.findFirst({
+            where: { trustedAdultId: r.trustedAdultId, status: "APPROVED" },
             select: { id: true },
         });
-        // One lapsed review is not a lapsed adult: a renewal approved before this row's
-        // date still authorizes them, and /operational still lists them. Only the review
-        // that leaves the adult with no approval at all earns the de-authorization notice.
-        if (stillAuthorized) continue;
+        // One lapsed review is not a lapsed adult: another approval may still authorize
+        // them, or be lapsed too and flip later in this run. Only the flip that leaves the
+        // adult with no approval at all earns the de-authorization notice, so it goes once.
+        if (approvalLeft) continue;
         const name = r.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
         await notifyHouseholdFamily(
             r.householdId,
