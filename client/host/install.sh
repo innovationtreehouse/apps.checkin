@@ -13,6 +13,8 @@ UNITS="kiosk-client.service kiosk-update.service kiosk-update.timer kiosk-urgent
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
 docker buildx version >/dev/null || { echo "docker with the buildx plugin is required" >&2; exit 1; }
 command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
+INPUT_GID=$(getent group input | cut -d: -f3)
+[ -n "$INPUT_GID" ] || { echo "the input group is required" >&2; exit 1; }
 
 install -d -m 755 /etc/kiosk "$STATE"
 install -d -m 750 -o "$KIOSK_USER" -g "$KIOSK_USER" /var/lib/kiosk
@@ -21,7 +23,7 @@ if [ ! -f "$CONF" ]; then
   install -m 644 "$HERE/host.conf.example" "$CONF"
   {
     echo "KIOSK_UID=$(id -u "$KIOSK_USER")"
-    echo "KIOSK_INPUT_GID=$(getent group input | cut -d: -f3)"
+    echo "KIOSK_INPUT_GID=$INPUT_GID"
   } >>"$CONF"
 fi
 # shellcheck source=client/host/host.conf.example
@@ -53,4 +55,5 @@ chown "$KIOSK_USER:$KIOSK_USER" "$AUTOSTART"
 grep -qF kiosk-browser "$AUTOSTART" || echo "/usr/local/bin/kiosk-browser &" >>"$AUTOSTART"
 
 echo "Installed. Before starting, set KIOSK_HEALTH_CMD in $CONF and put client.key and config.json in /etc/kiosk."
+echo "Stop the old kiosk loop and comment out its line in $AUTOSTART; going back during the soak restores it."
 echo "Then: systemctl enable --now kiosk-client.service kiosk-update.timer kiosk-urgent.timer kiosk-reboot.timer"

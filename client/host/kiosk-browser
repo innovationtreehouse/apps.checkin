@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Keeps Chromium on the kiosk page. Runs from Openbox autostart as the kiosk user.
 MARKER=/var/lib/kiosk/.chromium-bounce
-PORT=$(python3 -c "import json; print(json.load(open('/etc/kiosk/config.json')).get('listen_port', 8080))")
+
+read_port() {
+  python3 -c "import json; print(json.load(open('/etc/kiosk/config.json')).get('listen_port', 8080))" 2>/dev/null
+}
 
 xset s noblank || true
 xset s off || true
@@ -15,7 +18,8 @@ else
 fi
 
 while true; do
-  until (exec 3<>"/dev/tcp/localhost/$PORT") 2>/dev/null; do
+  # Read each pass: the config can arrive after Openbox starts, as it does at cutover.
+  until PORT=$(read_port) && (exec 3<>"/dev/tcp/localhost/$PORT") 2>/dev/null; do
     sleep 2
   done
   rm -f "$MARKER"

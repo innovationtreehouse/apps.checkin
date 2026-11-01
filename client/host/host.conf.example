@@ -4,7 +4,8 @@ KIOSK_RELEASE_TAG=kiosk-release
 KIOSK_URGENT_TAG=kiosk-urgent
 # Runs inside the container. Must check local health only (database, proxy,
 # scanner) and never the server, or an outage would roll back a good image.
-# Updates refuse to run until this is set. Quote a value with spaces.
+# Updates refuse to run until this is set. Quote the whole command; it splits on
+# spaces, so no single argument may contain one.
 KIOSK_HEALTH_CMD=
 # Seconds a new container has to pass the health check.
 KIOSK_HEALTH_TIMEOUT=90

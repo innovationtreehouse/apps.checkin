@@ -130,6 +130,7 @@ status() {
   echo "urgent:   $(get urgent)"
   echo "failed:   $(get failed)"
   echo "service:  $(systemctl is-active "$SERVICE")"
+  # One try: status reports the state now and does not wait for a start.
   if [ -n "$KIOSK_HEALTH_CMD" ] && KIOSK_HEALTH_TIMEOUT=3 healthy; then
     echo "health:   ok"
   else
