@@ -4,6 +4,9 @@ import { z } from "zod";
 // clearing any real bulk purchase.
 export const MAX_LINE_QUANTITY = 100_000;
 
+/** An ISO 4217 code; money formatting throws on anything else. */
+export const CURRENCY_CODE = /^[A-Z]{3}$/;
+
 const cents = z.number().int().nonnegative();
 
 export const CompletedReceiptLineItemSchema = z.object({
@@ -65,7 +68,7 @@ export const CompletedReceiptSchema = z.object({
   vendorName: z.string().nullable(),
   receiptNumber: z.string().nullable(),
   orderNumber: z.string().nullable(),
-  currency: z.string().default("USD"),
+  currency: z.string().regex(CURRENCY_CODE).default("USD"),
   taxCents: cents,
   shippingCents: cents,
   discountCents: cents,
