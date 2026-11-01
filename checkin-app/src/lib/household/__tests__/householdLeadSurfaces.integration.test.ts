@@ -2,15 +2,10 @@
  * @jest-environment node
  */
 /**
- * A merged-away Person keeps its householdId and loses isHouseholdLead, so a
- * household whose only remaining member is a tombstone reads as "has members,
- * no lead" — it lands on every board "needs a lead" surface with nothing to
- * promote, and its tombstone's name renders on the keyholder contact sheet.
- *
- * Covers the four surfaces that share those predicates: the broken-households
- * list, the membership-audit unclaimed list, the safety contact sheet, and the
- * two nav badges — asserting each list against its own badge count, since
- * lib/household/filters.ts exists precisely so they can't diverge.
+ * The "needs a lead" surfaces share lib/household/filters.ts: the broken-households
+ * list, the membership-audit unclaimed list, and their nav badges. A household with
+ * no members has nobody to promote, so it is not broken; the safety contact sheet
+ * skips it too. Each list is asserted against its own badge count so they can't diverge.
  */
 import { GET as BROKEN_GET } from '@/app/api/admin/broken-households/route';
 import { GET as UNCLAIMED_GET } from '@/app/api/membership-audit/unclaimed-households/route';
@@ -29,7 +24,7 @@ jest.mock('@/lib/config', () => {
     };
 });
 
-const TAG = 'tombstone-hh-test';
+const TAG = 'lead-surfaces-hh-test';
 
 function req() {
     return new Request('http://localhost:4000/x') as never;
@@ -40,14 +35,13 @@ async function json(res: Response) {
 }
 
 async function cleanup() {
-    await prisma.person.updateMany({ where: { email: { contains: TAG } }, data: { mergedIntoId: null } });
     await prisma.person.deleteMany({ where: { email: { contains: TAG } } });
     await prisma.household.deleteMany({ where: { name: { contains: TAG } } });
 }
 
-describe('live-empty households (only member is a merge tombstone)', () => {
+describe('household lead surfaces', () => {
     let keeperHh: number;
-    let ghostHh: number;
+    let emptyHh: number;
     let brokenHh: number;
     let boardId: number;
 
@@ -66,13 +60,9 @@ describe('live-empty households (only member is a merge tombstone)', () => {
             data: { name: `Board ${TAG}`, email: `board-${TAG}@example.com`, householdId: keeperHh, isBoardMember: true },
         })).id;
 
-        // Live-empty: its one member was merged away (merge clears isHouseholdLead).
-        ghostHh = (await prisma.household.create({ data: { name: `Ghost ${TAG}` } })).id;
-        await prisma.person.create({
-            data: { name: `Ghost ${TAG}`, email: `ghost-${TAG}@example.com`, householdId: ghostHh, mergedIntoId: keeper.id },
-        });
+        emptyHh = (await prisma.household.create({ data: { name: `Empty ${TAG}` } })).id;
 
-        // Genuinely broken: a live member, no lead.
+        // Broken: a member, no lead.
         brokenHh = (await prisma.household.create({ data: { name: `Broken ${TAG}` } })).id;
         await prisma.person.create({
             data: { name: `Live ${TAG}`, email: `live-${TAG}@example.com`, householdId: brokenHh },
@@ -85,22 +75,22 @@ describe('live-empty households (only member is a merge tombstone)', () => {
 
     afterAll(cleanup);
 
-    it('GET /api/admin/broken-households skips it and lists the broken household', async () => {
+    it('GET /api/admin/broken-households lists the broken household, not the empty one', async () => {
         const { households } = await json(await BROKEN_GET(req()));
         const ids = households.map((h: { id: number }) => h.id);
         expect(ids).toContain(brokenHh);
-        expect(ids).not.toContain(ghostHh);
+        expect(ids).not.toContain(emptyHh);
         expect(ids).not.toContain(keeperHh);
 
         const broken = households.find((h: { id: number }) => h.id === brokenHh);
         expect(broken.members.map((m: { name: string }) => m.name)).toEqual([`Live ${TAG}`]);
     });
 
-    it('GET /api/membership-audit/unclaimed-households skips it and lists the broken household', async () => {
+    it('GET /api/membership-audit/unclaimed-households lists the broken household, not the empty one', async () => {
         const { households } = await json(await UNCLAIMED_GET(req()));
         const ids = households.map((h: { id: number }) => h.id);
         expect(ids).toContain(brokenHh);
-        expect(ids).not.toContain(ghostHh);
+        expect(ids).not.toContain(emptyHh);
         expect(ids).not.toContain(keeperHh);
 
         const broken = households.find((h: { id: number }) => h.id === brokenHh);
@@ -109,12 +99,12 @@ describe('live-empty households (only member is a merge tombstone)', () => {
         ]);
     });
 
-    it('GET /api/safety/emergency-contacts skips it and hides the tombstone', async () => {
+    it('GET /api/safety/emergency-contacts skips the empty household', async () => {
         const { households } = await json(await CONTACTS_GET(req()));
         const ids = households.map((h: { id: number }) => h.id);
         expect(ids).toContain(brokenHh);
         expect(ids).toContain(keeperHh);
-        expect(ids).not.toContain(ghostHh);
+        expect(ids).not.toContain(emptyHh);
 
         const broken = households.find((h: { id: number }) => h.id === brokenHh);
         expect(broken.householdMembers.map((m: { name: string }) => m.name)).toEqual([`Live ${TAG}`]);

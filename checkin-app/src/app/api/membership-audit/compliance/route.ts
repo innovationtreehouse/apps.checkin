@@ -5,25 +5,16 @@ import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
-import { bgObligatedWhere, ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
+import { bgObligatedWhere, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
 /** Calendar day of an instant, UTC — how `@db.Date` columns come back from Prisma. */
 const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
-/**
- * The people merged INTO this survivor, from whichever record still holds them.
- *
- * The PersonMerge archive wins over a tombstone `Person` row: where both exist
- * they say the same thing. `mergedFrom` then covers only a tombstone with no
- * archive row, keyed by id so the same merge is never counted twice.
- */
-function mergeSourceIdentities(s: {
-    mergedFrom: { id: number; name: string | null; lastBackgroundCheck: Date | null }[];
-    mergedArchive: { fromId: number; snapshot: unknown }[];
-}) {
-    const archived = s.mergedArchive.map((a) => {
+/** The people merged INTO this survivor, read from their PersonMerge archive snapshots. */
+function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: unknown }[] }) {
+    return s.mergedArchive.map((a) => {
         const snap = (a.snapshot ?? {}) as { name?: string | null; lastBackgroundCheck?: string | null };
         return {
             id: a.fromId,
@@ -31,8 +22,6 @@ function mergeSourceIdentities(s: {
             lastBackgroundCheck: snap.lastBackgroundCheck ? new Date(snap.lastBackgroundCheck) : null,
         };
     });
-    const covered = new Set(archived.map((a) => a.id));
-    return [...archived, ...s.mergedFrom.filter((m) => !covered.has(m.id))];
 }
 
 /**
@@ -136,7 +125,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         // Same population the PERSON_BG triggers open for, so every obligation they
         // create has a row here with a submit action behind it.
         const people = await prisma.person.findMany({
-            where: { ...bgObligatedWhere(now), ...LIVE_PERSON },
+            where: bgObligatedWhere(now),
             select: {
                 id: true,
                 name: true,
@@ -197,7 +186,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                             id: true,
                             name: true,
                             householdMembers: {
-                                where: { isHouseholdLead: true, ...LIVE_PERSON },
+                                where: { isHouseholdLead: true },
                                 select: { id: true, name: true, email: true, lastBackgroundCheck: true },
                             },
                         },
@@ -261,18 +250,13 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    two different people.
     //
     //    A merge deletes the merged-away Person row, so the PersonMerge archive is
-    //    the source for both the predicate and `fromName`, and a tombstone row the
-    //    delete migration kept is the fallback. `mergedArchive: { some: {} }` is unfiltered
-    //    because the date lives inside a Json blob — the match happens below, over
-    //    a handful of rows.
+    //    the source for both the predicate and `fromName`. `mergedArchive: { some: {} }`
+    //    is unfiltered because the date lives inside a Json blob — the match happens
+    //    below, over a handful of rows.
     const survivors = await prisma.person.findMany({
         where: {
             lastBackgroundCheck: { not: null },
-            OR: [
-                { mergedFrom: { some: { lastBackgroundCheck: { not: null } } } },
-                { mergedArchive: { some: {} } },
-            ],
-            ...LIVE_PERSON,
+            mergedArchive: { some: {} },
         },
         select: {
             id: true,
@@ -280,7 +264,6 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             email: true,
             householdId: true,
             lastBackgroundCheck: true,
-            mergedFrom: { select: { id: true, name: true, lastBackgroundCheck: true } },
             mergedArchive: { select: { fromId: true, snapshot: true } },
         },
         orderBy: { name: "asc" },
@@ -308,11 +291,8 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    ponytail: the manual route accepts any personId, but this list only surfaces
     //    program-attached candidates — reaching someone not in a program needs a person
     //    picker we don't have a surface for yet.
-    // subjectPerson is filtered through LIVE_PERSON as a relation filter: an obligation
-    // whose subject was merged away must not stay on the board's chase list — the person
-    // it names no longer exists to chase.
     const openAgreements = await prisma.orgMembershipProcess.findMany({
-        where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION", subjectPerson: { is: LIVE_PERSON } },
+        where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION" },
         select: { subjectPerson: { select: { id: true, name: true, householdId: true } } },
     });
     const peopleAwaitingAgreement: PersonRow[] = openAgreements
@@ -333,7 +313,6 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         where: {
             ...autoPopulationWhere(now),
             isDeclaredAdult: true,
-            ...LIVE_PERSON,
         },
         select: { id: true, name: true, householdId: true },
         orderBy: { name: "asc" },
@@ -373,7 +352,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         where: { id: { in: [...reasons.keys()] } },
         include: {
             householdMembers: {
-                where: { isHouseholdLead: true, ...LIVE_PERSON },
+                where: { isHouseholdLead: true },
                 select: { id: true, name: true, phone: true, email: true, lastBackgroundCheck: true },
             },
         },
