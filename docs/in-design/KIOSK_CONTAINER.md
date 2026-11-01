@@ -281,6 +281,11 @@ safer channel rather than the one breaking today.
    workflow. Touches no device.
 3. **Host layer.** Install script and units, tested on any spare 64-bit Pi if one
    is available.
+   - **Container tests, required before cutover (owner, 2026-11-01).** The shipped
+     image runs in the flow stack with a throwaway signing key, on an arm64 runner.
+     A fake `evdev` mounted at test time feeds badges, so the image is unchanged.
+     Flow tests cover records, offline, restart, upgrade and rollback; Playwright
+     covers the kiosk's own page.
 4. **Cutover**, in one SSH session at night:
    1. Install Docker and the host layer, and pull the image.
    2. Stop the old loop cleanly, so the WAL file settles.
