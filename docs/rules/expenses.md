@@ -152,8 +152,9 @@ Things the app takes as true because they are handled outside it.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - After a merge, an expense's submitter, reimbursee and signers count as the
-  surviving person, so the conflict and one-step-per-person rules still bind
-  them. If a submitter or reimbursee names nobody the app can find, everyone
+  surviving person, so the conflict and one-step-per-person rules bind every
+  step taken after the merge; signatures given before it stand, under Spending
+  sign-off. If a submitter or reimbursee names nobody the app can find, everyone
   counts as conflicted on the expense until that is repaired. Nobody may approve
   a line, raise or reject an exception, sign a seat, confirm the receipt, or
   record Board authorization, and finance may not approve its tax, close its
@@ -460,6 +461,14 @@ Things the app takes as true because they are handled outside it.
   still reaches the books; the app does not check the signers again at booking.
   A signature that has to be given again is judged anew, so they are refused
   and another signer takes the seat.
+  [Decision — deliberate limit]
+
+- A signature given before a merge stands, even if the merge leaves one person
+  on two steps of the expense, or makes a signer the same person as its
+  submitter or the person reimbursed. This is the one exception to every signer
+  being a different person. The expense still reaches the books, needing no new
+  signature. A signature that has to be given again is judged anew against the
+  surviving person.
   [Decision — deliberate limit]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
