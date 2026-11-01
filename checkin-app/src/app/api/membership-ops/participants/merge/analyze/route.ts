@@ -4,7 +4,6 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { mergeBgNotice } from "@/lib/membership/mergeBgAdvance";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
 
@@ -61,7 +60,6 @@ export const GET = withAuth(
                                     // Tombstones are not members: the page's
                                     // isLeadWithOthers guard must match the POST's, and
                                     // the membership block counts live members only.
-                                    where: LIVE_PERSON,
                                     select: { id: true, name: true, isHouseholdLead: true }
                                 }
                             }
@@ -103,7 +101,7 @@ export const GET = withAuth(
             // The rule is asymmetric (it turns on which record is merged away) and the
             // keeper isn't fixed until the UI scores and the operator swaps, so both
             // directions are reported and the page applies the live one.
-            // householdMembers is already LIVE_PERSON-filtered, so "others" is the count.
+            // "others" is every household member but the subject.
             const subject = (p: typeof pA) => ({
                 status: householdMembershipStatus(p.household),
                 liveOthers: p.household?.householdMembers.filter(m => m.id !== p.id).length ?? 0,

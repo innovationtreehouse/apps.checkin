@@ -72,13 +72,10 @@ describe('live-empty households (only member is a merge tombstone)', () => {
             data: { name: `Ghost ${TAG}`, email: `ghost-${TAG}@example.com`, householdId: ghostHh, mergedIntoId: keeper.id },
         });
 
-        // Genuinely broken: a live member, no lead — plus a tombstone that must not render.
+        // Genuinely broken: a live member, no lead.
         brokenHh = (await prisma.household.create({ data: { name: `Broken ${TAG}` } })).id;
         await prisma.person.create({
             data: { name: `Live ${TAG}`, email: `live-${TAG}@example.com`, householdId: brokenHh },
-        });
-        await prisma.person.create({
-            data: { name: `Ghost2 ${TAG}`, email: `ghost2-${TAG}@example.com`, householdId: brokenHh, mergedIntoId: keeper.id },
         });
 
         (getServerSession as jest.Mock).mockResolvedValue({
@@ -88,7 +85,7 @@ describe('live-empty households (only member is a merge tombstone)', () => {
 
     afterAll(cleanup);
 
-    it('GET /api/admin/broken-households skips it and hides the tombstone in the broken household', async () => {
+    it('GET /api/admin/broken-households skips it and lists the broken household', async () => {
         const { households } = await json(await BROKEN_GET(req()));
         const ids = households.map((h: { id: number }) => h.id);
         expect(ids).toContain(brokenHh);
@@ -99,15 +96,13 @@ describe('live-empty households (only member is a merge tombstone)', () => {
         expect(broken.members.map((m: { name: string }) => m.name)).toEqual([`Live ${TAG}`]);
     });
 
-    it('GET /api/membership-audit/unclaimed-households skips it and hides the tombstone', async () => {
+    it('GET /api/membership-audit/unclaimed-households skips it and lists the broken household', async () => {
         const { households } = await json(await UNCLAIMED_GET(req()));
         const ids = households.map((h: { id: number }) => h.id);
         expect(ids).toContain(brokenHh);
         expect(ids).not.toContain(ghostHh);
         expect(ids).not.toContain(keeperHh);
 
-        // This list names people to chase, so a tombstone's name and its rewritten
-        // address must not be offered as a contact.
         const broken = households.find((h: { id: number }) => h.id === brokenHh);
         expect(broken.members).toEqual([
             { id: expect.any(Number), name: `Live ${TAG}`, email: `live-${TAG}@example.com` },

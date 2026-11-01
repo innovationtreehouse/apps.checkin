@@ -3,7 +3,6 @@ import type { Prisma, Visit } from "@/generated/prisma/client";
 import { handler, ApiResponseError, badRequest, notFound, unauthorized } from "@/security/handler";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
@@ -41,7 +40,7 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
 
     const subjectId = Number(personId);
     const person = await prisma.person.findFirst({
-        where: { id: subjectId, ...LIVE_PERSON },
+        where: { id: subjectId },
         select: { id: true },
     });
     if (!person) throw notFound("Person not found.");

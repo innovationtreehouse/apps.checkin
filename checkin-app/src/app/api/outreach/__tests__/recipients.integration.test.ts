@@ -41,13 +41,10 @@ async function makeHousehold(label: string) {
     return prisma.household.create({ data: { name: `${label} ${TAG}` } });
 }
 
-async function makeLead(householdId: number, email: string | null, opts: { emailSuppressed?: boolean; mergedIntoId?: number } = {}) {
+async function makeLead(householdId: number, email: string | null, opts: { emailSuppressed?: boolean } = {}) {
     const p = await prisma.person.create({
         data: { name: label(email), email, householdId, isHouseholdLead: true, emailSuppressed: !!opts.emailSuppressed },
     });
-    if (opts.mergedIntoId) {
-        await prisma.person.update({ where: { id: p.id }, data: { mergedIntoId: opts.mergedIntoId } });
-    }
     return p;
 }
 function label(email: string | null) { return email ?? 'no-email'; }
@@ -171,19 +168,6 @@ describe('outreach recipient snapshot', () => {
         expect(joinItem?.status).toBe('skipped_unsubscribed');
         expect(renewItem?.variant).toBe('renew');
         expect(renewItem?.status).toBe('queued'); // renew is never suppressed
-    });
-
-    it('excludes a tombstoned (merged-away) lead', async () => {
-        await setBoundary(BOUNDARY);
-        const survivorHh = await makeHousehold('MergeSurvivor');
-        const survivor = await makeLead(survivorHh.id, `survivor-${TAG}@example.com`);
-
-        const tombstonedHh = await makeHousehold('MergeTombstone');
-        const tombstonedEmail = `tombstoned-${TAG}@example.com`;
-        await makeLead(tombstonedHh.id, tombstonedEmail, { mergedIntoId: survivor.id });
-
-        const snap = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        expect(snap.items.find((i) => i.email === tombstonedEmail)).toBeUndefined();
     });
 
     // No standalone "two leads share an email" case: Person.email is @unique at the DB

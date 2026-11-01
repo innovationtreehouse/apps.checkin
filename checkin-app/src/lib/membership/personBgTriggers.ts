@@ -3,7 +3,7 @@ import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgChec
 import { nextBoundary } from "@/lib/membership/renewal";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { personBgOpen } from "@/lib/membership/lifecycle";
-import { bgObligatedWhere, LIVE_PERSON } from "@/lib/person/filters";
+import { bgObligatedWhere } from "@/lib/person/filters";
 import { systemActor } from "@/lib/auditActor";
 
 /**
@@ -80,7 +80,7 @@ export async function runPersonBgAnnualSweep(now: Date) {
 
     const boundary = nextBoundary(settings.orgMembershipYearBoundary, now);
     const threshold = bgFreshThreshold(boundary, months);
-    const people = await prisma.person.findMany({ where: { ...bgObligatedWhere(now), ...LIVE_PERSON }, select: { id: true } });
+    const people = await prisma.person.findMany({ where: { ...bgObligatedWhere(now) }, select: { id: true } });
 
     let opened = 0;
     for (const p of people) {
@@ -107,7 +107,7 @@ export async function openPersonBgForNewMember(householdId: number, asOf: Date) 
     if (!isRecheckPolicySet(months)) return;
     const threshold = bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
-        where: { householdId, ...bgObligatedWhere(asOf), ...LIVE_PERSON },
+        where: { householdId, ...bgObligatedWhere(asOf) },
         select: { id: true },
     });
     for (const p of people) await openPersonBg(p.id, asOf, threshold);

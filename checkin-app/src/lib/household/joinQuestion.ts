@@ -1,7 +1,6 @@
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { nameWrite } from "@/lib/person/name";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
@@ -30,7 +29,7 @@ export async function asksHouseholdQuestion(db: DbClient, personId: number): Pro
     });
     if (!person || person._count.accounts > 0 || isYouth(person.dateOfBirth)) return false;
     const peer = await db.person.findFirst({
-        where: { householdId: person.householdId, id: { not: personId }, accounts: { some: {} }, ...LIVE_PERSON },
+        where: { householdId: person.householdId, id: { not: personId }, accounts: { some: {} } },
         select: { id: true },
     });
     return peer !== null;

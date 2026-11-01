@@ -4,15 +4,14 @@
 /**
  * A bucket's owner and treasurers follow the own-household rule: nobody names
  * or removes themself or anyone in their household, and a refusal writes
- * nothing. A permitted change writes the row and one audit row together. A
- * merged-away (tombstoned) person is refused as not found, and an org-level
- * bucket takes no approvers.
+ * nothing. A permitted change writes the row and one audit row together. An
+ * unknown person is refused as not found, and an org-level bucket takes no
+ * approvers.
  */
 import { createBudgetOwner, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
-const mergedInto: Record<number, number> = { 4: 3 };
 const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null }> = {
     7: { isOrgLevel: false, ownerId: null },
     8: { isOrgLevel: true, ownerId: null },
@@ -30,10 +29,8 @@ jest.mock('@/lib/prisma', () => ({
         person: {
             findUnique: ({ where }: { where: { id: number } }) =>
                 Promise.resolve(where.id in households ? { householdId: households[where.id] } : null),
-            findFirst: ({ where }: { where: { id: number; mergedIntoId?: null } }) => {
-                const isMatch = where.id in households && !(where.mergedIntoId === null && where.id in mergedInto);
-                return Promise.resolve(isMatch ? { householdId: households[where.id] } : null);
-            },
+            findFirst: ({ where }: { where: { id: number } }) =>
+                Promise.resolve(where.id in households ? { householdId: households[where.id] } : null),
         },
         budgetOwner: {
             findUnique: ({ where, select }: { where: { id: number }; select: Record<string, unknown> }) => {
@@ -91,8 +88,8 @@ describe('setBucketTreasurer', () => {
         nothingWritten();
     });
 
-    test.each([true, false])('refuses a merged-away person as not found (on=%s), writing nothing', async (on) => {
-        await expect(setBucketTreasurer(1, 7, 4, on)).rejects.toMatchObject({ status: 404, message: 'Person not found' });
+    test.each([true, false])('refuses an unknown person as not found (on=%s), writing nothing', async (on) => {
+        await expect(setBucketTreasurer(1, 7, 99, on)).rejects.toMatchObject({ status: 404, message: 'Person not found' });
         nothingWritten();
     });
 

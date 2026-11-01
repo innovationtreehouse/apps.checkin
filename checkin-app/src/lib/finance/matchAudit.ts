@@ -3,7 +3,6 @@ import { membershipVariantYears } from "@/lib/finance/reconcile/membership";
 import { isPaid, isReversed } from "@/lib/finance/reconcile/orderStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import { normalizeAuditData } from "@/lib/auditPayload";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { programVariantIds } from "@/lib/programs/variants";
 import { personNamesById } from "@/lib/person/archivedPeople";
 
@@ -277,7 +276,6 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
         prisma.programParticipant.findMany({
             where: {
                 status: "ACTIVE",
-                person: LIVE_PERSON,
                 OR: [
                     { shopifyOrderId: { not: null } },
                     { program: { shopifyVariantId: { not: null } } },

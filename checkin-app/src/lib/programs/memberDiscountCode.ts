@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * Canonical prefix of a program's minted member-discount code. Single home for the
@@ -78,13 +77,10 @@ export async function unentitledMemberCodeUse(
     // Only rows THIS order pays for carry entitlement: PENDING (about to be activated
     // by it) or already stamped with this order id (redelivery). An id enrolled-ACTIVE
     // via some OTHER order clears neither arm, so it cannot lend its household's membership fee.
-    // LIVE_PERSON: a merge leaves the tombstone's enrollment row behind, and a
-    // tombstone must not lend its old household's membership fee to someone else's checkout.
     const enrolled = await prisma.programParticipant.findMany({
         where: {
             programId,
             personId: { in: personIds },
-            person: LIVE_PERSON,
             OR: [{ status: "PENDING" }, ...(shopifyOrderId ? [{ shopifyOrderId }] : [])],
         },
         select: { personId: true, person: { select: { householdId: true } } },

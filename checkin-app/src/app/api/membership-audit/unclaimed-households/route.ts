@@ -4,7 +4,6 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +22,7 @@ export const GET = withAuth(
             // shared predicate so the list and the badge can't drift.
             const households = await prisma.household.findMany({
                 where: UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE,
-                include: { householdMembers: { where: LIVE_PERSON } }
+                include: { householdMembers: true }
             });
 
             const result = households.map(h => ({

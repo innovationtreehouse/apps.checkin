@@ -1,7 +1,7 @@
 // Household and surname reads for in-kind gifts. Loaded at boot by the bulk-donation wiring, so it
 // imports nothing beyond the person model: no handler, auth or session code.
 import type { DbClient } from "@/lib/db-client";
-import { LIVE_PERSON, MAX_MERGE_HOPS } from "@/lib/person/filters";
+import { MAX_MERGE_HOPS } from "@/lib/person/filters";
 
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
 
@@ -48,7 +48,7 @@ async function householdsByPerson(db: DbClient, personIds: number[]): Promise<Ma
   const members =
     householdIds.length === 0
       ? []
-      : await db.person.findMany({ where: { householdId: { in: householdIds }, ...LIVE_PERSON }, select: { id: true, name: true, householdId: true } });
+      : await db.person.findMany({ where: { householdId: { in: householdIds } }, select: { id: true, name: true, householdId: true } });
   return new Map(
     ids.map((id) => {
       const selves = people.filter((p) => p.id === id || p.id === survivors.get(id));

@@ -12,7 +12,7 @@ import type { DbClient, TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
 import { recordPaymentException, type PaymentExceptionKind } from "@/lib/finance/reconcile/exceptions";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
-import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 
 export const DENIAL_REVOKE_REASON = "household denied";
 
@@ -30,7 +30,7 @@ export interface DenialOutcome {
 
 /** Revokes the household's trusted-adult access and opens its board items. */
 export async function applyHouseholdDenial(tx: TxClient, householdId: number, actor: AuditActor): Promise<DenialOutcome> {
-    const members = await tx.person.findMany({ where: { householdId, ...LIVE_PERSON }, select: { id: true } });
+    const members = await tx.person.findMany({ where: { householdId }, select: { id: true } });
     const memberIds = members.map((m) => m.id);
     const revokedReviewIds = await revokeTrustedAdults(tx, householdId, memberIds, actor);
     const boardItemIds = await openBoardItems(tx, memberIds);
@@ -90,11 +90,11 @@ async function openBoardItems(tx: TxClient, memberIds: number[]): Promise<number
     if (memberIds.length === 0) return [];
     const unfinished = { phase: { not: "FINISHED" as const } };
     const enrollments = await tx.programParticipant.findMany({
-        where: { personId: { in: memberIds }, person: LIVE_PERSON, program: unfinished, ...ENROLLED_PARTICIPANT },
+        where: { personId: { in: memberIds }, program: unfinished, ...ENROLLED_PARTICIPANT },
         select: { personId: true, programId: true },
     });
     const volunteers = await tx.programVolunteer.findMany({
-        where: { personId: { in: memberIds }, person: LIVE_PERSON, program: unfinished },
+        where: { personId: { in: memberIds }, program: unfinished },
         select: { personId: true, programId: true },
     });
     const programsLed = await tx.program.findMany({ where: { leadMentorId: { in: memberIds }, ...unfinished }, select: { id: true, leadMentorId: true } });
@@ -122,7 +122,7 @@ async function openBoardItems(tx: TxClient, memberIds: number[]): Promise<number
  * after the deny commits; the queue rows are already written by then.
  */
 export async function notifyBoardOfDenial(db: DbClient, householdId: number): Promise<void> {
-    const members = await db.person.findMany({ where: { householdId, ...LIVE_PERSON }, select: { id: true } });
+    const members = await db.person.findMany({ where: { householdId }, select: { id: true } });
     const row = await db.paymentException.findFirst({
         where: { kind: DENIED_HOUSEHOLD_KIND, programId: { not: null }, status: { not: "RESOLVED" }, personId: { in: members.map((m) => m.id) } },
         orderBy: { id: "desc" },

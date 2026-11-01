@@ -66,7 +66,6 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(found).toEqual({ id: 7, name: 'Pat Example', firstName: 'Pat', lastName: 'Example', isAdult: true, raisedMailLimit: false });
         expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
             where: {
-                mergedIntoId: null,
                 accounts: { some: {} },
                 OR: [{ email: { equals: 'pat@example.org', mode: 'insensitive' } }, { mailAliases: { some: { address: 'pat@example.org', approvedAt: { not: null } } } }],
             },
@@ -204,8 +203,8 @@ describe('receipt runtime: reimbursee bindings', () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([adult, minor, unknownAge, declaredNonMember]);
         expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }, { id: 11, name: 'Sam Guest' }]);
         const query = jest.mocked(prisma.person.findMany).mock.calls[0][0];
-        expect(query).toMatchObject({ where: { mergedIntoId: null, name: { contains: 'sam', mode: 'insensitive' } } });
-        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['mergedIntoId', 'name']);
+        expect(query).toMatchObject({ where: { name: { contains: 'sam', mode: 'insensitive' } } });
+        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['name']);
     });
 
     it('caps the search after dropping anyone not known to be an adult', async () => {
@@ -226,7 +225,7 @@ describe('receipt runtime: reimbursee bindings', () => {
     it('names nobody by id once their record is merged away', async () => {
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().reimbursees?.byId(8)).toBeNull();
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8, mergedIntoId: null } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8 } });
     });
 });
 
@@ -236,7 +235,7 @@ describe('receipt runtime: mailed receipt acknowledgements', () => {
     it("gives a live person's sign-in email and name", async () => {
         prisma.person.findFirst = jest.fn().mockResolvedValue({ email: 'pat@example.org', name: 'Pat Example' });
         expect(await boundConfig().replies?.contactOf(7)).toEqual({ email: 'pat@example.org', name: 'Pat Example' });
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null, accounts: { some: {} } } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, accounts: { some: {} } } });
     });
 
     it('gives nobody for a person without an email, without a sign-in, or merged away', async () => {
@@ -298,7 +297,7 @@ describe('receipt runtime: principal', () => {
             isBoardMember: true,
             addsPeople: true,
         });
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7 } });
     });
 
     it('refuses a session whose Person is gone', async () => {

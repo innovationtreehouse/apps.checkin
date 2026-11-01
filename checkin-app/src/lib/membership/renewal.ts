@@ -6,7 +6,6 @@ import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { logger } from "@/lib/logger";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { membershipYearLabel, membershipYearOf } from "@/lib/programYear";
@@ -395,7 +394,7 @@ export async function householdBgIsFresh(householdId: number, boundary: Date | n
     const threshold = bgFreshThreshold(boundary, recheckMonths);
     if (!threshold) return false;
     const fresh = await prisma.person.findFirst({
-        where: { householdId, isHouseholdLead: true, lastBackgroundCheck: { gte: threshold }, ...LIVE_PERSON },
+        where: { householdId, isHouseholdLead: true, lastBackgroundCheck: { gte: threshold } },
         select: { id: true },
     });
     return fresh !== null;

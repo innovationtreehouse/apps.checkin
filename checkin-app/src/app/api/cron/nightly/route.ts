@@ -5,7 +5,6 @@ import prisma from "@/lib/prisma";
 import { processPostEventEmails } from "@/lib/postEventEmails";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { type DepartureChange, executePendingCloses, logCloseDepartures } from "@/lib/attendance/close";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 import { systemActor } from "@/lib/auditActor";
@@ -112,7 +111,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
 
             if (closedNames || keyholderNames) {
                 const boardMembers = await prisma.person.findMany({
-                    where: { isBoardMember: true, ...LIVE_PERSON },
+                    where: { isBoardMember: true },
                     select: { email: true }
                 });
                 const message = `Auto-closed facility at midnight. Force-closed visits: ${closedNames || 'none'}.`

@@ -7,7 +7,6 @@ import { apiError } from "@/lib/api-response";
 import { isActiveOrgMember } from "@/lib/orgMembership";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { ENROLLMENT_WRITES, STATES } from "@/lib/programs/enrollmentState";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 // Two DISJOINT board queues over PENDING + isPaymentPlanRequested rows, split on
 // whether a Shopify seat is actually held (inventoryHeldAt):
@@ -26,7 +25,7 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
             // scholarship queue is PENDING_HELD, the reconciliation queue is
             // PENDING_HOLD_FAILED. Consume the definition's `where` so the split
             // can't drift from the state table.
-            where: { ...(holdsQueue ? STATES.PENDING_HOLD_FAILED.where : STATES.PENDING_HELD.where), person: LIVE_PERSON },
+            where: { ...(holdsQueue ? STATES.PENDING_HOLD_FAILED.where : STATES.PENDING_HELD.where) },
             include: {
                 // Nests household→orgMembership so the board can see CURRENT
                 // membership while a request is still pending —
@@ -47,7 +46,7 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                                 id: true,
                                 orgMembership: { select: { status: true } },
                                 householdMembers: {
-                                    where: { isHouseholdLead: true, ...LIVE_PERSON },
+                                    where: { isHouseholdLead: true },
                                     select: { id: true, name: true, email: true },
                                 },
                             },

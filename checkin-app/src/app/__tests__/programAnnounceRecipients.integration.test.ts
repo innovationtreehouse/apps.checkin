@@ -23,7 +23,6 @@ const mockSendEmail = sendEmail as jest.Mock;
 const TAG = 'announce-recip-test';
 
 describe('notifyNewProgramAnnounced recipient set (covered-member audience)', () => {
-    let tombstoneHouseholdId: number, tombstoneTargetId: number;
     // Integration suites share one DB, so BoardSettings row 1 may already carry a
     // boundary from another suite. The unbounded cases below require none.
     let prevBoardSettingsOuter: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
@@ -77,21 +76,6 @@ describe('notifyNewProgramAnnounced recipient set (covered-member audience)', ()
                 household: { create: { name: `OptedOut HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', memberSince: new Date() } } } },
             },
         });
-
-        // Tombstone: covered household, but mergedIntoId set -> excluded by LIVE_PERSON.
-        // The live merge target stays covered and included.
-        const tombstoneTarget = await prisma.person.create({
-            data: {
-                email: `tombstone-target-${TAG}@example.com`, name: 'TombstoneTarget',
-                household: { create: { name: `Tombstone HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', memberSince: new Date() } } } },
-            },
-            select: { id: true, householdId: true },
-        });
-        tombstoneTargetId = tombstoneTarget.id;
-        tombstoneHouseholdId = tombstoneTarget.householdId;
-        await prisma.person.create({
-            data: { email: `tombstone-${TAG}@example.com`, name: 'Tombstone', householdId: tombstoneHouseholdId, mergedIntoId: tombstoneTargetId },
-        });
     });
 
     afterAll(async () => {
@@ -107,15 +91,13 @@ describe('notifyNewProgramAnnounced recipient set (covered-member audience)', ()
         mockSendEmail.mockClear();
     });
 
-    it('includes covered+opted-in live members, excludes uncovered/opted-out/tombstoned, with no date boundary configured', async () => {
+    it('includes covered+opted-in live members, excludes uncovered/opted-out, with no date boundary configured', async () => {
         await notifyNewProgramAnnounced({ name: 'Robotics Recip Test', endAt: new Date('2026-12-01'), appliesToYear: 2026 });
 
         const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
         expect(recipients).toContain(`covered-${TAG}@example.com`);
-        expect(recipients).toContain(`tombstone-target-${TAG}@example.com`);
         expect(recipients).not.toContain(`uncovered-${TAG}@example.com`);
         expect(recipients).not.toContain(`optedout-${TAG}@example.com`);
-        expect(recipients).not.toContain(`tombstone-${TAG}@example.com`);
     });
 
     // "Full duration" gate: a household settled for the live membership year

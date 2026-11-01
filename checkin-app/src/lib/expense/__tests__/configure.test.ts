@@ -76,7 +76,7 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     await dir.boardMembers();
 
     for (const [{ where }] of personRoleFindMany.mock.calls) {
-      expect(where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+      expect(where.person).toEqual(NOT_DENIED);
     }
   });
 
@@ -89,7 +89,7 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     const dir = await signoff();
 
     await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8], owner: 7 });
-    expect(budgetOwnerFindUnique.mock.calls[0][0].select.treasurers.where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+    expect(budgetOwnerFindUnique.mock.calls[0][0].select.treasurers.where.person).toEqual(NOT_DENIED);
   });
 
   it("an org-level bucket has no approvers and no owner", async () => {
@@ -107,8 +107,8 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     expect(where).toMatchObject({ isOrgLevel: false });
     expect(where).not.toHaveProperty("archivedAt");
     const [owner, treasurer] = where.OR;
-    expect(owner).toEqual({ ownerId: 7, owner: { mergedIntoId: null, ...NOT_DENIED } });
-    expect(treasurer.treasurers.some).toEqual({ personId: 7, person: { mergedIntoId: null, ...NOT_DENIED } });
+    expect(owner).toEqual({ ownerId: 7, owner: NOT_DENIED });
+    expect(treasurer.treasurers.some).toEqual({ personId: 7, person: NOT_DENIED });
   });
 });
 
@@ -151,7 +151,7 @@ describe("whether a reimbursee is an adult", () => {
   ])("answers for %s", async (_label, row, adult) => {
     personFindFirst.mockResolvedValue(row);
     await expect((await signoff()).isAdult(7)).resolves.toBe(adult);
-    expect(personFindFirst.mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null } });
+    expect(personFindFirst.mock.calls[0][0]).toMatchObject({ where: { id: 7 } });
   });
 });
 
@@ -250,7 +250,7 @@ describe("expense reimbursee Vendor ports", () => {
   it("names a live person", async () => {
     personFindFirst.mockResolvedValue({ name: "Pat Lee" });
     await expect((await ports()).people.nameOf(9)).resolves.toBe("Pat Lee");
-    expect(personFindFirst.mock.calls[0][0].where).toEqual({ id: 9, mergedIntoId: null });
+    expect(personFindFirst.mock.calls[0][0].where).toEqual({ id: 9 });
   });
 });
 

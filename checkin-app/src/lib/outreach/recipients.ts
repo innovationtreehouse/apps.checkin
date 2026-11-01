@@ -1,5 +1,4 @@
 import prisma from "@/lib/prisma";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
 import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
@@ -18,7 +17,7 @@ export interface RecipientSnapshotItem {
 
 export interface RecipientSnapshot {
     items: RecipientSnapshotItem[];
-    /** isHouseholdLead && LIVE_PERSON && email == null, in the chosen audience's base
+    /** isHouseholdLead && email == null, in the chosen audience's base
      * population — informational only, these leads get no item. */
     leadsWithoutEmail: number;
 }
@@ -40,9 +39,9 @@ export async function computeRecipientSnapshot(audience: Audience, now = new Dat
     const settledSince = cycle?.settledSince ?? MAX_DATE;
 
     const [leadsWithoutEmail, leads] = await Promise.all([
-        prisma.person.count({ where: { isHouseholdLead: true, email: null, ...LIVE_PERSON, ...NOT_DENIED } }),
+        prisma.person.count({ where: { isHouseholdLead: true, email: null, ...NOT_DENIED } }),
         prisma.person.findMany({
-            where: { isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON, ...NOT_DENIED },
+            where: { isHouseholdLead: true, email: { not: null }, ...NOT_DENIED },
             select: {
                 id: true,
                 email: true,

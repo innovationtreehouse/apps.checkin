@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { calculateAge, orgCalendarDay } from "@/lib/time";
 import { renewalWindow } from "@/lib/membership/renewal";
-import { ENROLLED_PARTICIPANT, LIVE_PERSON, recentProgramWhere } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
 import { personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -183,7 +183,7 @@ export async function runPersonAgreementSweep(now: Date) {
     if (!settings?.orgMembershipYearBoundary) return { opened: 0, reason: "no membership-year boundary configured" };
 
     const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, now);
-    const people = await prisma.person.findMany({ where: { ...autoPopulationWhere(now), ...LIVE_PERSON }, select: { id: true } });
+    const people = await prisma.person.findMany({ where: { ...autoPopulationWhere(now) }, select: { id: true } });
 
     let opened = 0;
     for (const p of people) {
@@ -204,7 +204,7 @@ export async function openPersonAgreementForNewMember(householdId: number, asOf:
 
     const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, asOf);
     const people = await prisma.person.findMany({
-        where: { householdId, ...autoPopulationWhere(asOf), ...LIVE_PERSON },
+        where: { householdId, ...autoPopulationWhere(asOf) },
         select: { id: true },
     });
     for (const p of people) await openPersonAgreement(p.id, asOf, floor);

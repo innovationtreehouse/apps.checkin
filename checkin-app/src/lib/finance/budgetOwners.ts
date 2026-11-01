@@ -3,7 +3,6 @@ import { badRequest, forbidden, notFound, ApiResponseError } from "@/security/ha
 import { personActor } from "@/lib/auditActor";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
@@ -147,7 +146,7 @@ export async function listBucketApprovers(budgetOwnerId: number) {
 
 /** Every live person, by name, for the Board's owner and treasurer pickers. */
 export async function listApproverOptions() {
-    return prisma.person.findMany({ where: LIVE_PERSON, select: { id: true, name: true }, orderBy: { name: "asc" } });
+    return prisma.person.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } });
 }
 
 /** Refuses a missing or org-level bucket, a missing person, and the actor or their household. */
@@ -155,7 +154,7 @@ async function assertMayName(actorId: number, budgetOwnerId: number, personId: n
     const bucket = await prisma.budgetOwner.findUnique({ where: { id: budgetOwnerId }, select: { isOrgLevel: true } });
     if (!bucket) throw notFound("Bucket not found");
     if (bucket.isOrgLevel) throw new ApiResponseError(409, "An org-level bucket has no owner or treasurers.");
-    const target = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
+    const target = await prisma.person.findFirst({ where: { id: personId }, select: { householdId: true } });
     if (!target) throw notFound("Person not found");
     if (actorId === personId || (await hasHouseholdConflict(prisma, actorId, target.householdId))) {
         throw forbidden(OWN_HOUSEHOLD_MESSAGE);
