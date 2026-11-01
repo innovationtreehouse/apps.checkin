@@ -116,6 +116,17 @@ register already limits what the kiosk receives: no whole last names, emails,
 birth dates or phone numbers. The file is readable only by the kiosk user, on the
 same card as the signing key, which is the more sensitive item.
 
+**What stays on the Pi (owner, 2026-11-01).** A scan is deleted once the server
+acknowledges it. With a clean uplink and the building empty, the active data is empty
+after the 23:00 clear; not losing scans comes first, so an unsent scan stays queued
+through an outage. Only a directory persists: ID, limited display name and keyholder
+flag for everyone allowed to badge, with no email or other contact data. The server
+versions it by content hash, roster replies and acknowledgements carry the hash, and
+on a difference the kiosk replaces its whole copy in one transaction. So nothing ages:
+someone removed is gone at the next contact. This replaces the snapshot's `knownPeople`
+and `knownKeyholders`, needs a registry PR then a route PR, and lands after cutover.
+Who is on the list is still to be set.
+
 **Schema rule.** Queue and state changes are additive and nullable, so an older
 image can run against a newer file. Without this, rollback is unsafe.
 
