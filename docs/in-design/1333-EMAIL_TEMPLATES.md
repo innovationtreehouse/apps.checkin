@@ -219,7 +219,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 
 > See sub-decision B (blurb) below.
 
-### finance — 10
+### finance — 11
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
