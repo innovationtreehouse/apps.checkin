@@ -425,11 +425,10 @@ rollback.
     (complete run). Findings: `checkin-analysis/kiosk-design/findings-2026-10-31.md`.
     Not reached: the all-fixes run, a second night, a late or failed server run,
     real times, timezone and daylight saving.
-- **S2. The door empties just before the web each night. Open, for the owner.** An
-  online kiosk's timer clears at 23:00, before the server's run lands and the next
-  poll arrives, so door and web briefly disagree. Accept it (recommended: it is brief,
-  late at night and matches the ruling), or skip the clear when the last contact is
-  under one poll old, which needs a model run.
+- **S2. The door empties just before the web each night. Accepted by the owner
+  (2026-10-31).** An online kiosk's timer clears at 23:00, before the server's run
+  lands and the next poll arrives, so door and web briefly disagree. The clear has no
+  link condition.
 
 Rejected alternatives: Postgres on the Pi (one writer and a small table; adds a
 server); Docker socket in the container (equals root); Balena or a reflash
