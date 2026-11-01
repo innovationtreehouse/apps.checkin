@@ -19,7 +19,7 @@ interface FileRow {
 export default function UploadsPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
-  const files = useLoad<FileRow[]>(paged("/uploaded-files", page));
+  const files = useLoad<FileRow[]>(paged("/uploaded-files", page), { keepPrevious: true });
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
 

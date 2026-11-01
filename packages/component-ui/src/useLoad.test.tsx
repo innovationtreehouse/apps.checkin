@@ -1,7 +1,7 @@
 import { act, render, renderHook } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ViewerProvider, createClient, type Loaded, type Viewer } from "./index";
+import { HttpError, ViewerProvider, createClient, errorMessage, type Loaded, type Viewer } from "./index";
 import { clearLoads } from "./loadCache";
 
 const { api, useLoad } = createClient("/api/things");
@@ -37,9 +37,17 @@ afterEach(() => {
 
 const person = (id: number): Viewer => ({ id, ageBand: "adult", isFinance: false, isBoardMember: false, isOperations: false, isInventoryManager: false });
 
+describe("errorMessage", () => {
+  it("keeps the server's words and replaces exception text", () => {
+    expect(errorMessage(new HttpError("No such thing", 404))).toBe("No such thing");
+    expect(errorMessage(new TypeError("Failed to fetch"))).toBe("Something went wrong. Try again.");
+    expect(errorMessage("text")).toBe("Something went wrong. Try again.");
+  });
+});
+
 describe("what the server says", () => {
   it.each([
-    ["a network failure", () => new TypeError("Failed to fetch"), "Failed to fetch", null],
+    ["a network failure", () => new TypeError("Failed to fetch"), "Something went wrong. Try again.", null],
     ["a 5xx", () => json({ error: "Boom" }, 503), "Boom", 503],
   ])("%s retries at 2s, 4s, 8s, 16s without a message, then sets error", async (_name, answer, message, status) => {
     const fetchMock = stubFetch(answer);
@@ -145,7 +153,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x", { retry: false }));
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.current).toMatchObject({ error: "Failed to fetch", retrying: false });
+    expect(result.current).toMatchObject({ error: "Something went wrong. Try again.", retrying: false });
   });
 
   it("keeps retrying in a hidden tab", async () => {
@@ -163,7 +171,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x"));
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(result.current.error).toBe("Failed to fetch");
+    expect(result.current.error).toBe("Something went wrong. Try again.");
   });
 
   it("two hooks on one key report the same retry state", async () => {
@@ -200,19 +208,68 @@ describe("the five things SWR gets wrong unless told", () => {
     expect(skipped.result.current).toMatchObject({ data: null, error: null, loading: false, retrying: false });
   });
 
-  it("3: keeps the old rows while the new path loads, and starts at null", async () => {
-    let release: (r: Response) => void = () => {};
-    stubFetch((url) => (url.endsWith("/2") ? new Promise<Response>((r) => { release = r; }) : json(["one"])));
-    const { result, rerender } = renderHook(({ path }) => useLoad<string[]>(path), { initialProps: { path: "/1" } });
-    expect(result.current.data).toBeNull();
-    await advance();
-    expect(result.current.data).toEqual(["one"]);
-    rerender({ path: "/2" });
-    await advance();
-    expect(result.current).toMatchObject({ data: ["one"], loading: true });
-    release(json(["two"]));
-    await advance();
-    expect(result.current).toMatchObject({ data: ["two"], loading: false });
+  describe("3: a new path", () => {
+    const held = () => {
+      let release: (r: Response) => void = () => {};
+      stubFetch((url) => (url.endsWith("/2") ? new Promise<Response>((r) => { release = r; }) : json(["one"])));
+      return (r: Response) => release(r);
+    };
+
+    it("starts at null, so old rows never show under the new path", async () => {
+      const release = held();
+      const { result, rerender } = renderHook(({ path }) => useLoad<string[]>(path), { initialProps: { path: "/1" } });
+      expect(result.current.data).toBeNull();
+      await advance();
+      expect(result.current.data).toEqual(["one"]);
+      rerender({ path: "/2" });
+      expect(result.current.data).toBeNull();
+      await advance();
+      expect(result.current).toMatchObject({ data: null, loading: true });
+      release(json(["two"]));
+      await advance();
+      expect(result.current).toMatchObject({ data: ["two"], loading: false });
+    });
+
+    it("stays null through a retry chain and after the last failure", async () => {
+      stubFetch((url) => (url.endsWith("/2") ? json({ error: "Boom" }, 500) : json(["one"])));
+      const { result, rerender } = renderHook(({ path }) => useLoad<string[]>(path), { initialProps: { path: "/1" } });
+      await advance();
+      rerender({ path: "/2" });
+      await advance();
+      expect(result.current).toMatchObject({ data: null, retrying: true });
+      await advance(30000);
+      expect(result.current).toMatchObject({ data: null, error: "Boom" });
+    });
+
+    it("keepPrevious keeps the old rows until the answer arrives", async () => {
+      const release = held();
+      const { result, rerender } = renderHook(({ path }) => useLoad<string[]>(path, { keepPrevious: true }), { initialProps: { path: "/1" } });
+      await advance();
+      rerender({ path: "/2" });
+      await advance();
+      expect(result.current).toMatchObject({ data: ["one"], loading: true });
+      release(json(["two"]));
+      await advance();
+      expect(result.current.data).toEqual(["two"]);
+    });
+
+    it("keepPrevious does not keep an empty list", async () => {
+      stubFetch((url) => (url.endsWith("/2") ? new Promise<Response>(() => {}) : json([])));
+      const { result, rerender } = renderHook(({ path }) => useLoad<string[]>(path, { keepPrevious: true }), { initialProps: { path: "/1" } });
+      await advance();
+      expect(result.current.data).toEqual([]);
+      rerender({ path: "/2" });
+      await advance();
+      expect(result.current.data).toBeNull();
+    });
+
+    it("keepPrevious keeps nothing for a null path", async () => {
+      stubFetch(() => json(["one"]));
+      const { result, rerender } = renderHook(({ path }: { path: string | null }) => useLoad<string[]>(path, { keepPrevious: true }), { initialProps: { path: "/1" as string | null } });
+      await advance();
+      rerender({ path: null });
+      expect(result.current.data).toBeNull();
+    });
   });
 
   describe("4: a person's data does not outlive them", () => {
@@ -265,6 +322,23 @@ describe("the five things SWR gets wrong unless told", () => {
       release(json(["first"]));
       await advance();
       expect(last.data).toEqual(["second"]);
+    });
+
+    it.each([false, true])("the next person never sees the last person's rows on a mounted page (keepPrevious %s)", async (keepPrevious) => {
+      let calls = 0;
+      stubFetch(() => (++calls === 1 ? json(["first"]) : new Promise<Response>(() => {})));
+      const painted: (string[] | null)[] = [];
+      const Painted = () => {
+        const { data } = useLoad<string[]>("/mine", { keepPrevious });
+        useEffect(() => { painted.push(data); });
+        return null;
+      };
+      const { rerender } = render(<ViewerProvider viewer={person(1)}><Painted /></ViewerProvider>);
+      await advance();
+      expect(painted.at(-1)).toEqual(["first"]);
+      rerender(<ViewerProvider viewer={person(2)}><Painted /></ViewerProvider>);
+      await advance();
+      expect(painted.at(-1)).toBeNull();
     });
 
     it("moving from session loading to a person does not fetch twice", async () => {

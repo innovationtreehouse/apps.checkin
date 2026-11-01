@@ -106,8 +106,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
 }) {
   const refsLoad = useLoad<ItemReferenceRow[]>(opened && item ? `/item-references?gtin13=${encodeURIComponent(item.gtin13)}` : null);
   const refs = refsLoad.data ?? [];
-  // A retry keeps the previous item's rows in `data`, and their buttons would act on that item.
-  const loading = refsLoad.loading || refsLoad.retrying || refsLoad.data === null;
+  const loading = refsLoad.data === null;
   const [addForm, setAddForm] = useState(EMPTY_REF);
   const [showAdd, setShowAdd] = useState(false);
   const [creating, setCreating] = useState(false);

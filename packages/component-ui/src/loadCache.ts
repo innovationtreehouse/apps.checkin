@@ -2,6 +2,12 @@ import { mutate } from "swr";
 
 const failures = new Map<string, number>();
 const retries = new Map<string, ReturnType<typeof setTimeout>>();
+let generation = 0;
+
+/** Counts `clearLoads` calls, so rows kept outside the cache end with the person they were read for. */
+export function loadGeneration(): number {
+  return generation;
+}
 
 /** Counts one more failed read of `url` in its current retry chain. */
 export function countFailure(url: string): number {
@@ -34,6 +40,7 @@ export function invalidateLoads(): void {
 
 /** Empties every cached load. It revalidates so SWR also drops its dedupe markers, which would otherwise bring an earlier answer back. */
 export function clearLoads(): void {
+  generation += 1;
   failures.clear();
   retries.forEach((retry) => clearTimeout(retry));
   retries.clear();

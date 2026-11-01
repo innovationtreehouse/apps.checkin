@@ -44,7 +44,7 @@ function ReferencesTab() {
   const params = new URLSearchParams({ page: "1", limit: String(PAGE_LIMIT), sortBy, sortDir });
   if (debouncedSearch) params.set("q", debouncedSearch);
   if (showArchived) params.set("showArchived", "true");
-  const { data: refs, error, reload } = useLoad<ItemReferenceRow[]>(`/item-references?${params}`);
+  const { data: refs, error, reload } = useLoad<ItemReferenceRow[]>(`/item-references?${params}`, { keepPrevious: true });
 
   function toggleSort(col: "manufacturer" | "retailer" | "item") {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -200,11 +200,11 @@ export default function GlobalInventoryClient() {
   const itemFilter = new URLSearchParams();
   if (debouncedSearch) itemFilter.set("q", debouncedSearch);
   if (showArchived) itemFilter.set("includeArchived", "true");
-  const countLoad = useLoad<{ total: number }>(`/items/count?${itemFilter}`);
+  const countLoad = useLoad<{ total: number }>(`/items/count?${itemFilter}`, { keepPrevious: true });
   const total = countLoad.data?.total ?? 0;
   const shownPage = clampPage(page, total, PAGE_SIZE);
   const itemParams = new URLSearchParams({ page: String(shownPage), limit: String(PAGE_SIZE), sortBy, sortDir, ...Object.fromEntries(itemFilter) });
-  const itemsLoad = useLoad<ItemRow[]>(`/items?${itemParams}`);
+  const itemsLoad = useLoad<ItemRow[]>(`/items?${itemParams}`, { keepPrevious: true });
   const items = itemsLoad.data;
   const itemsError = itemsLoad.error ?? countLoad.error;
 

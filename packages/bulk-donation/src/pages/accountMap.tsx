@@ -31,7 +31,7 @@ const FIELDS: Array<[keyof Form, string]> = [
 export default function AccountMapPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
-  const rules = useLoad<RuleRow[]>(paged("/account-map", page));
+  const rules = useLoad<RuleRow[]>(paged("/account-map", page), { keepPrevious: true });
   const [editing, setEditing] = useState<{ id: number | null; form: Form } | null>(null);
 
   async function save() {
