@@ -13,6 +13,7 @@ import DevDashboard from '@/components/DevDashboard';
 import OnboardingGate from '@/components/OnboardingGate';
 import RenewalBanner from '@/components/RenewalBanner';
 import DbWakeNotice from '@/components/DbWakeNotice';
+import DialogFocusGuard from '@/components/DialogFocusGuard';
 import AppFrame from '@/components/AppFrame';
 import { UnsavedChangesProvider } from '@/components/UnsavedChangesProvider';
 import { TimezoneProvider } from '@/components/TimezoneProvider';
@@ -45,6 +46,7 @@ export default async function RootLayout({
           <MantineProvider theme={brand.theme} defaultColorScheme="auto">
             <ModalsProvider>
               <Notifications />
+              <DialogFocusGuard />
               <EnvProvider value={{ checkinEnv: config.checkinEnv(), shopifyStoreDomain: config.shopifyStoreDomain(), isStaging: config.isStaging() }}>
                 <AuthProvider>
                   <OnboardingGate>
