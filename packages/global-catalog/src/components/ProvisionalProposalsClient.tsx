@@ -9,7 +9,7 @@ import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
 
@@ -84,7 +84,7 @@ export default function ProvisionalProposalsClient() {
       });
       notifications.show({ message: "Proposal approved, new catalog item created", color: "green" });
       closeApprove();
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
     finally { setApproving(false); }
   }
 
@@ -95,7 +95,7 @@ export default function ProvisionalProposalsClient() {
       await api(`/provisional-items/${rejectTarget.id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason: rejectReason }) });
       notifications.show({ message: "Proposal rejected", color: "orange" });
       closeReject(); setRejectReason(""); setRejectTarget(null);
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
     finally { setRejecting(false); }
   }
 
@@ -106,7 +106,7 @@ export default function ProvisionalProposalsClient() {
       await api(`/provisional-items/${mapTarget.id}/map-to-existing`, { method: "POST", body: JSON.stringify({ realGtin13: mapGtin.trim() }) });
       notifications.show({ message: "Provisional item mapped to existing catalog entry", color: "blue" });
       closeMap(); setMapGtin(""); setMapTarget(null);
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
     finally { setMapping(false); }
   }
 

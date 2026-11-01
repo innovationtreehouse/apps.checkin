@@ -12,7 +12,7 @@ import {
 } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
 import { api, clampPage, lastPage, useCanManage, useLoad } from "./api";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, ItemReferenceRow, ReferenceConflictRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";
@@ -55,14 +55,14 @@ function ReferencesTab() {
     try {
       await api(`/item-references/${id}/archive`, { method: "POST" });
       notifications.show({ message: "Reference archived", color: "orange" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
   }
 
   async function handleUnarchive(id: number) {
     try {
       await api(`/item-references/${id}/unarchive`, { method: "POST" });
       notifications.show({ message: "Reference unarchived", color: "green" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
   }
 
   const thStyle = { cursor: "pointer", userSelect: "none" as const, whiteSpace: "nowrap" as const };
@@ -123,7 +123,7 @@ function ConflictsTab({ conflicts, error, onRetry }: { conflicts: ReferenceConfl
     try {
       await api(`/reference-conflicts/${c.id}/resolve`, { method: "PUT", body: JSON.stringify({ resolution, existingGtin13: c.itemReference.gtin13 }) });
       notifications.show({ message: "Conflict resolved", color: "green" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
     finally {
       setResolving(false);
       // A resolve can move the part under other open conflicts, and a refusal means this one is out of date.
@@ -266,7 +266,7 @@ export default function GlobalInventoryClient() {
       }
       close();
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally { setSubmitting(false); }
   }
 
@@ -278,7 +278,7 @@ export default function GlobalInventoryClient() {
       closeArchive();
       notifications.show({ message: "Item archived", color: "orange" });
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally { setArchiving(false); }
   }
 
@@ -287,7 +287,7 @@ export default function GlobalInventoryClient() {
       await api(`/items/${gtin13}/unarchive`, { method: "POST" });
       notifications.show({ message: "Item unarchived", color: "green" });
     } catch (err) {
-      notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red", autoClose: false });
+      showError(errorMessage(err));
     }
   }
 
