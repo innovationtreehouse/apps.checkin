@@ -5,6 +5,7 @@ import type { ProvisionalResolutionRepository } from "../repositories/provisiona
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
 import { methodsFor, type QuantityMethod } from "../mergeConflictMethods";
+import { logRemovedOrgItem } from "./inventoryService";
 import {
   assertProvisionalTransition,
   assertMergeConflictTransition,
@@ -104,7 +105,9 @@ export function createProvisionalItemService({
             },
             update: { existingQuantity: { increment: provisionalQty } },
           }));
-          await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          // A real row that already existed, or that a racing receipt inserted, keeps its own settings.
+          if (existingRow || realQty !== provisionalQty) await logRemovedOrgItem(tx, removed, null);
         }
         await tx.inventoryLog.create({
           data: realQty === provisionalQty
@@ -161,7 +164,8 @@ export function createProvisionalItemService({
         data: { existingQuantity: newQty },
       });
       if (provisionalRow) {
-        await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        await logRemovedOrgItem(tx, removed, null);
       }
       await tx.inventoryLog.create({
         data: {
@@ -394,9 +398,10 @@ export function createProvisionalItemService({
         }
 
         if (provisionalRow) {
-          await tx.orgItem.delete({
+          const removed = await tx.orgItem.delete({
             where: { orgGtin: { orgId, gtin13: conflict.provisionalGtin13 } },
           });
+          await logRemovedOrgItem(tx, removed, userId, username);
         }
 
         await tx.inventoryLog.create({
