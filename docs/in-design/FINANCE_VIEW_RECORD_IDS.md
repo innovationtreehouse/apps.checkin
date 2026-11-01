@@ -63,8 +63,9 @@ mechanism lands, it needs these entries:
 - `GET /api/income/items` → falls under the `payouts` kind by its `/api/income`
   prefix, so the tab reads "viewed 40 payout records". A variant has no page of
   its own.
-- `GET /api/finance-ops/payment-plans` → the `payments` kind. A composite id needs
-  a format the tab can parse, and the tab needs a page to link it to, if any.
+- `GET /api/finance-ops/payment-plans` → the `payments` kind. Its ids are
+  `programId:personId` (decided below), so the tab and the search take that
+  format, and the tab needs a page to link it to, if any.
 
 ## Options
 
@@ -148,31 +149,39 @@ duplicate group. Those need A.3 or C.
 
 A.1 (one field name) for the finance queue and income items, with `payoutGid`
 moved into its registry entry. That closes the gap on the finance queue, the
-most-used screen, with the smallest grammar. Signoffs and the duplicate group
-wait on question 1a (D.1 or D.2). Payment plans and the duplicate group's
-members wait on questions 2 and 3.
+most-used screen, with the smallest grammar. Signoffs record only the path's
+expense id (decided below), so D covers them; which variant is Q1a.
+
+Two of the decisions below need more than A.1. Payment plans need joined fields
+(A.2) or C. The duplicate review needs paths into the row (A.3) or C, because its
+ids are nested in one group row. Which one is Q1.
+
+## Decided
+
+- **Payment plans record `programId:personId`.** One id per pending request
+  shown, the program id and the person id joined by a colon.  [Decision — owner]
+- **The duplicate review records everything it displays.** Every receipt id the
+  group shows: each member's `id`, each member's `copyOfId`, and each id in
+  `dismissed`, as well as the receipt in the path.  [Decision — owner]
+- **Signoffs record the expense in the path, not its lines.** One id, the
+  expense's; the line ids the response carries are not recorded.  [Decision — owner]
 
 ## Open questions for @thpr
 
-1. **Which mechanism?** A (registry field), B (routes return `id`), C (route
-   hands over ids), or D only for the detail routes. If A, which shape: one
-   field name, joined fields, or paths.
-   1a. **The detail routes' path `id`.** D.1 (the handler records it in
-   `recordIds`, a boundary change) or D.2 (the tab and the search read it from
-   `params`, app code only, unindexed)?
-2. **Payment plans.** Should its record ids be the composite
-   `programId:personId`, the `personId` alone, or nothing beyond the count? And
-   should `BoardSettings` stop counting as a row and being recorded as id `"1"`?
-3. **Duplicate group.** Should the record name every member receipt shown (and
-   the dismissed ids), or only the receipt in the path?
-4. **Signoffs.** Is the expense in the path enough, or should the line ids be
-   recorded as well?
-5. **Income items.** A variant's bucket mapping is not a payout. Should
-   `GET /api/income/items` stay an audited read, and if so, under which kind
-   label in the Board's tab?
-6. **Sibling keys on other audited routes.** Should the count exclude rows that
-   are not records (such as `ExpenseQueueReason` on the expense detail), or is
-   that a separate change?
+- **Q1.** **Which mechanism?** A (registry field), B (routes return `id`), C (route
+  hands over ids), or D only for the detail routes. If A, which shape: one
+  field name, joined fields, or paths.
+- **Q1a.** **The detail routes' path `id`.** D.1 (the handler records it in
+  `recordIds`, a boundary change) or D.2 (the tab and the search read it from
+  `params`, app code only, unindexed)?
+- **Q2.** **Payment plans' `BoardSettings`.** Should it stop counting as a row and
+  being recorded as id `"1"`?
+- **Q5.** **Income items.** A variant's bucket mapping is not a payout. Should
+  `GET /api/income/items` stay an audited read, and if so, under which kind
+  label in the Board's tab?
+- **Q6.** **Sibling keys on other audited routes.** Should the count exclude rows that
+  are not records (such as `ExpenseQueueReason` on the expense detail), or is
+  that a separate change?
 
 Log rows written before the change keep their count only; there is nothing to
 backfill them from.
