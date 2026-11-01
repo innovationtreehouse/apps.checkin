@@ -352,6 +352,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   people, so the person deciding confirms they are outside the donor's household,
   and that is recorded.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
 
+- The person accepting a gift of goods, with a receipt or without one, confirms the
+  goods themselves exist and arrived, not only the receipt, and that is recorded.
+  Refusing or returning a gift needs no such confirmation.  [Decision — owner decision AR-13, 2026-11-01]
+
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
   [Decision — owner]

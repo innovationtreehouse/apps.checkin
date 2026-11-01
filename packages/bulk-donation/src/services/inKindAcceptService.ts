@@ -25,6 +25,8 @@ export const InKindDecisionInputSchema = z.object({
     .optional(),
   /** The decider's attestation that they are outside the donor's household; the app cannot check it. */
   confirmOutsideDonorHousehold: z.literal(true),
+  /** The decider's attestation that the goods exist and arrived, not only the receipt; a first accept requires it. */
+  confirmGoodsReceived: z.literal(true).optional(),
 });
 export type InKindDecisionInput = z.infer<typeof InKindDecisionInputSchema>;
 
@@ -514,6 +516,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
     const decided: DecisionData = { decisionOutcome: outcome, decidedByUserId: callerId, decidedAt: now, donorHouseholdAttestedAt: now };
     let lines = gift.lines;
     if (outcome === "ACCEPTED") {
+      if (!input.confirmGoodsReceived) throw new ServiceError(400, "Accepting a gift confirms the goods exist and arrived");
       Object.assign(decided, { budgetOwnerId: await assignableBucket(input.bucketId), bucketAssignedByUserId: callerId, bucketAssignedAt: now });
       if (source === "receipt") {
         if (input.lineValues) throw new ServiceError(400, "A gift with a receipt keeps the receipt's values");
@@ -546,7 +549,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       ...entity(gift),
       eventType: "IN_KIND_DECIDED",
       ...audit,
-      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...warn },
+      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}), ...warn },
     });
     return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
   });
