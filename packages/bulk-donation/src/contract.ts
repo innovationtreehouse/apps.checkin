@@ -62,6 +62,8 @@ export interface CatalogLookup {
  */
 export interface InventoryApply {
   apply(delta: ResolvedInventoryDelta): Promise<void>;
+  /** Why the last load under this source key failed; null once it loads, or if it never failed. */
+  failureReason(sourceKey: string): Promise<string | null>;
 }
 
 /** Per-source idempotency key for X11, beside the receipt pipeline's `receipt:<id>`. */

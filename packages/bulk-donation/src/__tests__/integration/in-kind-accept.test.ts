@@ -3,7 +3,7 @@
  * accepts, refuses or returns each gift; the Board decides only when every finance holder is
  * conflicted. Accepting sets the bucket (and, without a receipt, the value); the warnings only warn.
  */
-import { it, expect, beforeEach } from "vitest";
+import { it, expect, beforeEach, vi } from "vitest";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -38,7 +38,11 @@ let householdCalls = 0;
 let surnameCalls = 0;
 const HOUSEHOLDS: Record<number, number[]> = { [UPLOADER]: [UPLOADER, FINANCE_IN_UPLOADER_HOUSEHOLD], [RECORDER]: [RECORDER] };
 
-function configure(principalId = RECORDER, apply: () => Promise<void> = async () => undefined) {
+function configure(
+  principalId = RECORDER,
+  apply: () => Promise<void> = async () => undefined,
+  failureReason: (sourceKey: string) => Promise<string | null> = async () => null,
+) {
   const inKind: InKindDirectory = {
     financeHolders: async () => finance,
     boardMembers: async () => [BOARD],
@@ -58,7 +62,7 @@ function configure(principalId = RECORDER, apply: () => Promise<void> = async ()
     org: async () => ({ id: orgId, name: "Test Org" }),
     owners: { list: async () => buckets },
     catalog: { search: async () => [], getItem: async (g) => ({ gtin13: g, name: "Drill" }) },
-    inventory: { apply },
+    inventory: { apply, failureReason },
     inKind,
     capital,
   });
@@ -389,16 +393,37 @@ describeDb("getGift", () => {
     expect(gift.events.map((e) => e.eventType)).toEqual(["MANUAL_IN_KIND_RECORDED"]);
   });
 
-  it("shows a failed inventory load as not loaded", async () => {
-    configure(RECORDER, async () => {
-      throw new Error("inventory down");
-    });
+  it("shows a failed inventory load as not loaded, with the reason inventory recorded", async () => {
+    const asked: string[] = [];
+    configure(
+      RECORDER,
+      async () => {
+        throw new Error("inventory down");
+      },
+      async (sourceKey) => {
+        asked.push(sourceKey);
+        return "inventory down";
+      },
+    );
     const { id } = await recordInKindWithoutReceipt({
       donor: { firstName: "Sam", lastName: "Giver", companyName: null },
       donationDate: "2026-10-02",
       lines: [{ gtin13: DRILL, quantity: 1 }],
     });
-    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({ inventorySourceKey: `donation:${id}`, inventoryLoadedAt: null });
+    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({
+      inventorySourceKey: `donation:${id}`,
+      inventoryLoadedAt: null,
+      inventoryLoadFailureReason: "inventory down",
+    });
+    expect(asked).toEqual([`donation:${id}`]);
+  });
+
+  it("asks for no failure reason once the goods loaded", async () => {
+    const { id } = await manualGift();
+    const failureReason = vi.fn(async () => "stale");
+    configure(RECORDER, async () => undefined, failureReason);
+    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({ inventoryLoadFailureReason: null });
+    expect(failureReason).not.toHaveBeenCalled();
   });
 
   it("shows a settled withdrawal with nothing left to do and no donor", async () => {

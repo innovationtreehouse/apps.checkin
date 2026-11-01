@@ -277,6 +277,7 @@ model WorkflowEvent {
 
   @@index([orgId, disbursementId, occurredAt])
   @@index([orgId, occurredAt])
+  @@index([orgId, entityType, entityId, occurredAt])
   @@map("workflow_events")
 }
 

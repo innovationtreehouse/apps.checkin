@@ -48,6 +48,7 @@ const base = {
   revenueBooking: null,
   expenseBooking: null,
   inventoryLoadedAt: "2026-10-02T12:00:01.000Z",
+  inventoryLoadFailureReason: null,
   lines: [{ id: 9, gtin13: "0011111111116", description: "Drill", quantity: 2, valueCents: 3500, suggestedValueCents: 4000 }],
   events: [
     { id: 1, eventType: "MANUAL_IN_KIND_RECORDED", actorUsername: "ops-pat", occurredAt: "2026-10-02T12:00:00.000Z", payload: "{}" },
@@ -105,6 +106,12 @@ describe("in-kind gift page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load again" }));
     await waitFor(() => expect(mockReload).toHaveBeenCalled());
     expect(mockApi).toHaveBeenCalledWith("/in-kind/manual/4/load-inventory", { method: "POST" });
+  });
+
+  it("shows why a failed inventory load failed", () => {
+    mockGift = { ...manual, inventoryLoadedAt: null, inventoryLoadFailureReason: "Not a provisional GTIN: 0011111111116" };
+    wrap(<ManualGiftPage />);
+    expect(screen.getByText("The load for donation:4 failed: Not a provisional GTIN: 0011111111116")).toBeInTheDocument();
   });
 
   it("keeps a failed retry's error up until dismissed", async () => {
