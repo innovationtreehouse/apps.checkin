@@ -288,6 +288,10 @@ hours at a time — is a normal operating mode here, not an incident.
   whatever the network or facility state. The system may decline to *display* or
   *project* a scan — park it, defer it — but never discards one.  [Decision]
 
+- A restart keeps the kiosk's view of who is inside, online or offline, along with
+  the last roster, known keyholders and last two-deep state. It does not make the
+  building known empty: only a real roster does that.  [Decision]
+
 - A raw badge read is never edited or deleted, by anyone, a sysadmin included.
   Its time, place and person stay as the kiosk read them, and a wrong time is
   corrected on the visit. Only its review markings and replay key change, and a

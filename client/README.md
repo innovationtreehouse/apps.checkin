@@ -165,7 +165,9 @@ docker run --name kiosk-client --rm --network host \
 ```
 
 The container runs from `/data`, so `outbox.db` and the marker files live in the
-host's `/var/lib/kiosk`. `private_key_path` and `outbox_path` in the config must be
+host's `/var/lib/kiosk`. `outbox.db` holds the scan queue and one saved copy of
+the kiosk's view (who is inside, the last roster with names, known keyholders), so
+a restart while offline keeps that view. Only the kiosk user can read the file. `private_key_path` and `outbox_path` in the config must be
 relative or point under `/data`. The client asks for a Chromium restart by writing
 `/var/lib/kiosk/.chromium-bounce`; a host loop acts on the file and deletes it.
 
