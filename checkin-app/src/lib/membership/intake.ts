@@ -9,7 +9,7 @@ import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete, getOwnBackgroundCheck } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
-import { fromWhere } from "@/lib/membership/lifecycle";
+import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
@@ -106,7 +106,7 @@ export async function getIntakeState(userId: number) {
     // a member" card. ARCHIVED (board-disposed) is terminal like ACTIVE, so a
     // returning applicant sees a clean slate rather than resuming a ghost.
     const process = membership?.processes
-        .filter((p) => p.status !== "ACTIVE" && p.status !== "ARCHIVED")
+        .filter((p) => openProcess.has(p))
         .sort((a, b) => b.id - a.id)[0] ?? null;
 
     // Parents/guardians are the household leads; children are non-lead members.
