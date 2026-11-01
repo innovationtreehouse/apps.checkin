@@ -289,7 +289,8 @@ move to it in later changes.
 
 - **A display nobody attends raises no message that waits to be dismissed.** A
   kiosk screen shows its state inline, because nobody is there to clear it. This
-  overrides the rule above for an action that failed.
+  overrides the rule that an action that failed keeps a message in the lower
+  right.
 
 - **A message that stays on screen carries the server's chosen words or fixed
   text, never exception text.** It holds no personal detail the current page
