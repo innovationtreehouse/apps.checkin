@@ -165,7 +165,7 @@ describe('role admission', () => {
             'POST /api/receipts/[id]/different-purchases',
             'POST /api/receipts/[id]/keep-this-one',
         ]));
-        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs', 'GET /api/receipts/[id]/duplicate-group']));
+        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs', 'GET /api/receipts/[id]/duplicate-group', 'GET /api/receipts/duplicate-queue']));
     });
 
     it.each([
@@ -461,6 +461,17 @@ describe('the submitter view', () => {
             expect({ endpoint, leaked: 'duplicateSuspectReceiptId' in out }).toEqual({ endpoint, leaked: false });
             expect({ endpoint, leaked: 'duplicateSuspectIsRejected' in out }).toEqual({ endpoint, leaked: false });
             expect(out.duplicateFlaggedAt).toBe(flagged.duplicateFlaggedAt);
+        }
+    });
+
+    it("strips the kept receipt from the uploader on every receipt route, and keeps the notice of their own copy", () => {
+        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'Acme, uploaded 3 Oct', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
+        for (const endpoint of jsonRoutes) {
+            const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
+            if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
+            const out = stripValue('ReceiptView', copy, submitter, ctx) as Record<string, unknown>;
+            expect({ endpoint, leaked: 'copyOfId' in out || 'copyOfLabel' in out }).toEqual({ endpoint, leaked: false });
+            expect(out.duplicateNotice).toEqual(copy.duplicateNotice);
         }
     });
 

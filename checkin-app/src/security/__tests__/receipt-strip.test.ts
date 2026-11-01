@@ -13,7 +13,9 @@
  *      exactly as the generated models do.
  *   4. An ignore-list entry reaches FINANCE whole and never carries file bytes.
  *   5. A duplicate group reaches FINANCE whole; an internal-only view keeps
- *      only each member's state.
+ *      only each member's state, and a submitter's view never holds the uploader.
+ *   6. A duplicates queue row reaches FINANCE whole; an internal-only view loses
+ *      its receipt id and rejected marker.
  */
 import '@/security/registry';
 import { stripValue } from '@/security/stripper';
@@ -155,7 +157,7 @@ describe('ReceiptView tiering', () => {
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 
@@ -176,8 +178,8 @@ describe('ReceiptIgnoredFileView', () => {
 describe('ReceiptDuplicateGroup', () => {
     const group = () => ({
         members: [
-            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2' },
-            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null },
+            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2', uploaderName: 'Pat Doe' },
+            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null, uploaderName: 'Sam Roe' },
         ],
         dismissed: ['r-3'],
     });
@@ -190,5 +192,23 @@ describe('ReceiptDuplicateGroup', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), INTERNAL_ONLY, ctx())).toEqual({
             members: [{ state: 'rejected' }, { state: 'duplicate_flagged' }],
         });
+    });
+
+    it("a submitter's view of its own member strips the uploader's name", () => {
+        const out = stripValue('ReceiptDuplicateMember', group().members[0], ['their_own:personal', 'their_own:internal'], ctx());
+        expect(out).not.toHaveProperty('uploaderName');
+    });
+});
+
+describe('ReceiptDuplicateQueueRow', () => {
+    const row = { id: 'r-1', retailer: 'Acme', receiptDate: '2026-10-01', receiptTotalCents: 1000, memberCount: 3, includesRejected: true, oldestHeldAt: '2026-10-02' };
+
+    it('FINANCE gets every field', () => {
+        expect(stripValue('ReceiptDuplicateQueueRow', row, FINANCE_VIEW, ctx())).toEqual(row);
+    });
+
+    it('an internal-only view strips the receipt id and the rejected marker', () => {
+        const { id: _id, includesRejected: _rejected, ...rest } = row;
+        expect(stripValue('ReceiptDuplicateQueueRow', row, INTERNAL_ONLY, ctx())).toEqual(rest);
     });
 });
