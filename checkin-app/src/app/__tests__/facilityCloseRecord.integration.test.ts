@@ -17,6 +17,7 @@ import { getServerSession } from 'next-auth/next';
 import type { FacilityCloseVia, Person, Visit } from '@/generated/prisma/client';
 import type { NextRequest } from 'next/server';
 import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { lockFacility } from '@/lib/facilityLock';
 
 jest.mock('@/lib/auth', () => ({
     ...jest.requireActual('@/lib/auth'),
@@ -509,6 +510,22 @@ describe('facility close record and departure log (real DB)', () => {
                 expect(visit).toMatchObject({ departedAt: close.closedAt, departedVia: 'FACILITY_CLOSE', facilityCloseId: close.id });
                 const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: `evt-${TAG}-fenced` } });
                 expect(log?.reviewReason).toBe('closed_before_delivery');
+            });
+
+            it('waits for a check-in holding the facility lock, then sweeps it', async () => {
+                let nightly: ReturnType<typeof nightlyGET> | undefined;
+                const visit = await prisma.$transaction(async (tx) => {
+                    await lockFacility(tx);
+                    const visit = await tx.visit.create({ data: { personId: member.id, arrivedAt: new Date() } });
+                    nightly = nightlyGET(cronReq());
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    return visit;
+                });
+                expect((await nightly!).status).toBe(200);
+
+                const [close] = await closesSinceFloor();
+                expect(await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } })).toMatchObject({ departedVia: 'AUTO_CLOSE', facilityCloseId: close.id });
+                await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
             });
 
             it('records no second close when the run is retried the same night', async () => {

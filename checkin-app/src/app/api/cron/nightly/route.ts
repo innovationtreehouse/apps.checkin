@@ -19,35 +19,39 @@ export const GET = withCron(async () => {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
-        const now = new Date();
-        // The sweep is a facility close with no person behind it.
-        const recordSweep = () => prisma.facilityClose.create({
-            data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
-            select: { id: true },
-        });
 
-        // Recorded every night, even with nobody open, because this row is what
-        // fences a scan from before it that arrives later. It commits before the
-        // read below: an arrival that commits first is read and swept, and one
-        // that commits after sees this close (fenceReplayedArrival).
-        const sweptTonight = await prisma.facilityClose.findFirst({
-            where: { via: "NIGHTLY_SWEEP", closedAt: { gt: new Date(now.getTime() - SAME_NIGHT_MS) } },
-            select: { id: true },
-        });
-        let close = sweptTonight ? null : await recordSweep();
-
-        // 1. Find all users who are currently checked in (abandoned visits)
-        // A tombstoned open visit is not abandoned — it's deleted; closing it
-        // would rewrite a record the member chose to erase.
-        const abandonedVisits = await prisma.visit.findMany({
-            where: {
-                departedAt: null,
-                ...LIVE_VISIT
-            },
-            include: {
-                person: true
-            }
-        });
+        // 1. Find all users who are currently checked in (abandoned visits), and
+        // record the sweep: a facility close with no person behind it. Recorded
+        // every night, even with nobody open, because this row is what fences a
+        // scan from before it that arrives later. The facility lock makes the read
+        // and the close one step against a check-in: an arrival that commits
+        // before it is read and swept, and one after it sees this close
+        // (fenceReplayedArrival).
+        const { now, close, abandonedVisits } = await prisma.$transaction(async (tx) => {
+            await lockFacility(tx);
+            const now = new Date();
+            const sweptTonight = await tx.facilityClose.findFirst({
+                where: { via: "NIGHTLY_SWEEP", closedAt: { gt: new Date(now.getTime() - SAME_NIGHT_MS) } },
+                select: { id: true },
+            });
+            // A tombstoned open visit is not abandoned — it's deleted; closing it
+            // would rewrite a record the member chose to erase.
+            const abandonedVisits = await tx.visit.findMany({
+                where: {
+                    departedAt: null,
+                    ...LIVE_VISIT
+                },
+                include: {
+                    person: true
+                }
+            });
+            // A retry's departures carry its own time, so they need their own close.
+            const close = sweptTonight && abandonedVisits.length === 0 ? null : await tx.facilityClose.create({
+                data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
+                select: { id: true },
+            });
+            return { now, close, abandonedVisits };
+        }, { maxWait: 5_000, timeout: 15_000 });
 
         let failed = 0;
         const forceClosed: typeof abandonedVisits = [];
@@ -55,9 +59,7 @@ export const GET = withCron(async () => {
         // "Notified" means a SYSTEM_NOTIFY audit row + log line; nothing emails the board.
         let boardNotified = false;
 
-        if (abandonedVisits.length > 0) {
-            // A retry's departures carry its own time, so they need their own close.
-            close ??= await recordSweep();
+        if (close && abandonedVisits.length > 0) {
             const closeId = close.id;
             // One bad checkout must not abort the rest, so each visit's checkout and
             // its departure logs commit together, alone. Each takes the person lock
