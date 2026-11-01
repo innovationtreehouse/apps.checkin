@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold } from "@/lib/membership/review";
 import { ARCHIVABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
-import { advanceExternalIfComplete } from "@/lib/membership/external";
+import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
@@ -33,9 +33,9 @@ function closeRefusal(process: OrgMembershipProcess): string | null {
  * already-closed application is a no-op.
  *
  * The Zoho signing request stays live on purpose: Zoho charges per request, so
- * close/reopen never recall or recreate one. A signature that lands while closed is
- * picked up after Reopen (by the advance re-run below, or by syncContractStatus on
- * the applicant's next visit), with no new request.
+ * close/reopen never recall or recreate one. The webhook ignores a closed application,
+ * so a signature that lands while closed is asked of Zoho at Reopen, or at "Resume
+ * signing" if Zoho is down then, with no new request.
  */
 export async function archiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -142,8 +142,9 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
 /**
  * Board "Reopen": returns a closed application to the step it was closed from
  * (`archivedFromStatus`, captured by the close write). Refuses with the reason when
- * the household is DENIED or already has another open application, then re-runs the
- * external advance so a gate met while closed doesn't strand the application.
+ * the household is DENIED or already has another open application, then picks up a
+ * signature made while closed and re-runs the external advance so a gate met while
+ * closed doesn't strand the application.
  */
 export async function unarchiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -188,6 +189,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         }
         throw e;
     }
+    await pickUpMissedSignature(process);
     const advanced = await advanceExternalIfComplete(processId);
     return { status: advanced?.status ?? target };
 }

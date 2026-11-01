@@ -200,6 +200,25 @@ export async function markContractSigned(processId: number, actorId?: number, re
 }
 
 /**
+ * Asks Zoho about a stored request the app has no signature for, and records one it
+ * finds. The webhook cannot match a closed application, so this is how a signature
+ * made while closed reaches a reopened one. Attributed to the webhook actor: whoever
+ * triggered the check did not sign. Best-effort: on any failure the application
+ * stays unsigned and "Resume signing" asks again. A dead request is left for that
+ * click to replace. The mock answers "completed" for every request, so it is skipped.
+ */
+export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, "id" | "contractSignedAt" | "zohoEnvelopeId">) {
+    if (process.contractSignedAt || !process.zohoEnvelopeId || !config.zohoAvailable()) return;
+    try {
+        if (await signingMockActive()) return;
+        const token = await zohoSign.getAccessToken();
+        if ((await zohoSign.getRequestStatus(token, process.zohoEnvelopeId)) === "completed") await markContractSigned(process.id);
+    } catch (e) {
+        logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+/**
  * Records that the applicant submitted background-check consent, then maybe advance.
  * Only an open household application takes it, unless `kind` names the PERSON_BG
  * submit path, where consent is implicit in the external check.
@@ -511,18 +530,27 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
     // A stored request may be dead — declined by the signer, or expired after
     // CONTRACT_EXPIRATION_DAYS — and Zoho can neither embed nor revive it. Check
     // before reusing: forget dead ids and fall through to the create path
-    // below, so the same button self-recovers. Best-effort — if the status read
+    // below, so the same button self-recovers. A request already signed gets its
+    // signature recorded instead of a link. Best-effort — if the status read
     // fails, proceed with the stored ids rather than blocking the click (worst
     // case the embed call fails).
-    if (requestId && actionId && !process.contractSignedAt) {
+    if (requestId && !process.contractSignedAt) {
+        let signedAtZoho = false;
         try {
-            if ((await zohoSign.getRequestStatus(token, requestId)) === "terminal") {
+            const state = await zohoSign.getRequestStatus(token, requestId);
+            signedAtZoho = state === "completed";
+            if (state === "terminal") {
                 await clearDeadSigningRequest(process.id, requestId, userId);
                 requestId = null;
                 actionId = null;
             }
         } catch (e) {
             logger.warn(`Zoho request-status check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        // The mock answers "completed" for every request; only its interstitial signs.
+        if (signedAtZoho && !(await signingMockActive())) {
+            await markContractSigned(process.id, userId);
+            throw new ExternalError("wrong_phase", "This agreement has already been signed.");
         }
     }
 
@@ -676,6 +704,7 @@ export async function resetSigning(processId: number, actorId: number, reason: s
             // Zoho refuses to recall a request that is already dead or signed.
             const state = await zohoSign.getRequestStatus(token, requestId);
             if (state === "completed") {
+                await markContractSigned(processId);
                 throw new ExternalError("wrong_phase", "This agreement has already been signed. Refresh to see it.");
             }
             if (state !== "terminal") throw e;

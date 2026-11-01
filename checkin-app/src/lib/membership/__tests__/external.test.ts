@@ -566,6 +566,49 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(url).toBe('https://sign.example/embed-existing');
     });
 
+    describe('a stored request Zoho reports completed', () => {
+        const signedAtZoho = { ...pendingProcess, contractSignedAt: null, zohoEnvelopeId: 'req-signed', zohoActionId: 'act-signed', zohoSignerPersonId: 1 };
+
+        beforeEach(() => {
+            prisma.person.findUnique.mockResolvedValue({ ...leadUser, household: { orgMembership: { processes: [signedAtZoho] } } });
+            prisma.orgMembershipProcess.findUnique.mockResolvedValue(signedAtZoho);
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+            zohoSign.getAccessToken.mockResolvedValue('token-1');
+            zohoSign.getRequestStatus.mockResolvedValue('completed');
+            zohoSign.getEmbeddedSignUrl.mockResolvedValue('https://sign.example/embed');
+        });
+
+        it('records the signature and mints no link', async () => {
+            config.zohoMockActive.mockReturnValue(false);
+
+            await expect(getOrCreateContractSigningUrl(1)).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringMatching(/already been signed/) });
+
+            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                where: expect.objectContaining({ id: 20, contractSignedAt: null }),
+                data: expect.objectContaining({ contractSignedAt: expect.any(Date) }),
+            }));
+            expect(zohoSign.getEmbeddedSignUrl).not.toHaveBeenCalled();
+        });
+
+        it('a request with no action id is recorded too, rather than paying for a second one', async () => {
+            config.zohoMockActive.mockReturnValue(false);
+            prisma.person.findUnique.mockResolvedValue({ ...leadUser, household: { orgMembership: { processes: [{ ...signedAtZoho, zohoActionId: null, zohoSignerPersonId: null }] } } });
+
+            await expect(getOrCreateContractSigningUrl(1)).rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(zohoSign.createRequest).not.toHaveBeenCalled();
+        });
+
+        it('mock mode goes to the interstitial: the mock answers completed for every request', async () => {
+            config.zohoMockActive.mockReturnValue(true);
+
+            await expect(getOrCreateContractSigningUrl(1)).resolves.toBe('https://sign.example/embed');
+
+            expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+        });
+    });
+
     it('non-mock mode: AgreementUnavailableError maps to an agreement_unavailable ExternalError', async () => {
         config.zohoMockActive.mockReturnValue(false);
         prisma.person.findUnique.mockResolvedValue(leadUser);
@@ -743,13 +786,19 @@ describe('resetSigning', () => {
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
     });
 
-    it('a request signed in Zoho is not reset', async () => {
+    it('a request signed in Zoho is not reset: the signature is recorded instead', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(open);
         zohoSign.recallRequest.mockRejectedValue(new Error('cannot recall'));
         zohoSign.getRequestStatus.mockResolvedValue('completed');
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
 
         await expect(resetSigning(20, 9, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });
-        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(1);
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: 20, contractSignedAt: null }),
+            data: { contractSignedAt: expect.any(Date) },
+        }));
     });
 
     it('clears a claim whose create never finished, without calling Zoho', async () => {
