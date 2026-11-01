@@ -549,6 +549,26 @@ describe("membership page", () => {
     expect(await screen.findByText("Couldn't open the signing form. Please try again.")).toBeInTheDocument();
   });
 
+  it("reloads the application when signing is refused, so a signature found at Zoho shows", async () => {
+    setSession({ id: 1 });
+    const fetchMock = mockFetchJson({
+      "/api/membership/contract/sign": { error: "This agreement has already been signed." },
+      "/api/membership": state({
+        process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
+        external: { contractSigned: false, contractStarted: true, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+      }),
+    });
+    renderWithProviders(<MembershipPage />);
+    await screen.findByText("Sign & start your background check", { exact: false });
+    const stateLoads = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/membership").length;
+    const before = stateLoads();
+
+    fireEvent.click(screen.getByRole("button", { name: /Resume signing/ }));
+
+    expect(await screen.findByText("This agreement has already been signed.")).toBeInTheDocument();
+    await waitFor(() => expect(stateLoads()).toBe(before + 1));
+  });
+
   it("shows the server's error when signing fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {

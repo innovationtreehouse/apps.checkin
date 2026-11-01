@@ -343,6 +343,8 @@ export function useMembershipPage() {
       } else {
         flash(apiError(data, "Couldn't open the signing form. Please try again."), true);
         setSaving(false);
+        // The refusal may mean the signature was just found at Zoho.
+        void fetchState();
       }
     } catch {
       networkError();
