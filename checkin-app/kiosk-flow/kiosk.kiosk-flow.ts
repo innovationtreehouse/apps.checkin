@@ -66,13 +66,13 @@ describe("kiosk flow: the shipped image", () => {
     // A live close comes last: for two minutes after one, the server fences a replayed
     // arrival, and a just-started kiosk sends even its first scan as a replay.
     it("old image then new on the same /data loses no queued scan", async () => {
-        await startKiosk("kiosk-flow:old");
+        await startKiosk("old");
         await linkDown();
         badge(otherId);
         await kioskShowsOnly([otherId]);
         await stopKiosk();
 
-        await startKiosk("kiosk-flow:new");
+        await startKiosk("new");
         await kioskShowsOnly([otherId]);
         await linkUp();
         await serverShowsOnly([otherId]);
@@ -83,13 +83,13 @@ describe("kiosk flow: the shipped image", () => {
     });
 
     it("an older image runs against a file the new image wrote, and drains its queue", async () => {
-        await startKiosk("kiosk-flow:new");
+        await startKiosk("new");
         await linkDown();
         badge(otherId);
         await kioskShowsOnly([otherId]);
         await stopKiosk();
 
-        await startKiosk("kiosk-flow:old");
+        await startKiosk("old");
         await kioskShowsOnly([otherId]);
         await linkUp();
         await serverShowsOnly([otherId]);
@@ -100,7 +100,7 @@ describe("kiosk flow: the shipped image", () => {
     });
 
     it("offline scans queue, the health check stays good, and they drain on reconnect", async () => {
-        await startKiosk("kiosk-flow:new");
+        await startKiosk("new");
         badge(otherId);
         await serverShowsOnly([otherId]);
         await afterRepeatFilter();
@@ -119,7 +119,7 @@ describe("kiosk flow: the shipped image", () => {
     });
 
     it("a kill while offline keeps who is inside: the keyholder's badge still leaves and offers the close", async () => {
-        await startKiosk("kiosk-flow:new");
+        await startKiosk("new");
         await bothInside();
         await linkDown();
 
@@ -140,7 +140,7 @@ describe("kiosk flow: the shipped image", () => {
     });
 
     it("a badge in and out reach the server, signed, and the keyholder is offered the close", async () => {
-        await startKiosk("kiosk-flow:new");
+        await startKiosk("new");
         const banners = await watchBanners();
         await bothInside();
 

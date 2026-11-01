@@ -9,7 +9,8 @@ import net from "net";
 import os from "os";
 import path from "path";
 
-const CONTAINER = "kiosk-flow";
+const NAME = process.env.KIOSK_FLOW_NAME ?? "";
+const CONTAINER = `${NAME}-kiosk`;
 const DATA = "/kiosk-data";
 const KIOSK_UID = 1000;
 const KIOSK_PORT = 8083;
@@ -17,7 +18,7 @@ const SERVER_PORT = 4000;
 const LINK_PORT = 4100;
 export const KIOSK = `http://localhost:${KIOSK_PORT}`;
 
-export type Image = "kiosk-flow:new" | "kiosk-flow:old";
+export type Image = "new" | "old";
 
 function dockerApi<T = unknown>(method: string, apiPath: string, body?: unknown): Promise<{ status: number; json: T }> {
     return new Promise((resolve, reject) => {
@@ -106,7 +107,7 @@ export async function startKiosk(image: Image): Promise<void> {
     const self = await dockerApi<{ Mounts: { Destination: string; Name: string }[] }>("GET", `/containers/${os.hostname()}/json`);
     const volume = self.json.Mounts.find((m) => m.Destination === DATA)?.Name;
     const created = await dockerApi<{ Id: string }>("POST", `/containers/create?name=${CONTAINER}`, {
-        Image: image,
+        Image: `${NAME}:${image}`,
         Env: ["PYTHONPATH=/data"],
         // Plain logs, without the stream framing a non-TTY container adds.
         Tty: true,

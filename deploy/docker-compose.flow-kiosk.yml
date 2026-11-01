@@ -6,6 +6,8 @@ services:
     environment:
       KIOSK_PUBLIC_KEY: ${KIOSK_PUBLIC_KEY:?set by deploy/kiosk-flow.sh}
       KIOSK_SIGNING_SEED: ${KIOSK_SIGNING_SEED:?set by deploy/kiosk-flow.sh}
+      # Names this checkout's kiosk container and images.
+      KIOSK_FLOW_NAME: ${COMPOSE_PROJECT_NAME:?set by deploy/kiosk-flow.sh}
     volumes:
       # The tests start, kill and swap the kiosk container through the Docker API.
       - /var/run/docker.sock:/var/run/docker.sock

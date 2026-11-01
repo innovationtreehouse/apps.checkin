@@ -2,8 +2,10 @@
 // restarts. Run by deploy/kiosk-flow.sh, which provides the kiosk images.
 import flowConfig from './jest.flow.config.js';
 
-export default async () => ({
+const kioskFlowConfig = async () => ({
     ...(await flowConfig()),
     testMatch: ['<rootDir>/kiosk-flow/**/*.kiosk-flow.ts'],
     testTimeout: 300000,
 });
+
+export default kioskFlowConfig;
