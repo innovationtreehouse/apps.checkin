@@ -50,7 +50,7 @@ export async function archiveApplication(processId: number, actorId: number) {
         // between makes this a no-op instead of closing a paid or blocked row.
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere(process.status), paidAt: null },
-            data: { status: "ARCHIVED", archivedFromStatus: process.status, stageEnteredAt: new Date() },
+            data: { status: "ARCHIVED", archivedFromStatus: process.status, stageEnteredAt: new Date(), isPaymentPlanRequested: false },
         });
         if (count !== 1) throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
         await tx.auditLog.create({
@@ -98,7 +98,7 @@ export async function closeForRestore(tx: TxClient, open: Awaited<ReturnType<typ
     for (const p of open) {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: p.id, ...fromWhere(p.status), paidAt: null },
-            data: { status: "ARCHIVED", archivedFromStatus: p.status, stageEnteredAt: new Date() },
+            data: { status: "ARCHIVED", archivedFromStatus: p.status, stageEnteredAt: new Date(), isPaymentPlanRequested: false },
         });
         if (count !== 1) throw new ReviewError("wrong_phase", "An application in this household changed while it was being restored. Reload and try again.");
         await tx.auditLog.create({

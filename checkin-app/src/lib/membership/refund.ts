@@ -8,7 +8,7 @@ import { personActor } from "@/lib/auditActor";
  * Board "Record refund": records a refund already made in Shopify by clearing
  * `paidAt`. The background check is untouched.
  *   - PENDING_BG_CLEARANCE → PENDING_PAYMENT: the board can then close it, or the
- *     family can pay again.
+ *     family can pay again. Any earlier payment-plan request stays ended.
  *   - BLOCKED stays BLOCKED, so the rejection isn't erased.
  * `shopifyOrderId` is kept, and the audit row records it: the reconciler reads that
  * row to know the refunded order is accounted for, so it neither re-activates nor
@@ -35,7 +35,7 @@ export async function recordRefund(processId: number, actorId: number, reason: s
                 paidAt: { not: null },
             },
             data: to === "PENDING_PAYMENT"
-                ? { status: "PENDING_PAYMENT", paidAt: null, stageEnteredAt: new Date() }
+                ? { status: "PENDING_PAYMENT", paidAt: null, stageEnteredAt: new Date(), isPaymentPlanRequested: false }
                 : { paidAt: null },
         });
         if (count !== 1) throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");

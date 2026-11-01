@@ -364,7 +364,7 @@ export async function attest(
         });
 
         if (input.result === "REJECT") {
-            const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...awaitingBgReview.where }, data: { status: "BLOCKED", stageEnteredAt: new Date() } });
+            const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...awaitingBgReview.where }, data: { status: "BLOCKED", stageEnteredAt: new Date(), isPaymentPlanRequested: false } });
             if (!count) throw movedOn();
             await audit(tx, personActor(reviewerId), processId, { status: process.status }, { status: "BLOCKED", reason: "reviewer reject", ...(input.note ? { note: input.note } : {}) });
             // A paid household that fails review needs a manual refund — flag the board (post-tx).
