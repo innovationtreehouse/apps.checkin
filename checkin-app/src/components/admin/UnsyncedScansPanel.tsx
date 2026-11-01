@@ -31,6 +31,7 @@ const REASON_COPY: Record<string, string> = {
   stale_replay: "queued scan arrived after the freshness window — applied at its scan time; check the visit",
   out_of_order: "arrived behind later activity — applied only to the visit it fell in, else held; check the visit",
   clock_suspect: "kiosk clock looked wrong — applied; check the times",
+  close_time_uncertain: "scan time too near a building close to tell which side it belongs on — applied at its scan time; check the visit",
   closed_before_delivery: "check-in scanned before a close that reached the server first — recorded as departing at that close; check the visit",
   force_close_review: "keyholder left without confirming a close while others were recorded inside — check who is still in",
   close_stale_roster: "building closed from a kiosk roster taken before someone else checked in — the close was applied; check whether they were swept out",

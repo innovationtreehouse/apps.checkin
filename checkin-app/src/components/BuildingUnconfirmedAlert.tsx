@@ -3,10 +3,19 @@ import { useOrgTime } from "@/components/TimezoneProvider";
 
 /**
  * Shown in place of occupancy, open/closed and supervision when the server
- * hasn't heard from the kiosk recently (see `buildingLink`).
+ * hasn't heard from the kiosk recently, or the kiosk still has scans to send
+ * (see `buildingLink`).
  */
-export function BuildingUnconfirmedAlert({ lastSeenAt, mb }: { lastSeenAt: string | null | undefined; mb?: string }) {
+export function BuildingUnconfirmedAlert({ lastSeenAt, queued, mb }: { lastSeenAt: string | null | undefined; queued?: number; mb?: string }) {
   const { formatDateTime } = useOrgTime();
+  if (queued) {
+    return (
+      <Alert color="blue" icon="🔄" title={`Syncing ${queued} ${queued === 1 ? "scan" : "scans"} from the kiosk`} mb={mb}>
+        Who is checked in is the visit record until they arrive, not confirmed presence, and
+        supervision can&apos;t be checked from here.
+      </Alert>
+    );
+  }
   return (
     <Alert color="orange" icon="📡" title="Can't confirm building state" mb={mb}>
       {lastSeenAt

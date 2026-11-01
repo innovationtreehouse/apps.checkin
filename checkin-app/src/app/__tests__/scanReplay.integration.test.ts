@@ -363,6 +363,73 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
             POST(scanReq({ participantId: member.id, clientEventId: id, scannedAt: at.toISOString(), replay: true, intent, protocolVersion: SCAN_PROTOCOL_VERSION, ...extra }));
         const reasonOf = async (id: string) => (await prisma.rawBadgeLog.findUnique({ where: { clientEventId: id } }))?.reviewReason;
 
+        describe('a scan time uncertain against a close', () => {
+            const UNCERTAINTY = { scanTimeUncertaintyMs: 8_000 };
+            const closeAt = (closedAt: Date) => prisma.facilityClose.create({ data: { closedAt, via: 'NIGHTLY_SWEEP' } });
+
+            afterEach(async () => {
+                await prisma.facilityClose.updateMany({ where: { closedAt: { gt: new Date(Date.now() - 2 * 86_400_000) } }, data: { closedAt: new Date(0) } });
+            });
+
+            it('an IN the nightly close fences is flagged by the fence', async () => {
+                const closedAt = new Date(Date.now() - 5 * MIN);
+                await closeAt(closedAt);
+                await replayOf('evt-u-fenced', new Date(closedAt.getTime() + 5_000), 'IN', UNCERTAINTY);
+                expect(await reasonOf('evt-u-fenced')).toBe('closed_before_delivery');
+            });
+
+            it('an IN beyond every fence but inside the uncertainty is applied and flagged', async () => {
+                const closedAt = new Date(Date.now() - 5 * MIN);
+                await prisma.facilityClose.create({ data: { closedAt, via: 'KIOSK_OFFLINE' } });
+                const at = new Date(closedAt.getTime() + 5_000);
+                expect((await (await replayOf('evt-u-open', at, 'IN', UNCERTAINTY)).json()).type).not.toBe('parked');
+                const visit = await prisma.visit.findFirst({ where: { personId: member.id } });
+                expect(visit?.arrivedAt.getTime()).toBe(at.getTime());
+                expect(visit?.departedAt).toBeNull();
+                expect(await reasonOf('evt-u-open')).toBe('close_time_uncertain');
+            });
+
+            it('the same scan outside its uncertainty is not flagged', async () => {
+                const closedAt = new Date(Date.now() - 5 * MIN);
+                await prisma.facilityClose.create({ data: { closedAt, via: 'KIOSK_OFFLINE' } });
+                await replayOf('evt-u-clear', new Date(closedAt.getTime() + 5_000), 'IN', { scanTimeUncertaintyMs: 1_000 });
+                expect(await reasonOf('evt-u-clear')).toBeNull();
+            });
+
+            it('an older kiosk sending no uncertainty is not flagged', async () => {
+                const closedAt = new Date(Date.now() - 5 * MIN);
+                await prisma.facilityClose.create({ data: { closedAt, via: 'KIOSK_OFFLINE' } });
+                await replayOf('evt-u-old', new Date(closedAt.getTime() + 5_000), 'IN', { protocolVersion: 7 });
+                expect(await reasonOf('evt-u-old')).toBeNull();
+            });
+
+            it('names the uncertainty over a mere late delivery', async () => {
+                const closedAt = new Date(Date.now() - 60 * MIN);
+                await prisma.facilityClose.create({ data: { closedAt, via: 'KIOSK_OFFLINE' } });
+                await replayOf('evt-u-stale', new Date(closedAt.getTime() + 5_000), 'IN', UNCERTAINTY);
+                expect(await reasonOf('evt-u-stale')).toBe('close_time_uncertain');
+            });
+
+            it('a queued close near another close still closes, flagged', async () => {
+                const closedAt = new Date(Date.now() - 5 * MIN);
+                await closeAt(closedAt);
+                const res = await POST(scanReq({
+                    participantId: keyholder.id, clientEventId: 'evt-u-close', scannedAt: new Date(closedAt.getTime() - 3_000).toISOString(),
+                    replay: true, intent: 'OUT', close: 'alone', protocolVersion: SCAN_PROTOCOL_VERSION, ...UNCERTAINTY,
+                }));
+                expect(res.status).toBe(200);
+                expect(await prisma.facilityClose.count({ where: { clientEventId: 'evt-u-close' } })).toBe(1);
+                expect(await reasonOf('evt-u-close')).toBe('close_time_uncertain');
+                await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: new Date(0), arrivedVia: 'SCANNER' } });
+            });
+
+            it('a malformed uncertainty parks a replay rather than bouncing the queue', async () => {
+                const res = await replayOf('evt-u-bad', new Date(Date.now() - MIN), 'IN', { scanTimeUncertaintyMs: -1 });
+                expect((await res.json()).type).toBe('parked');
+                expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
+            });
+        });
+
         it('an older kiosk\'s stale IN still parks, unapplied', async () => {
             const at = new Date(Date.now() - 40 * MIN);
             expect((await (await replayOf('evt-t-old-kiosk', at, 'IN', { protocolVersion: 4 })).json()).type).toBe('parked');

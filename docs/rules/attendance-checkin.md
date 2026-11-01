@@ -170,8 +170,9 @@ person in front of it.
   keyholder are shown as inside a closed facility. A keyholder's check-in
   scanned before the latest close but reaching the server after the close was
   carried out is listed as inside but does not reopen the building; an arrival
-  after the close does, however soon after. The kiosk's clock is trusted to
-  within the same two minutes a late close allows.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+  after the close does, however soon after. A kiosk scan's time is trusted to
+  within the same two minutes a late close allows, as a backstop to the scan-time
+  rule below.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
 - A badge at the kiosk always checks the person in, keyholder or not. Someone
   scanning inside the building got in somehow, and the screen shows who is
@@ -329,6 +330,14 @@ hours at a time — is a normal operating mode here, not an incident.
   one: its late, out-of-order or doubtful-clock replay is held for review rather
   than applied.  [Decision]
 
+- A kiosk scan's time is the server's clock as the kiosk last measured it, plus
+  the time elapsed since, sent with how uncertain that makes it. A queued scan
+  with a close inside that uncertainty can't be placed on one side of the close,
+  so it applies at its time and is flagged. A kiosk keeps one server-time sample,
+  for its scan times, its signatures, its clock warning and its own 23:00 clear.
+  That clear changes only the kiosk's view and sends the server nothing; the
+  server's 23:00 run stays the one close of record.  [Decision — Board ruling B7/B14, 2026-10-27; owner ruling 2026-10-31]
+
 - A replay that lands behind later activity belongs to the visit the person was
   in at its own time — their latest arrival at or before it — and never touches a
   visit that began after it. A departure ends that visit: an open one checks out
@@ -379,11 +388,13 @@ hours at a time — is a normal operating mode here, not an incident.
 
 - The web states the building's state — who is inside, whether it is open,
   whether it is two deep — as fact only while the server has heard from the
-  kiosk within the last five minutes. Otherwise it says it can't confirm the
+  kiosk within the last five minutes and the kiosk has no scans waiting to send.
+  While scans wait it says it is syncing them, how many, and what it lists is the
+  visit record. Without a recent heartbeat it says it can't confirm the
   building's state and when the kiosk was last heard from, and what it lists is
   the visit record, not presence. A kiosk resting in a building it knows is
   empty sends nothing on purpose, so that is the expected reading then. The
-  kiosk's own screen shows what the kiosk holds regardless.  [Decision — *Principle: fail closed*]
+  kiosk's own screen shows what the kiosk holds regardless.  [Decision — Board ruling B7/B14, 2026-10-27; *Principle: fail closed*]
 
 - The kiosk rests — sends the server nothing on its own — only while the
   building is known empty: its last real roster showed nobody inside, no badge

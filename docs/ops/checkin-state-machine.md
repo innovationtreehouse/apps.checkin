@@ -50,6 +50,11 @@ stateDiagram-v2
 5. **Late scans** (queued offline) are applied in scan order, at scan time. A
    scan more than 10 minutes late, out of order, or with a suspect kiosk clock
    is applied **and** flagged.
+6. **Scan times come from the server's clock,** as the kiosk last measured it,
+   plus the time elapsed since. A queued scan with a close inside the time's
+   uncertainty is applied at its time **and** flagged: which side of the close it
+   belongs on can't be known. Board ruling B7/B14, 2026-10-27; owner ruling
+   2026-10-31.
 
 ## The building: open is derived, close is an event
 
@@ -98,6 +103,10 @@ flowchart TD
   the server has it. A restart never loses a scan.
 - **Never blank:** shows the server's roster plus its own queued scans, and keeps
   showing that view offline.
+- **Keeps one server-time sample** for scan times, signing, its clock warning and
+  clearing its own view at 23:00 when it has not heard from the server. The clear
+  sends the server nothing; the server's 23:00 run stays the one close of record.
+  Owner ruling 2026-10-31.
 - **Asks for the second scan itself.** The close confirmation happens at the
   kiosk, not the server.
 
@@ -113,8 +122,10 @@ flowchart TD
   visit. It never opens or ends a visit.
 - **Which close ended a visit.** The visit's own link to the close decides. The
   close log is never edited; a pull-back's log row names the close it replaced.
-- **With a recent kiosk heartbeat:** shows who is in, whether the building is
+- **With a recent kiosk heartbeat and no scans waiting to send:** shows who is in, whether the building is
   open, and supervision state. No-keyholder visits are shown as such and never
   make the building look open.
-- **Without one:** says it can't confirm building state ("kiosk last seen X
+- **With scans waiting:** says it is syncing N scans instead of showing occupancy,
+  open/closed or supervision as fact. Board ruling B7/B14, 2026-10-27.
+- **Without a recent heartbeat:** says it can't confirm building state ("kiosk last seen X
   ago") instead of showing occupancy, open/closed or supervision as fact.

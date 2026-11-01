@@ -111,11 +111,21 @@ describe('GET /api/attendance — real kiosk signature wiring', () => {
             user: { id: 1, isKeyholder: true, isSysadmin: false, isBoardMember: false },
         });
         const before = await (await GET(attendanceReq({}))).json();
-        expect(before.building).toEqual({ reachable: false, lastSeenAt: null });
+        expect(before.building).toEqual({ reachable: false, lastSeenAt: null, queued: 0 });
 
         await GET(attendanceReq(signedHeaders(signer, freshNonce())));
         const after = await (await GET(attendanceReq({}))).json();
         expect(after.building.reachable).toBe(true);
+    });
+
+    it('a signed poll reporting queued scans makes a web read say syncing', async () => {
+        resetKioskSeen();
+        (getServerSession as jest.Mock).mockResolvedValue({
+            user: { id: 1, isKeyholder: true, isSysadmin: false, isBoardMember: false },
+        });
+        await GET(attendanceReq({ ...signedHeaders(signer, freshNonce()), 'x-kiosk-queue-depth': '4' }));
+        const res = await (await GET(attendanceReq({}))).json();
+        expect(res.building).toMatchObject({ reachable: false, queued: 4 });
     });
 
     it('a signed kiosk poll stays display-only even when a keyholder session is present', async () => {
