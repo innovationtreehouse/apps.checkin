@@ -246,13 +246,10 @@ jobs:
           }
           EOF
 
-          # treehouse-prod is ECS Managed Instances: the app + migrate task defs
-          # are host-networked/EC2-compatible here (modules/checkin/compute.tf),
-          # and the service itself has no networkConfiguration (its dynamic
-          # block is empty on Managed Instances) — unlike dev's Fargate/awsvpc
-          # path, there is no network config to copy and no FARGATE launch type
-          # to use. Launch via the cluster's capacity provider instead, with no
-          # --network-configuration at all.
+          # The migrate task runs on FARGATE_SPOT with awsvpc networking in
+          # MIGRATE_SUBNETS / MIGRATE_SG (see env above). The service has no
+          # networkConfiguration to copy, because the app runs on the cluster's
+          # Managed Instances.
           TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --task-definition "$MIGRATE_ARN" \
