@@ -2,13 +2,16 @@
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
-import { findOrCreate, qbKey, shiftDate, type FindOrCreateResult, type QboPurchase, type QuickBooksClient, type TxnWrite } from "@checkin/quickbooks";
+import {
+  MATCH_WINDOW_DAYS, MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  type CloseRead, type FindOrCreateResult, type PostGate, type QboPurchase, type TxnWrite,
+} from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import {
-  MATCH_WINDOW_DAYS, appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
+  appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
 } from "../services/qbMatchService";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
@@ -23,53 +26,26 @@ import { NEEDS_VOIDING } from "./flags";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
- * AMBIGUOUS and the UNBOOKED_STATES wait for finance.
+ * AMBIGUOUS and UNBOOKED wait for finance. UNBOOKED is an expense not in QuickBooks that the drain
+ * may not create: dated in closed books, or submitted before posting switched on. Finance books it
+ * or matches it.
  */
 export const POSTABLE_QB_STATES = ["UNMATCHED", "POST_FAILED", "NOT_TEST_DATA", "TEST_DATA_REFUSED"];
 
-/**
- * Not in QuickBooks, and the drain may not create it: dated in closed books, or submitted before
- * posting switched on. Finance books it or matches it. BEFORE_LINE is held exactly as UNBOOKED
- * and never written.
- */
-export const UNBOOKED_STATES = ["UNBOOKED", "BEFORE_LINE"];
-
-/** How far back the daily sweep looks for create attempts. */
-export const SWEEP_DAYS = 30;
-
 /** Claimed by a post whose QuickBooks call is in flight; qbClaimedAt says since when. */
 export const POSTING = "POSTING";
-
-export const TEST_VENDOR_PREFIX = "TEST-";
 
 /** Why an expense must not reach this QuickBooks company, or null when it may. */
 function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorName: string | null }) {
   if (posting.prod) {
     return e.isTestData ? { qbMatchState: "TEST_DATA_REFUSED", note: "not sent to QuickBooks: test data is never posted in prod" } : null;
   }
-  return e.isTestData && (e.vendorName ?? "").startsWith(TEST_VENDOR_PREFIX)
+  return e.isTestData && (e.vendorName ?? "").startsWith(TEST_PREFIX)
     ? null
     : { qbMatchState: "NOT_TEST_DATA", note: "not sent to QuickBooks: not test data" };
 }
 
-// ponytail: fixed per-run caps; move to ExpenseOrgSettings when finance needs to tune them.
-export const MAX_CREATES_PER_RUN = 25;
-export const MAX_CREATES_PER_DAY = 50;
-/** Failed posts before the drain stops retrying and hands the expense to finance. */
-export const MAX_POST_ATTEMPTS = 5;
-
 export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class";
-
-/** The books closing date as read for a run or an action: the date (null when none is set), or a failed read. */
-export type CloseRead = { ok: true; date: string | null } | { ok: false; error: string };
-
-export async function readCloseDate(client: QuickBooksClient): Promise<CloseRead> {
-  try {
-    return { ok: true, date: await client.bookCloseDate() };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
 
 /** When the lane's posting switched on, or null while it is off. */
 export async function qbPostingOnAt(orgId: string, client: Db = db): Promise<Date | null> {
@@ -95,26 +71,6 @@ export async function switchQbPostingOn(orgId: string, now = new Date()): Promis
   const at = await qbPostingOnAt(orgId);
   if (!at) throw new Error("the expense posting stamp did not save");
   return at;
-}
-
-/** What findOrCreate may do with one expense. */
-export interface PostGate {
-  /** The last closed date, YYYY-MM-DD: nothing dated on or before it is created. */
-  closedThrough: string;
-  mayCreate: boolean;
-}
-
-/**
- * Nothing dated on or before the books closing date is created; with no closing date, nothing
- * dated before switch-on. Only an expense submitted after switch-on, or one finance asked to
- * book, may be created. A failed closing-date read, or neither date, creates nothing.
- */
-export function qbGate(date: string, close: CloseRead, onAt: Date | null, submittedAt: Date, book: boolean): PostGate {
-  const never = { closedThrough: shiftDate(date, -1), mayCreate: false };
-  if (!close.ok) return never;
-  const closedThrough = close.date ?? (onAt ? shiftDate(onAt.toISOString().slice(0, 10), -1) : null);
-  if (closedThrough === null) return never;
-  return { closedThrough, mayCreate: book || (onAt !== null && submittedAt > onAt) };
 }
 
 /** How one post runs: `book` is finance's "book it"; `close` is the closing date the run already read. */
@@ -162,14 +118,11 @@ function lockedExpense(tx: Db, orgId: string, expenseId: string) {
   );
 }
 
-/** A claim older than this belongs to a post that died between claim and settle; it may be taken over. */
-export const STALE_CLAIM_MS = 10 * 60_000;
-
 /** Whether a post may take the expense; finance's "book it" also takes an UNBOOKED one. */
 function isPostable(e: Expense, now = Date.now(), book = false): boolean {
   if (e.backfill || e.qbTxnId) return false;
   if (e.qbMatchState === POSTING) return !!e.qbClaimedAt && now - e.qbClaimedAt.getTime() > STALE_CLAIM_MS;
-  return POSTABLE_QB_STATES.includes(e.qbMatchState) || (book && UNBOOKED_STATES.includes(e.qbMatchState));
+  return POSTABLE_QB_STATES.includes(e.qbMatchState) || (book && e.qbMatchState === "UNBOOKED");
 }
 
 /** Locks the expense and runs `fn` on it when it is still waiting to be posted. */
@@ -487,7 +440,6 @@ export async function bookExpenseToQb(orgId: string, expenseId: string, actor: A
     case "MATCHED":
       return;
     case "UNBOOKED":
-    case "BEFORE_LINE":
       throw new ServiceError(
         409,
         outcome === "waiting"
@@ -510,13 +462,10 @@ export type DrainCounts = Record<PostOutcome, number> & {
   sweep: SweepCounts;
 };
 
-/** Consecutive failed posts after which a drain run stops: QuickBooks is likely down. */
-export const MAX_CONSECUTIVE_FAILURES = 3;
-
 /**
  * The daily orphan sweep. Reads every Purchase and Bill created since the oldest create attempt in
- * the last SWEEP_DAYS, one page each, and finds the expense each app key belongs to. An app entry
- * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a full page alerts finance
+ * the last SWEEP_DAYS and finds the expense each app key belongs to. An app entry
+ * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a capped read alerts finance
  * once per run, and a key with no attempted expense is logged. QuickBooks is only read. An
  * expense mid-post is skipped; the next sweep sees it.
  */
@@ -597,36 +546,31 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0,
     capped: null, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
-  let failuresInARow = 0;
-  const createdBefore = await qbCreatesToday();
-  for (const [i, e] of due.entries()) {
-    if (createdBefore + counts.posted >= MAX_CREATES_PER_DAY) {
-      counts.capped = "day";
-      logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: due.length - i });
-      break;
-    }
-    if (counts.posted >= MAX_CREATES_PER_RUN) {
-      counts.capped = "count";
-      logWarn("qb_drain_capped", { cap: counts.capped, remaining: due.length - i });
-      break;
-    }
-    let outcome: PostOutcome;
-    try {
-      const result = await postExpenseToQb(e.orgId, e.id, { close });
-      if (result === "unbound") break;
-      outcome = result;
-    } catch (err) {
-      outcome = "failed";
-      logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
-    }
-    counts[outcome]++;
+  const stop = await runDrain<Expense, PostOutcome>(due, {
+    counts,
+    createdToday: await qbCreatesToday(),
+    failures: ["failed", "needs_finance"],
     // No QuickBooks call was made for a missing Class, so it says nothing about QuickBooks being down.
-    if (outcome !== "no_class") failuresInARow = outcome === "failed" || outcome === "needs_finance" ? failuresInARow + 1 : 0;
-    if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) {
-      counts.stoppedAfterFailures = true;
-      logWarn("qb_drain_failure_streak", { failures: failuresInARow, remaining: due.length - i - 1 });
-      break;
-    }
+    noCall: ["no_class"],
+    post: async (e) => {
+      try {
+        const result = await postExpenseToQb(e.orgId, e.id, { close });
+        return result === "unbound" ? null : result;
+      } catch (err) {
+        logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
+        return "failed";
+      }
+    },
+  });
+  if (stop?.by === "day") {
+    counts.capped = "day";
+    logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: stop.remaining });
+  } else if (stop?.by === "count") {
+    counts.capped = "count";
+    logWarn("qb_drain_capped", { cap: counts.capped, remaining: stop.remaining });
+  } else if (stop?.by === "failures") {
+    counts.stoppedAfterFailures = true;
+    logWarn("qb_drain_failure_streak", { failures: MAX_CONSECUTIVE_FAILURES, remaining: stop.remaining });
   }
   // After the posts, so an expense this run linked to its own entry is not reported as a stray.
   counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);

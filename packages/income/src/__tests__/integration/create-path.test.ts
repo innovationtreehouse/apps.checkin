@@ -9,7 +9,7 @@ import { CLOSED_NOTE, drainIncomeOutbox, missingRoles, runIncomeOrphanSweep } fr
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
-import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
+import type { MirrorBalanceTxn, MirrorOrderLine, MirrorOrderSubtotal, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
 import { clearAll, ORG_A } from "../helpers/fixtures";
 import { depositStatus, expectDeposit, type ExpectedDeposit } from "../../lib/intake";
 import type { BooksMap, BooksMapRole } from "@checkin/quickbooks";
@@ -60,9 +60,9 @@ class FakeQbo {
         if (this.closeDateFails) return json({ Fault: { Error: [{ code: "3100" }] } }, 400);
         return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       }
-      const since = /MetaData\.CreateTime >= '([^']+)' STARTPOSITION 1 MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
+      const since = /MetaData\.CreateTime >= '([^']+)' ORDERBY MetaData\.CreateTime STARTPOSITION (\d+) MAXRESULTS (\d+)/.exec(url.searchParams.get("query") ?? "");
       if (since) {
-        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(0, Number(since[2]));
+        const list = this.deposits.filter((d) => (this.createdAt.get(d.Id) ?? 0) >= Date.parse(since[1])).slice(Number(since[2]) - 1, Number(since[2]) - 1 + Number(since[3]));
         return json({ QueryResponse: list.length ? { Deposit: list } : {} });
       }
       const m = /TxnDate >= '(\d{4}-\d{2}-\d{2})' AND TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(url.searchParams.get("query") ?? "");
@@ -94,6 +94,7 @@ let qbo: FakeQbo;
 let payouts: MirrorPayout[];
 let txns: Record<string, MirrorBalanceTxn[]>;
 let orderLines: MirrorOrderLine[];
+let subtotals: MirrorOrderSubtotal[];
 let owners: OwnerInfo[];
 let alerts: PostCapEvent[];
 let sweepAlerts: { orgId: string; since: Date }[];
@@ -107,7 +108,7 @@ function payout(n: number, day: string, netCents: number): string {
   const g = gid(n);
   payouts.push({ payoutGid: g, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD", source: "api" });
   txns[g] = [{ txnGid: `${g}/t`, type: "charge", orderGid: `O${n}`, orderName: `#${n}`, amountCents: netCents, feeCents: 0, netCents, source: "api" }];
-  orderLines.push({ orderGid: `O${n}`, variantId: null, title: "Custom", sku: null, quantity: 1, priceCents: netCents, discountCents: 0 });
+  orderLines.push({ orderGid: `O${n}`, variantId: null, title: "Custom", sku: null, quantity: 1, currentQuantity: 1, priceCents: netCents, discountCents: 0 });
   return g;
 }
 
@@ -120,6 +121,7 @@ const mirror: PayoutMirror = {
   payout: async (g) => payouts.find((p) => p.payoutGid === g) ?? null,
   transactions: async (g) => txns[g] ?? [],
   orderLines: async (gids) => orderLines.filter((l) => gids.includes(l.orderGid)),
+  orderSubtotals: async (gids) => subtotals.filter((o) => gids.includes(o.orderGid)),
   itemsSeen: async () => [],
 };
 
@@ -162,6 +164,7 @@ beforeEach(async () => {
   payouts = [];
   txns = {};
   orderLines = [];
+  subtotals = [];
   owners = [];
   alerts = [];
   sweepAlerts = [];
@@ -414,7 +417,7 @@ describeDb("postPayout — claim, lookup and settle", () => {
     qbo.mode = "reject";
     await drain();
     qbo.mode = "ok";
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
 
     expect(await resolve(p, { action: "retry" })).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", qbNote: expect.stringContaining("may already have booked") });
     expect(qbo.posts).toHaveLength(1);
@@ -696,10 +699,10 @@ describeDb("runIncomeOrphanSweep", () => {
     expect((await rowFor(a)).qbNote).toBeNull();
   });
 
-  it("alerts finance when the read fills a page", async () => {
+  it("alerts finance when the read reaches its cap", async () => {
     payout(2, "2026-06-28", 500);
     await drain();
-    for (let i = 0; i < 1000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
+    for (let i = 0; i < 10_000; i++) qbo.hand(`N${i}`, "2026-01-01", 1, "99");
     expect(await runIncomeOrphanSweep(ORG_A, new Date())).toMatchObject({ full: true });
     expect(sweepAlerts).toEqual([expect.objectContaining({ orgId: ORG_A })]);
   });
@@ -914,8 +917,8 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     ];
     setPayout(g, { netCents: 9830 });
     orderLines.push(
-      { orderGid: "O9", variantId: "V1", title: "Camp", sku: null, quantity: 2, priceCents: 3000, discountCents: 0 },
-      { orderGid: "O9", variantId: "V2", title: "Shirt", sku: null, quantity: 1, priceCents: 4000, discountCents: 0 },
+      { orderGid: "O9", variantId: "V1", title: "Camp", sku: null, quantity: 2, currentQuantity: 2, priceCents: 3000, discountCents: 0 },
+      { orderGid: "O9", variantId: "V2", title: "Shirt", sku: null, quantity: 1, currentQuantity: 1, priceCents: 4000, discountCents: 0 },
     );
     return g;
   }
@@ -967,6 +970,16 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
     expect(await drain(late)).toMatchObject({ post: { posted: 1, held: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 9830 });
+  });
+
+  it("a decision made before an item's first sale is honoured on its first payout", async () => {
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+
+    const g = orderPayout(2);
+
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", reason: null });
   });
 
   it("an item marked general income books without a Class and is not held", async () => {
@@ -1066,6 +1079,19 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     restore();
     expect(await drain(LATE)).toMatchObject({ post: { posted: 1, held: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 500 });
+  });
+
+  it("a charge whose order lost a line holds, and books once the line arrives", async () => {
+    const g = payout(2, "2026-06-28", 500);
+    orderLines = [{ ...orderLines[0], priceCents: 300 }];
+    subtotals = [{ orderGid: "O2", subtotalCents: 500 }];
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "orders with missing lines: O2" });
+    expect(qbo.posts).toHaveLength(0);
+
+    orderLines.push({ ...orderLines[0], priceCents: 200 });
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", reason: null });
   });
 
   it("lines that arrive with an undecided item move the hold's reason to that item", async () => {

@@ -33,7 +33,7 @@ export const GET = handler('GET /api/profile/visits', async ({ req, auth }) => {
         startDate.setDate(endDate.getDate() - 7);
     }
 
-    // Row filter (security-critical, stays query-side per #1134): own rows
+    // Row filter (security-critical, enforced in the query): own rows
     // only, not-deleted, ±7-day window.
     const visits = await prisma.visit.findMany({
         where: {

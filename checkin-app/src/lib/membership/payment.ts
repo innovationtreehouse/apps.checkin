@@ -1,4 +1,6 @@
 import prisma from "@/lib/prisma";
+import { ServiceError } from "@checkin/component-kit";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
@@ -26,9 +28,9 @@ import type { Prisma } from "@/generated/prisma/client";
  */
 
 
-export class PaymentError extends Error {
+export class PaymentError extends ServiceError {
     constructor(public readonly code: "not_found" | "wrong_phase" | "forbidden", message: string) {
-        super(message);
+        super(PAYMENT_ERROR_STATUS[code], message, code);
         this.name = "PaymentError";
     }
 }

@@ -1,3 +1,4 @@
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { describeDb, resetDb } from "../helpers/db";
 import { initDb, prisma } from "../../db";
@@ -41,36 +42,24 @@ beforeEach(async () => {
 const activeRefs = () => prisma.itemReference.findMany({ where: { ...PART_ROW, archivedAt: null } });
 const post = (body: object) => ({ req: new Request("http://test/refs", { method: "POST", body: JSON.stringify(body) }), params: {} });
 
-/** Resolves once another session waits on a lock, or once `settled` is true. */
-async function untilBlocked(settled: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !settled(); i++) {
-    const [{ n }] = await prisma.$queryRaw<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n > 0) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  if (!settled()) throw new Error("the action never waited on the held lock");
-}
-
 /** Runs `action` while another transaction holds `hold` uncommitted, committing once `action` waits on its locks. */
 async function racing<T>(hold: (tx: Prisma.TransactionClient) => Promise<unknown>, action: () => Promise<T>): Promise<PromiseSettledResult<T>> {
   let release!: () => void;
   const released = new Promise<void>((r) => (release = r));
-  let held!: () => void;
-  const isHeld = new Promise<void>((r) => (held = r));
+  let held!: (pid: number) => void;
+  const isHeld = new Promise<number>((r) => (held = r));
   const holder = prisma.$transaction(
     async (tx) => {
       await hold(tx);
-      held();
+      held(await backendPid(tx));
       await released;
     },
     { timeout: 20_000 },
   );
-  await isHeld;
-  let settled = false;
-  const result = Promise.allSettled([action()]).then(([r]) => ((settled = true), r));
+  const holderPid = await isHeld;
+  const result = Promise.allSettled([action()]).then(([r]) => r);
   try {
-    await untilBlocked(() => settled);
+    await waitersBehind(prisma, holderPid);
   } finally {
     release();
     await holder;

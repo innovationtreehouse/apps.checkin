@@ -6,7 +6,9 @@
  * their own yes. Drives the real adapter link and answer route against real Postgres.
  */
 import { GET, POST } from '@/app/api/profile/household-question/route';
+import { NextRequest } from 'next/server';
 import { GET as householdGET } from '@/app/api/household/route';
+import { GET as profileGET } from '@/app/api/profile/route';
 import { PUT as boardEdit } from '@/app/api/membership-ops/participants/[id]/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
@@ -34,8 +36,8 @@ const adapter = authOptions.adapter as unknown as { linkAccount: (account: Recor
 const TAG = 'household-question-test';
 const idToken = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
 const url = 'http://localhost/api/profile/household-question';
-const answer = (join: unknown) => POST(new Request(url, { method: 'POST', body: JSON.stringify({ join }) }));
-const ask = () => GET(new Request(url));
+const answer = (join: unknown) => POST(new NextRequest(url, { method: 'POST', body: JSON.stringify({ join }) }));
+const ask = () => GET(new NextRequest(url));
 const youthDob = () => new Date(Date.now() - 10 * 365 * 864e5);
 
 let seq = 0;
@@ -131,6 +133,7 @@ describe('while the question is open', () => {
         const { added } = await addedAdult();
         signedInAs(added.id, { householdJoinPending: true });
         expect((await householdGET(new Request('http://localhost/api/household'))).status).toBe(401);
+        expect((await profileGET(new NextRequest('http://localhost/api/profile'))).status).toBe(401);
     });
 
     it('shows the household name and nothing of the record', async () => {
@@ -138,7 +141,7 @@ describe('while the question is open', () => {
         signedInAs(added.id, { householdJoinPending: true });
         const res = await ask();
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ householdName: `${TAG} household` });
+        expect(await res.json()).toEqual({ household: { name: `${TAG} household` } });
     });
 });
 

@@ -24,13 +24,11 @@ function isToolLevel(value: unknown): value is ToolLevel {
 // Cert status is PUBLIC BY DESIGN — certifications are physically posted in the
 // shop. This route runs on the @/security handler() runtime so that intent is
 // DECLARED in the registry, not hand-rolled: admission is 'authenticated' (a
-// logged-in member; denied households fail closed at authenticateRequest, which
-// closes the old hand-rolled denied bypass), and the registry view — not this
-// query — gates fields. We select only {id, name} (no client needs email), but
+// logged-in member; denied households fail closed at authenticateRequest), and
+// the registry view — not this query — gates fields. We select only {id, name} (no client needs email), but
 // the registry declares person email as staff-only (everyones:pii) so the
-// stripper would gate it if ever added. That converts the endpoint from an
-// IDOR-shaped hand-rolled select into declared policy, so the recurring audit
-// false-positive resolves.
+// stripper would gate it if ever added. This is declared policy, so an audit
+// reading the endpoint as an IDOR is a false positive.
 export const GET = handler('GET /api/shop/certifications', async ({ req, auth }) => {
     if (auth.type !== 'session') throw unauthorized(); // unreachable: admission gates non-sessions
     const user = auth.user;
@@ -42,7 +40,7 @@ export const GET = handler('GET /api/shop/certifications', async ({ req, auth })
 
     // "All Assignments" ops grid — certifiers/keyholders/admins only. NOT a
     // confidentiality boundary (the data is public-by-design); an ops-surface
-    // gate preserving pre-migration behavior. Stays inline because the registry
+    // gate. It is inline because the registry
     // authorize grammar can't express "holds a MAY_CERTIFY_OTHERS on any tool".
     if (allParam === 'true') {
         const hasCertifierAuth = (user.toolStatuses ?? []).some(ts => ts.level === 'MAY_CERTIFY_OTHERS');
@@ -75,9 +73,8 @@ export const GET = handler('GET /api/shop/certifications', async ({ req, auth })
     return { ToolStatus: certifications };
 });
 
-// withAuth funnels the denied-household check at admission (closes GAP-1: this
-// POST previously re-queried certifier status with no denied gate), then the
-// certifier (MAY_CERTIFY_OTHERS) authorization runs as before.
+// withAuth funnels the denied-household check at admission, then the
+// certifier (MAY_CERTIFY_OTHERS) authorization runs.
 export const POST = withAuth({}, async (req, auth) => {
     if (auth.type !== 'session') {
         return apiError("Unauthorized", 401);

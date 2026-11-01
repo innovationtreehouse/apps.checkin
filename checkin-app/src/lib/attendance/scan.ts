@@ -11,12 +11,11 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { auditKioskLeave, closeVia, recordClose } from "@/lib/attendance/close";
 import { specTrace } from "@/lib/specTrace";
 
-/** Countdown on the supervision confirm (#1436). #1347 PR-0 extended the
- *  route's debounce exemption to a fresh `supervisionWarnedAt` stamp, so the
- *  full window is usable -- kiosk copy says "within 15 seconds". */
+/** Countdown on the supervision confirm. The route's debounce exemption covers
+ *  a fresh `supervisionWarnedAt` stamp, so the full window is usable -- kiosk copy says "within 15 seconds". */
 export const SUPERVISION_CONFIRM_MS = 15_000;
 
-/** Floor on the route's debounce exemption (Fable review, #1347 PR-0): a USB
+/** Floor on the route's debounce exemption: a USB
  *  hardware double-read of the warning scan lands ~300-800ms later with the
  *  stamp already fresh. Below this age, treat it as the same physical badge. */
 export const SUPERVISION_CONFIRM_DEADFRONT_MS = 1_000;
@@ -45,9 +44,9 @@ export type ParkReason =
     | "review";
 
 /**
- * What a scan did, as domain facts. The scan route renders it to the kiosk and
- * web wire (app/api/scan/scanResponse.ts); nothing here is a status, a message
- * or a wire flag.
+ * What a scan did, as domain facts. The scan route renders it to the kiosk wire
+ * (app/api/scan/scanResponse.ts); nothing here is a status, a message or a wire
+ * flag.
  */
 export type ScanOutcome =
     | {
@@ -71,9 +70,7 @@ export type ScanOutcome =
     }
     /** A departure stopped until the person badges again: it leaves a youth short of supervision. */
     | { kind: "confirm_departure"; supervisorsRemaining: number }
-    | { kind: "parked"; reason: ParkReason }
-    /** A check-in away from the door with no keyholder inside. */
-    | { kind: "refused"; reason: "facility_closed" };
+    | { kind: "parked"; reason: ParkReason };
 
 /**
  * Process a check-in for a participant who has no active visit.
@@ -85,7 +82,6 @@ export type ScanOutcome =
  */
 export async function processCheckin(
     participant: Person,
-    authType: string,
     db: DbClient = prisma,
     /** A replay's scan time; absent for a live check-in. */
     visitTime?: Date,
@@ -119,14 +115,6 @@ export async function processCheckin(
     // A badge at the kiosk always checks in — someone scanning inside the
     // building got in somehow, and the screen must show them. With no keyholder
     // present the visit reads as "no keyholder" (derived in getFullAttendance).
-    // Every other surface needs a keyholder already present, a keyholder's own
-    // check-in included: only a badge at the door opens the building.
-    if (authType !== "kiosk") {
-        const activeKeyholders = await tx.visit.count({ where: KEYHOLDER_IN_BUILDING });
-        if (activeKeyholders === 0) {
-            return { kind: "refused", reason: "facility_closed" };
-        }
-    }
 
     // A live arrival is stamped once it holds the facility lock: after any close
     // it waited behind was carried out, so it reads as arriving after that close.
@@ -145,8 +133,8 @@ export async function processCheckin(
     invalidateAttendanceCache();
     specTrace("VisitOpen", { p: participant.id, visitId: newVisit.id, t: arrivalTime.getTime(), live: !visitTime, fencedBy: null });
 
-    // A youth arriving into a room short of supervision is WARNED, never blocked
-    // (#1436): opening the door before the second adult is the keyholder's call to
+    // A youth arriving into a room short of supervision is WARNED, never blocked:
+    // opening the door before the second adult is the keyholder's call to
     // make, and the app's job is to tell the room. Only asked for youth, so an
     // ordinary adult check-in still costs no extra query.
     const isYouthArrival = !participant.isDeclaredAdult
@@ -207,8 +195,7 @@ export type LegacyKiosk = { shownEmpty: boolean | null; clientEventId: string | 
 /**
  * Process a check-out for a participant who has an active visit. Only this
  * person leaves: a building close is its own request (see
- * {@link processCloseRequest}), decided by the kiosk or the web dialog. The one
- * exception is a {@link LegacyKiosk}, whose keyholder checkout may close.
+ * {@link processCloseRequest}), decided by the kiosk. The one exception is a {@link LegacyKiosk}, whose keyholder checkout may close.
  *
  * `db` is the scan route's transaction client (covered by the per-participant
  * advisory lock) or, when called standalone, the global prisma client.
@@ -216,20 +203,17 @@ export type LegacyKiosk = { shownEmpty: boolean | null; clientEventId: string | 
 export async function processCheckout(
     participant: Person,
     activeVisitId: number,
-    authType: string,
     db: DbClient = prisma,
     visitTime: Date = new Date(),
     isReplay: boolean = false,
-    /** A web checkout whose dialog chose close; reported as a close in the outcome. */
-    webClose: boolean = false,
     legacy: LegacyKiosk | null = null,
 ): Promise<ScanOutcome> {
-    let facilityClosed = authType !== "kiosk" && webClose;
+    let facilityClosed = false;
     let closeOffer: CloseOffer | undefined;
     /** The last recorded keyholder's single-badge leave, with how many it left inside. */
     let leave: { othersInside: number } | null = null;
 
-    if (participant.isKeyholder && authType === "kiosk") {
+    if (participant.isKeyholder) {
         const remainingKeyholders = await db.visit.count({
             where: {
                 ...KEYHOLDER_IN_BUILDING,
@@ -264,14 +248,12 @@ export async function processCheckout(
         }
     }
 
-    // SUPERVISION INTERRUPT (#1436). Fires on every live badge departure.
+    // SUPERVISION INTERRUPT. Fires on every live badge departure.
     // Skipped when the facility is closing: that sweep departs everyone.
     // Skipped for a REPLAY: its 400 records nothing but the drain acks that
     // shape, so the queued departure would be dropped and the visit left open.
-    // Skipped for a web checkout as well: the badge scanner is the only place
-    // anyone can re-badge (docs/rules/attendance-checkin.md, Supervision).
     let supervisorsRemaining: number | undefined;
-    if (!facilityClosed && !isReplay && authType === "kiosk") {
+    if (!facilityClosed && !isReplay) {
         const interrupt = await supervisionInterrupt(activeVisitId, db);
         if (interrupt?.confirm) return { kind: "confirm_departure", supervisorsRemaining: interrupt.remaining };
         supervisorsRemaining = interrupt?.remaining;
@@ -279,8 +261,8 @@ export async function processCheckout(
 
     const finalVisits = await processVisitCheckout(activeVisitId, visitTime, db, "SCANNER");
     const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : null;
-    if (facilityClosed && authType === "kiosk") {
-        await recordClose(db, { closedById: participant.id, via: closeVia(authType, isReplay) }, visitTime);
+    if (facilityClosed) {
+        await recordClose(db, { closedById: participant.id, via: closeVia(isReplay) }, visitTime);
     }
     if (leave) await auditKioskLeave(db, participant.id, updatedVisit?.id ?? activeVisitId, isReplay, leave.othersInside);
 
@@ -288,7 +270,7 @@ export async function processCheckout(
 }
 
 /**
- * The two-rung supervision ladder for a departure (#1436), keyed on how many
+ * The two-rung supervision ladder for a departure, keyed on how many
  * supervising adults would REMAIN — and only when this departure is what removes
  * one. A second adult from the same household leaving changes nothing, because
  * the household is still represented; that is the same-household rule.
@@ -302,7 +284,7 @@ export async function processCheckout(
  * The confirm is bound to the warning having been SHOWN, not to badge adjacency:
  * only a scan following a fresh `supervisionWarnedAt` stamp goes through, exactly
  * as the force-close confirm works. Countdown window is
- * {@link SUPERVISION_CONFIRM_MS}; #1347's explicit-confirm slice renders the tick.
+ * {@link SUPERVISION_CONFIRM_MS}.
  */
 async function supervisionInterrupt(
     activeVisitId: number,
@@ -315,7 +297,7 @@ async function supervisionInterrupt(
 
     if (remaining === MIN_SUPERVISING_ADULTS) return { remaining, confirm: false };
 
-    // The confirm rung is youth-gated (#1436, 2026-08-19): policy's floor is two
+    // The confirm rung is youth-gated: policy's floor is two
     // adults whenever a youth is, so an adult-only room locking up warns and goes.
     // Probed on this rung only — every quieter departure pays nothing for it.
     if (!(await youthIsPresent(db))) return { remaining, confirm: false };

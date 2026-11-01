@@ -22,6 +22,25 @@ export async function householdOf(personIds: number[]): Promise<number[]> {
   return members.map((m) => m.id);
 }
 
+/** Each person's household as householdOf([id]) reads it, in two queries for any number of people. */
+export async function householdsOf(personIds: number[]): Promise<Map<number, number[]>> {
+  if (personIds.length === 0) return new Map();
+  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, householdId: true } });
+  const members = await prisma.person.findMany({
+    where: { householdId: { in: [...new Set(people.map((p) => p.householdId))] }, ...LIVE_PERSON },
+    select: { id: true, householdId: true },
+  });
+  return new Map(people.map((p) => [p.id, members.filter((m) => m.householdId === p.householdId).map((m) => m.id)]));
+}
+
+/** Everyone in the person's household, merged-away people included; none for an unknown id. */
+export async function householdIds(personId: number): Promise<number[]> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const members = await prisma.person.findMany({ where: { household: { householdMembers: { some: { id: personId } } } }, select: { id: true } });
+  return members.map((m) => m.id);
+}
+
 /** Checkin's one guarded QuickBooks client; null while the guard keeps it off. */
 export async function quickBooks() {
   return (await import("@/lib/quickbooks/client")).getQuickBooks();

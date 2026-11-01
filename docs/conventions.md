@@ -219,6 +219,10 @@ missed a row stored at a different time of day.
   issue's message. The host's `componentRoute()` (`lib/components/route.ts`)
   renders all three as checkin's API error; anything else is rethrown and the host
   answers an opaque 500. The kit's tests and the host wrapper's test pin this.
+  A `ServiceError` may also carry a `code`, for a UI that branches on it; the host
+  sends it as `{ error, code }`. `ReviewError`, `PaymentError`, `ExternalError`,
+  `RenewalError` and `TrustedAdultError` extend `ServiceError` and read their
+  status from `lib/domainErrorResponse.ts`.
 
 - **A library's runtime fails closed.** Each library
   builds its runtime with the kit's `defineRuntime`. Until the host configures
@@ -268,7 +272,7 @@ move to it in later changes.
   until the person dismisses it, or until a retry replaces it or a later success
   clears it.** It survives moving to another page, because a person who clicked
   away may not have read it. This holds while a modal is open; the modal stays
-  open.
+  open. A display nobody attends is the exception, under its own rule below.
 
 - **A page that could not load says so in place of its content, with a retry.**
   An empty space must never read as an empty list.
@@ -284,7 +288,8 @@ move to it in later changes.
   the person to read stays in the lower right in yellow until dismissed.
 
 - **A display nobody attends raises no message that waits to be dismissed.** A
-  kiosk screen shows its state inline, because nobody is there to clear it.
+  kiosk screen shows its state inline, because nobody is there to clear it. This
+  overrides the rule above for an action that failed.
 
 - **A message that stays on screen carries the server's chosen words or fixed
   text, never exception text.** It holds no personal detail the current page

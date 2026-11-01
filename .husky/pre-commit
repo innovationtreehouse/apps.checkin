@@ -1,5 +1,5 @@
 # Fast pre-commit: stays under ~10s so committing is cheap. Only lints the
-# staged files. Everything heavier that used to run here — prisma generate +
-# the security/generated staleness check, the full Jest suite, and a whole-app
-# tsc --noEmit — is enforced by CI (ci.yml), which blocks merge on all of them.
+# staged files. Everything heavier — prisma generate + the security/generated
+# staleness check, the full Jest suite, and a whole-app tsc --noEmit — is
+# enforced by CI (ci.yml), which blocks merge on all of them.
 npx lint-staged

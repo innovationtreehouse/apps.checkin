@@ -6,6 +6,7 @@ import { expenseOutcomes } from '@checkin/expense';
 import { receivingOutcomes } from '@checkin/workflow-mapping';
 import { giftOutcomes } from '@checkin/bulk-donation';
 import { sessionUser } from '@/lib/components/host';
+import { sendPurchaseOutcome } from '@/lib/purchaseOutcomeMail';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
@@ -21,6 +22,7 @@ jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receiv
 jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn(), sessionUser: jest.fn() }));
 jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
+jest.mock('@/lib/purchaseOutcomeMail', () => ({ sendPurchaseOutcome: jest.fn() }));
 
 const ADULT_DOB = new Date('1980-01-01');
 
@@ -242,6 +244,19 @@ describe('receipt runtime: mailed receipt acknowledgements', () => {
         expect(await boundConfig().replies?.contactOf(7)).toBeNull();
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().replies?.contactOf(7)).toBeNull();
+    });
+});
+
+describe('receipt runtime: outcome emails', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it("hands each copy to the host's purchase outcome mail and passes on whether it is done", async () => {
+        const notice = { receiptId: 'r-1', outcome: 'receipt_rejected' as const, uploaderPersonId: 7, reimburseePersonId: 8, retailer: 'Acme', receiptDate: '2026-10-02' };
+        jest.mocked(sendPurchaseOutcome).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        const mail = boundConfig().outcomeMail;
+        expect(await mail?.send(notice, 'uploader')).toBe(true);
+        expect(await mail?.send(notice, 'reimbursee')).toBe(false);
+        expect(jest.mocked(sendPurchaseOutcome).mock.calls).toEqual([[notice, 'uploader'], [notice, 'reimbursee']]);
     });
 });
 

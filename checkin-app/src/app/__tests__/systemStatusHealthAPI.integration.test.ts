@@ -14,6 +14,7 @@
 
 import { GET } from '@/app/api/system-status/health/route';
 import prisma from '@/lib/prisma';
+import { orgCalendarDay } from '@/lib/time';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({
@@ -83,7 +84,7 @@ describe('System status health API', () => {
         const data = await res.json();
         expect(data.days).toHaveLength(30);
 
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = orgCalendarDay().toISOString().split('T')[0];
         const today = data.days.find((d: { date: string }) => d.date === todayStr);
         expect(today).toBeDefined();
         expect(today.count).toBe(3); // the 'other_metric' row must not count

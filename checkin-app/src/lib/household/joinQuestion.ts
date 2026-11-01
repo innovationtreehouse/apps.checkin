@@ -35,13 +35,13 @@ export async function asksHouseholdQuestion(db: DbClient, personId: number): Pro
 }
 
 /** The household's name is all the question shows: nothing of the record that carries the address. */
-export async function householdQuestion(personId: number): Promise<{ householdName: string | null }> {
+export async function householdQuestion(personId: number): Promise<{ name: string }> {
     const person = await prisma.person.findUnique({
         where: { id: personId },
         select: { householdJoinPending: true, household: { select: { name: true } } },
     });
     if (!person?.householdJoinPending) throw new JoinQuestionError("not_pending");
-    return { householdName: person.household.name };
+    return { name: person.household.name };
 }
 
 // The address's holder may not be whoever the household meant, so a no carries nothing over.

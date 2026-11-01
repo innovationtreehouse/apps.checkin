@@ -28,6 +28,7 @@ const MIGRATIONS = path.resolve(__dirname, "../../../../../packages/s-ingest-cor
 let mirror: Client;
 let restoreBoardSettings: () => Promise<void> = async () => {};
 let nextOrder = 1;
+const MEMBERSHIP_VARIANT = `${TAG}-membership`;
 
 function urlFor(db: string): string {
     const url = new URL(process.env.DATABASE_URL!);
@@ -120,7 +121,7 @@ beforeAll(async () => {
     process.env.SHOPIFY_READ_DATABASE_URL = urlFor(MIRROR_DB);
 
     restoreBoardSettings = await snapshotBoardSettings();
-    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
+    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
     await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...settings }, update: settings });
 }, 60_000);
 
@@ -152,10 +153,10 @@ describe("reconcile reads only API-synced mirror rows", () => {
         const handPrg = await enrollment(`hand-prg-${TAG}@ex.com`);
         const apiPrg = await enrollment(`api-prg-${TAG}@ex.com`);
 
-        const handOrder = await mirrorOrder({ source: "HAND_LOADED", attrs: { Membership_Process_ID: String(handProc) } });
-        const testOrder = await mirrorOrder({ source: "TEST_LOADED", attrs: { Membership_Process_ID: String(testProc) } });
-        await mirrorOrder({ source: "BACKFILL", attrs: { Membership_Process_ID: String(backfillProc) } });
-        await mirrorOrder({ source: null, attrs: { Membership_Process_ID: String(nullProc) } });
+        const handOrder = await mirrorOrder({ source: "HAND_LOADED", attrs: { Membership_Process_ID: String(handProc) }, variantId: MEMBERSHIP_VARIANT });
+        const testOrder = await mirrorOrder({ source: "TEST_LOADED", attrs: { Membership_Process_ID: String(testProc) }, variantId: MEMBERSHIP_VARIANT });
+        await mirrorOrder({ source: "BACKFILL", attrs: { Membership_Process_ID: String(backfillProc) }, variantId: MEMBERSHIP_VARIANT });
+        await mirrorOrder({ source: null, attrs: { Membership_Process_ID: String(nullProc) }, variantId: MEMBERSHIP_VARIANT });
         const handPrgOrder = await mirrorOrder({
             source: "HAND_LOADED",
             attrs: { Program_ID: String(handPrg.programId), CheckMeIn_Account_ID: String(handPrg.personId) },

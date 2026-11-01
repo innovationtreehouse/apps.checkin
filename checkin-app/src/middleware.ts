@@ -91,8 +91,8 @@ export async function middleware(req: NextRequest) {
     // Household-denial login gate — runs in ALL envs (prod included), unlike the dev org
     // gate further down. A board "Deny Membership" stamps token.denied via the jwt callback;
     // bounce every page navigation to the bare /access-denied screen. APIs self-enforce
-    // (authenticateRequest treats denied sessions as unauthenticated), so they're exempt
-    // via the matcher and don't need handling here.
+    // (authenticateRequest treats denied sessions as unauthenticated), so the /api branch
+    // above returns before this gate.
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
     if (token?.denied) {
         return NextResponse.redirect(new URL('/access-denied', req.url));
@@ -149,6 +149,6 @@ export const config = {
     //  - any path with a file extension (`.*\..*`) — public static assets under /public (the brand
     //    logo/mark, svgs). They must stay reachable on the dev instance, and
     //    next/image optimizes via an origin fetch of its source — so a gated /brand/*.webp source
-    //    makes /_next/image return 400 (the broken dev-instance logo).
+    //    makes /_next/image return 400 and the logo fail to render.
     matcher: ['/((?!api|signin|_next/static|_next/image|favicon.ico|.*\\..*).*)', '/api/(.*)'],
 };

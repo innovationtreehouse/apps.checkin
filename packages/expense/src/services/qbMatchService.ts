@@ -1,6 +1,6 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
-import { appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
+import { MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
@@ -113,17 +113,14 @@ export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnId: string,
   }
 }
 
-/** Days either side of a line's receipt date that a QuickBooks candidate may fall in. */
-export const MATCH_WINDOW_DAYS = 7;
-
 async function loadExpense(expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() }, include: { lineItems: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   return expense;
 }
 
-/** Expense states that may still be linked to an existing QuickBooks entry; BEFORE_LINE is held as UNBOOKED. */
-const MATCHABLE_STATES = ["UNMATCHED", "AMBIGUOUS", "UNBOOKED", "BEFORE_LINE", "POST_FAILED", "NEEDS_FINANCE"];
+/** Expense states that may still be linked to an existing QuickBooks entry. */
+const MATCHABLE_STATES = ["UNMATCHED", "AMBIGUOUS", "UNBOOKED", "POST_FAILED", "NEEDS_FINANCE"];
 
 /**
  * The total the poster would book: every line plus the expense's tax and shipping, less its discount.
@@ -272,7 +269,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
 }
 
 /** States waiting on finance's decision. POST_FAILED is not one: the drain retries it until NEEDS_FINANCE. */
-const SKIPPABLE_STATES = ["UNBOOKED", "BEFORE_LINE", "AMBIGUOUS", "NEEDS_FINANCE"];
+const SKIPPABLE_STATES = ["UNBOOKED", "AMBIGUOUS", "NEEDS_FINANCE"];
 
 async function refuseConflictedSkip(principal: ExpensePrincipal, expense: { submitterId: number; reimburseePersonId: number | null }): Promise<void> {
   if ((await conflictedParties(expense)).includes(callerId(principal))) {

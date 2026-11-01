@@ -870,7 +870,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(noLeadProgramId) as unknown as never);
             expect(res.status).toBe(400);
             const data = await res.json();
-            expect(data.error).toBe('Cannot publish a program without a Lead Mentor assigned');
+            expect(data.error).toBe('Cannot publish a program without a Program Leader assigned');
         });
 
         it('rejects publishing without scheduled events (400)', async () => {
@@ -1044,7 +1044,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
             expect(res.status).toBe(403);
             const data = await res.json();
-            expect(data.error).toBe("Forbidden: Only the Board can change a program's lead");
+            expect(data.error).toBe('Forbidden: Only the Board can reassign Program Leaders');
         });
 
         it('allows the Board to reassign leadMentorId', async () => {

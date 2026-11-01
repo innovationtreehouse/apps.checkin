@@ -57,7 +57,7 @@ process.env.CHECKIN_ENV = 'dev';
   // cronNightlyLock holds a departure open on one connection while the sweep runs on another.
   // programStockLockConcurrency runs two stock writers on separate connections.
   // certificationsConcurrency holds a level change open on one connection while a certifier writes on another.
-  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  if (testPath && /(scanConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }
@@ -97,6 +97,16 @@ jest.mock('@checkin/component-ui', () => ({
   ...jest.requireActual('@checkin/component-ui'),
   useViewer: () => require('@/components/AuthProvider').viewerFromSession(require('next-auth/react').useSession().data),
 }));
+
+// The load cache lives for the test file, so each test gets its own answers. Pages unmount first, or the clear refetches them.
+if (typeof document !== 'undefined') {
+  const { cleanup } = require('@testing-library/react');
+  const { clearLoads } = require('@checkin/component-ui/loadCache');
+  afterEach(() => {
+    cleanup();
+    clearLoads();
+  });
+}
 
 // Mock next-auth to prevent instantiation errors in App Router imports
 jest.mock('next-auth', () => {

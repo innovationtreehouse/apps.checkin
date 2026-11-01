@@ -185,7 +185,7 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops/sessions', label: 'Sessions', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: PROGRAM_OPS.visible },
 
-  // Revenue Ops (path /finance-ops) — the finance tools are board-only
+  // Revenue Ops (path /finance-ops) — finance reads the payment plans; the other finance tools are board-only
   { href: '/finance-ops', label: 'Revenue Ops', section: 'Revenue Ops', visible: FINANCE_TOOLS },
   { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE_TOOLS },
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE_TOOLS },

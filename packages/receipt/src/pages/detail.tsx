@@ -4,18 +4,18 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
-import { Alert, Anchor, Badge, Button, Group, Mark, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, Mark, Modal, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import DuplicateCompare from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
 import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
+import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { missingDetails } from "../lib/missingDetails";
-import { describeCorrection, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
+import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
   tax: "tax was charged",
@@ -121,6 +121,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const [rejectReason, setRejectReason] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
+  const [confirmingRead, setConfirmingRead] = useState(false);
   // A ref, not state: a second click in the same tick must see the first save already running.
   const busy = useRef(false);
 
@@ -138,7 +139,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   // Finance and the Board read the audit log, so they see whether each correction entered a value or changed one.
   const corrections = audit.data
     ? submitterCorrections(
-        audit.data.filter((a) => a.action === "field_edit" && a.userId === r.uploadedByUserId),
+        editsSinceReading(audit.data).filter((a) => a.userId === r.uploadedByUserId),
         { taxCents: r.taxCents, receiptDate: r.receiptDate },
       )
     : [];
@@ -191,6 +192,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   // Details saved before a failed resubmit still need a way out of Couldn't read.
   const savedTyped = unread && missingDetails(r).length === 0;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
+
+  const readAgain = () => act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true);
 
   /** Applies the draft's writes in order; on a failure the draft keeps whatever is still unsaved. */
   const saveDraft = async (): Promise<boolean> => {
@@ -379,7 +382,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
               </>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && (
-              <Button size="xs" variant="light" onClick={() => void act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true)}>Read it again</Button>
+              <Button size="xs" variant="light" onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
             )}
             {own && !TERMINAL.has(r.state) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
@@ -427,6 +430,23 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       </Group>
 
       {editing && <ReceiptEditor receipt={r} draft={draft} onChange={setDraft} taxNote={own} />}
+
+      <Modal opened={confirmingRead} onClose={() => setConfirmingRead(false)} title="Read it again">
+        <Stack>
+          <Text>A good reading replaces the details and lines typed on this receipt. Unsaved changes are lost either way.</Text>
+          <Group justify="end">
+            <Button variant="default" onClick={() => setConfirmingRead(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                setConfirmingRead(false);
+                void readAgain();
+              }}
+            >
+              Read it again
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {audit.data && (
         <Paper withBorder p="sm">

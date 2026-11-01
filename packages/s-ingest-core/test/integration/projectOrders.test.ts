@@ -71,6 +71,24 @@ describeDb("projectOrder line reconciliation", () => {
     expect(await prisma.shopOrderLine.count({ where: { storeId: STORE, orderGid: ORDER } })).toBe(2);
   });
 
+  it("keeps a line absent from a truncated connection, then removes it once a complete version lacks it", async () => {
+    await injectFixtures(
+      prisma,
+      [{ objectType: ObjectType.ORDER, node: orderWith([{ id: LINE_A, sku: "A" }, { id: LINE_B, sku: "B" }]) }],
+      { storeId: STORE },
+    );
+    const page = orderWith([{ id: LINE_A, sku: "A" }]);
+    const truncated = { ...page, lineItems: { ...page.lineItems, pageInfo: { hasNextPage: true } } };
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: truncated }], { storeId: STORE });
+
+    const lineB = () => prisma.shopOrderLine.findUnique({ where: { storeId_lineGid: { storeId: STORE, lineGid: LINE_B } } });
+    expect((await lineB())?.removed).toBe(false);
+
+    const complete = { ...page, lineItems: { ...page.lineItems, pageInfo: { hasNextPage: false } } };
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: complete }], { storeId: STORE });
+    expect((await lineB())?.removed).toBe(true);
+  });
+
   it("stores the current quantity next to the original, and null when the payload has none", async () => {
     const node = orderWith([{ id: LINE_A, sku: "A", quantity: 2, currentQuantity: 1 }, { id: LINE_B, sku: "B" }]);
     await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node }], { storeId: STORE });

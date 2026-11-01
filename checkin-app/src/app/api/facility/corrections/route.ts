@@ -5,13 +5,14 @@ import { getAppSettings } from "@/lib/appSettings";
 import { getPeriodStart, type PeriodType } from "@/lib/timePeriods";
 import { MAX_ROWS } from "@/lib/corrections";
 import { SYSTEM_ACTOR } from "@/lib/auditActor";
+import { archivedPeople } from "@/lib/person/archivedPeople";
 
 /**
- * Board/sysadmin review of attendance corrections (AT12, #1258). Reads the
- * existing AuditLog trail for tableName='Visit' — nothing new is stored.
+ * Board/sysadmin review of attendance corrections. Reads the
+ * AuditLog trail for tableName='Visit' — nothing new is stored.
  * Governing rules: docs/rules/attendance-checkin.md, "The visit record".
  *
- * The bag is SYNTHESIZED, not passed through (§4):
+ * The bag is SYNTHESIZED, not passed through:
  * `oldData`/`newData` are internal-tier JSON blobs that carry personal-tier
  * Visit times inside them, and the stripper cannot see through JSON. So this
  * handler reads the blobs and rebuilds each bag entry from named fields —
@@ -112,8 +113,9 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
 
     // Actor + subject names, batched — AuditLog has no @relation to Person.
     // mergedIntoId rides along so the drill-down can follow a since-merged
-    // subject to their surviving record: a merge deletes nobody and moves the
-    // visits, so an older audit row can name a person since merged away.
+    // subject to their surviving record: a merge moves the visits, so an older
+    // audit row can name a person since merged away. A merge deletes the
+    // Person row, so that person comes from the merge archive instead.
     // SYSTEM_ACTOR is a sentinel, not a person id — looking it up would find
     // nobody and the row would render as one person editing another's record.
     const personIds = new Set<number>();
@@ -125,12 +127,14 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
     // since have been merged away, and the drill-down must still name them.
     // `mergedIntoId` is selected so the UI can mark the row, and because the
     // drift guard reads its presence as the filter — keep it if the select narrows.
-    const people = personIds.size
+    const people: { id: number; name: string | null; mergedIntoId: number | null }[] = personIds.size
         ? await prisma.person.findMany({
             where: { id: { in: [...personIds] } },
             select: { id: true, name: true, mergedIntoId: true },
         })
         : [];
+    const found = new Set(people.map((p) => p.id));
+    people.push(...await archivedPeople(prisma, [...personIds].filter((id) => !found.has(id))));
 
     // Always all three keys, even empty — handler.ts unwraps a single-key bag
     // to a bare value, which would turn an empty result into a bare `[]`.

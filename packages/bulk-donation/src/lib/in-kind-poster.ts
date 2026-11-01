@@ -3,11 +3,18 @@
 // clearing account, which the drain matches instead. Claim, call, settle, as the other lanes.
 import { dollarsToCents } from "@checkin/money";
 import {
+  MATCH_WINDOW_DAYS,
+  STALE_CLAIM_MS,
+  SWEEP_DAYS,
   appKeyOf,
   findOrCreateInKindJournal,
+  qbGate,
   qbKey,
+  readCloseDate,
+  runDrain,
   shiftDate,
   type BooksMapRole,
+  type CloseRead,
   type FindOrCreateResult,
   type InKindJournalLine,
   type QboDeposit,
@@ -22,7 +29,6 @@ import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
 import { QB_MATCH_STATE } from "./qb-match";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_RUN, MATCH_WINDOW_DAYS, STALE_CLAIM_MS, SWEEP_DAYS, qbGate, readCloseDate, type CloseRead } from "./qb-gate";
 
 /** Every books-map role the lane needs before it runs; clearing is only for matching finance's hand bookings. */
 export const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"] as const satisfies readonly BooksMapRole[];
@@ -360,8 +366,8 @@ export type InKindSweepCounts = { entries: number; flagged: number; full: boolea
 
 /**
  * The daily orphan sweep: every JournalEntry created since the oldest attempt in the last
- * SWEEP_DAYS days, one page. An entry carrying a gift's key that the gift does not hold gets a
- * note for finance to void or link it, unless finance already answered it; a full page alerts
+ * SWEEP_DAYS days. An entry carrying a gift's key that the gift does not hold gets a
+ * note for finance to void or link it, unless finance already answered it; a capped read alerts
  * finance. QuickBooks is only read.
  */
 export async function sweepInKindQbStrays(
@@ -435,7 +441,7 @@ export interface InKindDrainCounts {
  * The in-kind drain, run from the daily cron. It runs only with QuickBooks bound and every in-kind
  * role in the books map, then switches the lane on (once, for good) and reads the books closing
  * date once for the run. Each gift waiting on nothing but booking posts, oldest first, until the
- * per-run create cap or MAX_CONSECUTIVE_FAILURES failures in a row; the orphan sweep runs last.
+ * per-run create cap or the failure streak; the orphan sweep runs last.
  */
 export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | "unconfigured"> {
   const posting = getInKindQbPosting();
@@ -454,21 +460,16 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
     posted: 0, matched: 0, unbooked: 0, needs_finance: 0, failed: 0, waiting: 0,
     capped: false, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
-  let failuresInARow = 0;
-  for (const gift of [...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) {
-    if (counts.posted >= MAX_CREATES_PER_RUN) {
-      counts.capped = true;
-      break;
-    }
-    const result = await postGift(run, gift.source, gift.id, new Date());
-    const outcome = result === "not_ready" || result === "busy" ? "waiting" : result;
-    counts[outcome]++;
-    failuresInARow = outcome === "failed" ? failuresInARow + 1 : 0;
-    if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) {
-      counts.stoppedAfterFailures = true;
-      break;
-    }
-  }
+  const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
+    counts,
+    failures: ["failed"],
+    post: async (gift) => {
+      const result = await postGift(run, gift.source, gift.id, new Date());
+      return result === "not_ready" || result === "busy" ? "waiting" : result;
+    },
+  });
+  counts.capped = stop?.by === "count";
+  counts.stoppedAfterFailures = stop?.by === "failures";
   // After the posts, so a gift this run linked to its own entry is not reported as a stray.
   counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
   return counts;

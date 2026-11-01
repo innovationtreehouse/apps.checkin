@@ -22,8 +22,10 @@ import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
+import { oweOutcomeNotice, sendOutcomeNotices } from "./outcomeNotices";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import { listWords, missingDetails } from "../lib/missingDetails";
+import { READING_APPLIED } from "../lib/submitterCorrections";
 import {
   AddLineItemSchema,
   EditLineItemSchema,
@@ -308,7 +310,7 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
       }
       await tx.receiptLineItem.deleteMany({ where: { receiptId: id } });
       await tx.receipt.update({ where: { id }, data: { lineItems: { create: toLineRows(result.data.lineItems.map(toLine)) } } });
-      await audit(tx, id, actor, { action: "ocr_complete" });
+      await audit(tx, id, actor, { action: READING_APPLIED });
       return true;
     });
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
@@ -512,11 +514,12 @@ async function runFlowLogged(id: string, actor: Actor | null): Promise<void> {
   });
 }
 
-/** Finance refuses an open receipt with a reason, recorded as its finance review. */
-async function rejectAsFinance(row: ReceiptRow, note: string, actor: ReceiptPrincipal, tx?: Prisma.TransactionClient): Promise<void> {
+/** Finance refuses an open receipt with a reason, recorded as its finance review, and owes its outcome email. */
+async function rejectAsFinance(row: ReceiptRow, note: string, actor: ReceiptPrincipal, tx: Prisma.TransactionClient): Promise<void> {
   const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
   const set = { core: recordFinanceReview("rejected", row, reasons, actor, note, new Date()), detail: { validationNotes: note } };
   await step(row, { type: "REJECT" }, "rejected", set, actor, "reject_financial", note, tx);
+  await oweOutcomeNotice(tx, row.orgId, row.id, "receipt_rejected");
 }
 
 // ── Duplicate groups (2516_RECEIPT_DUPLICATES.md §5.5, §6) ─────────────────────
@@ -620,6 +623,7 @@ async function decideGroup(
     await decide(tx, row, group.members, actor);
     return live;
   });
+  await sendOutcomeNotices(decided);
   await recheck(row.orgId, decided, actor);
   const after = await load(id, "finance", actor);
   const holder = after.state === "duplicate_flagged" ? await checkDuplicate(after) : null;
@@ -864,7 +868,8 @@ export const receiptService = {
     await refuseSelfDecision(row, actor, "reject");
     const flaggedAgainst = await receiptRepo.list({ orgId: row.orgId, details: { duplicateSuspectReceiptId: row.id, state: "duplicate_flagged" } });
     for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "reject the suspected original");
-    await rejectAsFinance(row, note, actor);
+    await db.$transaction((tx) => rejectAsFinance(row, note, actor, tx));
+    await sendOutcomeNotices([id]);
     for (const flagged of flaggedAgainst) await audit(db, flagged.id, actor, { action: "suspected_original_rejected", valueAfter: row.id });
     return load(id, "finance", actor);
   },

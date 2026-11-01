@@ -1,7 +1,7 @@
 /**
- * Admin API token acquisition for the deployed Lambda (#237).
+ * Admin API token acquisition for the deployed Lambda.
  *
- * Today the Lambda needs a hand-pasted ~24h static token to run at all. Precedence:
+ * Precedence:
  *   - `SHOPIFY_ADMIN_TOKEN` set (local dev / legacy custom apps) → used verbatim,
  *     forever. No minting, no cache, no expiry tracking.
  *   - Otherwise, mint a short-lived (~24h) token via the client-credentials grant from
@@ -9,10 +9,8 @@
  *     FUTUREWORK.md §5), cached at module scope so a warm Lambda container reuses it
  *     across invocations instead of re-minting every run.
  *
- * The issue's original diagram (encrypted DB storing access + refresh tokens) doesn't
- * apply here — Shopify's client-credentials grant returns no refresh token; renewing is
- * just re-running the client_id/client_secret exchange (confirmed in the issue thread).
- * So this is deliberately in-memory only, no DB table.
+ * Shopify's client-credentials grant returns no refresh token; renewing is just re-running
+ * the client_id/client_secret exchange. So this is deliberately in-memory only, no DB table.
  *
  * Mirrors checkin-app/src/lib/shopify/client.ts's getAccessToken shape (cache + 5-min-early
  * refresh), but standalone — this package imports nothing from checkin-app.

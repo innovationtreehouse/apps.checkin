@@ -33,7 +33,7 @@ describe("OnboardingGate", () => {
 
   it("shows only the household question while it is open, naming only the household", async () => {
     setSession({ id: 1, householdJoinPending: true });
-    const fetchSpy = mockFetchJson({ "/api/profile/household-question": { householdName: "Rivera Household" } });
+    const fetchSpy = mockFetchJson({ "/api/profile/household-question": { household: { name: "Rivera Household" } } });
     renderGate();
 
     expect(await screen.findByText(/Rivera Household/)).toBeInTheDocument();

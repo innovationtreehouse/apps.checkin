@@ -86,6 +86,7 @@ const card: SignoffFacts = {
   reimburseeSetter: null,
   seatedHouseholds: [],
   boardSeat: true,
+  conflictedFinal: false,
   approved: true,
   approver: 2,
   expenseSigners: [],

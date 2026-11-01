@@ -1,7 +1,4 @@
-import { NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { apiError } from "@/lib/api-response";
-import { logger } from "@/lib/logger";
+import { ApiResponseError, handler } from "@/security/handler";
 import { answerHouseholdQuestion, householdQuestion, JoinQuestionError, type JoinRefusal } from "@/lib/household/joinQuestion";
 
 const REFUSALS: Record<JoinRefusal, { message: string; status: number }> = {
@@ -10,32 +7,27 @@ const REFUSALS: Record<JoinRefusal, { message: string; status: number }> = {
     denied: { message: "This household cannot be answered for. Please ask the Board.", status: 403 },
 };
 
-function respond(error: unknown) {
-    if (error instanceof JoinQuestionError) {
+async function refusingAsResponse<T>(work: () => Promise<T>): Promise<T> {
+    try {
+        return await work();
+    } catch (error) {
+        if (!(error instanceof JoinQuestionError)) throw error;
         const { message, status } = REFUSALS[error.refusal];
-        return apiError(message, status);
+        throw new ApiResponseError(status, message);
     }
-    logger.error("Household question error:", error);
-    return apiError("Internal Server Error", 500);
 }
 
-export const GET = withAuth({ allowJoinPending: true }, async (_req, auth) => {
-    if (auth.type !== "session") return apiError("Unauthorized", 401);
-    try {
-        return NextResponse.json(await householdQuestion(auth.user.id));
-    } catch (error) {
-        return respond(error);
-    }
+export const GET = handler("GET /api/profile/household-question", async ({ auth }) => {
+    if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
+    const userId = auth.user.id;
+    return { Household: await refusingAsResponse(() => householdQuestion(userId)) };
 });
 
-export const POST = withAuth({ allowJoinPending: true }, async (req, auth) => {
-    if (auth.type !== "session") return apiError("Unauthorized", 401);
+export const POST = handler("POST /api/profile/household-question", async ({ req, auth }) => {
+    if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
+    const userId = auth.user.id;
     const { join } = await req.json();
-    if (typeof join !== "boolean") return apiError("join must be true or false", 400);
-    try {
-        await answerHouseholdQuestion(auth.user.id, join);
-        return NextResponse.json({ joined: join });
-    } catch (error) {
-        return respond(error);
-    }
+    if (typeof join !== "boolean") throw new ApiResponseError(400, "join must be true or false");
+    await refusingAsResponse(() => answerHouseholdQuestion(userId, join));
+    return {};
 });

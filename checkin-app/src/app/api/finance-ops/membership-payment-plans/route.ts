@@ -11,7 +11,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const GET = handler('GET /api/finance-ops/membership-payment-plans', async () => {
     const requests = await prisma.orgMembershipProcess.findMany({
-        // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition (#1080).
+        // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition.
         where: {
             isPaymentPlanRequested: true,
             ...fromWhere('PENDING_PAYMENT'),
@@ -70,7 +70,7 @@ export const POST = withAuth(
             // approving a stale/nonexistent request is a no-op error, mirroring the
             // GET queue's filter.
             const process = await prisma.orgMembershipProcess.findFirst({
-                // Approve probe: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+                // Approve probe: from-state status from the definition; isPaymentPlanRequested stays literal.
                 where: { id: processId, isPaymentPlanRequested: true, ...fromWhere('PENDING_PAYMENT') },
                 select: { id: true },
             });

@@ -13,10 +13,11 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import crypto from 'crypto';
 import prisma from '@/lib/prisma';
 import { config, isStagingAccessAllowed } from '@/lib/config';
+import { constantTimeEqual } from '@/lib/signatureCompare';
 import { householdLeadship } from '@/lib/household/leads';
+import { isAcceptedSession } from '@/lib/session/acceptedSession';
 import type { AuthResult } from '@/types/auth';
 import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, type Role } from './core';
 import { ENROLLED_PARTICIPANT, LIVE_PERSON } from '@/lib/person/filters';
@@ -189,18 +190,15 @@ function isCertifier(auth: AuthResult): boolean {
 }
 
 /**
- * A session without a positive integer id (its sign-in or re-sync resolved no
- * live Person) is unauthenticated: it admits only on `public` and selects only
- * the `anyone`/`unauthenticated` view, whatever role flags it carries. Handlers
- * filter by the caller's id, and Prisma drops a `where` key whose value is
- * `undefined`, so admitting it would widen that filter to every row.
- * authenticateRequest already downgrades a session with no numeric id; these
- * resolvers deny it on their own so no caller depends on that.
+ * A session isAcceptedSession refuses (no positive integer id, a denied
+ * household, or an open household question on a route without
+ * `allowJoinPending`) is unauthenticated: it admits only on `public` and selects
+ * only the `anyone`/`unauthenticated` view, whatever role flags it carries.
+ * authenticateRequest already downgrades such a session; these resolvers deny
+ * it on their own so no caller depends on that.
  */
-function isIdlessSession(auth: AuthResult): boolean {
-    if (auth.type !== 'session') return false;
-    const { id } = auth.user;
-    return !(typeof id === 'number' && Number.isInteger(id) && id > 0);
+function isRefusedSession(auth: AuthResult, opts?: { allowJoinPending?: boolean }): boolean {
+    return auth.type === 'session' && !isAcceptedSession(auth.user, opts);
 }
 
 export function callerHoldsRole(
@@ -208,8 +206,9 @@ export function callerHoldsRole(
     auth: AuthResult,
     params: Record<string, string>,
     ctx: CallerContext,
+    opts?: { allowJoinPending?: boolean },
 ): boolean {
-    if (isIdlessSession(auth)) return role === 'anyone' || role === 'unauthenticated';
+    if (isRefusedSession(auth, opts)) return role === 'anyone' || role === 'unauthenticated';
     switch (role) {
         case 'anyone':
             return true;
@@ -254,19 +253,18 @@ export interface ResolverContext {
     callerContext: CallerContext;
     /** The request's Authorization header; only `cronSecret` routes read it. */
     authorization?: string | null;
+    /** The route's own `allowJoinPending`. */
+    allowJoinPending?: boolean;
 }
 
 /**
  * `Authorization: Bearer <secret>` against the named secret's env var. Unset or
- * empty fails closed. Both sides are hashed first so the compare is fixed-length
- * and timing-safe without leaking the secret's length.
+ * empty fails closed.
  */
 function cronSecretMatches(name: CronSecretName, authorization: string | null | undefined): boolean {
     const secret = process.env[CRON_SECRET_ENV[name]];
     if (!secret || !authorization) return false;
-    const provided = crypto.createHash('sha256').update(authorization).digest();
-    const expected = crypto.createHash('sha256').update(`Bearer ${secret}`).digest();
-    return crypto.timingSafeEqual(provided, expected);
+    return constantTimeEqual(authorization, `Bearer ${secret}`);
 }
 
 /**
@@ -306,7 +304,7 @@ export async function resolveAccess(
         }
     }
 
-    if (isIdlessSession(auth)) return { allowed: authorize === 'public' };
+    if (isRefusedSession(auth, { allowJoinPending: ctx.allowJoinPending })) return { allowed: authorize === 'public' };
 
     const isAdmin = auth.type === 'session' && (auth.user.isSysadmin || auth.user.isBoardMember);
 

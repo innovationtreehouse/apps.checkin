@@ -123,7 +123,7 @@ How the pieces are built is described in
 - A receipt's lines can be edited only while it waits for review. Once it is
   sent to apply, its lines can't be edited, even when the apply fails: a
   failed part is retried with the same lines, and a mistake is corrected by
-  hand outside receiving (issue #2267). `[Decision — owner]`
+  hand outside receiving. `[Decision — owner]`
 
 - The person who uploaded a receipt, or anyone in their household, may map its
   lines in Part mapping (link, propose or mark not inventory) and send it to

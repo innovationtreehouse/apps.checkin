@@ -282,6 +282,22 @@ export interface ReceiptReplies {
   send(ack: MailAcknowledgement): Promise<boolean>;
 }
 
+/** A receipt outcome its uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "receipt_rejected";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
+}
+
 /** Finance alerts the host binds. */
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
@@ -316,6 +332,8 @@ export interface ReceiptConfig {
   mailbox?: MailboxReader;
   /** Unset means acknowledgements wait unsent. */
   replies?: ReceiptReplies;
+  /** Unset means outcome emails wait unsent. */
+  outcomeMail?: OutcomeMail;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
   /** Unset means no row may have a key: reading or writing one throws. */
@@ -334,6 +352,8 @@ export interface ReceiptRouteCtx {
   access: "finance" | "submitter";
   /** The caller's Person.id under FINANCE's own view; null under any other view, BOARD's included. */
   financeActorId: number | null;
+  /** The caller's Person.id under the submitter view; null under the finance view or with no session person. */
+  submitterActorId: number | null;
 }
 
 /** A route factory's body: parse → service → model bag (stripped by the host). */

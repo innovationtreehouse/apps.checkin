@@ -1,8 +1,8 @@
 /**
- * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
+ * Wire the expense library into checkin, called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
- * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
- * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
+ * request. Bound crossings: catalog reads, the org-event replay read and the reimbursement
+ * status QuickBooks reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
  * search and create go through checkin's one guarded client (off = the reader throws, no Vendors).
  * The posting writer resolves per run: the guarded client and the books map's EXPENSE_PAYMENT
  * account, which finance also reads matches against. With either missing, or an account that is
@@ -17,7 +17,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg } from "@/lib/components/host";
 import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
-import { budgetOwners, householdOf } from "@/lib/components/ports";
+import { budgetOwners, householdIds, householdOf, householdsOf } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
@@ -64,6 +64,8 @@ export const signoff: SignoffDirectory = {
   boardMembers: () => roleHolders("BOARD"),
 
   householdOf,
+  householdsOf,
+  householdIds,
 
   async personExists(personId) {
     const { LIVE_PERSON } = await import("@/lib/person/filters");
@@ -249,7 +251,7 @@ export function configureRuntime(): void {
     budgetOwners,
     signoff,
     catalog: catalogReader,
-    catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
+    catalogEvents: { eventsSince: catalogEventsSince },
     alerts: orgEventAlerts("board.expenseEventsStuck", "Expense catalog event alert failed:"),
     people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },

@@ -10,7 +10,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * GET /api/cron/scholarship-grace-expiry — release path (c) of the
- * scholarship hold ledger (product decision 2026-07-06). A denied applicant
+ * scholarship hold ledger. A denied applicant
  * keeps their held seat (denial performs no Shopify op — see the refuse
  * route) so they can still pay; this sweep is the backstop for the ones who
  * never pay and never withdraw. Once BoardSettings.scholarshipDenialGraceDays

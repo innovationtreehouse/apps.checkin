@@ -34,12 +34,10 @@ export function makeWorkflowInvariants<
   const machineId = machine.id;
 
   function evalTransition(currentState: string, event: TEvent, context: TContext): string {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const snapshot = machine.resolveState({ value: currentState, context } as any);
+    const snapshot = machine.resolveState({ value: currentState, context });
     const actor = createActor(machine, { snapshot });
     actor.start();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    actor.send(event as any);
+    actor.send(event);
     const next = String(actor.getSnapshot().value);
     actor.stop();
     return next;
@@ -88,20 +86,18 @@ export function makeWorkflowInvariants<
    * Does not evaluate guards — answers "is this event defined for this state?".
    */
   function isLegalTransition(currentState: string, eventType: string): boolean {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const stateConfig = (machine.config.states as Record<string, any>)?.[currentState];
-    if (!stateConfig?.on) return false;
-    return eventType in stateConfig.on;
+    const on = machine.config.states?.[currentState]?.on;
+    if (!on) return false;
+    return eventType in on;
   }
 
   /**
    * Returns event types defined for the given state (guard-blind).
    */
   function legalEventTypes(state: string): string[] {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const stateConfig = (machine.config.states as Record<string, any>)?.[state];
-    if (!stateConfig?.on) return [];
-    return Object.keys(stateConfig.on);
+    const on = machine.config.states?.[state]?.on;
+    if (!on) return [];
+    return Object.keys(on);
   }
 
   /**

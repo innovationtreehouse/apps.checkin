@@ -190,7 +190,7 @@ describeDb("S5 catch-up: alerts", () => {
 
     expect(await catchUpOrgEvents()).toMatchObject({ unreadable: true, reconciled: 1 });
     expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true });
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true, stuckProvisionals: [] });
   });
 
   it("alerts once for events that fail or don't fit this run, and leaves them for the next", async () => {
@@ -199,7 +199,7 @@ describeDb("S5 catch-up: alerts", () => {
 
     expect(await catchUpOrgEvents(2)).toMatchObject({ failed: 2, unprocessed: 1 });
     expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 2, unprocessed: 1, unreadable: false });
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 2, unprocessed: 1, unreadable: false, stuckProvisionals: [] });
     expect(await db.inventoryReceivedOrgEvent.count({ where: { id: 3 } })).toBe(0);
   });
 
@@ -302,6 +302,59 @@ describeDb("S5 catch-up: stored resolutions", () => {
 
     expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0 });
     expect(await qty(REAL)).toBe(3);
+  });
+
+  it("rejects a pending provisional whose rejection arrived before it, keeping its stock, once", async () => {
+    await orgEventConsumer.onOrgEvents([event(5, "provisional_rejected", { provisionalGtin13: PROV, rejectionReason: "dup" })]);
+    await pendingProvisionalWithStock(3);
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 1, reconcileFailed: 0 });
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({
+      status: "rejected",
+      rejectionReason: "dup",
+    });
+    expect(await qty(PROV)).toBe(3);
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0 });
+  });
+
+  it("maps a pending provisional whose mapping arrived before it onto the real item, once", async () => {
+    await orgEventConsumer.onOrgEvents([event(5, "provisional_mapped_to_existing", { provisionalGtin13: PROV, realGtin13: REAL, conversionFactor: 1 })]);
+    await pendingProvisionalWithStock(3);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 7 } });
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 1, reconcileFailed: 0 });
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({
+      status: "mapped_to_existing",
+      resolvedToGtin13: REAL,
+    });
+    expect(await qty(REAL)).toBe(10);
+    expect(await qty(PROV)).toBeNull();
+
+    expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0 });
+    expect(await qty(REAL)).toBe(10);
+  });
+
+  it("alerts on every run while a reconcile keeps failing, and stops once it applies", async () => {
+    await orgEventConsumer.onOrgEvents([approved(5)]);
+    await pendingProvisionalWithStock(3);
+    const orgEventsStuck = vi.fn(async () => {});
+    configure(undefined, { orgEventsStuck });
+    const spy = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate")
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockRejectedValueOnce(new Error("boom"));
+
+    try {
+      await catchUpOrgEvents();
+      await catchUpOrgEvents();
+      expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+      expect(orgEventsStuck).toHaveBeenLastCalledWith({ failed: 0, unprocessed: 0, unreadable: false, stuckProvisionals: [{ gtin13: PROV, name: "Widget" }] });
+
+      expect(await catchUpOrgEvents()).toMatchObject({ reconcileFailed: 0 });
+      expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("leaves a pending provisional with no resolution alone", async () => {

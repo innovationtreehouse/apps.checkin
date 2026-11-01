@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ActionIcon, Button, Group, Modal, Stack, Table, Text, Textarea, Title, Tooltip,
 } from "@mantine/core";
@@ -7,27 +7,14 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api, errorMessage } from "./api";
+import { api, useLoad } from "./api";
 import { LoadError } from "@checkin/component-ui";
 import type { ItemReferenceProposalRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
 
 export default function ItemReferenceProposalsClient() {
-  const [proposals, setProposals] = useState<ItemReferenceProposalRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  function fetchProposals() {
-    return api<ItemReferenceProposalRow[]>(`/proposals/item-references?page=1&limit=${PAGE_LIMIT}`)
-      .then((rows) => { setProposals(rows); setError(null); }, (e) => setError(errorMessage(e)))
-      .finally(() => setLoading(false));
-  }
-  useEffect(() => { fetchProposals(); }, []);
-  async function load() {
-    setLoading(true);
-    await fetchProposals();
-  }
+  const { data: proposals, error, reload } = useLoad<ItemReferenceProposalRow[]>(`/proposals/item-references?page=1&limit=${PAGE_LIMIT}`);
 
   const [rejectTarget, setRejectTarget] = useState<ItemReferenceProposalRow | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -40,7 +27,6 @@ export default function ItemReferenceProposalsClient() {
     try {
       await api(`/proposals/item-references/${id}/approve`, { method: "POST" });
       notifications.show({ message: "Mapping approved and written to item references", color: "green" });
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setApproving(null); }
   }
@@ -54,7 +40,6 @@ export default function ItemReferenceProposalsClient() {
       closeReject();
       setRejectReason("");
       setRejectTarget(null);
-      await load();
     } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
     finally { setRejecting(false); }
   }
@@ -64,7 +49,7 @@ export default function ItemReferenceProposalsClient() {
       <Title order={3} mb="xs">Item Reference Proposals</Title>
       <Text size="sm" c="dimmed" mb="md">Pending proposals from organizations to map part numbers/descriptions to catalog items.</Text>
 
-      {error ? <LoadError what="proposals" message={error} onRetry={load} /> : loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? (
+      {error ? <LoadError what="proposals" message={error} onRetry={reload} /> : proposals === null ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? (
         <Text c="dimmed">No pending item reference proposals.</Text>
       ) : (
         <Stack gap="sm">

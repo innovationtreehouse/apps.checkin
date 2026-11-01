@@ -188,7 +188,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         }
 
         if (!leadMentorId) {
-            return apiError("Lead Mentor is required", 400);
+            return apiError("Program Leader is required", 400);
         }
 
         const mentorId = parseInt(leadMentorId, 10);
@@ -197,10 +197,10 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!mentor) {
-            return apiError("Lead mentor not found", 400);
+            return apiError("Program Leader not found", 400);
         }
         if (!isLeaderAgeEligible(mentor)) {
-            return apiError("Lead mentor must be at least 23 years old", 400);
+            return apiError("Program Leader must be at least 23 years old", 400);
         }
         // Nobody names themself or their household as a program's leader (Ethics Policy III.5).
         if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {

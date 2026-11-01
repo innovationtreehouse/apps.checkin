@@ -55,7 +55,8 @@ async function resolveAuthResult(
         // dev guest persona), or a denied household locked out of the whole app. Either
         // way every route fails closed, regardless of its role list. The jwt callback
         // already strips a denied household's role flags; this also denies plain member
-        // endpoints.
+        // endpoints. A session with an open household question is refused the same way
+        // unless the caller passes allowJoinPending.
         if (!isAcceptedSession(session.user, opts)) {
             return { type: 'unauthenticated' };
         }

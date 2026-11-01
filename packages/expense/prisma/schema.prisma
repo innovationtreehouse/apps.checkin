@@ -5,7 +5,7 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the expense schema under checkin's security regime (design #1272 §5): the
+// Brings the expense schema under checkin's security regime: the
 // same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
 // Paths are relative to this schema file.
 generator security {
@@ -139,11 +139,11 @@ model Expense {
   // still run so the capital register is built.
   /// @sensitivity:internal
   backfill           Boolean   @default(false)
-  // A signed note stands in for the receipt (F2 exception; changes who fills the program-approver seat).
+  // A signed note stands in for the receipt; it changes who fills the program-approver seat.
   /// @sensitivity:internal
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
   // QuickBooks match state of the whole expense (one QB entry per expense):
-  // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | UNBOOKED (BEFORE_LINE reads as it) | POST_FAILED, or not sent:
+  // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | UNBOOKED | POST_FAILED, or not sent:
   // SKIPPED (finance, with a reason, for good) | NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) | NEEDS_FINANCE (posts kept failing). qb_txn_id is the
   // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
   // once; qb_vendor_id is the Vendor a Bill was posted to.
@@ -199,6 +199,7 @@ model Expense {
   taxApproval        ExpenseTaxApproval?
 
   @@unique([qbTxnEntity, qbTxnId])
+  @@index([orgId, state, submittedAt(sort: Desc)])
   @@map("expenses")
 }
 
@@ -346,6 +347,7 @@ model LineItemOwnerApproval {
   expense           Expense         @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   lineItem          ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
 
+  @@index([expenseId, status])
   @@map("line_item_owner_approvals")
 }
 
@@ -403,9 +405,6 @@ model ExpenseEvent {
   orgId     String   @map("org_id")
   /// @sensitivity:internal
   expenseId String   @map("expense_id")
-  /// Out of the client; nothing reads or writes it. A later migration drops the column.
-  /// @sensitivity:personal
-  payload   String?  @ignore
   /// @sensitivity:internal
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -453,6 +452,7 @@ model ExpenseAuditLog {
   expense      Expense          @relation(fields: [expenseId], references: [id])
   lineItem     ExpenseLineItem? @relation(fields: [lineItemId], references: [id])
 
+  @@index([expenseId, action])
   @@map("expense_audit_log")
 }
 
@@ -534,7 +534,7 @@ model ReceivedExpensePayload {
   @@map("received_expense_payloads")
 }
 
-// Audit record of every catalog S5 event received; catch-up consumes any event not in it.
+// Audit record of every catalog org event received; catch-up consumes any event not in it.
 model ExpenseReceivedOrgEvent {
   /// @sensitivity:internal
   id            Int      @id
@@ -640,7 +640,7 @@ model DonatedCapitalLine {
   @@map("donated_capital_lines")
 }
 
-// A QuickBooks transaction finance has permanently removed from matching (D5).
+// A QuickBooks transaction finance has permanently removed from matching.
 model ExpenseQbMatchExclusion {
   /// @sensitivity:internal
   id                 Int      @id @default(autoincrement())
@@ -698,7 +698,7 @@ model ExpenseReimburseeVendor {
   @@map("reimbursee_vendor")
 }
 
-// One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
+// One filled sign-off seat on a reimbursement or card-charge line (Financial Policy Arts. IX and XII).
 // seat: SUBMITTER | TREASURER | BOARD; the program approver signs by approving the line. A Board
 // member may fill the Treasurer seat when nobody eligible can. BOARD is the extra Board signer on
 // a non-Everyday card-charge line without written Board authorization, or on a reimbursement owed
@@ -724,6 +724,7 @@ model ExpenseLineSignoff {
 
   @@unique([lineItemId, seat])
   @@unique([lineItemId, signerUserId])
+  @@index([expenseId])
   @@map("expense_line_signoffs")
 }
 

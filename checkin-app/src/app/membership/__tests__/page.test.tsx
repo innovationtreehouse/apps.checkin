@@ -1134,3 +1134,114 @@ describe("scholarship / payment-plan request", () => {
     expect(await screen.findByRole("button", { name: /Request a scholarship or payment plan/ })).toBeInTheDocument();
   });
 });
+
+describe("own background check", () => {
+  const ownCheck = { consented: false, deepLinkUrl: "https://averity.example/consent" };
+  const memberState = (ownBackgroundCheck: unknown) =>
+    state({ isLead: false, hasHousehold: true, membershipStatus: "ACTIVE", ownBackgroundCheck });
+
+  it("offers consent to someone with a pending check of their own", async () => {
+    setSession({ id: 2 });
+    mockFetchJson({ "/api/membership": memberState(ownCheck) });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByRole("heading", { name: "Your background check" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Consent on Averity/ })).toHaveAttribute("href", "https://averity.example/consent");
+    expect(screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ })).toBeDisabled();
+    expect(screen.getByText("You're a member 🎉", { exact: false })).toBeInTheDocument();
+  });
+
+  it("is hidden without a pending check", async () => {
+    setSession({ id: 2 });
+    mockFetchJson({ "/api/membership": memberState(null) });
+    renderWithProviders(<MembershipPage />);
+
+    await screen.findByText("You're a member 🎉", { exact: false });
+    expect(screen.queryByRole("heading", { name: "Your background check" })).not.toBeInTheDocument();
+  });
+
+  it("shows consent already on file instead of the form", async () => {
+    setSession({ id: 2 });
+    mockFetchJson({ "/api/membership": memberState({ ...ownCheck, consented: true }) });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText(/Your consent is recorded/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /I submitted my consent on Averity/ })).not.toBeInTheDocument();
+  });
+
+  it("records consent and shows it confirmed", async () => {
+    setSession({ id: 2 });
+    const fetchMock = mockFetchJson({
+      "/api/membership/bg-consent": { status: { contractSigned: false, contractStarted: false, bgConsented: true, bgCleared: false, deepLinkUrl: ownCheck.deepLinkUrl } },
+      "/api/membership": memberState(ownCheck),
+    });
+    renderWithProviders(<MembershipPage />);
+    await screen.findByRole("heading", { name: "Your background check" });
+
+    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/membership/bg-consent", expect.objectContaining({ method: "POST" })),
+    );
+    expect(await screen.findByText(/Your consent is recorded/)).toBeInTheDocument();
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's refusal in a red chip that stays open, and lets them retry", async () => {
+    setSession({ id: 2 });
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/api/membership/bg-consent")) {
+        return { ok: false, status: 409, json: async () => ({ error: "No application is awaiting background-check consent." }) } as Response;
+      }
+      return { ok: true, json: async () => memberState(ownCheck) } as Response;
+    }) as unknown as typeof fetch;
+    renderWithProviders(<MembershipPage />);
+    await screen.findByRole("heading", { name: "Your background check" });
+
+    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
+    const checkbox = screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ });
+    fireEvent.click(checkbox);
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({ color: "red", message: "No application is awaiting background-check consent.", autoClose: false }),
+    );
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toBeEnabled();
+    expect(screen.queryByText(/Your consent is recorded/)).not.toBeInTheDocument();
+  });
+
+  it("shows a red chip that stays open when the request fails to send", async () => {
+    setSession({ id: 2 });
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/api/membership/bg-consent")) throw new Error("offline");
+      return { ok: true, json: async () => memberState(ownCheck) } as Response;
+    }) as unknown as typeof fetch;
+    renderWithProviders(<MembershipPage />);
+    await screen.findByRole("heading", { name: "Your background check" });
+
+    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", autoClose: false, message: expect.stringMatching(/consent was not recorded/) })),
+    );
+  });
+
+  it("leaves a lead's household consent panel as it is", async () => {
+    setSession({ id: 1 });
+    mockFetchJson({
+      "/api/membership": state({
+        process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
+        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
+        ownBackgroundCheck: null,
+      }),
+    });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("Sign & start your background check", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("Start your background check")).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox", { name: /I submitted my consent on Averity/ })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "Your background check" })).not.toBeInTheDocument();
+  });
+});

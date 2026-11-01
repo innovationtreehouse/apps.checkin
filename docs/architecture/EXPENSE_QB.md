@@ -22,7 +22,8 @@ per-environment deploy checklist are in `packages/quickbooks/README.md`.
 | `packages/quickbooks/src/client.ts` | The client: readers and the one create request |
 | `packages/quickbooks/src/write.ts` | `findOrCreate`, `findOrCreateInKindJournal`, `createVendor`; the closed-books gate |
 | `packages/quickbooks/src/match.ts` | `findMatch`: pure, no reads or writes |
-| `packages/quickbooks/src/guard.ts` | Which company a deployment may reach |
+| `packages/quickbooks/src/guard.ts` | Which company a deployment may reach; the test-data prefix |
+| `packages/quickbooks/src/drain.ts` | The fixed caps and timings, the closed-books gate, the run loop |
 | `packages/expense/src/lib/expense-qb-processor.ts` | Account resolution, allocation, the outbox commit, stranded recovery, finance's retry |
 | `packages/expense/src/qb-write.ts` | Composes the entry from rows the outbound gateway passed |
 | `packages/expense/src/lib/expense-qb-poster.ts` | Claim, call, settle; the drain and the orphan sweep |
@@ -154,7 +155,6 @@ with no entity, so an exclusion drops that id for both Purchases and Bills.
 | `MATCHED` | A hand-booked entry is linked, with a baseline for drift | Terminal |
 | `AMBIGUOUS` | Several candidates, or no Vendor | Finance |
 | `UNBOOKED` | Not in QuickBooks, and the app may not create it | Finance |
-| `BEFORE_LINE` | An older stored value, held exactly like `UNBOOKED` and never written | Finance |
 | `POST_FAILED` | A post failed | The drain, up to five attempts |
 | `NEEDS_FINANCE` | Posts kept failing, or the app may already have booked it and cannot tell | Finance |
 | `SKIPPED` | Finance skipped it, with a reason | Terminal |
@@ -253,8 +253,8 @@ matched entry that has none, raising nothing for that entry on that run.
 
 **Orphan sweep.** `sweepExpenseQbStrays` reads the Purchases and Bills created since
 the oldest create attempt in the last 30 days. An entry carrying an expense's key
-that the expense does not hold raises `QB_DUPLICATE_TO_VOID`. A full page of 1,000
-emails finance, because some entries went unchecked.
+that the expense does not hold raises `QB_DUPLICATE_TO_VOID`. A read that reaches its
+cap of 10,000 entries emails finance, because some entries went unchecked.
 
 ---
 
@@ -265,7 +265,7 @@ take a date range of at most 93 days and refuse anything wider, so no reader can
 the company's history. Past expenses with no receipt stay in QuickBooks and are only
 ever matched against.
 
-Four kinds of read have no date window: `createdSince`, one page by creation time;
+Four kinds of read have no date window: `createdSince`, by creation time up to 10,000 entries;
 by-id reads; `bookCloseDate`; and the reference lists of accounts, Classes and
 Vendors.
 

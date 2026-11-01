@@ -29,7 +29,7 @@ function HouseholdQuestion() {
   useEffect(() => {
     fetch('/api/profile/household-question')
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setHouseholdName(data?.householdName ?? null))
+      .then((data) => setHouseholdName(data?.household?.name ?? null))
       .catch(() => setError('Could not load this question. Please try again.'));
   }, []);
 

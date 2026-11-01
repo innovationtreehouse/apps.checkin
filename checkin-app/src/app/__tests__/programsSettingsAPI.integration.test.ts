@@ -214,7 +214,7 @@ describe('Program Settings API Integration Tests', () => {
              expect(res.status).toBe(403);
              
              const data = await res.json();
-             expect(data.error).toBe("Forbidden: Only the Board can change a program's lead");
+             expect(data.error).toBe('Forbidden: Only the Board can reassign Program Leaders');
         });
 
         it('refuses a sysadmin off the Board a new lead, and lets the form resend the current one', async () => {

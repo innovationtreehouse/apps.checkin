@@ -1,7 +1,7 @@
 /**
  * The Revenue Ops section (path /finance-ops; finance-ops/layout.tsx, shared by
- * /income). It admits FINANCE or BOARD; the finance tools are board-only, and
- * Income is the library's tab. The Shopify tab
+ * /income). It admits FINANCE or BOARD; the payment-plan tabs are for both, the
+ * other finance tools are board-only, and Income is the library's tab. The Shopify tab
  * groups the Board-only Shopify tools with income's Shopify payout screens.
  */
 import type { RoleFlag } from "@/lib/roles";
@@ -11,8 +11,10 @@ import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
 import { libraryCount, type NavBadge } from "@/components/navBadges";
 
-/** The finance tools' gate; each of those pages and its API routes enforce it too. */
+/** The board-only finance tools' page gate. */
 export const FINANCE_TOOL_ROLES: readonly RoleFlag[] = ["isBoardMember"];
+/** Who reads the payment-plan queues; only the board decides a request. */
+export const PAYMENT_PLAN_ROLES: readonly RoleFlag[] = FINANCE_OR_BOARD;
 export const REVENUE_OPS_ROLES = FINANCE_OR_BOARD;
 
 const boardOnly = anyRole(FINANCE_TOOL_ROLES);
@@ -44,8 +46,8 @@ export const INCOME_SCREEN_LINKS: readonly SectionLink[] =
   INCOME_NAV_LINKS.filter((l) => !SHOPIFY_INCOME_HREFS.includes(l.href)).map(incomeScreen);
 
 export const FINANCE_NAV_LINKS: readonly SectionLink[] = [
-  { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳", visible: boardOnly },
-  { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳", visible: boardOnly },
+  { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳", visible: anyRole(PAYMENT_PLAN_ROLES) },
+  { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳", visible: anyRole(PAYMENT_PLAN_ROLES) },
   { name: "Shopify", href: SHOPIFY_NAV_LINKS[0].href, icon: "🛍️", subLinks: SHOPIFY_NAV_LINKS },
 ];
 

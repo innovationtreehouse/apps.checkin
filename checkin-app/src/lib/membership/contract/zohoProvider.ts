@@ -55,7 +55,7 @@ const mockProvider: ZohoSignProvider = {
     // The webhook records signing in the mock; this backs the ?signed=1 sync path,
     // which then no-ops idempotently. Report completed so a sync-only race still
     // lands. Never "terminal": mock requests don't expire, so the dead-request
-    // recovery path (#876) stays dormant in mock mode.
+    // recovery path stays dormant in mock mode.
     async getRequestStatus() {
         return "completed" as const;
     },

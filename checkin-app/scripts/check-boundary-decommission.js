@@ -12,8 +12,8 @@
  *
  * --head is the PR's own head sha, never the checked-out `HEAD`: on a
  * pull_request run that is refs/pull/N/merge — the base merged with the current
- * tip of main — so it sweeps in main's advance. #1501 moved the workflow off
- * that ref for the same reason; the certifier must audit the same tree.
+ * tip of main — so it sweeps in main's advance. The workflow diffs the PR's own
+ * head for the same reason; the certifier must audit the same tree.
  *
  * --boundary is the set of changed files the workflow's is_boundary matched;
  * that shell function is the single source of truth for "what is a boundary

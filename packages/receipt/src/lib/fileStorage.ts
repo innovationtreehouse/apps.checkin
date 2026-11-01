@@ -10,6 +10,15 @@ export const receiptFileKey = (receiptId: string): string => `receipts/${receipt
 export const newMailItemFileKey = (): string => `mail-items/${randomUUID()}`;
 
 /**
+ * A held item's key when the backfill moves it. Derived from what makes the row unique, so a re-run
+ * finds the object an interrupted run wrote; hashed, so the key says nothing about the file.
+ */
+export const backfilledMailItemFileKey = (gmailMessageId: string, attachmentHash: string): string => {
+  const h = createHash("sha256").update(`${gmailMessageId}:${attachmentHash}`).digest("hex");
+  return `mail-items/${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+};
+
+/**
  * A row's bytes: from the store when it has a key, else from its own column. Null when neither
  * holds them, including a key whose object is gone.
  */

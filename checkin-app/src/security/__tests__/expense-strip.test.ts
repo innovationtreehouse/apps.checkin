@@ -50,11 +50,12 @@ describe('expense tiering', () => {
     });
 
     it('tiers who signed, every actor and the reimbursee pii', () => {
-        const pii = Object.entries(expenseGenerated.classifications)
+        const pii = Object.entries(expenseMaps)
             .flatMap(([model, fields]) => Object.entries(fields).filter(([, t]) => t === 'pii').map(([f]) => `${model}.${f}`))
             .sort();
         expect(pii).toEqual([
             'DonatedCapitalLine.reviewedByUserId',
+            'DonatedCapitalLineView.reviewedByUserId',
             'Expense.boardAuthorizedByUserId',
             'Expense.boardAuthorizedByUsername',
             'Expense.reimburseePersonId',
@@ -71,13 +72,25 @@ describe('expense tiering', () => {
             'ExpenseOrgAuditLog.actorUsername',
             'ExpenseOrgSettingsChange.actorUserId',
             'ExpenseOrgSettingsChange.actorUsername',
+            'ExpenseQbCandidateView.vendorRef',
             'ExpenseQbMatchExclusion.excludedByUserId',
             'ExpenseQbMatchExclusion.excludedByUsername',
+            'ExpenseQbVendorOption.displayName',
             'ExpenseReceiptReview.approvedByUserId',
             'ExpenseReimburseeVendor.reimburseePersonId',
+            'ExpenseReimburseeView.name',
+            'ExpenseReimburseeView.personId',
             'ExpenseTaxApproval.approvedByUserId',
             'LineItemOwnerApproval.decidedByUserId',
         ]);
+    });
+
+    it('tiers a field named for a person pii, in generated and synthetic shapes alike', () => {
+        const misTiered = Object.entries(expenseMaps).flatMap(([model, fields]) =>
+            Object.entries(fields)
+                .filter(([field, tier]) => /(UserId|Username|PersonId|^personId)$/.test(field) && tier !== 'pii')
+                .map(([field, tier]) => `${model}.${field}:${tier}`));
+        expect(misTiered).toEqual([]);
     });
 
     it('tiers the org settings internal', () => {
