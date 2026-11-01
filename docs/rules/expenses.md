@@ -101,9 +101,19 @@ Things the app takes as true because they are handled outside it.
 
 - When finance rejects a receipt, its uploader gets one email naming the
   retailer and date and linking to the receipt, and so does the person
-  reimbursed when that is someone else. Neither email names the other person,
-  and neither carries finance's reason or the total.
+  reimbursed when that is someone else, unless the next rule skips that person.
+  Neither email names the other person, and neither carries finance's reason or
+  the total.
   [Decision — owner ruling 2026-10-31]
+
+- A rejection email goes only to a person with a linked sign-in and an email
+  address who has not turned off "Email me about my receipts and
+  reimbursements" or all email. Anyone else's copy is dropped, not held: it is
+  not sent if they later sign in or turn email back on. Unsubscribing from
+  invitations does not stop it. A skipped uploader still sees the rejection and
+  the reason in My receipts. A send that fails gets three tries in all, the
+  later ones in the daily sweep, and is then given up.
+  [Decision]
 
 - Once a receipt is finalized, its uploader sees in the receipt pages what
   became of the purchase: receiving, the expense's approval and booking, with
