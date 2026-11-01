@@ -635,6 +635,31 @@ describeDb("QB-2 posting — daily ceiling", () => {
     expect((await expenseRow(second.id)).qbMatchState).toBe("UNMATCHED");
   });
 
+  it("takes the org's daily limit from settings", async () => {
+    await createdAt(2, new Date());
+    await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMaxCreatesPerDay: 2 }, update: { qbMaxCreatesPerDay: 2 } });
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, capped: "day" });
+  });
+
+  it("takes the org's per-run limit from settings", async () => {
+    await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMaxCreatesPerRun: 1 }, update: { qbMaxCreatesPerRun: 1 } });
+    await outboxed("2026-09-10");
+    await outboxed("2026-09-11");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, capped: "count" });
+  });
+
+  it("matches only inside the org's window from settings", async () => {
+    await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMatchWindowDays: 1 }, update: { qbMatchWindowDays: 1 } });
+    const { id } = await outboxed("2026-09-10");
+    qbo.purchases.push({ Id: "900", TxnDate: "2026-09-12", TotalAmt: 10, AccountRef: { value: PAYMENT_ACCOUNT } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+  });
+
   it("creates from before UTC midnight do not count", async () => {
     const yesterday = new Date();
     yesterday.setUTCHours(0, 0, 0, 0);

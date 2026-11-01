@@ -3,7 +3,7 @@
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
-  MATCH_WINDOW_DAYS, MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  MAX_CONSECUTIVE_FAILURES, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
   type CloseRead, type FindOrCreateResult, type PostGate, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
@@ -21,6 +21,8 @@ import { logError, logWarn } from "./logger";
 import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
+import type { ExpenseSettings } from "../contract";
+import { readExpenseSettings } from "../services/settingsService";
 import { checkOffHeldOnPost, raiseFlag, raiseStray } from "../services/flagService";
 import { NEEDS_VOIDING } from "./flags";
 
@@ -73,8 +75,8 @@ export async function switchQbPostingOn(orgId: string, now = new Date()): Promis
   return at;
 }
 
-/** How one post runs: `book` is finance's "book it"; `close` is the closing date the run already read. */
-export type PostOptions = { book?: boolean; close?: CloseRead };
+/** How one post runs: `book` is finance's "book it"; `close` and `settings` are what the run already read. */
+export type PostOptions = { book?: boolean; close?: CloseRead; settings?: ExpenseSettings };
 
 /** QuickBooks entries created since UTC midnight, counted from the audit rows settle() writes. */
 export async function qbCreatesToday(client: Db = db): Promise<number> {
@@ -208,7 +210,7 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * finance; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by the
  * drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE (finance's retry re-arms it); an expense the
  * test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. A line whose bucket
- * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At MAX_CREATES_PER_DAY the
+ * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At the daily create limit the
  * expense waits for the next UTC day, nothing recorded. With the closing date unread nothing is
  * created, and a miss leaves the expense as it is.
  *
@@ -224,11 +226,11 @@ export async function postExpenseToQb(orgId: string, expenseId: string, opts: Po
 
   let claim: Claim | null = null;
   try {
-    const [close, onAt] = await Promise.all([opts.close ?? readCloseDate(posting.client), qbPostingOnAt(orgId)]);
-    const claimed = await claimForPost(orgId, expenseId, posting, { close, onAt, book });
+    const [close, onAt, settings] = await Promise.all([opts.close ?? readCloseDate(posting.client), qbPostingOnAt(orgId), opts.settings ?? readExpenseSettings(db, orgId)]);
+    const claimed = await claimForPost(orgId, expenseId, posting, { close, onAt, book, settings });
     if (typeof claimed === "string") return claimed;
     claim = claimed.claim;
-    return await callAndSettle(orgId, expenseId, posting, claimed, close);
+    return await callAndSettle(orgId, expenseId, posting, claimed, close, settings.qbMatchWindowDays);
   } catch (err) {
     // The failing transaction rolled back, so the failure is recorded in a fresh one.
     logError("qb_post_threw", { expenseId, orgId }, err);
@@ -251,7 +253,7 @@ type Claimed = {
   afterSwitchOn: boolean;
 };
 
-type ClaimInputs = { close: CloseRead; onAt: Date | null; book: boolean };
+type ClaimInputs = { close: CloseRead; onAt: Date | null; book: boolean; settings: ExpenseSettings };
 
 /**
  * Why an expense may not post: an unknown reimbursee, an unfilled seat or Board approval, or a
@@ -312,7 +314,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     if ("noClass" in built) return "no_class";
 
     // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
-    if ((await qbCreatesToday(tx)) >= MAX_CREATES_PER_DAY) return "waiting";
+    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
 
     const date = built.write.fields.txnDate;
     const gate = qbGate(date, inputs.close, inputs.onAt, current.submittedAt, inputs.book);
@@ -343,7 +345,7 @@ type PostResult = FindOrCreateResult | { kind: "lookup"; own: Exclude<OwnEntry, 
  * up the entry created since then by the expense's key (kept in its PrivateNote) instead of
  * creating a second one.
  */
-async function callAndSettle(orgId: string, expenseId: string, posting: ExpensePosting, claimed: Claimed, close: CloseRead): Promise<PostOutcome> {
+async function callAndSettle(orgId: string, expenseId: string, posting: ExpensePosting, claimed: Claimed, close: CloseRead, windowDays: number): Promise<PostOutcome> {
   const { claim, write, lineAccounts, gate, attemptedAt, afterSwitchOn } = claimed;
   const { before } = claim;
   const entity: QbMatchEntity = write.entity === "Bill" ? "Bill" : "Purchase";
@@ -357,7 +359,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
     result = await findOrCreate(posting.client, {
       write,
       key: qbKey("expense", expenseId),
-      window: { from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) },
+      window: { from: shiftDate(date, -windowDays), to: shiftDate(date, windowDays) },
       closedThrough: gate.closedThrough,
       mayCreate: gate.mayCreate,
       claimedIds,
@@ -532,6 +534,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   if (!posting) return "unbound";
   const orgId = await getOrgId();
   await switchQbPostingOn(orgId, now);
+  const settings = await readExpenseSettings(db, orgId);
   const close = await readCloseDate(posting.client);
   if (!close.ok) logWarn("qb_drain_close_date_unread", { orgId, error: close.error.slice(0, 200) });
   const outboxed = new Set((await db.expenseEvent.findMany({ select: { expenseId: true } })).map((e) => e.expenseId));
@@ -548,13 +551,15 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   };
   const stop = await runDrain<Expense, PostOutcome>(due, {
     counts,
+    maxCreatesPerRun: settings.qbMaxCreatesPerRun,
+    maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
     failures: ["failed", "needs_finance"],
     // No QuickBooks call was made for a missing Class, so it says nothing about QuickBooks being down.
     noCall: ["no_class"],
     post: async (e) => {
       try {
-        const result = await postExpenseToQb(e.orgId, e.id, { close });
+        const result = await postExpenseToQb(e.orgId, e.id, { close, settings });
         return result === "unbound" ? null : result;
       } catch (err) {
         logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
@@ -564,7 +569,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   });
   if (stop?.by === "day") {
     counts.capped = "day";
-    logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: stop.remaining });
+    logWarn("qb_daily_cap", { cap: settings.qbMaxCreatesPerDay, remaining: stop.remaining });
   } else if (stop?.by === "count") {
     counts.capped = "count";
     logWarn("qb_drain_capped", { cap: counts.capped, remaining: stop.remaining });

@@ -534,6 +534,17 @@ the parts specific to expenses.
   paid, on the date of the last payment.
   [Decision]
 
+- The window for matching an expense to a QuickBooks entry, one to 30 days either
+  side of its date, is a setting. Finance or the Board may change it in either
+  direction. Each change is recorded.
+  [Decision — owner]
+
+- How many QuickBooks entries the app may create per run and per day are settings,
+  25 and 50 by default. Finance may lower them; raising one takes the Board. The
+  per-run limit may not exceed the per-day limit. Each change is recorded. No
+  dollar limit per run applies to expenses.
+  [Decision — owner]
+
 - Finance may skip an expense that waits on it to reach the books, giving a
   reason. The record keeps who skipped it and why. The app never books or
   matches a skipped expense again, even if the expense later goes back to an

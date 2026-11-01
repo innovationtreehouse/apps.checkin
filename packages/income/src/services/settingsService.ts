@@ -1,14 +1,17 @@
 // The org's caps on what one outbox drain may create: one count across sources, a cents cap per source. FINANCE may lower a cap; raising one
-// takes the board. Every change is written to the audit log with its before and after.
+// takes the board. Finance or the board may move the Benevity match window either way. Every change is written to the audit log with its before and after.
 import { db } from "../db";
 import { recordAudit, type TxClient } from "../lib/audit";
 import { ServiceError } from "@checkin/component-kit";
+import { MAX_MATCH_WINDOW_DAYS } from "@checkin/quickbooks";
+import { BENEVITY_MATCH_WINDOW_DAYS } from "../lib/sources";
 import type { Actor } from "./reconciliationService";
 
 export interface IncomeSettings {
   maxCreatesPerRun: number;
   maxCreateCentsPerRun: number;
   benevityMaxCreateCentsPerRun: number;
+  benevityMatchWindowDays: number;
 }
 
 /** The column defaults; a missing row reads as these. */
@@ -16,6 +19,7 @@ export const DEFAULT_INCOME_SETTINGS: IncomeSettings = {
   maxCreatesPerRun: 25,
   maxCreateCentsPerRun: 2_500_000,
   benevityMaxCreateCentsPerRun: 2_500_000,
+  benevityMatchWindowDays: BENEVITY_MATCH_WINDOW_DAYS,
 };
 
 export interface SettingsActor extends Actor {
@@ -24,7 +28,7 @@ export interface SettingsActor extends Actor {
 }
 
 const KEYS = Object.keys(DEFAULT_INCOME_SETTINGS) as (keyof IncomeSettings)[];
-const SELECT = { maxCreatesPerRun: true, maxCreateCentsPerRun: true, benevityMaxCreateCentsPerRun: true } as const;
+const SELECT = { maxCreatesPerRun: true, maxCreateCentsPerRun: true, benevityMaxCreateCentsPerRun: true, benevityMatchWindowDays: true } as const;
 const MAX_INT = 2_147_483_647;
 
 export async function readIncomeSettings(client: TxClient | typeof db, orgId: string): Promise<IncomeSettings> {
@@ -47,8 +51,9 @@ export function settingsChanges(current: IncomeSettings, patch: unknown, actor: 
       throw new ServiceError(400, `${key} must be a positive whole number`);
     }
     const k = key as keyof IncomeSettings;
+    if (k === "benevityMatchWindowDays" && value > MAX_MATCH_WINDOW_DAYS) throw new ServiceError(400, `${key} must be at most ${MAX_MATCH_WINDOW_DAYS}`);
     if (value === current[k]) continue;
-    if (value > current[k] && !actor.isBoard) throw new ServiceError(403, `Raising ${key} takes the board`);
+    if (k !== "benevityMatchWindowDays" && value > current[k] && !actor.isBoard) throw new ServiceError(403, `Raising ${key} takes the board`);
     changes[k] = value;
   }
   return changes;

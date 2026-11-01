@@ -87,3 +87,15 @@ describe("qbGate", () => {
     expect(qbGate("2026-09-10", close, null, after, false).mayCreate).toBe(false);
   });
 });
+
+describe("runDrain limits passed by the lane", () => {
+  const fresh = () => ({ posted: 0 });
+  it("stops at the lane's per-run limit", async () => {
+    const counts = fresh();
+    expect(await runDrain<number, "posted">([1, 2, 3], { counts, failures: [], maxCreatesPerRun: 2, post: async () => "posted" })).toEqual({ by: "count", remaining: 1 });
+    expect(counts.posted).toBe(2);
+  });
+  it("stops at the lane's per-day limit", async () => {
+    expect(await runDrain<number, "posted">([1], { counts: fresh(), failures: [], createdToday: 3, maxCreatesPerDay: 3, post: async () => "posted" })).toEqual({ by: "day", remaining: 1 });
+  });
+});

@@ -1,7 +1,7 @@
 // Drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
 // when it was edited or removed in QuickBooks afterwards. Read-only: QuickBooks is never changed.
 import { dollarsToCents, sumCents } from "@checkin/money";
-import { MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import type { ExpensePosting } from "../contract";
 import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
@@ -105,10 +105,10 @@ async function flagDrift(expenseId: string, drift: DriftField[], entry: QboPurch
   await raiseFlag(expenseId, "QB_DRIFT", detail, db, observed);
 }
 
-/** The entry `qbTxnId` through the windowed reader around `receiptDate`; undefined when it is gone. */
+/** The entry `qbTxnId` through the windowed reader around `receiptDate`, at the widest window; undefined when it is gone. */
 async function readEntry(posting: ExpensePosting, entity: string | null, qbTxnId: string, receiptDate: string): Promise<QboPurchase | QboBill | undefined> {
-  const from = shiftDate(receiptDate, -MATCH_WINDOW_DAYS);
-  const to = shiftDate(receiptDate, MATCH_WINDOW_DAYS);
+  const from = shiftDate(receiptDate, -MAX_MATCH_WINDOW_DAYS);
+  const to = shiftDate(receiptDate, MAX_MATCH_WINDOW_DAYS);
   const entries: (QboPurchase | QboBill)[] = entity === "Bill" ? await posting.client.billsBetween(from, to) : await posting.client.purchasesBetween(from, to);
   return entries.find((e) => e.Id === qbTxnId);
 }

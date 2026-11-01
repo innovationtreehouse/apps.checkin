@@ -23,7 +23,7 @@ per-environment deploy checklist are in `packages/quickbooks/README.md`.
 | `packages/quickbooks/src/write.ts` | `findOrCreate`, `findOrCreateInKindJournal`, `createVendor`; the closed-books gate |
 | `packages/quickbooks/src/match.ts` | `findMatch`: pure, no reads or writes |
 | `packages/quickbooks/src/guard.ts` | Which company a deployment may reach; the test-data prefix |
-| `packages/quickbooks/src/drain.ts` | The fixed caps and timings, the closed-books gate, the run loop |
+| `packages/quickbooks/src/drain.ts` | The caps' defaults, the fixed timings, the closed-books gate, the run loop |
 | `packages/expense/src/lib/expense-qb-processor.ts` | Account resolution, allocation, the outbox commit, stranded recovery, finance's retry |
 | `packages/expense/src/qb-write.ts` | Composes the entry from rows the outbound gateway passed |
 | `packages/expense/src/lib/expense-qb-poster.ts` | Claim, call, settle; the drain and the orphan sweep |
@@ -118,8 +118,8 @@ short, so the note is what makes a retry days later safe.
 
 ## Match before create
 
-For one expense, `findOrCreate` reads entries of the right type in a window of seven
-days either side of the receipt date. A Purchase candidate must have the exact
+For one expense, `findOrCreate` reads entries of the right type within `qbMatchWindowDays`
+(seven by default) either side of the receipt date. A Purchase candidate must have the exact
 amount and the payment account; a Bill candidate must have the exact amount and the
 Vendor. Entries already claimed or excluded are dropped.
 
@@ -206,13 +206,17 @@ events), runs from `/api/cron/reconcile-shopify` instead.
 
 | Limit | Value | What happens |
 |---|---|---|
-| Entries created per drain | 25 | The run stops and logs; the rest wait |
-| Entries created per UTC day | 50, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
+| Entries created per drain | `qbMaxCreatesPerRun`, 25 by default | The run stops and logs; the rest wait |
+| Entries created per UTC day | `qbMaxCreatesPerDay`, 50 by default, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
 | Failures in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
 | Failed attempts on one expense | 5 | `NEEDS_FINANCE` |
 | Drift reads per run | 25 | The slice moves each UTC day, so every entry is checked in turn |
 
-These caps count entries; nothing caps the total amount. Hitting a drain cap writes a
+The two create limits and the match window are org settings, read once per drain run;
+finance lowers a limit, raising one takes the Board, and finance or the Board moves the
+window either way, from 1 to 30 days. The drift check reads at 30 days either side, so
+narrowing the window never reports a linked entry as gone. These caps count entries;
+nothing caps the total amount. Hitting a drain cap writes a
 log line.
 
 ---

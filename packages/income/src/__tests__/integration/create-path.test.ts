@@ -1355,6 +1355,7 @@ describeDb("income settings", () => {
       maxCreatesPerRun: 25,
       maxCreateCentsPerRun: 2_500_000,
       benevityMaxCreateCentsPerRun: 2_500_000,
+      benevityMatchWindowDays: 7,
     });
   });
 
@@ -1440,6 +1441,19 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 1 });
     expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "HB" });
+  });
+
+  it("matches a Benevity deposit only inside the org's window setting", async () => {
+    await updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 2 }, { userId: 9, isFinance: true, isBoard: false });
+    await expect1();
+    qbo.hand("HB", "2026-06-23", 14_700, BENEVITY_BANK);
+
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("D1")).depositId).toBeNull();
+
+    await updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 7 }, { userId: 9, isFinance: true, isBoard: false });
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("D1")).toMatchObject({ status: "MATCHED", depositId: "HB" });
   });
 
   it("creates a deposit after switch-on with its accounts and Classes from the books map, under income's Benevity key", async () => {
