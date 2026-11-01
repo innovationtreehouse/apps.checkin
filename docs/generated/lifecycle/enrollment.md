@@ -14,21 +14,28 @@ stateDiagram-v2
     ACTIVE --> WITHDRAWN: T12 withdraw
     ACTIVE --> [*]: T10 refund restocked
     ACTIVE --> [*]: T11 remove(comp/approved)
+    PENDING_HELD --> ACTIVE: T4 activate(held)
     PENDING_HELD --> ACTIVE: T5 approve
     PENDING_HELD --> PENDING_HELD_DENIED: T6 deny
     PENDING_HELD --> WITHDRAWN: T13 withdraw(held)
     PENDING_HELD --> [*]: T9 remove
+    PENDING_HELD_DENIED --> ACTIVE: T4 activate(denied)
     PENDING_HELD_DENIED --> PENDING_HELD: T3 re-apply
     PENDING_HELD_DENIED --> WITHDRAWN: T13 withdraw(denied)
     PENDING_HELD_DENIED --> [*]: T8 grace expiry
+    PENDING_HELD_DENIED --> [*]: T9 remove(denied)
+    PENDING_HOLD_FAILED --> ACTIVE: T4 activate(hold failed)
+    PENDING_HOLD_FAILED --> ACTIVE: T5 approve(no hold)
+    PENDING_HOLD_FAILED --> PENDING_HELD: T3 apply(retry)
     PENDING_HOLD_FAILED --> PENDING_HELD: T3m manual-hold
     PENDING_HOLD_FAILED --> PENDING_UNPAID: T6f deny(no hold)
     PENDING_HOLD_FAILED --> WITHDRAWN: T13 withdraw(hold failed)
+    PENDING_HOLD_FAILED --> [*]: T9 remove(hold failed)
     PENDING_UNPAID --> ACTIVE: T4 activate(payment)
     PENDING_UNPAID --> PENDING_HELD: T3 apply(−1 ok)
     PENDING_UNPAID --> PENDING_HOLD_FAILED: T3f apply(−1 FAILS)
     PENDING_UNPAID --> WITHDRAWN: T13 withdraw(unpaid)
-    PENDING_UNPAID --> [*]: T7 non-payment kick
+    PENDING_UNPAID --> [*]: T7 remove(unpaid)
     WITHDRAWN --> ACTIVE: T15 re-enroll(comp)
     WITHDRAWN --> PENDING_UNPAID: T14 re-enroll(paid)
     [*] --> ACTIVE: T2 enroll(comp)
@@ -40,15 +47,15 @@ stateDiagram-v2
 
 A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, not an oversight.
 
-| state ╲ event | T1 enroll(paid) | T10 refund restocked | T11 remove(comp/approved) | T12 withdraw | T13 withdraw(denied) | T13 withdraw(held) | T13 withdraw(hold failed) | T13 withdraw(unpaid) | T14 re-enroll(paid) | T15 re-enroll(comp) | T2 enroll(comp) | T3 apply(−1 ok) | T3 re-apply | T3f apply(−1 FAILS) | T3m manual-hold | T4 activate(payment) | T5 approve | T6 deny | T6f deny(no hold) | T7 non-payment kick | T8 grace expiry | T9 remove |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNENROLLED | PENDING_UNPAID | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | — | — | — | — | — | — | — |
-| PENDING_UNPAID | — | — | — | — | — | — | — | WITHDRAWN | — | — | — | PENDING_HELD | — | PENDING_HOLD_FAILED | — | ACTIVE | — | — | — | UNENROLLED | — | — |
-| PENDING_HOLD_FAILED | — | — | — | — | — | — | WITHDRAWN | — | — | — | — | — | — | — | PENDING_HELD | — | — | — | PENDING_UNPAID | — | — | — |
-| PENDING_HELD | — | — | — | — | — | WITHDRAWN | — | — | — | — | — | — | — | — | — | — | ACTIVE | PENDING_HELD_DENIED | — | — | — | UNENROLLED |
-| PENDING_HELD_DENIED | — | — | — | — | WITHDRAWN | — | — | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — | — | UNENROLLED | — |
-| ACTIVE | — | UNENROLLED | UNENROLLED | WITHDRAWN | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| WITHDRAWN | — | — | — | — | — | — | — | — | PENDING_UNPAID | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — |
+| state ╲ event | T1 enroll(paid) | T10 refund restocked | T11 remove(comp/approved) | T12 withdraw | T13 withdraw(denied) | T13 withdraw(held) | T13 withdraw(hold failed) | T13 withdraw(unpaid) | T14 re-enroll(paid) | T15 re-enroll(comp) | T2 enroll(comp) | T3 apply(retry) | T3 apply(−1 ok) | T3 re-apply | T3f apply(−1 FAILS) | T3m manual-hold | T4 activate(denied) | T4 activate(held) | T4 activate(hold failed) | T4 activate(payment) | T5 approve | T5 approve(no hold) | T6 deny | T6f deny(no hold) | T7 remove(unpaid) | T8 grace expiry | T9 remove | T9 remove(denied) | T9 remove(hold failed) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| UNENROLLED | PENDING_UNPAID | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| PENDING_UNPAID | — | — | — | — | — | — | — | WITHDRAWN | — | — | — | — | PENDING_HELD | — | PENDING_HOLD_FAILED | — | — | — | — | ACTIVE | — | — | — | — | UNENROLLED | — | — | — | — |
+| PENDING_HOLD_FAILED | — | — | — | — | — | — | WITHDRAWN | — | — | — | — | PENDING_HELD | — | — | — | PENDING_HELD | — | — | ACTIVE | — | — | ACTIVE | — | PENDING_UNPAID | — | — | — | — | UNENROLLED |
+| PENDING_HELD | — | — | — | — | — | WITHDRAWN | — | — | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | ACTIVE | — | PENDING_HELD_DENIED | — | — | — | UNENROLLED | — | — |
+| PENDING_HELD_DENIED | — | — | — | — | WITHDRAWN | — | — | — | — | — | — | — | — | PENDING_HELD | — | — | ACTIVE | — | — | — | — | — | — | — | — | UNENROLLED | — | UNENROLLED | — |
+| ACTIVE | — | UNENROLLED | UNENROLLED | WITHDRAWN | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| WITHDRAWN | — | — | — | — | — | — | — | — | PENDING_UNPAID | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 
 ## Reachability
 
