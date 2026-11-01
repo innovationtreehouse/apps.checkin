@@ -12,9 +12,11 @@
  *   - ACTIVE stops only by REVOKED or DENIED; nothing returns ACTIVE/REVOKED to NONE;
  *   - DENIED never becomes ACTIVE; its only exit is the board's restore to NONE;
  *   - activity that reaches a DENIED household changes nothing and goes to the board
- *     (`raiseDeniedHouseholdActivity`).
+ *     (`raiseDeniedHouseholdActivity`);
+ *   - entering DENIED revokes trusted-adult access and lists program ties and mailing
+ *     lists for the board (`applyHouseholdDenial`).
  *
- * Client-safe apart from the lazily-imported raise: Prisma is `import type` only,
+ * Client-safe apart from the lazily-imported raise and denial: Prisma is `import type` only,
  * and the writers take the client as a parameter.
  */
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
@@ -108,6 +110,11 @@ export async function setHouseholdStatus(
                 newData: { status: to, reason },
             },
         });
+        // A denial's trusted-adult revocations and board items commit with it, whichever path denies.
+        if (to === "DENIED") {
+            const { applyHouseholdDenial } = await import("@/lib/membership/denial");
+            await applyHouseholdDenial(tx, row.householdId, actor);
+        }
         return true;
     });
 }

@@ -1838,6 +1838,14 @@ enum PaymentExceptionKind {
   // A paid program order names children from more than one household. One order
   // pays for one household, so nobody is activated; the board decides.
   MIXED_HOUSEHOLDS
+  // A denied household's member is enrolled in a program (pending or active). The
+  // board removes it by hand after talking to the program's leaders.
+  DENIED_HOUSEHOLD_ENROLLMENT
+  // A denied household's member volunteers on or leads a program. Removed by hand.
+  DENIED_HOUSEHOLD_PROGRAM_ROLE
+  // A denied household's people are to come off every mailing list. The app holds
+  // no list membership, so the board does it by hand.
+  DENIED_HOUSEHOLD_MAILING_LISTS
 }
 
 enum PaymentExceptionSeverity {

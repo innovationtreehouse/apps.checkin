@@ -39,6 +39,9 @@ const EXCEPTION_BLURB: Record<string, string> = {
     DUPLICATE_PAYMENT: "a paid program order bought a seat for someone already enrolled (paid, comped or approved) — a refund may be needed",
     UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
     MIXED_HOUSEHOLDS: "a paid program order names children from more than one household — nobody was activated",
+    DENIED_HOUSEHOLD_ENROLLMENT: "a member of a denied household is enrolled in a program — remove the enrollment by hand once the program's leaders know",
+    DENIED_HOUSEHOLD_PROGRAM_ROLE: "a member of a denied household volunteers on or leads a program — remove the role by hand once the program's leaders know",
+    DENIED_HOUSEHOLD_MAILING_LISTS: "a household was denied: its trusted-adult access was revoked, and its people are to be removed from every mailing list by hand; its program enrollments and roles are listed alongside for removal",
 };
 
 /**
