@@ -248,26 +248,12 @@ const replies: ReceiptReplies = {
   },
 };
 
-/** Who each stored id names today. One query when nobody was merged; only the others walk the merge chain. */
 async function liveIds(personIds: number[]): Promise<Map<number, number | null>> {
-  const [{ default: prisma }, { LIVE_PERSON }, { resolveMergedPerson }] = await Promise.all([
-    import("@/lib/prisma"),
-    import("@/lib/person/filters"),
-    import("@/lib/person/mergeChain"),
-  ]);
-  const live = await prisma.person.findMany({ where: { id: { in: personIds }, ...LIVE_PERSON }, select: { id: true } });
-  const out = new Map<number, number | null>(live.map(({ id }) => [id, id]));
-  for (const id of personIds) {
-    if (out.has(id)) continue;
-    const resolved = await resolveMergedPerson(id);
-    out.set(id, resolved.kind === "live" ? resolved.person.id : null);
-  }
-  return out;
+  return (await import("@/lib/person/mergeChain")).liveIdsOf(personIds);
 }
 
 async function storedIdsOf(personId: number): Promise<number[]> {
-  const { mergedAwayIdsOf } = await import("@/lib/person/mergeChain");
-  return [personId, ...(await mergedAwayIdsOf(personId))];
+  return (await import("@/lib/person/mergeChain")).storedIdsOf(personId);
 }
 
 const outcomeMail: OutcomeMail = {

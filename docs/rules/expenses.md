@@ -151,6 +151,12 @@ Things the app takes as true because they are handled outside it.
   review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- After a merge, an expense's submitter, reimbursee and signers count as the
+  surviving person, so the conflict and one-step-per-person rules still bind
+  them. If a submitter or reimbursee names nobody the app can find, nobody may
+  act on the expense until that is repaired.
+  [Decision — owner; *Principle: fail closed*]
+
 - Choosing a line's bucket before sign-off is not a conflicted step. A
   conflicted finance holder may assign a line's bucket, resolve an unknown
   one, and settle a raised exception by moving the line to another bucket.

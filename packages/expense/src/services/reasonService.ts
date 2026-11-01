@@ -7,7 +7,7 @@ import { callerId } from "../lib/caller";
 import { REVIEW_KINDS, reviewKindOf } from "../lib/flags";
 import { deriveReasons, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
+import { boardApprovalNeeded, isConflicted, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
 import { reimburseeVendorId } from "./reimburseeVendorService";
 
@@ -89,7 +89,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   });
 
   const me = callerId(principal);
-  const conflicted = (await conflictedParties(expense)).includes(me);
+  const conflicted = await isConflicted(expense, me);
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
     if (!principal.isFinance) return false;

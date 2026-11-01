@@ -25,6 +25,7 @@ import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { checkOffHeldOnPost, raiseFlag, raiseStray } from "../services/flagService";
 import { NEEDS_VOIDING } from "./flags";
+import { reimburseeVendorLink } from "./livePeople";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
@@ -166,7 +167,7 @@ async function writeRows(client: Db, orgId: string, expense: Expense): Promise<O
   const buckets = (await getExpenseRuntime().budgetOwners.list()).filter((b) => bucketIds.has(b.id));
   const vendor =
     expense.needsReimbursement && expense.reimburseePersonId !== null
-      ? await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: expense.reimburseePersonId } })
+      ? await reimburseeVendorLink(client, orgId, expense.reimburseePersonId)
       : null;
   return {
     Expense: expense,

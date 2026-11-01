@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../db";
 import { configureExpense } from "../../runtime";
-import type { ExpensePrincipal, Outbound, OwnerDirectory, SignoffDirectory } from "../../contract";
+import { inertSignoffDirectory, type ExpensePrincipal, type Outbound, type OwnerDirectory, type SignoffDirectory } from "../../contract";
 
 export const ORG = "org-1";
 
@@ -12,6 +12,9 @@ export const TEST_BUCKETS: OwnerDirectory = {
     { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01"), quickBooksClassId: "9999" },
   ],
 };
+
+/** Inert, except that every id names itself: a test's people exist unless its directory says otherwise. */
+export const selfNamingDirectory: SignoffDirectory = { ...inertSignoffDirectory, liveIds: async (ids) => new Map(ids.map((id) => [id, id])) };
 
 /** A gateway that passes rows through unstripped; checkin-app's tests run the real one's tiers. */
 export const passthroughOutbound: Outbound = (_surface, bag, send) => send(bag);
@@ -186,7 +189,7 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
 
 /** Rebinds the runtime with test ports (org stays ORG). */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, ...ports });
+  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, signoff: selfNamingDirectory, ...ports });
 }
 
 /**
@@ -222,7 +225,8 @@ export function directory(d: {
     householdsOf: async (ids) => new Map(ids.map((id) => [id, live(households.filter((h) => h.includes(id)).flat())])),
     householdIds: async (id) => households.filter((h) => h.includes(id)).flat(),
     personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
-    livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
+    liveIds: async (ids) => new Map(ids.map((id) => [id, d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id)])),
+    storedIdsOf: async (id) => [id, ...Object.entries(d.merged ?? {}).filter(([, to]) => to === id).map(([from]) => Number(from))],
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
     isAdult: async (id) => !(d.minors ?? []).includes(id),
     searchAdults: async (_query, limit) => (d.adults ?? []).slice(0, limit),

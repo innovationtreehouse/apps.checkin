@@ -6,8 +6,9 @@ import type { ExpensePrincipal, QbVendorClient, QbVendorOption } from "../contra
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { conflictedParties } from "../lib/signoff-facts";
+import { isConflicted } from "../lib/signoff-facts";
 import { QB_OFF } from "../lib/expense-constants";
+import { liveIdOf, reimburseeVendorLink, storedIdsFor } from "../lib/livePeople";
 import { ServiceError } from "@checkin/component-kit";
 
 /** A Vendor QuickBooks already has, by id, or one found or created under the reimbursee's own name. */
@@ -26,12 +27,9 @@ export async function reimburseeVendorFor(
 ): Promise<{ link: ExpenseReimburseeVendor | null; reimbursee: ReimburseeView | null }> {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { reimburseePersonId: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
-  const personId = expense.reimburseePersonId;
-  if (personId === null) return { link: null, reimbursee: null };
-  const [link, name] = await Promise.all([
-    db.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: personId } }),
-    getExpenseRuntime().people.nameOf(personId),
-  ]);
+  if (expense.reimburseePersonId === null) return { link: null, reimbursee: null };
+  const personId = await liveIdOf(expense.reimburseePersonId);
+  const [link, name] = await Promise.all([reimburseeVendorLink(db, orgId, personId), getExpenseRuntime().people.nameOf(personId)]);
   return { link, reimbursee: { personId, name } };
 }
 
@@ -54,8 +52,7 @@ export async function vendorOptions(orgId: string, expenseId: string, text: stri
 
 /** The QuickBooks Vendor id linked to a reimbursee; null when none is linked. Bound by the host as QbRefs.vendorIdFor. */
 export async function reimburseeVendorId(personId: number): Promise<string | null> {
-  const row = await db.expenseReimburseeVendor.findFirst({ where: { orgId: await getOrgId(), reimburseePersonId: personId }, select: { qbVendorId: true } });
-  return row?.qbVendorId ?? null;
+  return (await reimburseeVendorLink(db, await getOrgId(), personId))?.qbVendorId ?? null;
 }
 
 /** Whether the actor is this person or shares a household with them. */
@@ -84,9 +81,9 @@ export async function linkReimburseeVendor(
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (!expense.needsReimbursement) throw new ServiceError(400, "Expense is not a reimbursement");
-  const personId = expense.reimburseePersonId;
-  if (personId === null) throw new ServiceError(409, "Set the reimbursee before linking a Vendor");
-  if (await db.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: personId } })) {
+  if (expense.reimburseePersonId === null) throw new ServiceError(409, "Set the reimbursee before linking a Vendor");
+  const personId = await liveIdOf(expense.reimburseePersonId);
+  if (await reimburseeVendorLink(db, orgId, personId)) {
     throw new ServiceError(409, "The reimbursee already has a QuickBooks Vendor");
   }
 
@@ -94,7 +91,7 @@ export async function linkReimburseeVendor(
     await writeAudit(db, actor, { expenseId, action: "reimbursee_vendor_refused", notes: reason });
     throw new ServiceError(403, reason);
   };
-  if ((await conflictedParties(expense)).includes(actor.userId)) {
+  if (await isConflicted(expense, actor.userId)) {
     await refuse("You cannot link a Vendor on an expense that you or your household submitted or would be reimbursed for");
   }
 
@@ -115,7 +112,7 @@ export async function linkReimburseeVendor(
 
   const holder = await db.expenseReimburseeVendor.findFirst({ where: { orgId, qbVendorId } });
   if (holder) {
-    if (await sameHousehold(holder.reimburseePersonId, actor.userId)) await refuse("That QuickBooks Vendor is linked to you or your household");
+    if (await sameHousehold(await liveIdOf(holder.reimburseePersonId), actor.userId)) await refuse("That QuickBooks Vendor is linked to you or your household");
     throw new ServiceError(409, "That QuickBooks Vendor is already linked to another person");
   }
   // A same-name Vendor may be someone else; finance confirms it through a pick instead.
@@ -123,6 +120,7 @@ export async function linkReimburseeVendor(
     throw new ServiceError(409, `QuickBooks already has a Vendor named "${displayName}" (#${qbVendorId}); pick it from the search to confirm it is this person`);
   }
 
+  const storedIds = await storedIdsFor(personId);
   return db
     .$transaction(async (tx) => {
       const row = await tx.expenseReimburseeVendor.create({ data: { orgId, reimburseePersonId: personId, qbVendorId } });
@@ -135,7 +133,7 @@ export async function linkReimburseeVendor(
       });
       // ponytail: re-arms every AMBIGUOUS reimbursement of this person; one ambiguous on QuickBooks candidates just parks again.
       const parked = await tx.expense.findMany({
-        where: { orgId, reimburseePersonId: personId, needsReimbursement: true, backfill: false, qbTxnId: null, qbMatchState: "AMBIGUOUS" },
+        where: { orgId, reimburseePersonId: { in: storedIds }, needsReimbursement: true, backfill: false, qbTxnId: null, qbMatchState: "AMBIGUOUS" },
         select: { id: true },
       });
       for (const { id } of parked) {

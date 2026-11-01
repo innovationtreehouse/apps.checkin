@@ -6,13 +6,15 @@ const budgetOwnerFindMany = jest.fn();
 const personFindUnique = jest.fn();
 const personMergeFindUnique = jest.fn();
 const personFindFirst = jest.fn();
+const personFindMany = jest.fn();
+const personMergeFindMany = jest.fn();
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     personRole: { findMany: personRoleFindMany },
     budgetOwner: { findUnique: budgetOwnerFindUnique, findMany: budgetOwnerFindMany },
-    person: { findUnique: personFindUnique, findFirst: personFindFirst },
-    personMerge: { findUnique: personMergeFindUnique },
+    person: { findUnique: personFindUnique, findFirst: personFindFirst, findMany: personFindMany },
+    personMerge: { findUnique: personMergeFindUnique, findMany: personMergeFindMany },
   },
 }));
 
@@ -120,18 +122,22 @@ describe("the live person an id resolves to", () => {
   beforeEach(() => {
     personFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => people[where.id] ?? null);
     personMergeFindUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) => archive[where.fromId] ?? null);
+    personFindMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.filter((id) => people[id]?.mergedIntoId === null).map((id) => ({ id })));
   });
 
   it("is the person when live, the survivor through a tombstone or an archived merge, else null", async () => {
-    const dir = await signoff();
-    await expect(dir.livePersonFor(2)).resolves.toBe(2);
-    await expect(dir.livePersonFor(1)).resolves.toBe(2);
-    await expect(dir.livePersonFor(3)).resolves.toBe(2);
-    await expect(dir.livePersonFor(4)).resolves.toBeNull();
+    const live = await (await signoff()).liveIds([2, 1, 3, 4]);
+    expect([...live]).toEqual([[2, 2], [1, 2], [3, 2], [4, null]]);
   });
 
   it("stops on a cyclic merge chain", async () => {
-    await expect((await signoff()).livePersonFor(5)).resolves.toBeNull();
+    expect((await (await signoff()).liveIds([5])).get(5)).toBeNull();
+  });
+
+  it("every id stored for a live person is their own and each merged into them", async () => {
+    personMergeFindMany.mockResolvedValue([{ fromId: 1 }, { fromId: 3 }]);
+    await expect((await signoff()).storedIdsOf(2)).resolves.toEqual([2, 1, 3]);
+    expect(personMergeFindMany.mock.calls[0][0].where).toEqual({ toId: 2 });
   });
 });
 
