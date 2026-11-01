@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { formatCents } from "@checkin/money";
 import { parseStoredReceipt } from "../../lib/parse-receipt";
 import { buildReceiptPayload } from "../helpers/setup";
 
@@ -19,6 +20,13 @@ describe("parseStoredReceipt", () => {
     const result = parseStoredReceipt(json);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.receipt.lineItems).toHaveLength(3);
+  });
+
+  // The receiving list formats each row it parses, and an unparsed row as a blank total.
+  it("keeps the receiving list rendering when a stored row's currency is not a code", () => {
+    const result = parseStoredReceipt(JSON.stringify({ ...buildReceiptPayload(), currency: "US$" }));
+    const row = result.ok ? result.receipt : null;
+    expect(formatCents(row?.receiptTotalCents ?? null, row?.currency ?? "USD")).toBe("—");
   });
 
   // ── Negative: malformed JSON ─────────────────────────────────────────────

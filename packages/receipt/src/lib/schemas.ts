@@ -1,7 +1,9 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { CURRENCY_CODE, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
+
+export { CURRENCY_CODE };
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;
@@ -12,8 +14,7 @@ const finite = z.number().finite();
 const nonNegative = finite.nonnegative();
 const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
-/** An ISO 4217 code; money formatting throws on anything else. */
-export const CURRENCY_CODE = /^[A-Z]{3}$/;
+const currencyCode = z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" });
 /** The most a money column holds: its integer cents limit, in dollars. */
 const MAX_DOLLARS = (2 ** 31 - 1) / 100;
 const dollarString = z.string().refine(
@@ -42,7 +43,7 @@ export const ManualDetailsSchema = z.object({
   retailer: requiredText("The retailer", 500),
   receiptDate: isoDate,
   receiptTotal: dollarString,
-  currency: z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" }).optional(),
+  currency: currencyCode.optional(),
   shipping: dollarString.optional(),
   tax: dollarString.optional(),
   discount: dollarString.optional(),
@@ -116,7 +117,7 @@ export const EditReceiptSchema = z
   .object({
     retailer: requiredText("The retailer", 500).optional(),
     receiptDate: isoDate.optional(),
-    currency: z.string().min(1).max(10).optional(),
+    currency: currencyCode.optional(),
     shipping: nonNegative.optional(),
     tax: nonNegative.optional(),
     discount: nonNegative.optional(),
@@ -169,7 +170,7 @@ export const ImportReceiptSchema = z
     receiptNumber: z.string().max(200).nullable().optional(),
     orderNumber: z.string().max(200).nullable().optional(),
     receiptDate: isoDate,
-    currency: z.string().max(10).default("USD"),
+    currency: currencyCode.default("USD"),
     shippingCents: cents,
     taxCents: cents,
     discountCents: cents,
