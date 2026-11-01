@@ -148,7 +148,12 @@ function bind(over: Partial<IncomeConfig> = {}) {
   });
 }
 
-const rowFor = (g: string) => db.payoutReconciliation.findFirstOrThrow({ where: { orgId: ORG_A, payoutGid: g } });
+/** The one row holding this key; a second row under another source fails the test. */
+const rowFor = async (g: string) => {
+  const rows = await db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: g } });
+  expect(rows).toHaveLength(1);
+  return rows[0];
+};
 const drain = (now = NOW) => drainIncomeOutbox(ORG_A, now);
 const finance = { userId: 9 };
 const resolve = (g: string, req: Parameters<typeof reconciliationService.resolve>[2]) =>
@@ -1426,6 +1431,37 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(rows).toMatchObject([
       { source: "benevity", payoutNetCents: 14_700 },
       { source: "shopify", payoutNetCents: 9_900 },
+    ]);
+  });
+
+  it("drift-checks settled Shopify and Benevity rows with one key against their own payout and deposit", async () => {
+    const key = payout(1, "2026-06-28", 9_900);
+    await expect1(key);
+    qbo.hand("HS", "2026-06-28", 9_900, BANK);
+    qbo.hand("HB", "2026-06-28", 14_700, BENEVITY_BANK);
+    const rows = () => db.payoutReconciliation.findMany({ where: { orgId: ORG_A, payoutGid: key }, orderBy: { source: "asc" } });
+
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ matched: 2, drifted: 0 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", status: "MATCHED", depositId: "HB" },
+      { source: "shopify", status: "MATCHED", depositId: "HS" },
+    ]);
+
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 0 });
+    expect(await rows()).toMatchObject([{ status: "MATCHED" }, { status: "MATCHED" }]);
+
+    qbo.deposits = qbo.deposits.map((d) => (d.Id === "HB" ? { ...d, TotalAmt: 140 } : d));
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", status: "OPEN", kind: "DRIFT", depositId: null },
+      { source: "shopify", status: "MATCHED", depositId: "HS" },
+    ]);
+
+    setPayout(key, { netCents: 9_800 });
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rows()).toMatchObject([
+      { source: "benevity", payoutNetCents: 14_700 },
+      { source: "shopify", status: "OPEN", kind: "DRIFT", depositId: null, payoutNetCents: 9_800 },
     ]);
   });
 
