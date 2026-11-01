@@ -111,21 +111,20 @@ export const POST = withAuth(
             // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
             // return it. A request whose hold failed took no seat and records none.
             const approved = await prisma.$transaction(async (tx) => {
-                const heldData = { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval, seatTakenWithoutSaleAt: new Date() };
+                const seatTakenWithoutSaleAt = new Date();
                 const held = await tx.programParticipant.updateMany({
                     where: { ...participant, ...ENROLLMENT_WRITES.approveHeld.where },
-                    data: heldData,
+                    data: { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval, seatTakenWithoutSaleAt },
                 });
 
-                let auditData: Prisma.InputJsonObject = heldData;
+                let auditData: Prisma.InputJsonObject = { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval, seatTakenWithoutSaleAt };
                 if (held.count === 0) {
-                    const unheldData = { ...ENROLLMENT_WRITES.approveUnheld.data(), ...approval };
                     const unheld = await tx.programParticipant.updateMany({
                         where: { ...participant, ...ENROLLMENT_WRITES.approveUnheld.where },
-                        data: unheldData,
+                        data: { ...ENROLLMENT_WRITES.approveUnheld.data(), ...approval },
                     });
                     if (unheld.count === 0) return false;
-                    auditData = { ...unheldData, reason: "payment_plan_approved_no_hold" };
+                    auditData = { ...ENROLLMENT_WRITES.approveUnheld.data(), ...approval, reason: "payment_plan_approved_no_hold" };
                 }
 
                 await tx.auditLog.create({
