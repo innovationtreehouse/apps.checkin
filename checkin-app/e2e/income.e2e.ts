@@ -5,6 +5,7 @@
  * (packages/income/prisma/seed.ts).
  */
 import { expect, test } from "@playwright/test";
+import { api } from "../flow-tests/helpers";
 import { watchPage, type PageWatch } from "./support/pageErrors";
 import { BOARD, FINANCE, MEMBER, releaseLibraries, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
@@ -37,7 +38,10 @@ test.describe("income in the browser", () => {
   });
 
   test("FINANCE settles a reconciliation row and records why", async ({ browser }) => {
-    const { context } = await signIn(browser, FINANCE);
+    const { context, session } = await signIn(browser, FINANCE);
+    // Settling is final and no route reopens a row, so only the stack's first run has one to settle.
+    const queue = await api<Array<{ payoutGid: string; status: string }>>(session, "/api/income/reconciliation");
+    test.skip(!queue.json.some((r) => r.payoutGid === SEED_PAYOUT && r.status === "OPEN"), "an earlier run on this stack settled the seed's open row");
     const page = await context.newPage();
     const watch = watchPage(page);
     await page.goto("/income/reconciliation");
@@ -88,7 +92,8 @@ test.describe("income in the browser", () => {
     const { context } = await signIn(browser, MEMBER);
     const page = await context.newPage();
     await page.goto("/income/reconciliation");
-    await page.waitForLoadState("networkidle");
+    // The Revenue Ops role gate sends a viewer it refuses to the home page.
+    await expect(page).toHaveURL((url) => url.pathname === "/");
     await expect(page.getByRole("heading", { name: /Reconciliation/ })).toHaveCount(0);
     await context.close();
   });
