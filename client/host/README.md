@@ -41,6 +41,26 @@ skips a failed digest.
 
 State lives in `/var/lib/kiosk-host`, which the container cannot reach.
 
+## Forcing or withdrawing a release
+
+A successful prod deploy publishes the image and moves `kiosk-release`, so kiosks
+update overnight. To move them sooner, or to withdraw a bad release, run **Force
+kiosk update** in GitHub Actions.
+
+1. Enter a release tag (`v1.2.3`) or a digest from an earlier run's summary. To
+   withdraw a release, enter the last good one.
+2. Get the run approved in the `kiosk-force` environment.
+3. Kiosks apply it within five minutes, or when they reconnect. Badges during the
+   restart are missed and a live close prompt is lost; the scan queue is safe.
+
+The run summary records who forced what and where both tags were before.
+
+- Each run publishes the image under a digest of its own, so forcing the same image
+  twice swaps both times. Re-running a run does not force again, and a forced image
+  that failed is retried only by a new run.
+- The next release moves `kiosk-release` forward as usual. Re-running a withdrawn
+  release's deploy publishes it again.
+
 ## Limits
 
 A power cut between the swap and the health check leaves the new digest in place

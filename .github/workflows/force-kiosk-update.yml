@@ -1,0 +1,99 @@
+name: Force kiosk update
+run-name: Force kiosk to ${{ inputs.target }} (${{ github.triggering_actor }})
+
+# Moves kiosk-release and kiosk-urgent to one existing image, forward or back.
+# Kiosks apply it within five minutes. See client/host/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Release tag (v1.2.3) or image digest (sha256:...)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: kiosk-tags
+  cancel-in-progress: false
+
+env:
+  KIOSK_IMAGE: ghcr.io/innovationtreehouse/kiosk
+  # These match client/host/host.conf.example.
+  KIOSK_RELEASE_TAG: kiosk-release
+  KIOSK_URGENT_TAG: kiosk-urgent
+
+jobs:
+  force:
+    name: Move the kiosk tags
+    runs-on: ubuntu-24.04
+    environment: kiosk-force
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move the tags
+        env:
+          TARGET: ${{ inputs.target }}
+          FORCED_BY: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          # The input can only complete a reference to KIOSK_IMAGE: neither form
+          # can hold a registry, a path or one of the moving tags.
+          if [[ $TARGET =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            ref="$KIOSK_IMAGE@$TARGET"
+          elif [[ $TARGET =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            ref="$KIOSK_IMAGE:$TARGET"
+          else
+            echo "::error::Target must be a release tag (v1.2.3) or an image digest (sha256:<64 hex>)"
+            exit 1
+          fi
+
+          digest_of() { docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}'; }
+
+          raw=$(docker buildx imagetools inspect "$ref" --raw) || {
+            echo "::error::$ref does not exist"
+            exit 1
+          }
+          # Each published image is an index. A digest from inside one is not a release.
+          if [ "$(jq -r .mediaType <<<"$raw")" != "application/vnd.oci.image.index.v1+json" ]; then
+            echo "::error::$TARGET is not a published image index; use the digest from a run summary"
+            exit 1
+          fi
+          source_digest=$(digest_of "$ref")
+
+          old_release=$(digest_of "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" 2>/dev/null || echo none)
+          old_urgent=$(digest_of "$KIOSK_IMAGE:$KIOSK_URGENT_TAG" 2>/dev/null || echo none)
+
+          # A kiosk swaps at once only when the urgent digest is new to it, so the
+          # run id gives each run its own digest for the same image. A re-run of a
+          # run keeps that digest and does not force again.
+          docker buildx imagetools create \
+            --annotation "index:org.innovationtreehouse.kiosk.force-run=$GITHUB_RUN_ID" \
+            --tag "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" "$KIOSK_IMAGE@$source_digest"
+          digest=$(digest_of "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG")
+
+          # The release tag moved first, so a kiosk that sees the force cannot have
+          # the nightly check undo it.
+          docker buildx imagetools create --tag "$KIOSK_IMAGE:$KIOSK_URGENT_TAG" "$KIOSK_IMAGE@$digest"
+          moved=$(digest_of "$KIOSK_IMAGE:$KIOSK_URGENT_TAG")
+          if [ "$moved" != "$digest" ]; then
+            echo "::error::$KIOSK_URGENT_TAG is at $moved, expected $digest"
+            exit 1
+          fi
+
+          {
+            echo "### Kiosk forced to \`$TARGET\`"
+            echo "- Forced by: @$FORCED_BY"
+            echo "- Image: \`$source_digest\`"
+            echo "- Published for this run as: \`$digest\`"
+            echo "- \`$KIOSK_RELEASE_TAG\` was \`$old_release\`"
+            echo "- \`$KIOSK_URGENT_TAG\` was \`$old_urgent\`"
+          } >> "$GITHUB_STEP_SUMMARY"
