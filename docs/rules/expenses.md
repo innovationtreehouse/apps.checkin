@@ -468,8 +468,8 @@ Things the app takes as true because they are handled outside it.
   submitter or the person reimbursed. This is the one exception to every signer
   being a different person. The expense still reaches the books, needing no new
   signature. A signature that has to be given again is judged anew against the
-  surviving person.
-  [Decision — deliberate limit]
+  surviving person. The risk is accepted because merges are very rare.
+  [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*; owner accepted 2026-11-01]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
