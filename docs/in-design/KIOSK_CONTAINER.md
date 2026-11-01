@@ -125,7 +125,8 @@ versions it by content hash, roster replies and acknowledgements carry the hash,
 on a difference the kiosk replaces its whole copy in one transaction. So nothing ages:
 someone removed is gone at the next contact. This replaces the snapshot's `knownPeople`
 and `knownKeyholders`, needs a registry PR then a route PR, and lands after cutover.
-Who is on the list is still to be set.
+The list is everyone active in the system, leaving out any DENIED household and any
+archived household.
 
 **Schema rule.** Queue and state changes are additive and nullable, so an older
 image can run against a newer file. Without this, rollback is unsafe.
