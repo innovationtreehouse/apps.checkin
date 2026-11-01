@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { Anchor, Button, Center, Group, Loader, Select, Stack, Table, Text, TextInput } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { Anchor, Box, Button, Center, Group, Loader, Select, Stack, Table, Text, TextInput } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { FINANCE_VIEWS_ROLES } from "@/lib/nav/sections/systemStatus";
 import {
   FINANCE_VIEWS_PAGE_SIZE,
@@ -36,8 +37,6 @@ export default function FinanceViewsPage() {
 }
 
 function FinanceViewsPanel() {
-  const [data, setData] = useState<FinanceViewsResponse | null>(null);
-  const [failed, setFailed] = useState(false);
   const [page, setPage] = useState(1);
   const [person, setPerson] = useState<string | null>(null);
   const [kind, setKind] = useState<string | null>(null);
@@ -45,42 +44,15 @@ function FinanceViewsPanel() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
-  useEffect(() => {
-    const qs = new URLSearchParams({ page: String(page) });
-    if (person) qs.set("person", person);
-    if (kind) qs.set("kind", kind);
-    if (record.trim()) qs.set("record", record.trim());
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-
-    let cancelled = false;
-    fetch(`/api/system-status/finance-views?${qs}`)
-      .then(async (res) => {
-        if (!res.ok) {
-          const body: { error?: string } = await res.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${res.status}`);
-        }
-        return res.json() as Promise<FinanceViewsResponse>;
-      })
-      .then((d) => {
-        if (cancelled) return;
-        setData(d);
-        setFailed(false);
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        setFailed(true);
-        notifications.show({
-          color: "red",
-          title: "Couldn't load the finance view log",
-          message: err.message,
-          autoClose: false,
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [page, person, kind, record, from, to]);
+  const qs = new URLSearchParams({ page: String(page) });
+  if (person) qs.set("person", person);
+  if (kind) qs.set("kind", kind);
+  if (record.trim()) qs.set("record", record.trim());
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  // Keeps the person filter's options and the rows on screen while the next page or filter loads.
+  const { data, error, loading, retrying, reload } = useLoad<FinanceViewsResponse>(`/api/system-status/finance-views?${qs}`, { keepPrevious: true });
+  const stale = loading || retrying;
 
   // Filter changes reset to page 1.
   const onFilter =
@@ -133,7 +105,9 @@ function FinanceViewsPanel() {
         <DateField label="To" value={to} onChange={onFilter(setTo)} />
       </Group>
 
-      {failed && !data ? null : !data ? (
+      {error ? (
+        <LoadError what="the finance view log" message={error} onRetry={reload} />
+      ) : !data ? (
         <Center mih="30vh">
           <Loader />
         </Center>
@@ -143,6 +117,7 @@ function FinanceViewsPanel() {
         </Text>
       ) : (
         <>
+          <Box aria-busy={stale} style={{ opacity: stale ? 0.5 : 1 }}>
           <Table striped withTableBorder verticalSpacing={6} fz="sm">
             <Table.Tbody>
               {rows.map((row) => (
@@ -158,13 +133,14 @@ function FinanceViewsPanel() {
               ))}
             </Table.Tbody>
           </Table>
+          </Box>
           {(page > 1 || hasNext) && (
             <Group justify="center">
-              <Button variant="default" size="xs" disabled={page === 1} onClick={() => setPage(page - 1)}>
+              <Button variant="default" size="xs" disabled={stale || page === 1} onClick={() => setPage(page - 1)}>
                 Newer
               </Button>
               <Text size="sm">Page {page}</Text>
-              <Button variant="default" size="xs" disabled={!hasNext} onClick={() => setPage(page + 1)}>
+              <Button variant="default" size="xs" disabled={stale || !hasNext} onClick={() => setPage(page + 1)}>
                 Older
               </Button>
             </Group>

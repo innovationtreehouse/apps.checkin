@@ -2,10 +2,8 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
-import { notifications } from "@mantine/notifications";
+import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import EmergencyContactsPage from "../page";
 
@@ -73,26 +71,23 @@ describe("safety/emergency-contacts page", () => {
     expect(screen.queryByText("Keyholder House")).not.toBeInTheDocument();
   });
 
-  it("shows an error state when the fetch fails", async () => {
+  it("shows the failure, not an empty directory, when the load fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({});
     renderWithProviders(<EmergencyContactsPage />);
 
-    expect(await screen.findByText(/Failed to load emergency contacts/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load emergency contacts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByText("No households found matching your search.")).not.toBeInTheDocument();
   });
 
-  it("toasts a network-error notification when the fetch rejects", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+  it("pins present households first whatever order the route sends", async () => {
     setSession({ id: 1, isSysadmin: true });
-    global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+    mockFetchJson({ "/api/safety/emergency-contacts": { households: [...households].reverse() } });
     renderWithProviders(<EmergencyContactsPage />);
 
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error loading contacts." }),
-      ),
-    );
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.anything());
-    spy.mockRestore();
+    const present = await screen.findByText("Keyholder House");
+    const away = screen.getByText("Away House");
+    expect(present.compareDocumentPosition(away) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
