@@ -903,6 +903,86 @@ describeDb("QB-2 posting — a line's account after posting", () => {
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBe("62");
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(1);
   });
+
+  const postedAccounts = () => qbo.posts[0].body.Line.map((l) => l.AccountBasedExpenseLineDetail.AccountRef.value);
+
+  it("the regular drain posts an account set after the processing commit", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1 });
+    expect(postedAccounts()).toEqual(["62", "61"]);
+  });
+
+  it("the regular drain's retry of a failed post uses an account set after the failure", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    qbo.mode = "down";
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    qbo.mode = "ok";
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1 });
+    expect(postedAccounts()).toEqual(["62", "61"]);
+  });
+
+  it("finance's book it posts an account set while the expense is UNBOOKED", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await switchedOn(new Date(Date.now() + 60_000));
+    qbo.closeDate = "2026-06-30";
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+    await resubmitHeldExpense(finance, id);
+
+    expect(postedAccounts()).toEqual(["62", "61"]);
+  });
+
+  it("a re-armed AMBIGUOUS expense posts an account set while it was parked", async () => {
+    const { id, lines } = await outboxed("2026-09-10", { reimburseePersonId: 43 });
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+    // What linking the reimbursee's Vendor leaves behind.
+    await db.expenseReimburseeVendor.create({ data: { orgId: ORG, reimburseePersonId: 43, qbVendorId: VENDOR } });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "UNMATCHED" } });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1 });
+    expect(postedAccounts()).toEqual(["62", "61"]);
+  });
+
+  it("finance's retry posts an account set after the attempts ran out", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() } });
+    await db.expenseLineItem.update({ where: { id: lines[1] }, data: { manualQbAccount: "61" } });
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+    await resubmitHeldExpense(finance, id);
+
+    expect(postedAccounts()).toEqual(["62", "61"]);
+  });
+
+  it("leaves a line that never resolved unresolved, so processing still decides its account", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseLineItem.update({ where: { id: lines[0] }, data: { resolvedQbAccount: null } });
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).toMatchObject({ manualQbAccount: "62", resolvedQbAccount: null });
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("does not touch the line's account on a refused write", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "CREATED" } });
+
+    await expect(setHeldLineAccount(finance, id, lines[0], "62")).rejects.toMatchObject({ status: 409 });
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).resolvedQbAccount).toBe("60");
+  });
 });
 
 describeDb("QB-2 posting — QuickBooks Class per line", () => {

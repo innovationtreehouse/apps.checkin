@@ -31,7 +31,12 @@ export async function setHeldLineAccount(
     await lockExpense(tx, expenseId);
     const { qbMatchState } = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { qbMatchState: true } });
     if (IN_QUICKBOOKS.has(qbMatchState)) throw new ServiceError(409, "already posted to QuickBooks; correct it there");
-    await tx.expenseLineItem.update({ where: { id: lineItemId }, data: { manualQbAccount: qbAccount } });
+    const { resolvedQbAccount } = await tx.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { resolvedQbAccount: true } });
+    // The poster reads resolvedQbAccount, and nothing refreshes it on every path after the processing commit.
+    await tx.expenseLineItem.update({
+      where: { id: lineItemId },
+      data: { manualQbAccount: qbAccount, ...(resolvedQbAccount ? { resolvedQbAccount: qbAccount } : {}) },
+    });
     await writeAudit(tx, actorOf(principal), {
       expenseId,
       action: "hold_account_set",
