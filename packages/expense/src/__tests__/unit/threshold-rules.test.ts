@@ -1,4 +1,4 @@
-/** Which threshold changes are the Board's: the direction each field loosens in, and its policy value. */
+/** Which threshold changes are the Board's: raising a field past its policy value, or any change to a Board-only field. */
 import { describe, it, expect } from "vitest";
 import { DEFAULT_EXPENSE_SETTINGS, THRESHOLD_RULES, boardOnlyChanges } from "../../services/settingsService";
 import { financeCeilingCents } from "../../lib/threshold-rules";
@@ -6,7 +6,7 @@ import { financeCeilingCents } from "../../lib/threshold-rules";
 const current = { ...DEFAULT_EXPENSE_SETTINGS, capitalTotalThresholdCents: 500_000 };
 
 describe("boardOnlyChanges", () => {
-  it("declares a direction for every threshold", () => {
+  it("lists a rule for every threshold", () => {
     expect(Object.keys(THRESHOLD_RULES).sort()).toEqual(Object.keys(DEFAULT_EXPENSE_SETTINGS).sort());
   });
 
