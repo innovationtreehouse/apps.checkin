@@ -3,6 +3,7 @@
  * relations, which the host stripper recurses into. Catalog item names are not
  * here — they live in the catalog's database.
  */
+import { parseGtinInput } from "@checkin/gtin";
 import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
@@ -32,18 +33,23 @@ const updateSchema = createSchema
   })
   .strict();
 
+/** What the search box matches: GTIN, location, backstock, or the GTIN a typed short ID stands for. */
+export function itemSearch(q: string): Prisma.OrgItemWhereInput[] {
+  const gtin13 = parseGtinInput(q);
+  return [
+    { gtin13: { contains: q } },
+    ...(gtin13 ? [{ gtin13 }] : []),
+    { location: { name: { contains: q, mode: "insensitive" } } },
+    { backstockLocation: { name: { contains: q, mode: "insensitive" } } },
+  ];
+}
+
 /** The filter shared by the list and its count, so page totals match rows. */
 async function itemWhere(sp: URLSearchParams): Promise<Prisma.OrgItemWhereInput> {
   const where: Prisma.OrgItemWhereInput = { orgId: await getOrgId() };
   if (sp.get("unlocated") === "true") where.locationId = null;
   const q = sp.get("q")?.trim();
-  if (q) {
-    where.OR = [
-      { gtin13: { contains: q.replace(/\D/g, "") || q } },
-      { location: { name: { contains: q, mode: "insensitive" } } },
-      { backstockLocation: { name: { contains: q, mode: "insensitive" } } },
-    ];
-  }
+  if (q) where.OR = itemSearch(q);
   return where;
 }
 
