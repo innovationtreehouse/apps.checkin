@@ -24,6 +24,16 @@ async function isolated<T>(name: string, failureName: string, step: () => Promis
     return outcome;
 }
 
+/** A step that threw, or a part that caught its own throw and reports `{ error }`. */
+function crashed(outcome: object): boolean {
+    return ("status" in outcome && outcome.status === "error") || "error" in outcome;
+}
+
+/** The `failed` count of a step that has one, else 0. */
+function rowsFailed(outcome: object): number {
+    return "failed" in outcome && typeof outcome.failed === "number" ? outcome.failed : 0;
+}
+
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
  * 09:00 UTC sync, so it reads a mirror that was just refreshed.
@@ -86,12 +96,15 @@ async function isolated<T>(name: string, failureName: string, step: () => Promis
  *
  * Last, it retries the receipt outcome emails still owed (sweepOutcomeNotices). Isolated the same
  * way; counts only.
+ *
+ * The Shopify reconcile and the sale sweep run isolated too. The top-level `failed`, which the cron
+ * run records, counts every step or expense part that crashed, every row a step reports as failed
+ * (reconcile orders, receipt sweeps, re-pushes, donor re-sends, outcome emails), provisionals not
+ * reconciled, Apply give-ups, and a mailbox that could not be read.
  */
 export const GET = withCron(async () => {
-    const result = await runReconcile();
-    logger.info(`[reconcile] ${JSON.stringify(result)}`);
-    const saleSweep = await runSaleSweep();
-    logger.info(`[sale-sweep] ${JSON.stringify(saleSweep)}`);
+    const result = await isolated("shopify", "Shopify reconcile", runReconcile);
+    const saleSweep = await isolated("sale sweep", "program sale sweep", runSaleSweep);
     const income = await isolated("income", "income reconciliation", async () => runIncomeReconcile((await getOrg()).id));
     const expense = await isolated("expense", "expense catch-up", runExpenseCatchUp);
     const programStock = await isolated("program stock", "program stock heal", healProgramStock);
@@ -104,8 +117,13 @@ export const GET = withCron(async () => {
     const donorSync = await isolated("donor sync", "receipt donor re-send", resendDonorSync);
     const receiptMail = await isolated("receipt mail", "receipt mail intake", readMailbox);
     const receiptOutcomes = await isolated("receipt outcome emails", "receipt outcome emails", sweepOutcomeNotices);
-    const mailUnread = receiptMail.status === "error" || receiptMail.status === "listing_failed";
-    const sweepRowsFailed = [receipt, receiptStuck].reduce((sum, sweep) => sum + ("failed" in sweep ? sweep.failed : 0), 0);
-    const reconcileFailed = "reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0;
-    return NextResponse.json({ success: true, ...result, failed: result.failed + sweepRowsFailed + reconcileFailed + (mailUnread ? 1 : 0), saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes });
+    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes];
+    const expenseParts = "intake" in expense ? [expense.intake, expense.catalogEvents] : [];
+    const failed = [...steps, ...expenseParts].filter(crashed).length
+        + [result, receipt, receiptStuck, receiptPush, donorSync, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
+        + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
+        + ("gaveUp" in receivingApply ? receivingApply.gaveUp : 0)
+        + (receiptMail.status === "listing_failed" ? 1 : 0);
+    const reconciled = "configured" in result ? result : { reconcile: result };
+    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes });
 });

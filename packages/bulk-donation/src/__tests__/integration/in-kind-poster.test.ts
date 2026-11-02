@@ -200,10 +200,17 @@ beforeEach(async () => {
 describeDb("in-kind drain", () => {
   it("does nothing, and stays switched off, until every in-kind role is in the books map", async () => {
     delete accounts.FIXED_ASSETS;
-    await expect(runInKindQbPosting(orgId)).resolves.toBe("unconfigured");
+    await expect(runInKindQbPosting(orgId)).resolves.toEqual({ unconfigured: true, waiting: 0 });
     accounts = { ...ACCOUNTS, INKIND_CLEARING: "35" };
-    await expect(runInKindQbPosting(orgId)).resolves.toBe("unconfigured");
+    await expect(runInKindQbPosting(orgId)).resolves.toEqual({ unconfigured: true, waiting: 0 });
     expect(await inKindPostingOnAt(orgId)).toBeNull();
+  });
+
+  it("counts the gifts waiting while an in-kind role is missing", async () => {
+    await acceptedGift();
+    delete accounts.FIXED_ASSETS;
+
+    await expect(runInKindQbPosting(orgId)).resolves.toEqual({ unconfigured: true, waiting: 1 });
   });
 
   it("books a gift recorded after switch-on as one balanced journal entry, an asset line to fixed assets", async () => {
