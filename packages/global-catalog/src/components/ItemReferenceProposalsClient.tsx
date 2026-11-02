@@ -6,7 +6,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconX } from "@tabler/icons-react";
-import { formatItemId } from "../lib/gtin";
+import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import type { ItemReferenceProposalRow } from "./viewTypes";
@@ -73,7 +73,7 @@ export default function ItemReferenceProposalsClient() {
                   <Table.Td>{p.orgName}</Table.Td>
                   <Table.Td>
                     <Text size="sm">{p.item.name}</Text>
-                    <Text size="xs" c="dimmed" ff="monospace">{formatItemId(p.gtin13)}</Text>
+                    <Text size="xs" c="dimmed" ff="monospace">{formatGtinDisplay(p.gtin13)}</Text>
                   </Table.Td>
                   <Table.Td>{p.manufacturer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
                   <Table.Td>{p.partNumber ? <Text size="sm" ff="monospace">{p.partNumber}</Text> : <Text c="dimmed" size="sm">—</Text>}</Table.Td>

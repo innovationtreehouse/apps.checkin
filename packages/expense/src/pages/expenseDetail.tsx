@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import {
   Alert, Anchor, Badge, Button, Checkbox, Group, Mark, Menu, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reviewKindOf, type ReviewKind } from "../lib/flags";
@@ -640,7 +641,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             <Table.Th ta="right">Qty</Table.Th>
             <Table.Th ta="right">Unit</Table.Th>
             <Table.Th ta="right">Total</Table.Th>
-            <Table.Th>GTIN-13</Table.Th>
+            <Table.Th>Part No.</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>
@@ -672,7 +673,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Table.Td ta="right">{l.quantity}</Table.Td>
                 <Table.Td ta="right">{formatCents(l.unitPriceCents, e.currency)}</Table.Td>
                 <Table.Td ta="right">{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
-                <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ?? "—"}</Text></Table.Td>
+                <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ? formatGtinDisplay(l.gtin13) : "—"}</Text></Table.Td>
                 <Table.Td>
                   <Marked on={(open("BUCKET_TO_ASSIGN") && a?.ownerId == null) || (open("BUCKET_UNKNOWN") && a?.status === "unknown")}>
                     {a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}

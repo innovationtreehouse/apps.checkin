@@ -10,7 +10,7 @@ import {
   IconAlertTriangle, IconArchive, IconArchiveOff, IconChevronDown,
   IconChevronUp, IconEdit, IconLink, IconPlus, IconSelector,
 } from "@tabler/icons-react";
-import { formatItemId } from "../lib/gtin";
+import { formatGtinDisplay } from "../lib/gtin";
 import { api, clampPage, lastPage, useCanManage, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
@@ -93,7 +93,7 @@ function ReferencesTab() {
           <Table.Tbody>
             {refs.map((a) => (
               <Table.Tr key={a.id} c={a.archivedAt ? "red" : undefined}>
-                <Table.Td><Text size="sm">{a.item?.name ?? "—"} <Text span size="xs" c={a.archivedAt ? "red.3" : "dimmed"} ff="monospace">({formatItemId(a.gtin13)})</Text></Text></Table.Td>
+                <Table.Td><Text size="sm">{a.item?.name ?? "—"} <Text span size="xs" c={a.archivedAt ? "red.3" : "dimmed"} ff="monospace">({formatGtinDisplay(a.gtin13)})</Text></Text></Table.Td>
                 <Table.Td>{a.manufacturer ?? <Text c={a.archivedAt ? "red.3" : "dimmed"} size="sm">—</Text>}</Table.Td>
                 <Table.Td>{a.retailer ?? <Text c={a.archivedAt ? "red.3" : "dimmed"} size="sm">—</Text>}</Table.Td>
                 <Table.Td><Text size="sm" ff={a.partNumber ? "monospace" : undefined}>{a.partNumber ?? a.descriptionNormalized ?? "—"}</Text></Table.Td>
@@ -163,12 +163,12 @@ function ConflictsTab({ conflicts, error, onRetry }: { conflicts: ReferenceConfl
               </Table.Td>
               <Table.Td><Text size="sm" ff={c.partNumber ? "monospace" : undefined}>{c.partNumber ?? c.description ?? "—"}</Text></Table.Td>
               <Table.Td>
-                <Text size="sm" ff="monospace">{formatItemId(c.itemReference.gtin13)}</Text>
+                <Text size="sm" ff="monospace">{formatGtinDisplay(c.itemReference.gtin13)}</Text>
                 {c.itemReference.gtin13 !== c.existingGtin13 && (
-                  <Text size="xs" c="orange">Out of date: raised against {formatItemId(c.existingGtin13)}. The part has moved since; this is where it is now.</Text>
+                  <Text size="xs" c="orange">Out of date: raised against {formatGtinDisplay(c.existingGtin13)}. The part has moved since; this is where it is now.</Text>
                 )}
               </Table.Td>
-              <Table.Td><Text size="sm" ff="monospace">{formatItemId(c.proposedGtin13)}</Text></Table.Td>
+              <Table.Td><Text size="sm" ff="monospace">{formatGtinDisplay(c.proposedGtin13)}</Text></Table.Td>
               <Table.Td>
                 {c.itemReference.gtin13 === c.proposedGtin13 ? (
                   <Stack gap={4} align="flex-start">
@@ -344,7 +344,7 @@ export default function GlobalInventoryClient({ unresolvedConflicts = 0 }: { unr
               ) : items.map((item) => (
                 <Table.Tr key={item.gtin13}>
                   <Table.Td>{item.name}</Table.Td>
-                  <Table.Td ff="monospace">{formatItemId(item.gtin13)}</Table.Td>
+                  <Table.Td ff="monospace">{formatGtinDisplay(item.gtin13)}</Table.Td>
                   <Table.Td>{item.category.name}</Table.Td>
                   <Table.Td>{item.subcategory.name}</Table.Td>
                   <Table.Td>{item.usageBehavior}</Table.Td>
@@ -394,7 +394,7 @@ export default function GlobalInventoryClient({ unresolvedConflicts = 0 }: { unr
       </Modal>
 
       <Modal opened={archiveOpen} onClose={closeArchive} title="Confirm Archive" centered>
-        <Text mb="lg">Archive <strong>{archiveTarget?.name}</strong> ({archiveTarget && formatItemId(archiveTarget.gtin13)})? Archived parts will not appear in the catalog by default.</Text>
+        <Text mb="lg">Archive <strong>{archiveTarget?.name}</strong> ({archiveTarget && formatGtinDisplay(archiveTarget.gtin13)})? Archived parts will not appear in the catalog by default.</Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeArchive}>Cancel</Button>
           <Button color="orange" loading={archiving} onClick={handleArchive}>Archive</Button>

@@ -31,6 +31,7 @@
     "@checkin/component-kit": "*",
     "@checkin/component-ui": "*",
     "@checkin/donations": "*",
+    "@checkin/gtin": "*",
     "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",

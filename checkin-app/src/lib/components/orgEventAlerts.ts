@@ -1,8 +1,10 @@
+import { formatGtinDisplay } from "@checkin/gtin";
+
 const MAX_NAMED_PROVISIONALS = 20;
 const MAX_PROVISIONAL_NAME_LENGTH = 80;
 
 function provisionalsProblem(items: { gtin13: string; name: string }[]): string {
-  const named = items.slice(0, MAX_NAMED_PROVISIONALS).map((item) => `${item.name.slice(0, MAX_PROVISIONAL_NAME_LENGTH)} (${item.gtin13})`);
+  const named = items.slice(0, MAX_NAMED_PROVISIONALS).map((item) => `${item.name.slice(0, MAX_PROVISIONAL_NAME_LENGTH)} (${formatGtinDisplay(item.gtin13)})`);
   if (items.length > named.length) named.push(`and ${items.length - named.length} more`);
   return `could not apply the catalog's decision to ${items.length} provisional item(s): ${named.join(", ")}`;
 }

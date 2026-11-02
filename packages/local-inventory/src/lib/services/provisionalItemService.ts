@@ -4,6 +4,7 @@ import type { ProvisionalItemRepository } from "../repositories/provisionalItemR
 import type { ProvisionalResolutionRepository } from "../repositories/provisionalResolutionRepository";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "../gtin";
 import { methodsFor, type QuantityMethod } from "../mergeConflictMethods";
 import { logRemovedOrgItem } from "./inventoryService";
 import {
@@ -125,7 +126,7 @@ export function createProvisionalItemService({
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisionalId, gtin13: provisionalGtin13,
-            eventType: finalStatus, notes: `renamed to ${realGtin13}`,
+            eventType: finalStatus, notes: `renamed to ${formatGtinDisplay(realGtin13)}`,
             performedBy: null, createdAt: now,
           },
         });
@@ -177,7 +178,7 @@ export function createProvisionalItemService({
       await tx.provisionalItemLog.create({
         data: {
           orgId, provisionalItemId: provisionalId, gtin13: provisionalGtin13,
-          eventType: finalStatus, notes: `merged into ${realGtin13}, qty: ${newQty}`,
+          eventType: finalStatus, notes: `merged into ${formatGtinDisplay(realGtin13)}, qty: ${newQty}`,
           performedBy: null, createdAt: now,
         },
       });

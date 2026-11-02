@@ -3,7 +3,7 @@ import { isRecordNotFoundError, isUniqueConstraintError, type Db } from "../db/i
 import type { InventoryProvisionalItem, OrgItem } from "../db/schema";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
-import { isProvisionalGtin13 } from "../gtin";
+import { formatGtinDisplay, isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
 import { receivingGtin13, type ProvisionalItemService } from "./provisionalItemService";
 import { ServiceError } from "@checkin/component-kit";
@@ -33,9 +33,17 @@ export type ApplyResult = {
   updatedItems: Array<{ gtin13: string; newQuantity: number }>;
 };
 
+/**
+ * A provisional item's name. A donation delta sends its raw GTIN when the line has no description, and
+ * that value stays in the delta because a replay must match the delta as first applied.
+ */
+function provisionalItemName(gtin13: string, provisionalName?: string): string {
+  return !provisionalName || provisionalName === gtin13 ? formatGtinDisplay(gtin13) : provisionalName;
+}
+
 /** Stock is held under a provisional GTIN only when the GTIN is in the provisional range. */
 function assertProvisionalGtin(gtin13: string): void {
-  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional GTIN: ${gtin13}`);
+  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional GTIN: ${formatGtinDisplay(gtin13)}`);
 }
 
 const positiveInt = z.number().int().positive();
@@ -185,7 +193,7 @@ export function createReceiptService({
               await tx.inventoryProvisionalItem.create({
                 data: {
                   provisionalGtin13: li.gtin13,
-                  name: li.provisionalName ?? li.gtin13,
+                  name: provisionalItemName(li.gtin13, li.provisionalName),
                   usageBehavior: "Unknown",
                   orgId,
                   status: "pending",

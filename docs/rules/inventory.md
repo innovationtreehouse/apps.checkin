@@ -40,6 +40,11 @@ How the pieces are built is described in
   item, across the whole catalog. A change must not create a second item for the
   same GTIN or move a GTIN to a different item. `[Decision]`
 
+- A GTIN shown to a person uses its short form: `P000123` for a provisional GTIN,
+  `03B0042` for one minted from the catalog's category and sequence, and the 13
+  digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
+  digits. `[Decision]`
+
 - A category is keyed by a letter, and a subcategory by a number within its
   category; each item carries a category, a subcategory and a sequence number.
   The letter and number are part of how items are named, so they must not

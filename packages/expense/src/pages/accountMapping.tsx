@@ -1,4 +1,5 @@
 "use client";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { useState } from "react";
 import { ActionIcon, Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
@@ -56,7 +57,7 @@ export default function AccountMappingPage() {
         <Table.Tbody>
           {(mappings.data ?? []).map((m) => (
             <Table.Tr key={m.id}>
-              <Table.Td>{m.category}</Table.Td><Table.Td>{m.subcategory}</Table.Td><Table.Td>{m.partNumber}</Table.Td>
+              <Table.Td>{m.category}</Table.Td><Table.Td>{m.subcategory}</Table.Td><Table.Td>{formatGtinDisplay(m.partNumber)}</Table.Td>
               <Table.Td>{triLabel(m.isDelayed)}</Table.Td><Table.Td>{triLabel(m.isCapital)}</Table.Td><Table.Td>{m.qbAccount}</Table.Td>
               <Table.Td>
                 {isFinance && (

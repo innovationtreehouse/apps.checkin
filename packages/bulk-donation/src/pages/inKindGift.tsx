@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
 import { api, errorMessage, useCanWrite, useLoad, when } from "../components/api";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -191,8 +192,8 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
         <Table.Tbody>
           {g.lines.map((l) => (
             <Table.Tr key={l.id}>
-              <Table.Td>{l.description ?? l.gtin13 ?? "—"}</Table.Td>
-              <Table.Td>{l.gtin13 ?? "—"}</Table.Td>
+              <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
+              <Table.Td>{l.gtin13 ? formatGtinDisplay(l.gtin13) : "—"}</Table.Td>
               <Table.Td>{l.quantity}</Table.Td>
               <Table.Td>{l.valueCents === null ? "—" : formatCents(l.valueCents)}</Table.Td>
               {isManual && <Table.Td>{l.suggestedValueCents === null ? "—" : formatCents(l.suggestedValueCents)}</Table.Td>}
