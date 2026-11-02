@@ -1,5 +1,5 @@
 /**
- * Donation hands every completed disbursement's deposit to income (QB_ENTRY_OWNERSHIP): the call
+ * Donation hands every completed disbursement's deposit to income: the call
  * after the completion commit with its re-send job, and no call of its own to QuickBooks.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
