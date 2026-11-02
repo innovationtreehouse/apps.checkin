@@ -10,6 +10,7 @@ jest.mock("@/lib/prisma", () => {
             event: {
                 findMany: jest.fn(),
                 update: jest.fn(),
+                updateMany: jest.fn(),
             },
             person: {
                 findUnique: jest.fn(),
@@ -21,6 +22,10 @@ jest.mock("@/lib/prisma", () => {
 
 jest.mock("@/lib/email", () => ({
     sendEmail: jest.fn()
+}));
+
+jest.mock("@/lib/logger", () => ({
+    logIntegrationError: jest.fn(),
 }));
 
 jest.mock("@/lib/config", () => ({
@@ -43,6 +48,7 @@ describe("processPostEventEmails", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        (prisma.event.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
     });
 
     it("uses 1-hour cutoff time when forceImmediate is false", async () => {
@@ -263,6 +269,29 @@ describe("processPostEventEmails", () => {
 
         expect(sendEmail).toHaveBeenCalled();
         expect(prisma.event.update).not.toHaveBeenCalled();
+        expect(prisma.event.updateMany).toHaveBeenLastCalledWith({
+            where: { id: 13, postEventEmailClaimedAt: expect.any(Date) },
+            data: { postEventEmailClaimedAt: null, postEventEmailAttempts: { increment: 1 } },
+        });
+        expect(result.emailsSent).toBe(0);
+    });
+
+    it("does not send when another run holds the claim", async () => {
+        (prisma.event.findMany as jest.Mock).mockResolvedValueOnce([
+            {
+                id: 15,
+                name: "Claimed Event",
+                program: { leadMentorId: 100, volunteers: [] },
+                rsvps: [],
+                visits: []
+            }
+        ]).mockResolvedValueOnce([]);
+        (prisma.person.findMany as jest.Mock).mockResolvedValue([{ id: 100, email: "lead@example.com" }]);
+        (prisma.event.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+        const result = await processPostEventEmails();
+
+        expect(sendEmail).not.toHaveBeenCalled();
         expect(result.emailsSent).toBe(0);
     });
 });
