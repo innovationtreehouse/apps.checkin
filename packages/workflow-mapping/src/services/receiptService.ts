@@ -1,4 +1,5 @@
 import { httpError } from "@checkin/component-kit";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
@@ -42,7 +43,7 @@ export const receiptService = {
         state: row.state,
         vendorName: r?.vendorName ?? null,
         receiptTotalCents: r?.receiptTotalCents ?? null,
-        currency: r?.currency ?? "USD",
+        currency: r?.currency ?? DEFAULT_CURRENCY,
         lineItemCount: r?.lineItems.length ?? 0,
         validationNotes: row.validationNotes,
         createdAt: row.createdAt.toISOString(),

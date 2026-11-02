@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { OcrDataSchema, type OcrData, type OcrProvider, type OcrResult } from "../contract";
 
 const MODEL = "claude-opus-5-5";
@@ -60,7 +61,7 @@ export function mapRawToOcrData(raw: Record<string, unknown>): OcrData {
     receiptNumber: raw.receiptNumber ? String(raw.receiptNumber) : undefined,
     orderNumber: raw.orderNumber ? String(raw.orderNumber) : undefined,
     receiptDate: String(raw.receiptDate ?? ""),
-    currency: String(raw.currency || "USD").trim().toUpperCase(),
+    currency: String(raw.currency ?? "").trim().toUpperCase() || DEFAULT_CURRENCY,
     shipping: Number(raw.shipping ?? 0),
     tax: Number(raw.tax ?? 0),
     discount: Number(raw.discount ?? 0),

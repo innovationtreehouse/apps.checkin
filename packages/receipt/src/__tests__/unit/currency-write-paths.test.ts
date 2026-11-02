@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatCents } from "@checkin/money";
-import { CompletedReceiptSchema } from "@checkin/receipt-types";
+import { CompletedReceiptSchema, DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { OcrDataSchema } from "../../contract";
 import { mapRawToOcrData } from "../../lib/ocr";
 import { EditReceiptSchema, ImportReceiptSchema } from "../../lib/schemas";
@@ -75,8 +75,16 @@ describe("every path that writes a receipt's currency", () => {
     expect(OcrDataSchema.safeParse(reading(code)).success).toBe(false);
   });
 
-  it.each(["US$", "USDX", "usd", "$", ""])("the completed-receipt contract refuses %j", (code) => {
+  it.each(["US$", "USDX", "XX", "$"])("the completed-receipt contract refuses %j", (code) => {
     expect(CompletedReceiptSchema.safeParse(completed(code)).success).toBe(false);
+  });
+
+  it.each(["usd", " usd "])("the completed-receipt contract reads a stored %j as USD", (code) => {
+    expect(CompletedReceiptSchema.parse(completed(code)).currency).toBe("USD");
+  });
+
+  it.each(["", "   "])("the completed-receipt contract reads a stored blank %j as the default", (code) => {
+    expect(CompletedReceiptSchema.parse(completed(code)).currency).toBe(DEFAULT_CURRENCY);
   });
 
   it("each path accepts a real code", () => {
@@ -95,6 +103,7 @@ describe("every path that writes a receipt's currency", () => {
 describe("mapping what the model read", () => {
   it.each([
     ["a blank", ""],
+    ["a whitespace-only", "   "],
     ["a missing", undefined],
   ])("reads %s code as the schema's default, USD", (_label, code) => {
     expect(mapRawToOcrData(reading(code)).currency).toBe("USD");
