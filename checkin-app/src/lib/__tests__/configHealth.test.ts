@@ -19,6 +19,10 @@ const ALL_KEYS = [
     "RECEIPT_FILES_S3_BUCKET",
     "RESEND_API_KEY",
     "S_READ_TRIGGER_FUNCTION",
+    "ANTHROPIC_API_KEY",
+    "GMAIL_REFRESHER_FN",
+    "RECEIPT_MAILBOX_ADDRESS",
+    "RECEIPT_PROD_MAILBOX_ADDRESS",
     "CHECKIN_ENV",
 ];
 
@@ -55,7 +59,11 @@ describe("getConfigHealth — prod, nothing configured", () => {
         expect(c["s-read-trigger"].detail).toContain("S_READ_TRIGGER_FUNCTION");
         expect(c["s-read-mirror"].ok).toBe(false);
         expect(c["s-read-mirror"].detail).toContain("SHOPIFY_READ_DB");
-        expect(openConfigIssues(checks)).toBe(6);
+        expect(c["receipt-ocr"].ok).toBe(false);
+        expect(c["receipt-ocr"].detail).toContain("ANTHROPIC_API_KEY");
+        expect(c["receipt-mailbox"].ok).toBe(false);
+        expect(c["receipt-mailbox"].detail).toContain("RECEIPT_MAILBOX_ADDRESS");
+        expect(openConfigIssues(checks)).toBe(8);
     });
 });
 
@@ -73,6 +81,9 @@ describe("getConfigHealth — prod, all configured", () => {
         // just the app's own credential pointed at the mirror's database name.
         process.env.DATABASE_URL = "postgresql://checkin_prod_dml:pw@host:5432/checkin_prod?sslmode=verify-full";
         process.env.SHOPIFY_READ_DB = "shopify_read_prod";
+        process.env.ANTHROPIC_API_KEY = "sk-key";
+        process.env.GMAIL_REFRESHER_FN = "gmail-refresher";
+        process.env.RECEIPT_MAILBOX_ADDRESS = "receipts@example.org";
         expect(openConfigIssues(getConfigHealth())).toBe(0);
     });
 });
@@ -110,5 +121,34 @@ describe("getConfigHealth — receipt files", () => {
         delete process.env.RECEIPT_FILES_S3_BUCKET;
         process.env.CHECKIN_ENV = "local";
         expect(check().ok).toBe(true);
+    });
+});
+
+describe("getConfigHealth — receipt mailbox", () => {
+    const check = () => byId(getConfigHealth())["receipt-mailbox"];
+    const setMailbox = () => {
+        process.env.GMAIL_REFRESHER_FN = "gmail-refresher";
+        process.env.RECEIPT_MAILBOX_ADDRESS = "receipts@example.org";
+    };
+
+    it.each([["dev"], ["stg"], ["local"]])("is no gap on %s with nothing set", (env) => {
+        process.env.CHECKIN_ENV = env;
+        expect(check().ok).toBe(true);
+    });
+
+    it("is a gap off prod when set but refused, naming why", () => {
+        process.env.CHECKIN_ENV = "dev";
+        setMailbox();
+        expect(check().ok).toBe(false);
+        expect(check().detail).toContain("RECEIPT_PROD_MAILBOX_ADDRESS");
+        process.env.RECEIPT_PROD_MAILBOX_ADDRESS = "real@example.org";
+        expect(check().ok).toBe(true);
+    });
+
+    it("is a gap under an unknown CHECKIN_ENV, which binds nothing", () => {
+        process.env.CHECKIN_ENV = "production";
+        setMailbox();
+        expect(check().ok).toBe(false);
+        expect(check().detail).toContain("CHECKIN_ENV");
     });
 });
