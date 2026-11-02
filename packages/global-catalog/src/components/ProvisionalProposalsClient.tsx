@@ -7,7 +7,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
-import { formatItemId } from "../lib/gtin";
+import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
@@ -115,7 +115,7 @@ export default function ProvisionalProposalsClient() {
   function proposalRow(p: ProvisionalItemRow) {
     return (
       <Table.Tr key={p.id}>
-        <Table.Td><Text size="sm" ff="monospace">{formatItemId(p.provisionalGtin13)}</Text></Table.Td>
+        <Table.Td><Text size="sm" ff="monospace">{formatGtinDisplay(p.provisionalGtin13)}</Text></Table.Td>
         <Table.Td>{p.orgName}</Table.Td>
         <Table.Td>{p.proposedName}</Table.Td>
         <Table.Td>{p.proposedCategoryId ? categories.find((c) => c.id === p.proposedCategoryId)?.name ?? `ID ${p.proposedCategoryId}` : "—"}</Table.Td>
@@ -167,7 +167,7 @@ export default function ProvisionalProposalsClient() {
       <Modal opened={approveOpen} onClose={closeApprove} title="Approve Provisional Item" size="lg" centered>
         {approveTarget && (
           <Stack gap="sm">
-            <Text size="sm" c="dimmed">Provisional GTIN: <Text span ff="monospace">{formatItemId(approveTarget.provisionalGtin13)}</Text> from <strong>{approveTarget.orgName}</strong></Text>
+            <Text size="sm" c="dimmed">Provisional GTIN: <Text span ff="monospace">{formatGtinDisplay(approveTarget.provisionalGtin13)}</Text> from <strong>{approveTarget.orgName}</strong></Text>
             <Divider />
             <TextInput label="Item Name" value={approveName} onChange={(e) => setApproveName(e.currentTarget.value)} required data-autofocus />
             <Select label="Category" data={categories.map((c) => ({ value: String(c.id), label: `${c.letter} — ${c.name}` }))} value={approveCategoryId} onChange={(v) => { setApproveCategoryId(v); setApproveSubcategoryId(null); }} required />
@@ -183,7 +183,7 @@ export default function ProvisionalProposalsClient() {
 
       <Modal opened={mapOpen} onClose={() => { closeMap(); setMapGtin(""); setMapTarget(null); }} title="Map to Existing Item" centered>
         <Stack gap="sm">
-          {mapTarget && <Text size="sm" c="dimmed">Map provisional GTIN <Text span ff="monospace">{formatItemId(mapTarget.provisionalGtin13)}</Text> to an existing catalog item.</Text>}
+          {mapTarget && <Text size="sm" c="dimmed">Map provisional GTIN <Text span ff="monospace">{formatGtinDisplay(mapTarget.provisionalGtin13)}</Text> to an existing catalog item.</Text>}
           <TextInput label="Real GTIN-13" placeholder="0200000000000" value={mapGtin} onChange={(e) => setMapGtin(e.currentTarget.value)} data-autofocus />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => { closeMap(); setMapGtin(""); setMapTarget(null); }}>Cancel</Button>
@@ -194,7 +194,7 @@ export default function ProvisionalProposalsClient() {
 
       <Modal opened={rejectOpen} onClose={() => { closeReject(); setRejectReason(""); setRejectTarget(null); }} title="Reject Provisional Item" centered>
         <Stack gap="sm">
-          {rejectTarget && <Text size="sm">Rejecting: <strong>{rejectTarget.proposedName}</strong> ({formatItemId(rejectTarget.provisionalGtin13)})</Text>}
+          {rejectTarget && <Text size="sm">Rejecting: <strong>{rejectTarget.proposedName}</strong> ({formatGtinDisplay(rejectTarget.provisionalGtin13)})</Text>}
           <Textarea label="Reason" placeholder="Explain why this proposal is being rejected…" value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} minRows={3} required />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => { closeReject(); setRejectReason(""); setRejectTarget(null); }}>Cancel</Button>

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
 import { paged, send, useLoad, useRoles, type Bucket } from "../components/api";
 import { LoadError, Pager } from "@checkin/component-ui";
@@ -42,8 +43,8 @@ export default function OwnershipMapPage() {
           {(map.data?.PartOwnerMap ?? []).map((p) => (
             <Table.Tr key={p.id}>
               <Table.Td>
-                {itemName.get(p.gtin13) ?? p.gtin13}
-                {itemName.has(p.gtin13) && <Text size="xs" c="dimmed">{p.gtin13}</Text>}
+                {itemName.get(p.gtin13) ?? formatGtinDisplay(p.gtin13)}
+                {itemName.has(p.gtin13) && <Text size="xs" c="dimmed">{formatGtinDisplay(p.gtin13)}</Text>}
               </Table.Td>
               <Table.Td>{nameOf.get(p.ownerId) ?? `#${p.ownerId}`}</Table.Td>
             </Table.Tr>

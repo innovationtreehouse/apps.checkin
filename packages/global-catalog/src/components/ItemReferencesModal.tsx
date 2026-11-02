@@ -5,7 +5,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
-import { formatItemId } from "../lib/gtin";
+import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import type { ItemRow, ItemReferenceRow } from "./viewTypes";
@@ -157,7 +157,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
 
   return (
     <Modal opened={opened} onClose={handleClose} title={item ? `References — ${item.name}` : "References"} size="xl" centered>
-      {item && <Text size="sm" c="dimmed" ff="monospace" mb="md">{formatItemId(item.gtin13)}</Text>}
+      {item && <Text size="sm" c="dimmed" ff="monospace" mb="md">{formatGtinDisplay(item.gtin13)}</Text>}
       {refsLoad.error ? <LoadError what="references" message={refsLoad.error} onRetry={refsLoad.reload} />
         : loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 && !showAdd ? (
         <Text size="sm" c="dimmed" mb="md">No references yet.</Text>

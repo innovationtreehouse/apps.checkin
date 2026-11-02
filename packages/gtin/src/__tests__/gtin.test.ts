@@ -4,7 +4,6 @@ import {
   buildProvisionalGtin13,
   calculateChecksum,
   formatGtinDisplay,
-  formatItemId,
   formatProvisionalDisplay,
   isProvisionalGtin13,
   isValidGtin13,
@@ -166,17 +165,15 @@ describe("formatGtinDisplay", () => {
 
   it("returns_raw_gtin_for_non_0200_codes", () => {
     expect(formatGtinDisplay("5901234123457")).toBe("5901234123457");
-  });
-});
-
-describe("formatItemId", () => {
-  it("formats_provisional_gtin_as_P_plus_padded_sequence", () => {
-    expect(formatItemId(buildProvisionalGtin13(1))).toBe("P000001");
+    expect(formatGtinDisplay("4006381333931")).toBe("4006381333931");
   });
 
-  it("formats_catalog_gtin_as_subcategory_letter_sequence_compact", () => {
-    // buildGtin13("A",1,1) → "020001010001X" → subPart="01", catPos=01→A, seqPart="0001"
-    const gtin = buildGtin13("A", 1, 1);
-    expect(formatItemId(gtin)).toBe("01A0001");
+  it("returns_input_that_is_not_13_digits_unchanged", () => {
+    for (const value of ["", "*", "B", "0200", "0200abc000000"]) expect(formatGtinDisplay(value)).toBe(value);
+  });
+
+  it("returns_a_0200_gtin_with_no_category_letter_unchanged", () => {
+    expect(formatGtinDisplay("0200010000018")).toBe("0200010000018");
+    expect(formatGtinDisplay("0200019900016")).toBe("0200019900016");
   });
 });

@@ -50,28 +50,19 @@ export function formatProvisionalDisplay(gtin13: string): string {
   return "P" + String(sequence).padStart(6, "0");
 }
 
+/** The short ID of an org-minted GTIN; anything else, malformed input included, comes back as given. */
 export function formatGtinDisplay(gtin13: string): string {
+  if (!/^\d{13}$/.test(gtin13)) return gtin13;
   if (isProvisionalGtin13(gtin13)) {
     return formatProvisionalDisplay(gtin13);
   }
   if (gtin13.startsWith("0200")) {
     const subcategory = parseInt(gtin13.substring(4, 6), 10);
     const catPos = parseInt(gtin13.substring(6, 8), 10);
+    if (catPos < 1 || catPos > 26) return gtin13;
     const sequence = parseInt(gtin13.substring(8, 12), 10);
     const letter = String.fromCharCode(64 + catPos);
     return String(subcategory).padStart(2, "0") + letter + String(sequence).padStart(4, "0");
   }
   return gtin13;
-}
-
-export function formatItemId(gtin13: string): string {
-  if (isProvisionalGtin13(gtin13)) {
-    const sequence = parseProvisionalSequence(gtin13);
-    return "P" + String(sequence).padStart(6, "0");
-  }
-  const subPart = gtin13.slice(4, 6);
-  const catPos = parseInt(gtin13.slice(6, 8), 10);
-  const catLetter = String.fromCharCode(64 + catPos);
-  const seqPart = gtin13.slice(8, 12);
-  return `${subPart}${catLetter}${seqPart}`;
 }

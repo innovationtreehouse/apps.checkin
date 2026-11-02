@@ -38,6 +38,7 @@
   "dependencies": {
     "@checkin/component-kit": "*",
     "@checkin/component-ui": "*",
+    "@checkin/gtin": "*",
     "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",

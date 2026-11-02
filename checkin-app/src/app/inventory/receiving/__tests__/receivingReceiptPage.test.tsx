@@ -1,5 +1,5 @@
 import { HttpError } from "@checkin/component-ui";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ReceiptPage from "@checkin/workflow-mapping/pages/receipt";
 
@@ -59,6 +59,39 @@ const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).
 
 /** The value printed under a header field's label; the selector skips the table's same-named column header. */
 const field = (label: string) => screen.getByText(label, { selector: "p" }).nextElementSibling?.textContent;
+
+describe("the receiving page's Mapping column", () => {
+  const mapped = (fields: { assignedGtin13?: string; provisionalItemGtin13?: string }) => {
+    detail = {
+      ...baseDetail,
+      ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], assignedGtin13: null, provisionalItemGtin13: null, ...fields, conversionFactor: 2 }] as typeof baseDetail.ReceivedReceiptLineStatus,
+    };
+  };
+
+  it("shows a provisional part by its short ID and the line's name", () => {
+    mapped({ provisionalItemGtin13: "0200002701237" });
+    wrap();
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Wood glue ×2");
+    expect(mockApi).not.toHaveBeenCalled();
+  });
+
+  it("shows a catalog part by its short ID and catalog name", async () => {
+    mockApi.mockResolvedValue({ gtin13: "0200030200429", name: "Titebond III" });
+    mapped({ assignedGtin13: "0200030200429" });
+    wrap();
+    expect(await within(screen.getByRole("row", { name: /Wood glue/ })).findByText("03B0042 · Titebond III ×2")).toBeInTheDocument();
+    expect(mockApi).toHaveBeenCalledWith("/api/catalog/items/0200030200429");
+  });
+
+  it("still shows the ID when the catalog name fails to load", async () => {
+    mockApi.mockRejectedValue(new Error("nope"));
+    mapped({ assignedGtin13: "4006381333931" });
+    wrap();
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("4006381333931 ×2");
+    await act(async () => {});
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("4006381333931 ×2");
+  });
+});
 
 describe("the receiving page for one receipt", () => {
   it("shows the receipt's money and identity in the header", () => {

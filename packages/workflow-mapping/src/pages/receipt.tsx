@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
@@ -76,7 +77,7 @@ interface CatalogItem {
   subcategory: { name: string };
 }
 
-const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${item.gtin13}`;
+const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${formatGtinDisplay(item.gtin13)}`;
 
 /** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
 function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null } {
@@ -95,6 +96,20 @@ function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | nu
   return result && result.term === term ? { items: result.items, error: result.error } : { items: [], error: null };
 }
 
+/** Catalog names by GTIN, one request per distinct GTIN; a name that fails to load is left out and the part still shows its ID. */
+function useCatalogNames(gtins: string[]): Map<string, string> {
+  const [names, setNames] = useState<Map<string, string>>(new Map());
+  const key = [...new Set(gtins)].sort().join(",");
+  useEffect(() => {
+    if (!key) return;
+    let live = true;
+    Promise.all(key.split(",").map((gtin13) => api<CatalogItem>(`/api/catalog/items/${gtin13}`).catch(() => null)))
+      .then((rows) => { if (live) setNames(new Map(rows.flatMap((row) => (row ? [[row.gtin13, row.name] as const] : [])))); });
+    return () => { live = false; };
+  }, [key]);
+  return names;
+}
+
 type Form = "associate" | "propose" | null;
 
 /**
@@ -105,6 +120,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
+  const catalogNames = useCatalogNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? []));
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<{ lineId: number; form: Form }>({ lineId: 0, form: null });
 
@@ -208,6 +224,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
             const li = items.get(ls.receiptLineItemId);
             const lineBase = `${base}/lines/${ls.id}`;
             const isOpen = editable && open.lineId === ls.id && !!open.form;
+            const mappedGtin = ls.assignedGtin13 ?? ls.provisionalItemGtin13;
+            // A provisional part takes its name from the line's description when the receipt applies.
+            const mappedName = ls.assignedGtin13 ? catalogNames.get(ls.assignedGtin13) : li?.description;
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>
@@ -221,9 +240,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     <Badge size="sm" variant="light" color={LINE_STATUS_COLOR[ls.recognitionStatus] ?? "gray"}>
                       {LINE_STATUS_LABEL[ls.recognitionStatus] ?? ls.recognitionStatus}
                     </Badge>
-                    {(ls.assignedGtin13 ?? ls.provisionalItemGtin13) && (
+                    {mappedGtin && (
                       <Text size="xs" ff="monospace" c="dimmed">
-                        {ls.assignedGtin13 ?? ls.provisionalItemGtin13} ×{ls.conversionFactor}
+                        {formatGtinDisplay(mappedGtin)}{mappedName ? ` · ${mappedName}` : ""} ×{ls.conversionFactor}
                       </Text>
                     )}
                   </Table.Td>

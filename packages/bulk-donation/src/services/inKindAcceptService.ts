@@ -11,6 +11,7 @@ import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
 import type { CapitalReviewLine } from "../contract";
 import { ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "@checkin/gtin";
 
 export type InKindSource = "receipt" | "manual";
 export type InKindOutcome = "ACCEPTED" | "REFUSED" | "RETURNED";
@@ -184,7 +185,7 @@ function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[]
     giftSource: g.source,
     giftId: g.id,
     giftLineId: l.id,
-    description: l.description ?? l.gtin13 ?? "Donated item",
+    description: l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "Donated item"),
     quantity: l.quantity,
     costCents: costs[i],
     acquisitionDate: g.receiptDate ?? g.donationDate,

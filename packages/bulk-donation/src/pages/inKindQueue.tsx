@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useViewer } from "@checkin/component-ui";
 import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, useLoad, when } from "../components/api";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -115,7 +116,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
           <Table.Tbody>
             {item.lines.map((l) => (
               <Table.Tr key={l.id}>
-                <Table.Td>{l.description ?? l.gtin13 ?? "—"}</Table.Td>
+                <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
                 <Table.Td>{l.quantity}</Table.Td>
                 <Table.Td>
                   {needsValues ? (
