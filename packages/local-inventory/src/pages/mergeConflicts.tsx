@@ -4,7 +4,7 @@ import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "../lib/gtin";
 import { methodsFor, type QuantityMethod } from "../lib/mergeConflictMethods";
-import { api, errorMessage, useLoad } from "../components/api";
+import { api, errorMessage, notifyNavCounts, useLoad } from "../components/api";
 import { LoadError } from "@checkin/component-ui";
 
 interface ConflictRow {
@@ -57,6 +57,7 @@ export default function MergeConflictsPage() {
     setBusy(id);
     try {
       await api(`/inventory-merge-conflicts/${id}/resolve`, { method: "PUT", body: JSON.stringify({ quantityMethod }) });
+      notifyNavCounts();
       notifications.show({ message: "Conflict resolved", color: "green" });
       conflicts.reload();
     } catch (err) {

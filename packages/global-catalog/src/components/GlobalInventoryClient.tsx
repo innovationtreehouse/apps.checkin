@@ -191,7 +191,7 @@ function ConflictsTab({ conflicts, error, onRetry }: { conflicts: ReferenceConfl
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function GlobalInventoryClient() {
+export default function GlobalInventoryClient({ unresolvedConflicts = 0 }: { unresolvedConflicts?: number }) {
   const canEdit = useCanManage();
 
   const [page, setPage] = useState(1);
@@ -229,7 +229,7 @@ export default function GlobalInventoryClient() {
   const optionsError = categoriesLoad.error ?? subcategoriesLoad.error;
 
   const conflictsLoad = useLoad<ReferenceConflictRow[]>(conflictsOpened ? `/reference-conflicts?page=1&limit=${PAGE_LIMIT}` : null);
-  const conflictCount = conflictsLoad.data?.length ?? 0;
+  const conflictCount = conflictsLoad.data?.length ?? unresolvedConflicts;
 
   function handleTabChange(value: string | null) {
     if (value === "conflicts") setConflictsOpened(true);

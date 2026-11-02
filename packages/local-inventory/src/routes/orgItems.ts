@@ -7,7 +7,7 @@ import { httpError, mapServiceErrors, parseBody, query } from "@checkin/componen
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { getOrgId, getPrincipal, getServices } from "../runtime";
+import { getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { pageArgs } from "./_shared";
 
@@ -34,8 +34,8 @@ const updateSchema = createSchema
 
 /** The filter shared by the list and its count, so page totals match rows. */
 async function itemWhere(sp: URLSearchParams): Promise<Prisma.OrgItemWhereInput> {
-  const where: Prisma.OrgItemWhereInput = { orgId: await getOrgId() };
-  if (sp.get("unlocated") === "true") where.locationId = null;
+  const orgId = await getOrgId();
+  const where: Prisma.OrgItemWhereInput = sp.get("unlocated") === "true" ? unlocatedWhere(orgId) : { orgId };
   const q = sp.get("q")?.trim();
   if (q) {
     where.OR = [

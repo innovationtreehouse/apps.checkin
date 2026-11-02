@@ -74,7 +74,16 @@ export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonatio
   donationFailureReason: (...args) => getServices().receiptService.donationFailureReason(...args),
 };
 
-/** The host nav's pill counts for the current org: open receive-queue lines. */
-export async function getNavCounts(): Promise<{ openBackorders: number }> {
-  return { openBackorders: await getServices().receiveQueueService.countOpen(await getOrgId()) };
+/** An org's items with no location: the Needs a location list and its pill. */
+export const unlocatedWhere = (orgId: string) => ({ orgId, locationId: null });
+
+/** The host nav's pill counts for the current org: open receive-queue lines, pending merge conflicts and unlocated items. */
+export async function getNavCounts(): Promise<{ openBackorders: number; pendingMergeConflicts: number; unlocated: number }> {
+  const orgId = await getOrgId();
+  const [openBackorders, pendingMergeConflicts, unlocated] = await Promise.all([
+    getServices().receiveQueueService.countOpen(orgId),
+    db.inventoryMergeConflict.count({ where: { orgId, status: "pending" } }),
+    db.orgItem.count({ where: unlocatedWhere(orgId) }),
+  ]);
+  return { openBackorders, pendingMergeConflicts, unlocated };
 }

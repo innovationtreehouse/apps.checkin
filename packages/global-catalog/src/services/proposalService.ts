@@ -2,6 +2,8 @@ import { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import { createProposalRepository } from "../repositories/proposal";
 import { createCatalogRepository } from "../repositories/catalog";
+import { createConversionChallengeRepository } from "../repositories/conversionChallenge";
+import { createItemReferenceRepository } from "../repositories/itemReference";
 import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "../db/schema";
 
 const proposalRepo = createProposalRepository(db);
@@ -12,6 +14,22 @@ import { assertItemReferenceProposalTransition } from "../workflows/item-referen
 import { normalizeDescription } from "../lib/normalizeDescription";
 import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 import { assertNoReferenceConflict } from "./referenceMatchingService";
+
+/** The host nav's pill counts: every org's open items in the queues a catalog manager reviews. */
+export async function getNavCounts(): Promise<{
+  pendingProvisionalItems: number;
+  pendingItemReferences: number;
+  unresolvedConflicts: number;
+  pendingChallenges: number;
+}> {
+  const [pendingProvisionalItems, pendingItemReferences, unresolvedConflicts, pendingChallenges] = await Promise.all([
+    proposalRepo.countPendingProvisionalItems(),
+    proposalRepo.countPendingItemReferenceProposals(),
+    createItemReferenceRepository(db).countUnresolvedConflicts(),
+    createConversionChallengeRepository(db).countPending(),
+  ]);
+  return { pendingProvisionalItems, pendingItemReferences, unresolvedConflicts, pendingChallenges };
+}
 
 export interface CreateItemReferenceProposalParams {
   gtin13: string;

@@ -1,5 +1,5 @@
 "use client";
-import { createClient, lastPage, useViewer } from "@checkin/component-ui";
+import { createClient, lastPage, notifyNavCounts, useViewer } from "@checkin/component-ui";
 
 export { lastPage } from "@checkin/component-ui";
 
@@ -10,7 +10,16 @@ export { lastPage } from "@checkin/component-ui";
  */
 const BASE = "/api/catalog";
 
-export const { api, useLoad } = createClient(BASE);
+const client = createClient(BASE);
+
+export const { useLoad } = client;
+
+/** Sends a request; a successful write tells the host nav to refetch its pills. */
+export async function api<T>(path: string, options: Parameters<typeof client.api>[1] = {}): Promise<T> {
+  const answer = await client.api<T>(path, options);
+  if (options.method && options.method !== "GET") notifyNavCounts();
+  return answer;
+}
 
 /** The page to show: archiving the only row on the last page shrinks the list under the person. */
 export function clampPage(page: number, total: number, pageSize: number): number {
