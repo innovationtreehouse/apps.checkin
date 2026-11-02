@@ -6,10 +6,12 @@
  * or removes themself or anyone in their household, and a refusal writes
  * nothing. A permitted change writes the row and one audit row together. An
  * unknown person is refused as not found, and an org-level bucket takes no
- * approvers.
+ * approvers. Whether a bucket is org-level changes only when no approver or
+ * awaited Board seat depends on it, and a restore brings an archived bucket back.
  */
 import { createBudgetOwner, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
+import { linesAwaitingBoardSeat } from '@checkin/expense';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
 const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null }> = {
@@ -18,11 +20,12 @@ const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null }> =
     9: { isOrgLevel: false, ownerId: 2 },
 };
 const tx = {
-    budgetOwner: { create: jest.fn(), update: jest.fn() },
+    budgetOwner: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     budgetOwnerTreasurer: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
     auditLog: { create: jest.fn() },
 };
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ linesAwaitingBoardSeat: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
@@ -127,6 +130,96 @@ describe('setBucketOwner', () => {
 
     test('refuses an org-level bucket', async () => {
         await expect(setBucketOwner(1, 8, 3)).rejects.toMatchObject({ status: 409 });
+        nothingWritten();
+    });
+});
+
+describe('updateBudgetOwner: org-level and restore', () => {
+    const awaiting = linesAwaitingBoardSeat as jest.Mock;
+    const stored = (over: Record<string, unknown> = {}) => ({
+        name: 'Shop', quickBooksClassId: '12', isOrgLevel: false, archivedAt: null, ownerId: null, _count: { treasurers: 0 }, ...over,
+    });
+
+    beforeEach(() => {
+        awaiting.mockResolvedValue(0);
+        tx.budgetOwner.update.mockResolvedValue({ id: 7 });
+    });
+
+    test.each([
+        ['an owner', { ownerId: 2 }],
+        ['a treasurer', { _count: { treasurers: 1 } }],
+    ])('refuses to make a bucket holding %s org-level, writing nothing', async (_name, over) => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored(over));
+        await expect(updateBudgetOwner(1, 7, { isOrgLevel: true })).rejects.toMatchObject({
+            status: 409,
+            message: "The Board must remove this bucket's owner and treasurers first.",
+        });
+        nothingWritten();
+    });
+
+    test('makes a bucket with no approvers org-level and audits the change', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored());
+        await updateBudgetOwner(1, 7, { isOrgLevel: true });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { isOrgLevel: true } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                action: 'EDIT',
+                tableName: 'BudgetOwner',
+                affectedEntityId: 7,
+                oldData: expect.objectContaining({ isOrgLevel: false }),
+                newData: { isOrgLevel: true },
+            }),
+        });
+        expect(awaiting).not.toHaveBeenCalled();
+    });
+
+    test('refuses to make an org-level bucket a program bucket while a Board seat is awaited, writing nothing', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        awaiting.mockResolvedValue(2);
+        await expect(updateBudgetOwner(1, 8, { isOrgLevel: false })).rejects.toMatchObject({
+            status: 409,
+            message: 'Open expenses in this bucket still need a Board signature; have them signed or recorded first.',
+        });
+        expect(awaiting).toHaveBeenCalledWith(8);
+        nothingWritten();
+    });
+
+    test('makes an org-level bucket a program bucket with no Board seat awaited, and audits the change', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        await updateBudgetOwner(1, 8, { isOrgLevel: false });
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                action: 'EDIT',
+                oldData: expect.objectContaining({ isOrgLevel: true }),
+                newData: { isOrgLevel: false },
+            }),
+        });
+    });
+
+    test('an edit that keeps the flag checks neither approvers nor seats', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ ownerId: 2 }));
+        await updateBudgetOwner(1, 9, { name: 'Renamed', isOrgLevel: false });
+        expect(awaiting).not.toHaveBeenCalled();
+        expect(tx.budgetOwner.update).toHaveBeenCalled();
+    });
+
+    test('rejects a flag that is not a boolean', async () => {
+        await expect(updateBudgetOwner(1, 7, { isOrgLevel: 'yes' })).rejects.toMatchObject({ status: 400 });
+        nothingWritten();
+    });
+
+    test('restores an archived bucket and audits it', async () => {
+        const archivedAt = new Date('2026-10-01');
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ archivedAt }));
+        await updateBudgetOwner(1, 7, { archived: false });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { archivedAt: null } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ action: 'EDIT', oldData: expect.objectContaining({ archivedAt }), newData: { archivedAt: null } }),
+        });
+    });
+
+    test('archives only through the archive route', async () => {
+        await expect(updateBudgetOwner(1, 7, { archived: true })).rejects.toMatchObject({ status: 400 });
         nothingWritten();
     });
 });

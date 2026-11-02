@@ -258,6 +258,75 @@ describe("budgets page write errors", () => {
   });
 });
 
+describe("budgets org-level and restore", () => {
+  const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
+
+  it("saves a changed org-level flag from the edit form", async () => {
+    mockServer(ok);
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Org-level/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Robotics", quickBooksClassId: null, isOrgLevel: true }) }),
+    ]]));
+  });
+
+  it("shows the refusal and keeps the form open", async () => {
+    mockServer(async () => jsonResponse(409, { error: "The Board must remove this bucket's owner and treasurers first." }));
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Org-level/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Bucket not saved",
+      message: "The Board must remove this bucket's owner and treasurers first. (409)",
+    })));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
+  const archived = async () => jsonResponse(200, [{ ...programBucket, archivedAt: "2026-10-01T00:00:00.000Z" }]);
+
+  it("restores an archived bucket", async () => {
+    mockServer(ok, { buckets: archived });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Show archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ archived: false }) }),
+    ]]));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket restored." })));
+  });
+
+  it("offers Restore only on an archived bucket", async () => {
+    mockServer(ok);
+    renderWithProviders(<BudgetsPage />);
+    await screen.findByRole("button", { name: "Archive" });
+    expect(screen.queryByRole("button", { name: "Restore" })).not.toBeInTheDocument();
+  });
+
+  it("shows a restore failure in a red chip", async () => {
+    mockServer(async () => jsonResponse(500, { error: "Refused" }), { buckets: archived });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Show archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Bucket not restored",
+      message: "Refused (500)",
+    })));
+  });
+});
+
 describe("budgets approvers owner", () => {
   const people = async () => jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }, { id: 11, name: "Olive Owner" }]);
   const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);

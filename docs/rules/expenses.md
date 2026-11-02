@@ -286,11 +286,33 @@ Things the app takes as true because they are handled outside it.
   system. Archiving keeps the row, because finance records point at it.
   [Decision]
 
+- Finance may restore an archived bucket. It comes back with its class, owner
+  and treasurers. An archived bucket keeps its class, so no other bucket can
+  hold that class when it returns. Each restore is recorded.
+  [Decision — owner ruling 2026-11-01]
+
 - A bucket's approvers are its owner and its treasurers, stored on the bucket
   and not derived from any program: a budget and a program need not match one
-  to one. An org-level bucket has none, and whether a bucket is org-level is set
-  when it is created and never changes.
+  to one. An org-level bucket has none.
   [Decision — owner]
+
+- Finance may change whether a bucket is org-level, and each change is recorded.
+  A bucket does not become org-level while it holds an owner or treasurers: the
+  Board removes them first. An org-level bucket does not stop being org-level
+  while an open expense in it has a non-Everyday card-charge line with no Board
+  authorization and no Board signature, so the change never removes a Board seat
+  a line still owes.
+  [Decision — owner ruling 2026-11-01; *Policy: Financial Policy, Art. XII §XII.4*]
+
+- A change to whether a bucket is org-level undoes no signature, and the seats
+  still unsigned follow the bucket as it now is. A bucket that becomes org-level
+  gives its open non-Everyday card-charge lines a Board seat, signed lines
+  included, unless a Board authorization is recorded. Its unapproved lines go to
+  a Board member, who gives no reason. A bucket that stops being org-level has no
+  approvers until the Board names them, and a Board member in their place gives
+  the reason. Once it is a program bucket, its lines take no Board seat for being
+  in it, on finance's change alone.
+  [Decision — owner ruling 2026-11-01]
 
 - A bucket's owner and treasurers are set by the board alone, because they come
   from the board-approved budget. Nobody sets, replaces or removes themself or
