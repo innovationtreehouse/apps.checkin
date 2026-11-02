@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
+import { LoadError } from '@checkin/component-ui';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { useLoad } from '@/lib/api';
 import { Alert, Anchor, Button, Card, Center, Group, Loader, Modal, Select, Stack, Table, Tabs, Text, TextInput } from '@mantine/core';
 import { ToolLevelBadge, toToolLevel, toolLevelDot, toolLevelLabel } from '@/components/ToolLevelBadge';
 import { ScrollableTabsList } from '@/components/ui/ScrollableTabsList';
@@ -146,8 +148,8 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
   onToolsChange: () => void;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [certs, setCerts] = useState<Certification[]>([]);
-  const [loadingCerts, setLoadingCerts] = useState(false);
+  const { data: certsAnswer, error: certsError, reload: reloadCerts } = useLoad<Certification[]>(expanded === null ? null : `/api/shop/certifications?toolId=${expanded}`);
+  const certs = certsAnswer ?? [];
   const [editingGuide, setEditingGuide] = useState<{ id: number; value: string } | null>(null);
   const [savingGuide, setSavingGuide] = useState(false);
   const [msg, setMsg] = useState("");
@@ -155,21 +157,7 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
   const [grantSaving, setGrantSaving] = useState(false);
   const [search, setSearch] = useState("");
 
-  const loadCerts = async (toolId: number) => {
-    setLoadingCerts(true);
-    try {
-      const res = await fetch(`/api/shop/certifications?toolId=${toolId}`);
-      if (res.ok) setCerts(await res.json());
-    } finally {
-      setLoadingCerts(false);
-    }
-  };
-
-  const toggle = (toolId: number) => {
-    if (expanded === toolId) { setExpanded(null); setCerts([]); return; }
-    setExpanded(toolId);
-    void loadCerts(toolId);
-  };
+  const toggle = (toolId: number) => setExpanded(expanded === toolId ? null : toolId);
 
   const saveGuide = async () => {
     if (!editingGuide) return;
@@ -184,10 +172,7 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
         setMsg("Safety guide updated.");
         setEditingGuide(null);
         onToolsChange();
-        if (expanded === editingGuide.id) {
-          const toolRes = await fetch(`/api/shop/certifications?toolId=${editingGuide.id}`);
-          if (toolRes.ok) setCerts(await toolRes.json());
-        }
+        if (expanded === editingGuide.id) reloadCerts();
       } else {
         setMsg("Failed to update.");
       }
@@ -231,7 +216,8 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
 
               {isOpen && (
                 <Card.Section withBorder p="md">
-                  {loadingCerts ? <Center py="sm"><Loader size="sm" /></Center> : (
+                  {certsError && <LoadError what="certifications" message={certsError} onRetry={reloadCerts} />}
+                  {certsAnswer === null ? (!certsError && <Center py="sm"><Loader size="sm" /></Center>) : (
                     <>
                       <Text fw={600} size="sm" c="dimmed" mb="sm">Certified Treehouse Members</Text>
                       {certs.length === 0 ? (
@@ -251,7 +237,7 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
                           {grantMsg && <Text size="sm" c="cyan" mb="sm">{grantMsg}</Text>}
                           <GrantForm tools={tools} members={members} prefillToolId={tool.id}
                             canGrantCertifier={isAdmin}
-                            onGranted={m => { setGrantMsg(m); void loadCerts(tool.id); }}
+                            onGranted={m => { setGrantMsg(m); reloadCerts(); }}
                             saving={grantSaving} setSaving={setGrantSaving} />
                         </>
                       )}
@@ -279,27 +265,13 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
 
 function PersonTab({ members, tools, isCertifier, isAdmin }: { members: Member[]; tools: Tool[]; isCertifier: boolean; isAdmin: boolean }) {
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [certs, setCerts] = useState<Certification[]>([]);
-  const [loadingCerts, setLoadingCerts] = useState(false);
+  const { data: certsAnswer, error: certsError, reload: reloadCerts } = useLoad<Certification[]>(expanded === null ? null : `/api/shop/certifications?personId=${expanded}`);
+  const certs = certsAnswer ?? [];
   const [search, setSearch] = useState("");
   const [grantMsg, setGrantMsg] = useState("");
   const [grantSaving, setGrantSaving] = useState(false);
 
-  const loadCerts = async (memberId: number) => {
-    setLoadingCerts(true);
-    try {
-      const res = await fetch(`/api/shop/certifications?personId=${memberId}`);
-      if (res.ok) setCerts(await res.json());
-    } finally {
-      setLoadingCerts(false);
-    }
-  };
-
-  const toggle = (memberId: number) => {
-    if (expanded === memberId) { setExpanded(null); setCerts([]); return; }
-    setExpanded(memberId);
-    void loadCerts(memberId);
-  };
+  const toggle = (memberId: number) => setExpanded(expanded === memberId ? null : memberId);
 
   const filtered = members.filter(personQueryMatcher(search));
 
@@ -323,7 +295,8 @@ function PersonTab({ members, tools, isCertifier, isAdmin }: { members: Member[]
 
               {isOpen && (
                 <Card.Section withBorder p="md">
-                  {loadingCerts ? <Center py="sm"><Loader size="sm" /></Center> : (
+                  {certsError && <LoadError what="certifications" message={certsError} onRetry={reloadCerts} />}
+                  {certsAnswer === null ? (!certsError && <Center py="sm"><Loader size="sm" /></Center>) : (
                     <>
                       <Text fw={600} size="sm" c="dimmed" mb="sm">Tool certifications</Text>
                       {certs.length === 0 ? (
@@ -343,7 +316,7 @@ function PersonTab({ members, tools, isCertifier, isAdmin }: { members: Member[]
                           {grantMsg && <Text size="sm" c="cyan" mb="sm">{grantMsg}</Text>}
                           <GrantForm tools={tools} members={members} prefillMemberId={member.id}
                             canGrantCertifier={isAdmin}
-                            onGranted={m => { setGrantMsg(m); void loadCerts(member.id); }}
+                            onGranted={m => { setGrantMsg(m); reloadCerts(); }}
                             saving={grantSaving} setSaving={setGrantSaving} />
                         </>
                       )}
@@ -362,18 +335,12 @@ function PersonTab({ members, tools, isCertifier, isAdmin }: { members: Member[]
 // ---- All Assignments tab ----
 
 function AllTab({ tools }: { tools: Tool[] }) {
-  const [certs, setCerts] = useState<Certification[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, error, reload } = useLoad<Certification[]>('/api/shop/certifications?all=true');
+  const certs = data ?? [];
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    fetch('/api/shop/certifications?all=true')
-      .then(r => r.ok ? r.json() : [])
-      .then(setCerts)
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <Center py="md"><Loader /></Center>;
+  const loadError = error && <LoadError what="assignments" message={error} onRetry={reload} />;
+  if (data === null) return loadError || <Center py="md"><Loader /></Center>;
 
   const s = search.toLowerCase();
 
@@ -414,6 +381,7 @@ function AllTab({ tools }: { tools: Tool[] }) {
 
   return (
     <div>
+      {loadError}
       <Group justify="space-between" align="center" mb="md" wrap="wrap">
         <TextInput placeholder="Filter by tool or member..." value={search} onChange={e => setSearch(e.currentTarget.value)} style={{ flex: '1 1 220px' }} />
         <Text size="sm" c="dimmed">{dotCount} assignment{dotCount !== 1 ? 's' : ''}</Text>
@@ -498,27 +466,14 @@ function AllTab({ tools }: { tools: Tool[] }) {
 
 export function ToolManagementPanel() {
   const { user, loading: authLoading, ready } = useRequireRole([]);
-  const hasFetched = useRef(false);
 
   const [tab, setTab] = useState<Tab>('tools');
-  const [tools, setTools] = useState<Tool[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: toolsAnswer, error: toolsError, reload: reloadTools } = useLoad<Tool[]>(ready ? '/api/shop/tools' : null);
+  const { data: membersAnswer, error: membersError, reload: reloadMembers } = useLoad<{ orgMembers?: Member[] }>(ready ? '/api/shop/org-members' : null);
+  const tools = toolsAnswer ?? [];
+  const members = membersAnswer?.orgMembers ?? [];
 
-  useEffect(() => {
-    if (ready && !hasFetched.current) {
-      hasFetched.current = true;
-      Promise.all([
-        fetch('/api/shop/tools').then(r => r.ok ? r.json() : []),
-        fetch('/api/shop/org-members').then(r => r.ok ? r.json() : { orgMembers: [] }),
-      ]).then(([toolData, memberData]) => {
-        setTools(toolData);
-        setMembers(memberData.orgMembers ?? []);
-      }).finally(() => setLoading(false));
-    }
-  }, [ready]);
-
-  if (loading || authLoading) {
+  if ((toolsAnswer === null && !toolsError) || (membersAnswer === null && !membersError) || authLoading) {
     return <PageLoader minHeight="40vh" />;
   }
 
@@ -539,11 +494,10 @@ export function ToolManagementPanel() {
     );
   }
 
-  const reloadTools = () => {
-    fetch('/api/shop/tools').then(r => r.ok ? r.json() : []).then(setTools);
-  };
-
   return (
+    <>
+    {toolsError && <LoadError what="tools" message={toolsError} onRetry={reloadTools} />}
+    {membersError && <LoadError what="members" message={membersError} onRetry={reloadMembers} />}
     <Tabs value={tab} onChange={(v) => setTab(v as Tab)} keepMounted={false}>
       <ScrollableTabsList mb="md">
         <Tabs.Tab value="tools">All Tools</Tabs.Tab>
@@ -552,10 +506,10 @@ export function ToolManagementPanel() {
       </ScrollableTabsList>
 
       <Tabs.Panel value="tools">
-        <ToolsTab tools={tools} members={members} isAdmin={!!isAdmin} isCertifier={!!isCertifier} onToolsChange={reloadTools} />
+        {toolsAnswer !== null && <ToolsTab tools={tools} members={members} isAdmin={!!isAdmin} isCertifier={!!isCertifier} onToolsChange={reloadTools} />}
       </Tabs.Panel>
       <Tabs.Panel value="person">
-        <PersonTab members={members} tools={tools} isCertifier={!!isCertifier} isAdmin={!!isAdmin} />
+        {membersAnswer !== null && <PersonTab members={members} tools={tools} isCertifier={!!isCertifier} isAdmin={!!isAdmin} />}
       </Tabs.Panel>
       {canSeeAll && (
         <Tabs.Panel value="all">
@@ -563,5 +517,6 @@ export function ToolManagementPanel() {
         </Tabs.Panel>
       )}
     </Tabs>
+    </>
   );
 }

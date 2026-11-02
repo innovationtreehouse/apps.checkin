@@ -84,7 +84,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x"));
     await advance(30000);
     expect(result.current.error).toBe("Boom");
-    act(() => result.current.reload());
+    act(() => { void result.current.reload(); });
     await advance();
     expect(fetchMock).toHaveBeenCalledTimes(6);
     expect(result.current).toMatchObject({ retrying: true, error: null });
@@ -443,5 +443,44 @@ describe("a write re-reads cached loads", () => {
     await api("/y", { method: "POST", invalidate: false });
     await advance();
     expect(gets(fetchMock)).toBe(1);
+  });
+});
+
+describe("the promise from reload", () => {
+  it("settles only after the fresh answer has arrived", async () => {
+    let finish: (answer: Response) => void = () => {};
+    let reads = 0;
+    stubFetch(() => {
+      reads += 1;
+      return reads === 1 ? json({ n: 1 }) : new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    const { result } = renderHook(() => useLoad<{ n: number }>("/reload-fresh"));
+    await advance(0);
+
+    let settled = false;
+    void result.current.reload().then(() => { settled = true; });
+    await advance(0);
+    expect(settled).toBe(false);
+
+    finish(json({ n: 2 }));
+    await advance(0);
+    expect(settled).toBe(true);
+    expect(result.current.data).toEqual({ n: 2 });
+  });
+
+  it("settles without rejecting on a failed load, whose message lands in error", async () => {
+    let reads = 0;
+    stubFetch(() => {
+      reads += 1;
+      return reads === 1 ? json({ n: 1 }) : json({ error: "No such thing" }, 404);
+    });
+    const { result } = renderHook(() => useLoad<{ n: number }>("/reload-failed"));
+    await advance(0);
+
+    let outcome = "pending";
+    void result.current.reload().then(() => { outcome = "resolved"; }, () => { outcome = "rejected"; });
+    await advance(0);
+    expect(outcome).toBe("resolved");
+    expect(result.current.error).toBe("No such thing");
   });
 });

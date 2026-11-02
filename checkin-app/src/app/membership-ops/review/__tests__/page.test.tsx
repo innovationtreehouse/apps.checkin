@@ -8,6 +8,8 @@ import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { ModalsProvider } from "@mantine/modals";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { jsonBody } from "@/test-helpers/jsonBody";
+import { settle } from "@/test-helpers/settle";
 import MembershipReviewPage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so the confirmed action
@@ -154,7 +156,7 @@ describe("membership-ops/review page", () => {
 
   it("shows the forbidden card when the queue endpoint returns 403", async () => {
     setSession({ id: 1, isSysadmin: true });
-    global.fetch = jest.fn(async () => ({ ok: false, status: 403, json: async () => ({}) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 403, ...jsonBody(({})) })) as unknown as typeof fetch;
     renderPage();
 
     expect(await screen.findByText("Background-check review")).toBeInTheDocument();
@@ -281,5 +283,68 @@ describe("membership-ops/review page", () => {
 
     expect(await screen.findByText("A board member can start this review over.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start review over" })).not.toBeInTheDocument();
+  });
+});
+
+describe("failed load", () => {
+  it("shows an error with a retry, never the empty state", async () => {
+    setSession({ id: 1 });
+    mockFetchJson({});
+    renderPage();
+
+    await settle();
+    expect(screen.queryByText("Nothing awaiting your review right now.")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the review queue")).toBeInTheDocument();
+
+    mockFetchJson({ "/api/membership/reviews": { queue: [] } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Nothing awaiting your review right now.")).toBeInTheDocument();
+  });
+});
+
+describe("failed load of a side list", () => {
+  it.each([
+    ["Show incomplete reviews I've already approved", "?mine=1", "Couldn't load the reviews you approved", "None — every review you approved has cleared."],
+    ["Show blocked reviews I rejected", "?rejected=1", "Couldn't load the reviews you rejected", "None — no blocked review carries your rejection."],
+  ])("%s shows an error, never the empty text", async (label, query, errorTitle, emptyText) => {
+    setSession({ id: 1 });
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const failed = String(input).includes(query);
+      const body = failed ? {} : { queue: [] };
+      return { ok: !failed, status: failed ? 404 : 200, ...jsonBody(body), text: async () => JSON.stringify(body) } as Response;
+    }) as unknown as typeof fetch;
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: label }));
+    await settle();
+    expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
+    expect(await screen.findByText(errorTitle)).toBeInTheDocument();
+  });
+});
+
+describe("Start review over while the reload is in flight", () => {
+  it("keeps the button disabled until the list answers", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const row = { ...queue.queue[0], id: 400 };
+    let finishReload: () => void = () => {};
+    let mineReads = 0;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+      if (init?.method === "POST") return answer({});
+      if (!String(input).includes("mine=1")) return answer({ queue: [] });
+      mineReads += 1;
+      if (mineReads === 1) return answer({ queue: [row] });
+      return new Promise<Response>((resolve) => { finishReload = () => resolve(answer({ queue: [] })); });
+    }) as unknown as typeof fetch;
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start review over" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start over" }));
+    await waitFor(() => expect(mineReads).toBe(2));
+
+    expect(screen.getByRole("button", { name: "Start review over" })).toBeDisabled();
+    finishReload();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Start review over" })).not.toBeInTheDocument());
   });
 });

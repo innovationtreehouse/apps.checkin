@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, Suspense } from "react";
 import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { useSession } from "next-auth/react";
+import { useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -96,8 +98,6 @@ function ApplicationsBoard() {
   // The disabled state is UX only — the server is the real enforcement.
   const ownHousehold = (r: ProcessRow) =>
     sharesHousehold(me?.householdId, r.orgMembership?.householdId);
-  const [rows, setRows] = useState<ProcessRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [messageId, setMessageId] = useState<number | null>(null);
@@ -110,17 +110,10 @@ function ApplicationsBoard() {
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
 
-  const fetchRows = useCallback((archived: boolean) =>
-    fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`)
-      .then(async (res) => { if (res.ok) setRows((await res.json()).processes || []); })
-      .finally(() => setLoading(false)), []);
-
-  const load = (archived: boolean) => {
-    setLoading(true);
-    return fetchRows(archived);
-  };
-
-  useEffect(() => { fetchRows(showArchived); }, [fetchRows, showArchived]);
+  const { data, error: loadError, reload } = useLoad<{ processes?: ProcessRow[] }>(
+    `/api/membership-ops/applications${showArchived ? "?archived=1" : ""}`,
+  );
+  const rows = data?.processes ?? [];
 
   const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
     setBusyId(processId);
@@ -135,7 +128,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Updated." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         setMessage(data.error || "Action failed.");
@@ -160,11 +153,12 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Sent back for re-review." });
-        await load(showArchived);
+        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
+        await reload();
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
         notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
-        await load(showArchived);
+        reload();
       } else {
         setMessage(data.error || "Reset failed.");
       }
@@ -188,7 +182,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Application closed." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         setMessage(data.error || "Couldn't close the application.");
@@ -253,7 +247,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Application reopened." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: false });
@@ -278,11 +272,11 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Certified — membership activated." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
         notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: false });
-        await load(showArchived);
+        reload();
       } else {
         setMessage(data.error || "Certification failed.");
       }
@@ -306,7 +300,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Refund recorded." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         setMessage(data.error || "Couldn't record the refund.");
@@ -373,10 +367,10 @@ function ApplicationsBoard() {
       <Switch
         label="Show closed applications"
         checked={showArchived}
-        onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
+        onChange={(e) => setShowArchived(e.currentTarget.checked)}
       />
 
-      {!loading && rows.length > 0 && !showArchived && (
+      {rows.length > 0 && !showArchived && (
         <>
           {rows.some((r) => r.status === "BLOCKED") && (
             <Alert
@@ -403,8 +397,10 @@ function ApplicationsBoard() {
 
       {!showArchived && <ActiveFilterNotice active={active} label={statusLabel} onClear={clear} />}
 
-      {loading ? (
-        <Center py="xl"><Loader /></Center>
+      {loadError && <LoadError what="applications" message={loadError} onRetry={reload} />}
+
+      {data === null ? (
+        !loadError && <Center py="xl"><Loader /></Center>
       ) : rows.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
           <Text c="dimmed">{showArchived ? "No closed applications." : "No in-flight membership applications."}</Text>

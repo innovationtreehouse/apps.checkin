@@ -5,6 +5,8 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { jsonBody } from "@/test-helpers/jsonBody";
+import { settle } from "@/test-helpers/settle";
 import { ToolManagementPanel } from "../ToolManagementPanel";
 
 // Note: GrantForm's member/tool Select mounts its option list in the DOM even
@@ -213,12 +215,12 @@ describe("ToolManagementPanel", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (init?.method === "POST") {
-        return { ok: false, status: 400, json: async () => ({ error: "Level exceeds your authorization." }) } as Response;
+        return { ok: false, status: 400, ...jsonBody(({ error: "Level exceeds your authorization." })) } as Response;
       }
-      if (url.includes("/api/shop/certifications?toolId=1")) return { ok: true, json: async () => [] } as Response;
-      if (url.includes("/api/shop/tools")) return { ok: true, json: async () => [TABLE_SAW] } as Response;
-      if (url.includes("/api/shop/org-members")) return { ok: true, json: async () => ({ orgMembers: MEMBERS }) } as Response;
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
+      if (url.includes("/api/shop/certifications?toolId=1")) return { ok: true, ...jsonBody([]) } as Response;
+      if (url.includes("/api/shop/tools")) return { ok: true, ...jsonBody([TABLE_SAW]) } as Response;
+      if (url.includes("/api/shop/org-members")) return { ok: true, ...jsonBody(({ orgMembers: MEMBERS })) } as Response;
+      return { ok: false, status: 404, ...jsonBody(({})) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<ToolManagementPanel />);
@@ -271,10 +273,10 @@ describe("ToolManagementPanel", () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (init?.method === "PATCH") return { ok: false, status: 500, json: async () => ({}) } as Response;
-      if (url.includes("/api/shop/tools")) return { ok: true, json: async () => [TABLE_SAW] } as Response;
-      if (url.includes("/api/shop/org-members")) return { ok: true, json: async () => ({ orgMembers: MEMBERS }) } as Response;
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
+      if (init?.method === "PATCH") return { ok: false, status: 500, ...jsonBody(({})) } as Response;
+      if (url.includes("/api/shop/tools")) return { ok: true, ...jsonBody([TABLE_SAW]) } as Response;
+      if (url.includes("/api/shop/org-members")) return { ok: true, ...jsonBody(({ orgMembers: MEMBERS })) } as Response;
+      return { ok: false, status: 404, ...jsonBody(({})) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<ToolManagementPanel />);
@@ -350,19 +352,6 @@ describe("ToolManagementPanel", () => {
     );
   });
 
-  it("AllTab: shows an empty state when the certifications fetch fails", async () => {
-    setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({
-      "/api/shop/tools": [TABLE_SAW],
-      "/api/shop/org-members": { orgMembers: MEMBERS },
-    });
-    renderWithProviders(<ToolManagementPanel />);
-
-    fireEvent.click(await screen.findByRole("tab", { name: "All Assignments" }));
-
-    expect(await screen.findByText("No assignments found.")).toBeInTheDocument();
-  });
-
   it("AllTab: search narrows the matrix by tool or member name", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
@@ -389,5 +378,58 @@ describe("ToolManagementPanel", () => {
     fireEvent.change(screen.getByPlaceholderText("Filter by tool or member..."), { target: { value: "zzz" } });
     expect(screen.getByText("Table Saw")).toBeInTheDocument();
     expect(screen.getByText("Laser Cutter")).toBeInTheDocument();
+  });
+});
+
+describe("ToolManagementPanel failed load", () => {
+  it("shows an error with a retry, never the empty state, when the tools fail to load", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/shop/org-members": { orgMembers: MEMBERS } });
+    renderWithProviders(<ToolManagementPanel />);
+
+    await settle();
+    expect(screen.queryByText("No tools match.")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load tools")).toBeInTheDocument();
+
+    mockFetchJson({ "/api/shop/tools": [TABLE_SAW], "/api/shop/org-members": { orgMembers: MEMBERS } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Table Saw")).toBeInTheDocument();
+  });
+
+  it("shows an error with a retry, never the empty state, when the members fail to load", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/shop/tools": [TABLE_SAW] });
+    renderWithProviders(<ToolManagementPanel />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "By Person" }));
+    await settle();
+    expect(screen.queryByText("No members match.")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load members")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a tool", "All Tools", "Table Saw", "No certifications yet."],
+    ["a person", "By Person", "Alice", "No certifications."],
+  ])("shows an error, never the empty text, when %s's certifications fail to load", async (_what, tab, row, emptyText) => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/shop/tools": [TABLE_SAW], "/api/shop/org-members": { orgMembers: MEMBERS } });
+    renderWithProviders(<ToolManagementPanel />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: tab }));
+    fireEvent.click(await screen.findByText(row));
+    await settle();
+    expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load certifications")).toBeInTheDocument();
+  });
+
+  it("shows an error, never the empty text, when all assignments fail to load", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/shop/tools": [], "/api/shop/org-members": { orgMembers: MEMBERS } });
+    renderWithProviders(<ToolManagementPanel />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "All Assignments" }));
+    await settle();
+    expect(screen.queryByText("No assignments found.")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load assignments")).toBeInTheDocument();
   });
 });
