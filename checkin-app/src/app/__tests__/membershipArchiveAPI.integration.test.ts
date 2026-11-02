@@ -24,6 +24,8 @@ import { GET as ADMIN_LIST } from '@/app/api/membership-ops/applications/route';
 import { getIntakeState, startIntake, submitIntake } from '@/lib/membership/intake';
 import { recordRefund } from '@/lib/membership/refund';
 import { activateByProcessId } from '@/lib/membership/payment';
+import { todoCounts } from '@/lib/nav/todoCounts';
+import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -378,6 +380,17 @@ describe('Membership application archive API', () => {
         const archivedBody = await archivedRes.json();
         expect(archivedBody.processes.map((p: { id: number }) => p.id)).toContain(archivedId);
         expect(archivedBody.processes.every((p: { status: string }) => p.status === 'ARCHIVED')).toBe(true);
+    });
+
+    it('the Applications badge counts the rows the default list shows, leaving out a closed application', async () => {
+        const { processId } = await makeProcess('ClosedForBadge', 'PENDING_PAYMENT');
+        await makeProcess('OpenForBadge', 'PENDING_PAYMENT');
+        asBoard(boardId);
+        await ARCHIVE(req({ processId }) as never);
+
+        const listed = (await (await ADMIN_LIST(listReq() as never)).json()).processes;
+        const counts = await todoCounts({ id: boardId, isBoardMember: true } as AuthenticatedUser);
+        expect(counts.admin?.applicationsTotal).toBe(listed.length);
     });
 
     // --- record refund (lib; the route lands with its registry entry) ---
