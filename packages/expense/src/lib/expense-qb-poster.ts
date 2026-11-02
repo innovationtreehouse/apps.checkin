@@ -48,7 +48,7 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
     : { qbMatchState: "NOT_TEST_DATA", note: "not sent to QuickBooks: not test data" };
 }
 
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class";
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class" | "unpostable";
 
 /** When the lane's posting switched on, or null while it is off. */
 export async function qbPostingOnAt(orgId: string, client: Db = db): Promise<Date | null> {
@@ -210,7 +210,9 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * re-read before the create, or refused as fault 6210), or not allowed to create → UNBOOKED for
  * finance; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by the
  * drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE (finance's retry re-arms it); an expense the
- * test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. A line whose bucket
+ * test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
+ * own data cannot make an entry (no receipt date, no lines, a line with no account) → NEEDS_FINANCE
+ * at once with the reason, no attempt counted. A line whose bucket
  * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At the daily create limit the
  * expense waits for the next UTC day, nothing recorded. With the closing date unread nothing is
  * created, and a miss leaves the expense as it is.
@@ -310,6 +312,8 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
       built = { error: e instanceof Error ? e.message : String(e) };
     }
     if ("error" in built) return recordFailure(tx, current, built.error);
+    // Retrying cannot fix the expense's own data, so it waits for finance with no attempt counted.
+    if ("unpostable" in built) return settle(tx, current, "unpostable", { qbMatchState: "NEEDS_FINANCE" }, built.unpostable);
     if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
     // State stays postable, so the next drain posts it once the bucket has a Class.
     if ("noClass" in built) return "no_class";
@@ -549,7 +553,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   ).filter((e) => outboxed.has(e.id) && isPostable(e, now.getTime()));
 
   const counts: DrainCounts = {
-    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0,
+    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0,
     capped: null, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
   const stop = await runDrain<Expense, PostOutcome>(due, {
@@ -558,8 +562,8 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
     failures: ["failed", "needs_finance"],
-    // No QuickBooks call was made for a missing Class, so it says nothing about QuickBooks being down.
-    noCall: ["no_class"],
+    // No QuickBooks call was made for these, so they say nothing about QuickBooks being down.
+    noCall: ["no_class", "unpostable"],
     post: async (e) => {
       try {
         const result = await postExpenseToQb(e.orgId, e.id, { close, settings });

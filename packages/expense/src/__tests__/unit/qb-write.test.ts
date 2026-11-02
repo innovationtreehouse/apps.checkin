@@ -55,6 +55,25 @@ describe("composeWrite", () => {
     expect(composeWrite({ ...bag(), ExpenseLineItem: [stripped, second] }, POSTING)).toEqual({ error: expect.stringMatching(/did not pass/) });
   });
 
+  it.each([
+    ["no receipt date", { ...bag(), Expense: { ...bag().Expense, receiptDate: null } }, /no receipt date/],
+    ["no lines", { ...bag(), ExpenseLineItem: [] }, /no lines/],
+    ["a line with no resolved account", { ...bag(), ExpenseLineItem: [{ ...bag().ExpenseLineItem[0], resolvedQbAccount: null }, bag().ExpenseLineItem[1]] }, /"Plywood" has no resolved QuickBooks account/],
+  ])("an expense with %s waits for finance, not a retry", (_case, rows, reason) => {
+    expect(composeWrite(rows, POSTING)).toEqual({ unpostable: expect.stringMatching(reason) });
+  });
+
+  it("a receipt date the gateway stripped fails the post", () => {
+    const { receiptDate: _date, ...expense } = bag().Expense;
+    expect(composeWrite({ ...bag(), Expense: expense }, POSTING)).toEqual({ error: expect.stringMatching(/receipt date did not pass/) });
+  });
+
+  it("a line account the gateway stripped fails the post", () => {
+    const [first, second] = bag().ExpenseLineItem;
+    const { resolvedQbAccount: _account, ...stripped } = first;
+    expect(composeWrite({ ...bag(), ExpenseLineItem: [stripped, second] }, POSTING)).toEqual({ error: expect.stringMatching(/account did not pass/) });
+  });
+
   it("a field the write does not read never reaches it", () => {
     const built = composeWrite(bag({ reimbursementFor: "Pat Example" }), POSTING);
     expect(JSON.stringify("write" in built ? built.write : built)).not.toContain("Pat Example");
