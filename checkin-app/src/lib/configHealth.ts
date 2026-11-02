@@ -116,7 +116,7 @@ export function getConfigHealth(): ConfigCheck[] {
                 ? "API key configured."
                 : config.isLocal()
                   ? "Not required on local; receipts are read from fixtures."
-                  : "NOT configured — set ANTHROPIC_API_KEY (uploaded receipts land in OCR failed).",
+                  : "NOT configured — set ANTHROPIC_API_KEY (uploaded and mailed receipts land in OCR failed).",
         },
         receiptMailboxCheck(),
     ];

@@ -88,8 +88,8 @@ describe("getConfigHealth — prod, all configured", () => {
     });
 });
 
-describe("getConfigHealth — dev/local, nothing configured", () => {
-    it("mock/dev states keep every check green", () => {
+describe("getConfigHealth — local, nothing configured", () => {
+    it("mock/local states keep every check green", () => {
         process.env.CHECKIN_ENV = "local";
         const checks = getConfigHealth();
         // Zoho + S3 ok via the active mock; webhook ok via mock-secret fallback;
@@ -136,8 +136,8 @@ describe("getConfigHealth — receipt mailbox", () => {
         expect(check().ok).toBe(true);
     });
 
-    it("is a gap off prod when set but refused, naming why", () => {
-        process.env.CHECKIN_ENV = "dev";
+    it.each([["dev"], ["stg"]])("is a gap on %s when set but refused, naming why", (env) => {
+        process.env.CHECKIN_ENV = env;
         setMailbox();
         expect(check().ok).toBe(false);
         expect(check().detail).toContain("RECEIPT_PROD_MAILBOX_ADDRESS");
@@ -150,5 +150,16 @@ describe("getConfigHealth — receipt mailbox", () => {
         setMailbox();
         expect(check().ok).toBe(false);
         expect(check().detail).toContain("CHECKIN_ENV");
+    });
+});
+
+describe("getConfigHealth — receipt OCR", () => {
+    const check = () => byId(getConfigHealth())["receipt-ocr"];
+
+    it.each([["dev"], ["stg"], ["prod"]])("is a gap on %s without the key", (env) => {
+        process.env.CHECKIN_ENV = env;
+        expect(check().ok).toBe(false);
+        process.env.ANTHROPIC_API_KEY = "sk-key";
+        expect(check().ok).toBe(true);
     });
 });

@@ -264,7 +264,7 @@ export function configureRuntime(): void {
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
     // without the key reads nothing and lands auto uploads in ocr_failed.
-    ocr: config.checkinEnv() === "local" ? fixtureOcr : createAnthropicOcr(config.anthropicApiKey() ?? undefined),
+    ocr: config.isLocal() ? fixtureOcr : createAnthropicOcr(config.anthropicApiKey() ?? undefined),
     fileStore: receiptFileStore(),
     storeNewFilesInBucket: config.receiptFilesS3(),
   });
