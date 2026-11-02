@@ -468,6 +468,12 @@ export interface InKindDrainCounts {
   drift: InKindDriftCounts;
 }
 
+/** The books map lacks an in-kind role; `waiting` counts gifts that would otherwise post. */
+export interface InKindUnconfigured {
+  unconfigured: true;
+  waiting: number;
+}
+
 /**
  * The in-kind drain, run from the daily cron. It runs only with QuickBooks bound and every in-kind
  * role in the books map, then switches the lane on (once, for good) and reads the books closing
@@ -475,12 +481,15 @@ export interface InKindDrainCounts {
  * per-run create limit or the failure streak, which alerts finance; the orphan sweep and the drift
  * check run last.
  */
-export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | "unconfigured"> {
+export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | InKindUnconfigured> {
   const posting = getInKindQbPosting();
   const client = await posting?.client();
   if (!posting || !client) return "unbound";
   const [accounts, classes] = await Promise.all([posting.booksMap.accounts(), posting.booksMap.classes()]);
-  if (!inKindAccountsReady(accounts)) return "unconfigured";
+  if (!inKindAccountsReady(accounts)) {
+    const { ready } = await inKindReadiness.giftsToBook(orgId, await inKindReadiness.readReadiness(orgId));
+    return { unconfigured: true, waiting: ready.length };
+  }
   const onAt = await switchInKindPostingOn(orgId, now);
   const close = await readCloseDate(client);
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this in-kind run creates nothing: ${close.error}`);
