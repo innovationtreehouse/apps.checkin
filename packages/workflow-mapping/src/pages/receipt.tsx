@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
@@ -79,7 +79,7 @@ interface CatalogItem {
 const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${item.gtin13}`;
 
 /** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
-function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null } {
+function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null; answered: boolean } {
   const [result, setResult] = useState<{ term: string; items: CatalogItem[]; error: string | null } | null>(null);
   const term = catalogSearchTerm(q);
   useEffect(() => {
@@ -92,10 +92,8 @@ function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | nu
     }, 250);
     return () => { live = false; clearTimeout(t); };
   }, [term]);
-  return result && result.term === term ? { items: result.items, error: result.error } : { items: [], error: null };
+  return result && result.term === term ? { items: result.items, error: result.error, answered: true } : { items: [], error: null, answered: false };
 }
-
-type Form = "associate" | "propose" | null;
 
 /**
  * /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls.
@@ -106,7 +104,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<{ lineId: number; form: Form }>({ lineId: 0, form: null });
+  const [openLineId, setOpenLineId] = useState<number | null>(null);
 
   async function act(path: string, body?: unknown, message = "Saved"): Promise<boolean> {
     setBusy(true);
@@ -140,7 +138,11 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
 
   return (
     <>
-      <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
+      {editable && openLineId !== null ? (
+        <Anchor component="button" size="sm" onClick={() => setOpenLineId(null)}>← Back to receipt</Anchor>
+      ) : (
+        <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
+      )}
       <Group justify="space-between" mt="md">
         <Stack gap={0}>
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>
@@ -207,7 +209,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           {lines.map((ls, i) => {
             const li = items.get(ls.receiptLineItemId);
             const lineBase = `${base}/lines/${ls.id}`;
-            const isOpen = editable && open.lineId === ls.id && !!open.form;
+            const isOpen = editable && openLineId === ls.id;
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>
@@ -230,11 +232,10 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                   {editable && (
                     <Table.Td>
                       {isOpen ? (
-                        <Button size="xs" variant="subtle" onClick={() => setOpen({ lineId: 0, form: null })}>Close</Button>
+                        <Button size="xs" variant="subtle" onClick={() => setOpenLineId(null)}>Close</Button>
                       ) : (
                         <Group gap={4} wrap="nowrap">
-                          <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "associate" })}>Associate</Button>
-                          <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "propose" })}>Propose</Button>
+                          <Button size="xs" variant="light" onClick={() => setOpenLineId(ls.id)}>Associate</Button>
                           <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
                             Not inventory
                           </Button>
@@ -243,18 +244,17 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     </Table.Td>
                   )}
                 </Table.Tr>
-                {isOpen && open.form && (
+                {isOpen && (
                   <Table.Tr>
                     <Table.Td colSpan={COLUMNS + 1}>
                       <Paper component="section" p="md" withBorder aria-label={`Line ${li?.lineNumber ?? i + 1} details`}>
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
                           <LineDetails item={li} currency={parsed.currency} />
                           <LineForm
-                            form={open.form}
                             busy={busy}
-                            onCancel={() => setOpen({ lineId: 0, form: null })}
-                            onSubmit={async (body) => {
-                              if (await act(`${lineBase}/${open.form}`, body)) setOpen({ lineId: 0, form: null });
+                            onCancel={() => setOpenLineId(null)}
+                            onSubmit={async (form, body) => {
+                              if (await act(`${lineBase}/${form}`, body)) setOpenLineId(null);
                             }}
                           />
                         </SimpleGrid>
@@ -300,18 +300,16 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ form, busy, onSubmit, onCancel }: {
-  form: LineFormKind;
+function LineForm({ busy, onSubmit, onCancel }: {
   busy: boolean;
-  onSubmit: (body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
+  onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
 }) {
+  const [form, setForm] = useState<LineFormKind>("associate");
   const [chosen, setChosen] = useState<CatalogItem | null>(null);
   const [search, setSearch] = useState("");
-  // Choosing an option fills the search box with its label; that is not a new search.
-  const found = useCatalogSearch(chosen && search === itemLabel(chosen) ? "" : search);
-  const itemOptions = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)]
-    .map((item) => ({ value: item.gtin13, label: itemLabel(item) }));
+  const found = useCatalogSearch(search);
+  const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
   const gtin13 = chosen?.gtin13 ?? null;
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -330,20 +328,36 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
   return (
     <Stack gap={4}>
       {form === "associate" ? (
-        <Select
-          size="xs"
-          placeholder="Search the catalog by name, GTIN or category"
-          data={itemOptions}
-          value={gtin13}
-          onChange={(v) => setChosen([chosen, ...found.items].find((item) => item?.gtin13 === v) ?? null)}
-          searchable
-          searchValue={search}
-          onSearchChange={setSearch}
-          filter={({ options }) => options}
-          error={found.error && `Couldn't search the catalog: ${found.error}`}
-          nothingFoundMessage={catalogSearchTerm(search) === null ? `Type at least ${MIN_CATALOG_SEARCH_LENGTH} characters` : "No matching catalog items"}
-          miw={320}
-        />
+        <>
+          <TextInput
+            size="xs"
+            placeholder="Search the catalog by name, GTIN or category"
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+            error={found.error && `Couldn't search the catalog: ${found.error}`}
+            miw={320}
+          />
+          {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
+          {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
+          {results.length > 0 && (
+            <ScrollArea.Autosize mah={220}>
+              <Radio.Group
+                aria-label="Catalog items"
+                value={gtin13}
+                onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
+              >
+                <Stack gap={6} py={4}>
+                  {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={itemLabel(item)} />)}
+                </Stack>
+              </Radio.Group>
+            </ScrollArea.Autosize>
+          )}
+          {found.answered && !found.error && (
+            <Group>
+              <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+            </Group>
+          )}
+        </>
       ) : (
         <>
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
@@ -377,11 +391,11 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
           size="xs"
           loading={busy}
           disabled={!body}
-          onClick={() => { if (body) onSubmit(body); }}
+          onClick={() => { if (body) onSubmit(form, body); }}
         >
           Save
         </Button>
-        <Button size="xs" variant="subtle" onClick={onCancel}>Cancel</Button>
+        <Button size="xs" variant="subtle" onClick={form === "propose" ? () => setForm("associate") : onCancel}>Cancel</Button>
       </Group>
     </Stack>
   );
