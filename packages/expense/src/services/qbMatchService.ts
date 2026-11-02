@@ -40,9 +40,10 @@ export const appKeysOf = (entry: QboPurchase) => appKeyOf(entry)?.split(" ") ?? 
 /**
  * For an expense the app may already have created in QuickBooks: every `entity` QuickBooks created
  * since its first attempt, kept to those carrying its key. Creation time does not change when
- * finance edits the date, so a re-dated entry is still found. An entry carrying another key
- * beside it, several keyed entries, or a full page is unsure; an entry another expense or line
- * holds is held.
+ * finance edits the date, so a re-dated entry is still found. A voided entry keeps its memo at a
+ * zero total, so a $0 entry is ignored unless the expense's own total, `totalCents`, is $0 too. An
+ * entry carrying another key beside it, several keyed entries, or a full page is unsure; an entry
+ * another expense or line holds is held.
  */
 export async function lookupOwnEntry(
   client: QuickBooksClient,
@@ -50,6 +51,7 @@ export async function lookupOwnEntry(
   expenseId: string,
   entity: QbMatchEntity,
   since: Date,
+  totalCents: number,
 ): Promise<OwnEntry> {
   let read: { entries: QboPurchase[]; full: boolean };
   try {
@@ -60,7 +62,7 @@ export async function lookupOwnEntry(
   }
   if (read.full) return { kind: "unsure", note: `the app may already have booked this expense: QuickBooks returned a full page of ${entity}s created since its first attempt` };
   const key = qbKey("expense", expenseId);
-  const keyed = read.entries.filter((e) => appKeysOf(e).includes(key));
+  const keyed = read.entries.filter((e) => appKeysOf(e).includes(key) && (e.TotalAmt !== 0 || totalCents === 0));
   if (keyed.length === 0) return { kind: "none" };
   if (keyed.length > 1 || appKeyOf(keyed[0]) !== key) {
     return { kind: "unsure", note: `the app may already have booked this expense: ${entity}s ${keyed.map((e) => e.Id).join(", ")} carry its key` };
@@ -177,7 +179,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
   if (!expense.qbCreateAttemptedAt) return null;
   const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
-  const own = await lookupOwnEntry(posting.client, expense.orgId, expense.id, entity, expense.qbCreateAttemptedAt);
+  const own = await lookupOwnEntry(posting.client, expense.orgId, expense.id, entity, expense.qbCreateAttemptedAt, postedTotalCents(expense));
   switch (own.kind) {
     case "none":
       return null;

@@ -351,7 +351,8 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
   const { before } = claim;
   const entity: QbMatchEntity = write.entity === "Bill" ? "Bill" : "Purchase";
   const date = write.fields.txnDate;
-  const own: OwnEntry = attemptedAt ? await lookupOwnEntry(posting.client, orgId, expenseId, entity, attemptedAt) : { kind: "none" };
+  const amountCents = sumCents(...write.fields.lines.map((l) => l.amountCents));
+  const own: OwnEntry = attemptedAt ? await lookupOwnEntry(posting.client, orgId, expenseId, entity, attemptedAt, amountCents) : { kind: "none" };
   let result: PostResult;
   if (own.kind !== "none") {
     result = { kind: "lookup", own };
@@ -399,7 +400,6 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
           if (!(await claimQbTxn(tx, orgId, entity, result.id))) {
             return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, `QuickBooks ${entity} ${result.id} is already claimed by another expense or line`);
           }
-          const amountCents = sumCents(...write.fields.lines.map((l) => l.amountCents));
           const qbMatchBaseline = matchedBaseline({ amountCents, txnDate: result.txnDate, vendorId: qbVendorId ?? null });
           return settle(tx, before, "matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: entity, qbMatchBaseline });
         }
@@ -470,7 +470,8 @@ export type DrainCounts = Record<PostOutcome, number> & {
  * the last SWEEP_DAYS and finds the expense each app key belongs to. An app entry
  * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a capped read alerts finance
  * once per run, and a key with no attempted expense is logged. QuickBooks is only read. An
- * expense mid-post is skipped; the next sweep sees it.
+ * expense mid-post is skipped; the next sweep sees it. A $0 entry is skipped: a voided entry keeps
+ * its memo at a zero total, and a stray $0 entry moves no money.
  */
 export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePosting, now = new Date()): Promise<SweepCounts> {
   const oldest = await db.expense.findFirst({
@@ -502,6 +503,7 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
     entries += read.length;
     if (full) logWarn("qb_sweep_full_page", { orgId, entity, since: since.toISOString() });
     for (const entry of read) {
+      if (entry.TotalAmt === 0) continue;
       for (const key of appKeysOf(entry)) {
         if (!key.startsWith("expense:")) continue;
         const expenseId = byKey.get(key);

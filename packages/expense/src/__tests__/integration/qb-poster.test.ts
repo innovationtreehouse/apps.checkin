@@ -1457,3 +1457,96 @@ describeDb("QB closed books — daily orphan sweep", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });
+
+describeDb("QB posting — an entry finance voided", () => {
+  const finance = principal(500, { isFinance: true });
+
+  /** An attempted expense whose create landed but never settled: QuickBooks holds its keyed entry. */
+  const landed = async (amounts?: [number, number]) => {
+    const { id } = await outboxed("2026-09-10", { amounts });
+    qbo.mode = "accept-then-drop";
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    qbo.mode = "ok";
+    return { id, first: qbo.purchases[0] };
+  };
+  /** QuickBooks keeps a voided entry's memo, at a zero total. */
+  const voidEntry = (entry: QboPurchase) => void (entry.TotalAmt = 0);
+  const secondKeyedEntry = (entry: QboPurchase) => {
+    const copy = { ...entry, Id: "7001" };
+    qbo.purchases.push(copy);
+    qbo.createdAt.set(copy.Id, new Date());
+    return copy;
+  };
+
+  it("books a replacement when the only keyed entry was voided, and never links the voided one", async () => {
+    const { id, first } = await landed();
+    voidEntry(first);
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+
+    expect(qbo.posts).toHaveLength(2);
+    const replacement = qbo.purchases[1];
+    expect(replacement.Id).not.toBe(first.Id);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: replacement.Id });
+    expect(await sweepExpenseQbStrays(ORG, posting())).toMatchObject({ flagged: 0 });
+  });
+
+  it("links the live entry when one of two keyed entries was voided", async () => {
+    const { id, first } = await landed();
+    const live = secondKeyedEntry(first);
+    voidEntry(first);
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+
+    expect(qbo.posts).toHaveLength(1);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: live.Id });
+  });
+
+  it("two live keyed entries still go to finance", async () => {
+    const { id, first } = await landed();
+    secondKeyedEntry(first);
+
+    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    expect(qbo.posts).toHaveLength(1);
+    expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
+  });
+
+  it("finance's match links the live entry of an expense stuck on two keyed entries once one is voided", async () => {
+    const { id, first } = await landed();
+    const live = secondKeyedEntry(first);
+    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    voidEntry(first);
+
+    await matchExpenseToQb(finance, id, "hand-1");
+
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: live.Id });
+  });
+
+  it("finance may skip an expense whose only keyed entry was voided", async () => {
+    const { id, first } = await landed();
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
+    voidEntry(first);
+
+    await skipExpenseQb(finance, id, "booked by hand");
+
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "SKIPPED", qbTxnId: null });
+  });
+
+  it("the sweep raises nothing for a voided entry", async () => {
+    const { id, first } = await landed();
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
+    voidEntry(first);
+
+    expect(await sweepExpenseQbStrays(ORG, posting())).toEqual({ entries: 1, flagged: 0, full: false });
+    expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "QB_DUPLICATE_TO_VOID" } })).toBe(0);
+  });
+
+  it("a $0 expense's retry links its own $0 entry, never a second booking", async () => {
+    const { id, first } = await landed([0, 0]);
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+
+    expect(qbo.posts).toHaveLength(1);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: first.Id });
+  });
+});
