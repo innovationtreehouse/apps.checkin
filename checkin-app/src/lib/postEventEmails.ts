@@ -122,19 +122,20 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             // Overlapping runs (the crons and facility close) read the same unsent
             // event; only the run whose conditional write lands may send it.
             const claimedAt = new Date();
+            const claimable = { id: event.id, postEventEmailSent: false, postEventEmailAttempts: { lt: POST_EVENT_EMAIL_MAX_ATTEMPTS } };
             const claim = await prisma.event.updateMany({
-                where: {
-                    id: event.id,
-                    postEventEmailSent: false,
-                    postEventEmailAttempts: { lt: POST_EVENT_EMAIL_MAX_ATTEMPTS },
-                    OR: [
-                        { postEventEmailClaimedAt: null },
-                        { postEventEmailClaimedAt: { lt: new Date(claimedAt.getTime() - CLAIM_STALE_AFTER_MS) } },
-                    ],
-                },
+                where: { ...claimable, postEventEmailClaimedAt: null },
                 data: { postEventEmailClaimedAt: claimedAt },
             });
-            if (claim.count !== 1) continue;
+            if (claim.count !== 1) {
+                // A stale claim is a run that died mid-send, possibly after sending:
+                // it counts as a failed attempt so crash re-sends stop at the cap.
+                const takeover = await prisma.event.updateMany({
+                    where: { ...claimable, postEventEmailClaimedAt: { lt: new Date(claimedAt.getTime() - CLAIM_STALE_AFTER_MS) } },
+                    data: { postEventEmailClaimedAt: claimedAt, postEventEmailAttempts: { increment: 1 } },
+                });
+                if (takeover.count !== 1) continue;
+            }
 
             const baseUrl = config.baseUrl();
             const eventLink = `${baseUrl}/program-ops/sessions/${event.id}`;
@@ -149,18 +150,23 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             if (success) {
                 await prisma.event.update({
                     where: { id: event.id },
-                    data: { postEventEmailSent: true }
+                    data: { postEventEmailSent: true, postEventEmailClaimedAt: null }
                 });
                 emailsSent++;
                 continue;
             }
 
             // Release the claim so the next run retries now, not after the stale window.
-            await prisma.event.updateMany({
+            const released = await prisma.event.updateMany({
                 where: { id: event.id, postEventEmailClaimedAt: claimedAt },
                 data: { postEventEmailClaimedAt: null, postEventEmailAttempts: { increment: 1 } },
             });
-            const attempts = event.postEventEmailAttempts + 1;
+            if (released.count !== 1) continue;
+            // Re-read: other runs may have counted failures since this batch was fetched.
+            const { postEventEmailAttempts: attempts } = await prisma.event.findUniqueOrThrow({
+                where: { id: event.id },
+                select: { postEventEmailAttempts: true },
+            });
             if (attempts >= POST_EVENT_EMAIL_MAX_ATTEMPTS) {
                 await logIntegrationError(
                     "post-event-email",
