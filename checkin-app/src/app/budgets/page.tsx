@@ -115,6 +115,7 @@ export default function BudgetsPage() {
   const [editing, setEditing] = useState<Bucket | null>(null);
   const [editName, setEditName] = useState("");
   const [editClassId, setEditClassId] = useState<string | null>(null);
+  const [editOrgLevel, setEditOrgLevel] = useState(false);
 
   const [approverBucket, setApproverBucket] = useState<Bucket | null>(null);
 
@@ -161,6 +162,7 @@ export default function BudgetsPage() {
     const ok = await run(`/api/budget-owners/${editing.id}`, "PATCH", {
       name: editName,
       quickBooksClassId: editClassId,
+      isOrgLevel: editOrgLevel,
     }, "Bucket saved.", "Bucket not saved");
     if (ok) setEditing(null);
   };
@@ -168,6 +170,10 @@ export default function BudgetsPage() {
   const archive = (bucket: Bucket) => {
     if (!window.confirm(`Archive "${bucket.name}"? It stays on record but leaves the active list.`)) return;
     void run(`/api/budget-owners/${bucket.id}/archive`, "POST", undefined, "Bucket archived.", "Bucket not archived");
+  };
+
+  const restore = (bucket: Bucket) => {
+    void run(`/api/budget-owners/${bucket.id}`, "PATCH", { archived: false }, "Bucket restored.", "Bucket not restored");
   };
 
   const buckets = showArchived ? allBuckets : allBuckets.filter((b) => !b.archivedAt);
@@ -197,8 +203,8 @@ export default function BudgetsPage() {
           A bucket is a budget that spending, income and gifts are booked to. Its lines post to QuickBooks under
           the bucket&apos;s QuickBooks Class, so a bucket without one holds its lines until finance sets it here. A
           bucket is not a QuickBooks account: the account says what the money was spent on, and Account mapping
-          picks it. A bucket&apos;s owner and treasurers approve its lines, and the Board names them. Finance
-          assigning a line to an org-level bucket approves it.
+          picks it. A bucket&apos;s owner and treasurers approve its lines, and the Board names them. An org-level
+          bucket has neither, and a Board member approves its lines.
         </Text>
 
         {isFinance && (
@@ -208,7 +214,7 @@ export default function BudgetsPage() {
               <TextInput label="Name" value={newName} onChange={(e) => setNewName(e.currentTarget.value)} w={240} />
               <Checkbox
                 label="Org-level"
-                description="No approvers; can't change later"
+                description="No approvers"
                 checked={newOrgLevel}
                 onChange={(e) => setNewOrgLevel(e.currentTarget.checked)}
               />
@@ -265,10 +271,13 @@ export default function BudgetsPage() {
                         <Button
                           size="xs"
                           variant="light"
-                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId); }}
+                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId); setEditOrgLevel(b.isOrgLevel); }}
                         >
                           Edit
                         </Button>
+                      )}
+                      {isFinance && b.archivedAt && (
+                        <Button size="xs" variant="light" onClick={() => restore(b)}>Restore</Button>
                       )}
                       {isFinance && !b.archivedAt && (
                         <Button size="xs" variant="light" color="red" onClick={() => archive(b)}>Archive</Button>
@@ -296,6 +305,12 @@ export default function BudgetsPage() {
             data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
             value={editClassId}
             onChange={setEditClassId}
+          />
+          <Checkbox
+            label="Org-level"
+            description="No approvers. The Board removes any owner and treasurers first, and a change back waits for Board signatures open expenses here still need."
+            checked={editOrgLevel}
+            onChange={(e) => setEditOrgLevel(e.currentTarget.checked)}
           />
           <Button onClick={saveEdit} disabled={!editName.trim()}>Save</Button>
         </Stack>

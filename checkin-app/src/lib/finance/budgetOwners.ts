@@ -90,17 +90,39 @@ export async function createBudgetOwner(actorId: number, body: Record<string, un
     });
 }
 
-// Rename and QuickBooks Class mapping. Whether a bucket is org-level never
-// changes: lines already approved by assignment would silently need approvers.
+// Rename, QuickBooks Class mapping, the org-level flag and restoring an archived bucket.
 export async function updateBudgetOwner(actorId: number, id: number, body: Record<string, unknown>) {
-    const data: { name?: string; quickBooksClassId?: string | null } = {};
+    const data: { name?: string; quickBooksClassId?: string | null; isOrgLevel?: boolean; archivedAt?: null } = {};
     if (body.name !== undefined) data.name = readName(body.name);
     if (body.quickBooksClassId !== undefined) data.quickBooksClassId = readClassId(body.quickBooksClassId);
+    if (body.isOrgLevel !== undefined) {
+        if (typeof body.isOrgLevel !== "boolean") throw badRequest("isOrgLevel must be a boolean");
+        data.isOrgLevel = body.isOrgLevel;
+    }
+    if (body.archived !== undefined) {
+        if (body.archived !== false) throw badRequest("archived can only be false: this restores a bucket");
+        data.archivedAt = null;
+    }
     if (Object.keys(data).length === 0) throw badRequest("Nothing to change.");
 
     return prisma.$transaction(async (tx) => {
-        const before = await tx.budgetOwner.findUnique({ where: { id }, select: { name: true, quickBooksClassId: true } });
-        if (!before) throw notFound("Bucket not found");
+        const stored = await tx.budgetOwner.findUnique({
+            where: { id },
+            select: { name: true, quickBooksClassId: true, isOrgLevel: true, archivedAt: true, ownerId: true, _count: { select: { treasurers: true } } },
+        });
+        if (!stored) throw notFound("Bucket not found");
+        const { ownerId, _count, ...before } = stored;
+        if (data.isOrgLevel === true && !before.isOrgLevel && (ownerId !== null || _count.treasurers > 0)) {
+            // Only the Board removes approvers, so finance's change waits for it.
+            throw new ApiResponseError(409, "The Board must remove this bucket's owner and treasurers first.");
+        }
+        if (data.isOrgLevel === false && before.isOrgLevel) {
+            // A program bucket's lines take no Board seat, so the change would drop a seat still owed.
+            const { linesAwaitingBoardSeat } = await import("@checkin/expense");
+            if ((await linesAwaitingBoardSeat(id)) > 0) {
+                throw new ApiResponseError(409, "Open expenses in this bucket still need a Board signature; have them signed or recorded first.");
+            }
+        }
         const bucket = await tx.budgetOwner.update({ where: { id }, data, select: BUCKET_SELECT }).catch(rethrowClassTaken);
         await tx.auditLog.create({
             data: { ...personActor(actorId), action: "EDIT", tableName: "BudgetOwner", affectedEntityId: id, oldData: before, newData: data },
@@ -109,7 +131,7 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
     });
 }
 
-// Archive is soft and one-way: library rows reference buckets by id.
+// Archive is soft: library rows reference buckets by id, and updateBudgetOwner restores it.
 export async function archiveBudgetOwner(actorId: number, id: number) {
     return prisma.$transaction(async (tx) => {
         const before = await tx.budgetOwner.findUnique({ where: { id }, select: { archivedAt: true } });

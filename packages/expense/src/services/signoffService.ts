@@ -20,6 +20,33 @@ import { ServiceError } from "@checkin/component-kit";
 type Actor = ReturnType<typeof actorOf>;
 type SignedLine = { lineItemId: number; seat: Seat; facts: SignoffFacts; filled: FilledSeat[] };
 
+/**
+ * How many open lines in the bucket wait on a Board signature because of the bucket they are in:
+ * non-Everyday card charges with no Board authorization and no Board seat signed. The host refuses
+ * to make an org-level bucket a program bucket while any is open, since that removes the seat.
+ */
+export async function linesAwaitingBoardSeat(bucketId: number): Promise<number> {
+  const expenses = await db.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      needsReimbursement: false,
+      state: { notIn: [...CLOSED_STATES] },
+      OR: [{ everydayWithinLimits: false }, { everydayWithinLimits: null }],
+      approvals: { some: { ownerId: bucketId } },
+    },
+  });
+  const facts = await signoffFactsForExpenses(db, expenses, { readOnly: true });
+  let count = 0;
+  for (const { byLine, filled, approvals } of facts.values()) {
+    for (const [lineId, line] of byLine) {
+      const signed = (filled.get(lineId) ?? []).some((f) => f.seat === "BOARD");
+      if (approvals.get(lineId)?.ownerId === bucketId && line.boardSeat && !signed) count++;
+    }
+  }
+  return count;
+}
+
 /** Refuses an expense that takes no sign-off now. */
 function requireSignable(expense: { backfill: boolean; state: string; needsReimbursement: boolean; reimburseePersonId: number | null }): void {
   if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
