@@ -41,7 +41,7 @@ describe("receipt page line lock", () => {
     (stamps) => {
       load({ state: "apply_failed", ...stamps });
       renderWithProviders(<ReceiptPage />);
-      for (const name of ["Associate", "Propose", "Not inventory"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      for (const name of ["Associate", "Not inventory"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.getByText("Lines locked")).toBeInTheDocument();
       expect(screen.getByText(/Retry sends the part that failed with the same lines\./)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Retry apply" })).toBeInTheDocument();

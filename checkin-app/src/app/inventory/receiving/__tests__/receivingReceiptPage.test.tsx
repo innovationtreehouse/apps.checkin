@@ -127,7 +127,7 @@ describe("the receiving page for one receipt", () => {
   it("shows an opened line's details beside its mapping form", () => {
     wrap();
     const row = screen.getByRole("row", { name: /Wood glue/ });
-    fireEvent.click(within(row).getByRole("button", { name: "Propose" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Associate" }));
     const panel = screen.getByRole("region", { name: "Line 1 details" });
     expect(within(panel).getByText("Line 1: Wood glue")).toBeInTheDocument();
     expect(within(panel).getByText("WG-8")).toBeInTheDocument();
@@ -138,6 +138,76 @@ describe("the receiving page for one receipt", () => {
 
     fireEvent.click(within(row).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("region", { name: "Line 1 details" })).not.toBeInTheDocument();
+  });
+
+  describe("proposing from the associate search", () => {
+    const hub = { gtin13: "0022222222220", name: "Power Hub", category: { name: "Electronics" }, subcategory: { name: "Control" } };
+    const SEARCH = "Search the catalog by name, GTIN or category";
+
+    /** Opens the Wood glue line's associate panel and searches, with the catalog answering `results`. */
+    function search(term: string, results: unknown) {
+      mockApi.mockImplementation((path: string) =>
+        results instanceof Error ? Promise.reject(results) : Promise.resolve(path.startsWith("/api/catalog/items") ? results : null));
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
+      fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: term } });
+    }
+
+    it("leaves propose off the line row and offers it only once a search has answered", async () => {
+      wrap();
+      expect(screen.queryByRole("button", { name: "Propose" })).not.toBeInTheDocument();
+      search("wood glue", []);
+      expect(screen.queryByRole("button", { name: "Propose new item" })).not.toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Propose new item" })).toBeInTheDocument();
+      expect(screen.getByText("No matching catalog items")).toBeInTheDocument();
+    });
+
+    it("offers propose below near-miss results", async () => {
+      wrap();
+      search("power", [hub]);
+      const button = await screen.findByRole("button", { name: "Propose new item" });
+      expect(screen.getByRole("radio", { name: /Power Hub/ }).compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
+    it("doesn't offer propose when the search failed", async () => {
+      wrap();
+      search("wood glue", new HttpError("Catalog is down", 500));
+      expect(await screen.findByText("Couldn't search the catalog: Catalog is down")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Propose new item" })).not.toBeInTheDocument();
+    });
+
+    it("pre-fills the proposed name from the search and keeps the search when cancelled", async () => {
+      wrap();
+      search(" wood glue ", []);
+      fireEvent.click(await screen.findByRole("button", { name: "Propose new item" }));
+      expect(screen.getByPlaceholderText("Proposed name")).toHaveValue("wood glue");
+      expect(screen.getByText("Line 1: Wood glue")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.getByPlaceholderText(SEARCH)).toHaveValue(" wood glue ");
+      expect(screen.getByRole("region", { name: "Line 1 details" })).toBeInTheDocument();
+    });
+
+    it("associates a chosen result through the associate route", async () => {
+      wrap();
+      search("power", [hub]);
+      fireEvent.click(await screen.findByRole("radio", { name: /Power Hub/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/associate", expect.objectContaining({
+        body: JSON.stringify({ gtin13: hub.gtin13, conversionFactor: 1 }),
+      })));
+    });
+  });
+
+  it("goes back to the receipt from an open line, then to where the receipt was opened from", () => {
+    render(<MantineProvider><ReceiptPage backHref="/inventory/receiving?queue=mapping" /></MantineProvider>);
+    expect(screen.getByRole("link", { name: "← Back" })).toHaveAttribute("href", "/inventory/receiving?queue=mapping");
+
+    fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
+    expect(screen.queryByRole("link", { name: "← Back" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "← Back to receipt" }));
+
+    expect(screen.queryByRole("region", { name: "Line 1 details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "← Back" })).toHaveAttribute("href", "/inventory/receiving?queue=mapping");
   });
 
   it("keeps an apply failure open as a red notification naming the leg and the reason", async () => {

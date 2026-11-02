@@ -32,23 +32,24 @@ export const POST = withAuth(
                 return apiError("programId and participantId are required", 400);
             }
 
+            if (auth.type !== 'session') {
+                return apiError("Unauthorized", 401);
+            }
+
             const heldAt = new Date();
 
             // Compare-and-set on the exact PENDING_HOLD_FAILED tuple: only a row
             // that is still PENDING, still requested, and still unheld flips. A
             // concurrent approve/deny/manual-hold that already moved it 409s
             // instead of double-stamping.
-            const { count } = await prisma.programParticipant.updateMany({
-                where: { programId, personId: participantId, ...ENROLLMENT_WRITES.manualHold.where },
-                data: ENROLLMENT_WRITES.manualHold.data(heldAt),
-            });
+            const confirmed = await prisma.$transaction(async (tx) => {
+                const { count } = await tx.programParticipant.updateMany({
+                    where: { programId, personId: participantId, ...ENROLLMENT_WRITES.manualHold.where },
+                    data: ENROLLMENT_WRITES.manualHold.data(heldAt),
+                });
+                if (count === 0) return false;
 
-            if (count === 0) {
-                return apiError("No hold-failed request to reconcile", 409);
-            }
-
-            if (auth.type === 'session') {
-                await prisma.auditLog.create({
+                await tx.auditLog.create({
                     data: {
                         actorId: auth.user.id,
                         action: "EDIT",
@@ -58,6 +59,11 @@ export const POST = withAuth(
                         newData: ENROLLMENT_WRITES.manualHold.data(heldAt),
                     },
                 });
+                return true;
+            });
+
+            if (!confirmed) {
+                return apiError("No hold-failed request to reconcile", 409);
             }
 
             return NextResponse.json({ success: true });

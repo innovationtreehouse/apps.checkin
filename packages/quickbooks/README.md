@@ -156,7 +156,8 @@ amount-anchored vendor join.
 relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null with the books open
 and as the date once closed, a create dated in a closed period fails with fault 6210 in "Required
 password" closing mode, `createdSince` returns an entry just created, by its key, and its query is
-accepted and answers oldest first on `Deposit`, `Purchase`, `Bill` and `JournalEntry`. Run it twice:
+accepted and answers oldest first on `Deposit`, `Purchase`, `Bill` and `JournalEntry`, and an id lookup
+returns every row, which tests the default page size only with more than 100 Deposits. Run it twice:
 first with the sandbox books open, then after closing them (Settings → Account and settings →
 Advanced → Close the books) with a date before today and a password. It needs the consent token
 file and `QBO_ENVIRONMENT=sandbox`. The test deposits go into the bank account named

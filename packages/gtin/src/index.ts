@@ -66,3 +66,14 @@ export function formatGtinDisplay(gtin13: string): string {
   }
   return gtin13;
 }
+
+/** The checked GTIN-13 for a typed `P000123`, `03B0042` or 13 digits; null for anything else. */
+export function parseGtinInput(text: string): string | null {
+  const input = text.trim();
+  if (isValidGtin13(input)) return input;
+  const provisional = /^[Pp](\d{6})$/.exec(input);
+  if (provisional) return buildProvisionalGtin13(Number(provisional[1]));
+  const catalog = /^(\d{2})([A-Za-z])(\d{4})$/.exec(input);
+  return catalog ? buildGtin13(catalog[2], Number(catalog[1]), Number(catalog[3])) : null;
+}
+

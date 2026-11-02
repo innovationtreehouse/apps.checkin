@@ -7,6 +7,7 @@ import {
   formatProvisionalDisplay,
   isProvisionalGtin13,
   isValidGtin13,
+  parseGtinInput,
   parseProvisionalSequence,
 } from "../index";
 
@@ -175,5 +176,39 @@ describe("formatGtinDisplay", () => {
   it("returns_a_0200_gtin_with_no_category_letter_unchanged", () => {
     expect(formatGtinDisplay("0200010000018")).toBe("0200010000018");
     expect(formatGtinDisplay("0200019900016")).toBe("0200019900016");
+  });
+});
+
+describe("parseGtinInput", () => {
+  it("round-trips the display form of all three kinds", () => {
+    for (const gtin of [buildProvisionalGtin13(123), buildGtin13("B", 3, 42), buildGtin13("Z", 99, 9999), "4006381333931"]) {
+      expect(parseGtinInput(formatGtinDisplay(gtin))).toBe(gtin);
+    }
+  });
+
+  it("reads the documented short forms", () => {
+    expect(parseGtinInput("P000123")).toBe(buildProvisionalGtin13(123));
+    expect(parseGtinInput("03B0042")).toBe(buildGtin13("B", 3, 42));
+  });
+
+  it("trims and ignores the case of the letter", () => {
+    expect(parseGtinInput("  p000123\n")).toBe(buildProvisionalGtin13(123));
+    expect(parseGtinInput(" 03b0042 ")).toBe(buildGtin13("B", 3, 42));
+  });
+
+  it("rejects 13 digits with a wrong check digit", () => {
+    expect(parseGtinInput("4006381333932")).toBeNull();
+  });
+
+  it("rejects a character that is not a letter A-Z", () => {
+    for (const text of ["03@0042", "03[0042", "03\u00c90042", "0300042"]) {
+      expect(parseGtinInput(text)).toBeNull();
+    }
+  });
+
+  it("rejects junk and near misses", () => {
+    for (const text of ["", "   ", "hammer", "P00012", "P0001234", "Q000123", "3B0042", "03B00421", "400638133393", "40063813339310", "03 B0042"]) {
+      expect(parseGtinInput(text)).toBeNull();
+    }
   });
 });

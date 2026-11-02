@@ -260,4 +260,33 @@ describeDb("S2 intake — applied is written only after processing commits", () 
 
     expect((await snapshot(allRecognized.receiptId)).expenses).toBe(1);
   });
+
+  it.each(["", "usd"])("the sweep builds the expense as USD from a stored currency of %j", async (currency) => {
+    await db.receivedExpensePayload.create({
+      data: { orgId: allRecognized.orgId, receiptId: allRecognized.receiptId, payloadJson: JSON.stringify({ ...allRecognized, currency }), status: "failed" },
+    });
+
+    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
+
+    expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.currency).toBe("USD");
+  });
+
+  it.each(["", "usd"])("the sweep finishes a row whose expense exists and whose stored currency is %j", async (currency) => {
+    await receiveCompletedReceipt(allRecognized);
+    await db.receivedExpensePayload.updateMany({ data: { status: "received", payloadJson: JSON.stringify({ ...allRecognized, currency }) } });
+
+    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
+
+    expect((await snapshot(allRecognized.receiptId)).payloads.map((p) => p.status)).toEqual(["applied"]);
+  });
+
+  it("the sweep leaves a stored currency that cannot be read as one failing", async () => {
+    await db.receivedExpensePayload.create({
+      data: { orgId: allRecognized.orgId, receiptId: allRecognized.receiptId, payloadJson: JSON.stringify({ ...allRecognized, currency: "$" }), status: "failed" },
+    });
+
+    expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
+
+    expect((await snapshot(allRecognized.receiptId)).expenses).toBe(0);
+  });
 });

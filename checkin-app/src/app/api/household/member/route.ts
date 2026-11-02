@@ -16,6 +16,8 @@ import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInEmail";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
+import { normalizeEmail } from "@/lib/prismaEmailNormalize";
+import { EMAIL_IN_USE_REFUSAL, isBadEmailChange, isEmailInUseError } from "@/lib/household/emailInUse";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
@@ -27,12 +29,14 @@ class BecameTrustedError extends Error {}
 export const PATCH = withAuth(
     {},
     async (req, auth) => {
+        let requestedEmail: unknown;
         try {
             if (auth.type !== 'session') return apiError("Unauthorized", 401);
             const userId = auth.user.id;
 
             const body = await req.json();
             const { participantId, name, nickname, email, dob, phone, isLead, over25, allergies } = body;
+            requestedEmail = email;
 
             if (!participantId) {
                 return apiError("Participant ID is required", 400);
@@ -111,6 +115,10 @@ export const PATCH = withAuth(
                 return apiError(signInEmailHelp(replyTo?.[0]), 400);
             }
 
+            if (isBadEmailChange(email, targetHouseholdMember.email)) {
+                return apiError("Invalid email format", 400);
+            }
+
             // The email is the sign-in key, so a member holding board-granted authority keeps
             // the address the board granted it to. The form resends it on every save, so an
             // equivalent address passes the check but is never written over the stored one.
@@ -141,7 +149,7 @@ export const PATCH = withAuth(
                     data: {
                         name: nameWrite(name),
                         nickname: nicknameWrite(nickname),
-                        email: email !== undefined && !holdsGrant ? (email === "" ? null : email.toLowerCase()) : undefined,
+                        email: email !== undefined && !holdsGrant ? (email === "" ? null : normalizeEmail(email)) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
                         ...normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth),
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
@@ -252,6 +260,9 @@ export const PATCH = withAuth(
             if (error instanceof BecameTrustedError) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
+            }
+            if (isEmailInUseError(error, requestedEmail)) {
+                return apiError(EMAIL_IN_USE_REFUSAL, 400);
             }
             logger.error("Household Member PATCH Error:", error);
             return apiError("Internal Server Error", 500);

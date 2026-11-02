@@ -3,6 +3,7 @@ import type { OrgMembershipProcessStatus, TrustedAdultReviewStatus } from "@/gen
 import type { AuthenticatedUser } from "@/types/auth";
 import { countHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
 import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/review";
+import { openProcess } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
 import { openConfigIssues } from "@/lib/configHealth";
@@ -70,8 +71,8 @@ export type TodoCounts = {
     // Admin keys stay numeric — each admin nav link already deep-links to a page
     // that lists its own queue, so the number is enough.
     // `membership` = board-actionable (BLOCKED, green). `applicationsTotal` =
-    // every in-flight (non-ACTIVE) application, the gray count shown on the
-    // Applications tab — mirrors what /api/admin/membership lists.
+    // every open application, the gray count shown on the Applications tab —
+    // mirrors what /api/membership-ops/applications lists.
     // `brokenEmails` = people whose email Resend has reported as undeliverable
     // (bounce/complaint) and no later delivery has cleared — see webhooks/resend.
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
@@ -441,9 +442,9 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         prisma.orgMembershipProcess.count({
             where: { status: { in: BOARD_ACTIONABLE_MEMBERSHIP } },
         }),
-        // Every in-flight application the Applications page lists (status != ACTIVE).
+        // Every open application, the same rows the Applications page lists.
         prisma.orgMembershipProcess.count({
-            where: { status: { not: "ACTIVE" } },
+            where: openProcess.where,
         }),
         // Scholarship-queue count: mirror GET /api/finance-ops/payment-plans'
         // default filter exactly so the nav badge can't over-count. Excludes
