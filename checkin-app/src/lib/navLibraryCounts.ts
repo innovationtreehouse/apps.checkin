@@ -48,6 +48,13 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
   {
+    library: "catalog",
+    // Only INVENTORY_MANAGER approves, rejects or maps a proposal; every other catalog viewer only reads.
+    visible: (u) => u.isInventoryManager === true,
+    count: async (): Promise<Record<string, number>> =>
+      process.env.CATALOG_DATABASE_URL ? (await import("@checkin/global-catalog")).proposalService.getNavCounts() : {},
+  },
+  {
     library: "local-inventory",
     // Only INVENTORY_MANAGER fulfils or cancels a queued line; FINANCE and BOARD only read the queue.
     visible: (u) => u.isInventoryManager === true,

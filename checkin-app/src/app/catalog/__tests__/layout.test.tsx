@@ -7,6 +7,8 @@ import { renderWithProviders, setSession, setPathname, resetRtl, router } from "
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
+import { sectionBadges, sectionTabBadge } from "@/components/navBadges";
+import { INVENTORY } from "@/lib/nav/sections/inventory";
 import CatalogLayout from "../layout";
 
 const counts: TodoCounts = {
@@ -135,5 +137,38 @@ describe("part mapping tab", () => {
     renderLayout();
     expect(screen.getByRole("tab", { name: /Part mapping/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: /^Receiving/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("catalog layout proposal pills", () => {
+  const withPending = (catalog?: Record<string, number>) =>
+    (useTodoCounts as jest.Mock).mockReturnValue({ ...counts, libraries: catalog ? { catalog } : undefined });
+
+  it("shows the pending total on Global Catalog and on Proposals", () => {
+    withPending({ pendingProvisionalItems: 3, pendingItemReferences: 2 });
+    setSession({ id: 3, isInventoryManager: true });
+    setPathname("/catalog/proposals");
+    renderLayout();
+    const [top, sub] = screen.getAllByLabelText("5 catalog proposals to review");
+    expect(screen.getByRole("tab", { name: /Global Catalog/ })).toContainElement(top);
+    expect(screen.getByRole("tab", { name: /Proposals/ })).toContainElement(sub);
+  });
+
+  it("shows no pill when the counts are absent, as for a viewer who cannot act or a failed read", () => {
+    withPending();
+    setSession({ id: 3, isBoardMember: true });
+    setPathname("/catalog/proposals");
+    renderLayout();
+    expect(screen.queryByLabelText(/catalog proposals? to review/)).not.toBeInTheDocument();
+  });
+
+  it("counts each queue once: sub-tabs alone carry a badge, and the sidebar sums them", () => {
+    const withAll = { ...counts, libraries: { catalog: { pendingProvisionalItems: 3, pendingItemReferences: 2, unresolvedConflicts: 1, pendingChallenges: 4 } } };
+    const catalogTabs = INVENTORY.links.filter((l) => l.library === "catalog");
+    expect(sectionTabBadge(catalogTabs, "/catalog/items", withAll)?.count).toBe(10);
+    expect(sectionBadges("/catalog", catalogTabs, withAll).map((b) => b.count)).toEqual([10]);
+    const subs = catalogTabs[0].subLinks ?? [];
+    expect(sectionTabBadge(subs, "/catalog/items", withAll)?.count).toBe(1);
+    expect(sectionTabBadge(subs, "/catalog/conversion-challenges", withAll)?.count).toBe(4);
   });
 });

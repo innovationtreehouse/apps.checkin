@@ -14,6 +14,10 @@ jest.mock("@checkin/receipt", () => ({
   },
 }));
 
+jest.mock("@checkin/global-catalog", () => ({
+  proposalService: { getNavCounts: async () => ({ pendingProvisionalItems: 3, pendingItemReferences: 2, unresolvedConflicts: 1, pendingChallenges: 4 }) },
+}));
+
 describe("the receipt provider", () => {
   const receipt = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "receipt");
 
@@ -167,5 +171,26 @@ describe("library badge pattern", () => {
       { count: 5, color: "red", label: "a; c" },
       { count: 2, color: "gray", label: "b" },
     ]);
+  });
+});
+
+describe("the catalog provider", () => {
+  const catalog = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "catalog");
+
+  beforeEach(() => { process.env.CATALOG_DATABASE_URL = "postgres://catalog"; });
+  afterEach(() => { delete process.env.CATALOG_DATABASE_URL; });
+
+  it("reports the pending proposals to an INVENTORY_MANAGER alone", async () => {
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["catalog"], catalog)).toEqual({
+      catalog: { pendingProvisionalItems: 3, pendingItemReferences: 2, unresolvedConflicts: 1, pendingChallenges: 4 },
+    });
+    for (const viewer of [{ id: 2, isBoardMember: true }, { id: 3, isFinance: true }, { id: 4, isSysadmin: true }]) {
+      expect(await collectLibraryCounts(viewer, ["catalog"], catalog)).toBeUndefined();
+    }
+  });
+
+  it("omits the counts when the catalog is not configured", async () => {
+    delete process.env.CATALOG_DATABASE_URL;
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["catalog"], catalog)).toEqual({ catalog: {} });
   });
 });

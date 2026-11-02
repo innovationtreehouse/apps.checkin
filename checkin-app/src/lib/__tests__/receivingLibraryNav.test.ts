@@ -51,6 +51,23 @@ describe("Inventory Part mapping tab", () => {
     const c = counts([...LIBRARY_KEYS], { "workflow-mapping": { pending_review: 2, apply_failed: 1, applying: 5 } });
     expect(tab?.badge?.(c)).toEqual({ count: 3, color: "red", label: "3 receipts awaiting mapping or apply" });
     expect(tab?.badge?.(released)).toBeNull();
+    const waiting = counts([...LIBRARY_KEYS], { "workflow-mapping": { pending_review: 1 } });
+    expect(tab?.badge?.(waiting)).toEqual({ count: 1, color: "treehouseGreen", label: "1 receipt awaiting mapping or apply" });
+  });
+
+  it("badges unlocated items", () => {
+    const tabs = INVENTORY.links.flatMap((l) => l.subLinks ?? []);
+    const tab = tabs.find((l) => l.href === "/inventory/unlocated");
+    const c = counts([...LIBRARY_KEYS], { "local-inventory": { unlocated: 1 } });
+    expect(tab?.badge?.(c)).toEqual({ count: 1, color: "treehouseGreen", label: "1 item needs a location" });
+    expect(tab?.badge?.(released)).toBeNull();
+  });
+
+  it("badges pending merge conflicts", () => {
+    const tab = INVENTORY.links.find((l) => l.href === "/inventory/merge-conflicts");
+    const c = counts([...LIBRARY_KEYS], { "local-inventory": { pendingMergeConflicts: 2 } });
+    expect(tab?.badge?.(c)).toEqual({ count: 2, color: "treehouseGreen", label: "2 merge conflicts to resolve" });
+    expect(tab?.badge?.(released)).toBeNull();
   });
 
   it("runs the workflow-mapping count provider only for an inventory manager, the one role that maps or applies", () => {

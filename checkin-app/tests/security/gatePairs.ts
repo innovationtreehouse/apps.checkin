@@ -147,6 +147,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'sub-tab /inventory/inventory-log applies route', client: tab(INVENTORY, '/inventory/inventory-log'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/inventory-log applies route', client: page('/inventory/inventory-log'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
+    { name: 'counts:catalog', client: counts('catalog'), token: routeToken('POST /api/catalog/provisional-items/[id]/approve') },
     { name: 'counts:local-inventory', client: counts('local-inventory'), token: routeToken('POST /api/inventory/receive-queue/[id]/fulfill') },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },

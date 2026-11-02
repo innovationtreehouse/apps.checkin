@@ -7,7 +7,7 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
+import { api, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
 import { LoadError } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
@@ -122,6 +122,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
           }),
         })
         : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify(changes) }));
+      notifyNavCounts();
       notifications.show({ message: isNew ? "Item added" : "Item updated", color: "green" });
       setForm(null);
       reload();
@@ -158,6 +159,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     setSaving(true);
     try {
       await api(`/org-items/${removeTarget.gtin13}`, { method: "DELETE" });
+      notifyNavCounts();
       notifications.show({ message: "Item removed from organization inventory", color: "green" });
       setRemoveTarget(null);
       reload();
