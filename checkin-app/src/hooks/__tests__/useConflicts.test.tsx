@@ -56,7 +56,7 @@ describe("useConflicts", () => {
     await waitFor(() => expect(result.current.conflicts).toEqual(conflicts));
 
     fetchMock.mockResolvedValue({ ok: false, status: 403, text: async () => JSON.stringify({ error: "Forbidden" }) } as Response);
-    act(() => result.current.refresh());
+    act(() => { void result.current.refresh(); });
 
     await waitFor(() => expect(result.current.error).toBe("Forbidden"));
     expect(result.current.conflicts).toEqual(conflicts);
@@ -68,7 +68,7 @@ describe("useConflicts", () => {
     await waitFor(() => expect(result.current.conflicts).toEqual([makeConflict(2)]));
 
     fetchMock.mockResolvedValue(answer([makeConflict(3)]));
-    act(() => result.current.refresh());
+    act(() => { void result.current.refresh(); });
 
     await waitFor(() => expect(result.current.conflicts).toEqual([makeConflict(3)]));
   });

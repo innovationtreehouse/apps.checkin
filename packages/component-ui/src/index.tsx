@@ -100,7 +100,8 @@ export interface Loaded<T> {
   retrying: boolean;
   /** The HTTP status of a failed read; null for a network failure or no failure. */
   status: number | null;
-  reload: () => void;
+  /** Settles once the re-read has answered, and never rejects: a failed read lands in `error`. */
+  reload: () => Promise<void>;
 }
 
 const MAX_ATTEMPTS = 5;
@@ -166,7 +167,7 @@ export function createClient(base: string) {
       if (status === 401 && expireOn401) onSessionExpired?.();
     }, [status, expireOn401, onSessionExpired]);
     const { mutate } = swr;
-    const reload = useCallback(() => { void mutate(); }, [mutate]);
+    const reload = useCallback(() => mutate().then(() => undefined, () => undefined), [mutate]);
     return {
       data: swr.data !== undefined ? swr.data : previous,
       error: swr.error && !retrying ? swr.error.message : null,

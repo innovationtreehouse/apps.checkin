@@ -6,6 +6,8 @@ import { useDisclosure } from "@mantine/hooks";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { useUnsavedGuard } from "@/components/UnsavedChangesProvider";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { useLoad } from "@/lib/api";
 import {
   buildIntakePayload, mapServerFields, useMembershipForm, validateIntake, type IntakePrefill,
 } from "./membershipForm";
@@ -67,7 +69,6 @@ export function useMembershipPage() {
   const { data: session, status: sessionStatus } = useSession();
 
   const [state, setState] = useState<IntakeState | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | undefined>();
   // Per-field validation errors, keyed by form field ("address", "emName",
@@ -107,7 +108,7 @@ export function useMembershipPage() {
   }, []);
 
   const { reset: resetForm } = form;
-  const hydrate = useCallback((s: IntakeState) => {
+  const applyState = useCallback((s: IntakeState) => {
     setState(s);
     // Restore an in-flight payment holdoff after a tab refresh mid-Shopify-checkout.
     // Once the process has moved out of PENDING_PAYMENT, normally because the
@@ -124,19 +125,23 @@ export function useMembershipPage() {
       sessionStorage.removeItem(awaitingPaymentKey(processId));
       setAwaitingPayment(null);
     }
+  }, []);
+  const hydrate = useCallback((s: IntakeState) => {
+    applyState(s);
     resetForm(s.prefill);
-  }, [resetForm]);
+  }, [applyState, resetForm]);
 
-  const fetchState = useCallback(() =>
-    fetch("/api/membership")
-      .then(async (res) => { if (res.ok) hydrate(await res.json()); })
-      .catch(() => { /* shown via empty state */ })
-      .finally(() => setLoading(false)), [hydrate]);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    return fetchState();
-  }, [fetchState]);
+  const { data: loaded, error: loadError, reload: load } = useLoad<IntakeState>(
+    sessionStatus === "authenticated" ? "/api/membership" : null,
+  );
+  const loading = state === null && !loadError;
+  // A background re-read keeps unsaved input, except the read after a save that returned no state.
+  const [reseedForm, setReseedForm] = useState(false);
+  useSeedForm(loaded, false, (s) => {
+    if (form.isDirty && !reseedForm) applyState(s);
+    else hydrate(s);
+    setReseedForm(false);
+  });
 
   // Return from embedded signing: Zoho redirects back with ?signed=1 (or
   // ?declined=1). Sync the contract status straight from Zoho rather than waiting
@@ -164,7 +169,7 @@ export function useMembershipPage() {
           } catch {
             /* best-effort — the Zoho webhook is still a backstop */
           }
-          await load();
+          load();
           notifications.show({
             message: signedNow
               ? "Thanks — your signature was received."
@@ -173,12 +178,10 @@ export function useMembershipPage() {
         })();
       }
     }
-    // The page shows the loader until this first load settles, so the decline
+    // The page shows the loader until the first load settles, so the decline
     // message lands with the first visible render.
-    fetchState().then(() => {
-      if (declined) setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
-    });
-  }, [sessionStatus, fetchState, load]);
+    if (declined) setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
+  }, [sessionStatus, load]);
 
   // When awaiting payment, fetch the membership-fee amount and Shopify checkout link. Leads
   // only — the route refuses anyone else, and the card hides the money from them.
@@ -223,7 +226,7 @@ export function useMembershipPage() {
   const onMockPaid = async () => {
     flash("Payment mocked (local) — updating status.");
     notifyNavRefresh();
-    await load();
+    load();
   };
   const onMockFailed = (data: { error?: string; detail?: string } | null) =>
     flash(apiError(data, "Mock payment failed."), true);
@@ -261,7 +264,7 @@ export function useMembershipPage() {
         // A null state means saved but unread; refetch so new people get their ids
         // and a second save updates them rather than creating them again.
         if (data.state) hydrate(data.state);
-        else await fetchState();
+        else { setReseedForm(true); load(); }
         flash("Progress saved.");
         setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
       } else flash(apiError(data, "Could not save."), true);
@@ -311,7 +314,7 @@ export function useMembershipPage() {
         // Race: the process advanced out from under this stale view. Transient
         // toast + re-hydrate; the `incomplete` field-error path below is untouched.
         notifications.show({ color: "red", message: data.error || "No application is awaiting your information.", autoClose: false });
-        await load();
+        load();
       } else {
         // The server may flag fields the client can't check locally (e.g. an
         // emergency contact who is a household member) — highlight those too.
@@ -344,7 +347,7 @@ export function useMembershipPage() {
         flash(apiError(data, "Couldn't open the signing form. Please try again."), true);
         setSaving(false);
         // The refusal may mean the signature was just found at Zoho.
-        void fetchState();
+        load();
       }
     } catch {
       networkError();
@@ -397,10 +400,10 @@ export function useMembershipPage() {
     try {
       const res = await fetch("/api/membership/renew", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) { await load(); notifyNavRefresh(); flash("Renewal started."); }
+      if (res.ok) { load(); notifyNavRefresh(); flash("Renewal started."); }
       else if (data.code === "wrong_phase") {
         notifications.show({ color: "red", message: data.error || "This renewal is no longer awaiting your confirmation.", autoClose: false });
-        await load();
+        load();
       }
       else flash(apiError(data, "Could not start renewal."), true);
     } catch {
@@ -419,7 +422,7 @@ export function useMembershipPage() {
       const res = await fetch("/api/membership/bg-consent", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        await load();
+        load();
         notifyNavRefresh();
       } else {
         setBgConsenting(false);
@@ -434,7 +437,7 @@ export function useMembershipPage() {
   useUnsavedGuard(form.isDirty);
 
   return {
-    session, sessionStatus, state, loading, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
+    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
     load, startApplication, save, submit, startSigning, renew,
     payment: {
       payment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LoadError } from "@checkin/component-ui";
 import { Alert, Anchor, Box, Button, Card, Container, Group, Stack, Text, Title } from "@mantine/core";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import MembershipFlowStepper from "@/components/MembershipFlowStepper";
@@ -14,7 +15,7 @@ import OwnBackgroundCheckPanel from "./OwnBackgroundCheckPanel";
 
 export default function MembershipPage() {
   const {
-    session, sessionStatus, state, loading, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
+    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
     load, startApplication, save, submit, startSigning, renew, payment, bg,
   } = useMembershipPage();
   const confirmNav = useConfirmNav();
@@ -35,6 +36,14 @@ export default function MembershipPage() {
     );
   }
 
+  if (state === null) {
+    return (
+      <Container size="xs" py="xl">
+        <LoadError what="your membership" message={loadError ?? ""} onRetry={load} />
+      </Container>
+    );
+  }
+
   const inStatus = state?.process?.status ?? null;
   const isIntake = inStatus === "INTAKE";
   const isActive = state?.membershipStatus === "ACTIVE";
@@ -50,6 +59,8 @@ export default function MembershipPage() {
         <Title order={1}>Treehouse Membership</Title>
         <Button component={Link} href="/" variant="default" onNavigate={(e) => { if (!confirmNav()) e.preventDefault(); }}>← Home</Button>
       </Group>
+
+      {loadError && <LoadError what="your membership" message={loadError} onRetry={load} />}
 
       {/* Intake echoes `message` in a section-local Alert next to its buttons
           (long card), so suppress the top banner there to avoid a duplicate. */}

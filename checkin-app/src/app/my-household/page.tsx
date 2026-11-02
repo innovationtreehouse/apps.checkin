@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { LoadError } from '@checkin/component-ui';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { useSeedForm } from '@/hooks/useSeedForm';
+import { useLoad } from '@/lib/api';
 import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -56,7 +59,9 @@ type HouseholdData = {
   name?: string;
   householdMembers?: HouseholdMember[];
   orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean } | null;
+  intakeNotes?: string | null;
 } & Partial<StructuredAddress> | null;
+type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
 const blankContactForm = { id: null as number | null, name: "", phone: "", email: "", relationship: "" };
 
@@ -64,13 +69,14 @@ export default function HouseholdPage() {
   const { user: sessionUser, loading: authLoading, ready } = useRequireRole([]);
   const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
-  const [household, setHousehold] = useState<HouseholdData>(null);
-  const [boardReplyTo, setBoardReplyTo] = useState<string | null>(null);
+  const { data: householdAnswer, error: householdError, reload: fetchHousehold } = useLoad<HouseholdAnswer>(ready ? '/api/household' : null);
+  const household = householdAnswer?.household ?? null;
+  const boardReplyTo = householdAnswer?.boardReplyTo ?? null;
+  const validUntil = householdAnswer?.validUntil ?? null;
   // Open renewal for this household (lead-only, from /api/membership/renewal-status).
   // Drives the "Renew now" copy for a still-ACTIVE member whose renewal has opened.
-  const [renewalDue, setRenewalDue] = useState(false);
-  const [validUntil, setValidUntil] = useState<string | null>(null);
+  const { data: renewalAnswer, error: renewalError, reload: reloadRenewal } = useLoad<{ renewalDue?: boolean }>(ready ? '/api/membership/renewal-status' : null);
+  const renewalDue = !!renewalAnswer?.renewalDue;
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   // Explicit tone per outcome so a real error can never render green (was
   // decided by `message.includes('success')`).
@@ -102,7 +108,6 @@ export default function HouseholdPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   // Transient "Updated" confirmation shown in the Address card header for 5s.
 
-  const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [contactForm, setContactForm] = useState(blankContactForm);
   const [showContactForm, setShowContactForm] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
@@ -113,54 +118,29 @@ export default function HouseholdPage() {
   // so phone/email/name errors never flash while the user is still typing.
   const [contactErrors, setContactErrors] = useState<{ name?: string; phone?: string; email?: string }>({});
 
-  const fetchContacts = useCallback(() => fetch('/api/household/emergency-contacts')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setContacts(data.contacts || []);
-      }
-    }),
-  []);
+  // ponytail: guard ONLY the deferred Address card (committed by the "Update
+  // Address" button). The member add/edit forms, emergency-contact form, and the
+  // receipts toggle all submit instantly — intentionally excluded so they never
+  // raise a spurious unsaved-changes prompt.
+  const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
+  useUnsavedGuard(isDirty);
 
-  const fetchHousehold = useCallback(() => fetch('/api/household')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHousehold(data.household);
-        setBoardReplyTo(data.boardReplyTo ?? null);
-        setValidUntil(data.validUntil ?? null);
-        const a = pickAddress(data.household);
-        const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
-        setAddress(loaded);
-        setInitialAddress(loaded);
-        setNotes(data.household?.intakeNotes ?? "");
-        setInitialNotes(data.household?.intakeNotes ?? "");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading household.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) {
-      fetchHousehold();
-      fetch('/api/membership/renewal-status')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => setRenewalDue(!!d?.renewalDue))
-        .catch(() => {});
-    }
-  }, [ready, fetchHousehold]);
+  useSeedForm(householdAnswer, isDirty, (answer) => {
+    const a = pickAddress(answer.household);
+    const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
+    setAddress(loaded);
+    setInitialAddress(loaded);
+    setNotes(answer.household?.intakeNotes ?? "");
+    setInitialNotes(answer.household?.intakeNotes ?? "");
+  });
 
   const userId = (sessionUser as { id: number } | undefined)?.id;
   const viewerIsLead = household?.householdMembers?.find((m) => m.id === userId)?.isHouseholdLead ?? false;
   // The contacts card, and the API behind it, are the household lead's.
-  useEffect(() => {
-    if (viewerIsLead) fetchContacts();
-  }, [viewerIsLead, fetchContacts]);
+  const { data: contactsAnswer, error: contactsError, reload: fetchContacts } = useLoad<{ contacts?: EmergencyContact[] }>(
+    viewerIsLead ? '/api/household/emergency-contacts' : null,
+  );
+  const contacts = contactsAnswer?.contacts ?? [];
 
   const handleSaveSettings = async () => {
     const errors = validateAddress(address);
@@ -176,6 +156,7 @@ export default function HouseholdPage() {
 
       if (householdRes.ok) {
         ok("Settings updated successfully!");
+        setInitialAddress(address);
         setInitialNotes(notes);
         fetchHousehold();
         notifyNavRefresh();
@@ -344,14 +325,7 @@ export default function HouseholdPage() {
     }
   };
 
-  // ponytail: guard ONLY the deferred Address card (committed by the "Update
-  // Address" button). The member add/edit forms, emergency-contact form, and the
-  // receipts toggle all submit instantly — intentionally excluded so they never
-  // raise a spurious unsaved-changes prompt.
-  const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
-  useUnsavedGuard(isDirty);
-
-  if (loading || authLoading) {
+  if ((householdAnswer === null && !householdError) || authLoading) {
     return <PageLoader />;
   }
 
@@ -378,6 +352,8 @@ export default function HouseholdPage() {
         <TodoCard />
         <Card withBorder radius="md" padding="lg">
           <Title order={1} mb="md">{household?.name || 'My Household'}</Title>
+
+          {renewalError && <LoadError what="your renewal status" message={renewalError} onRetry={reloadRenewal} />}
 
           {household && (
             // An existing member — still ACTIVE with an open renewal, or already
@@ -416,8 +392,10 @@ export default function HouseholdPage() {
 
           <AlertBanner message={message?.text} tone={message?.tone} mb="lg" />
 
+          {householdError && <LoadError what="your household" message={householdError} onRetry={fetchHousehold} />}
+
           {!household ? (
-            <Stack align="center" py="md">
+            !householdError && <Stack align="center" py="md">
               <Text c="dimmed" ta="center">
                 We couldn&apos;t load your household. Please refresh to try again.
               </Text>
@@ -561,7 +539,9 @@ export default function HouseholdPage() {
                   <Alert color="red" variant="light" mb="sm" withCloseButton onClose={() => setContactError("")}>{contactError}</Alert>
                 )}
 
-                {contacts.length === 0 && !showContactForm && (
+                {contactsError && <LoadError what="emergency contacts" message={contactsError} onRetry={fetchContacts} />}
+
+                {contactsAnswer !== null && contacts.length === 0 && !showContactForm && (
                   <Alert color="red" variant="light">No emergency contact on file. Add at least one.</Alert>
                 )}
 

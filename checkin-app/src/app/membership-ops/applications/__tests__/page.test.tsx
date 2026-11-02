@@ -20,6 +20,7 @@ import { ModalsProvider } from "@mantine/modals";
 import { EnvProvider } from "@/components/EnvProvider";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
+import { settle } from "@/test-helpers/settle";
 import AdminMembershipPage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so a confirmed action would
@@ -321,5 +322,51 @@ describe("AdminMembershipPage", () => {
             expect.objectContaining({ method: "POST", body: JSON.stringify({ processId: 3, reason: "Refunded in Shopify" }) }),
         ));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Refund recorded." })));
+    });
+});
+
+describe("failed load", () => {
+    it("shows an error with a retry, never the empty state", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderPage();
+
+        await settle();
+        expect(screen.queryByText("No in-flight membership applications.")).not.toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load applications")).toBeInTheDocument();
+
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [] } });
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(await screen.findByText("No in-flight membership applications.")).toBeInTheDocument();
+    });
+});
+
+describe("Reset for re-review while the reload is in flight", () => {
+    it("sends no second request on a second click", async () => {
+        setSession({ id: 1, isBoardMember: true });
+        const blocked = { ...archivedRows[0], id: 7, status: "BLOCKED", orgMembership: null, subjectPerson: { id: 9, name: "Pat" }, attestations: [] };
+        let finishReload: (rows: unknown) => void = () => {};
+        let reads = 0;
+        const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const answer = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+            if (init?.method === "POST") return answer({});
+            reads += 1;
+            if (reads === 1) return answer({ processes: [blocked] });
+            return new Promise<Response>((resolve) => { finishReload = (rows) => resolve(answer({ processes: rows })); });
+        });
+        global.fetch = fetchMock as unknown as typeof fetch;
+        renderPage();
+
+        const reset = await screen.findByRole("button", { name: "Reset for re-review" });
+        fireEvent.click(reset);
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
+        await waitFor(() => expect(reads).toBe(2));
+
+        fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+
+        finishReload([{ ...blocked, status: "PENDING_BG_REVIEW" }]);
+        await waitFor(() => expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument());
     });
 });
