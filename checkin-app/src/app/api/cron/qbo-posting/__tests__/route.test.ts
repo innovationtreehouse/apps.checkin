@@ -21,7 +21,7 @@ jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue(
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
 const SECRET = 'qbo-posting-secret-under-test';
-const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, capped: null, stoppedAfterFailures: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
+const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, stoppedAfterFailures: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
 const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, exhausted: 0, failed: 0, waiting: 0, capped: false, stoppedAfterFailures: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 } };
 const expensePosting = (qbPost: Awaited<ReturnType<typeof runExpenseQbPosting>>['qbPost']) =>
     ({ stranded: { checked: 0, failed: 0 }, qbPost, qbDrift: 'unbound' as const, outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });

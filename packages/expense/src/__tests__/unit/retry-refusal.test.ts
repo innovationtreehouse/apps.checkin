@@ -18,6 +18,7 @@ describe("retryRefusal", () => {
     ["not_sent", 409, "test-data"],
     ["needs_finance", 409, "still needs finance"],
     ["no_class", 409, "QuickBooks Class"],
+    ["unpostable", 409, "own data"],
   ] as const)("names where a %s retry leaves the expense", (outcome, status, words) => {
     expect(retryRefusal(outcome)).toMatchObject({ status, message: expect.stringContaining(words) });
   });
