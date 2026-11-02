@@ -8,6 +8,7 @@
  * module, so class identity differs, while the global symbol registry is shared. The file
  * has no relative imports: Turbopack resolves only the package's `.` export.
  */
+import { isDbUnavailableError } from "@checkin/pg-kit";
 import type { ZodType } from "zod";
 
 const SERVICE_ERROR = Symbol.for("@checkin/component-kit/ServiceError");
@@ -128,10 +129,47 @@ export function query(req: Request): URLSearchParams {
   return new URL(req.url).searchParams;
 }
 
+/**
+ * What kind of failure an outside call met, which decides who acts and whether the item is
+ * charged a try: `system` a service or our infrastructure is down, `connection` a credential
+ * or link is broken, `settings` our configuration is wrong or missing, `data` this item can't
+ * be taken, `bug` our code failed unexpectedly.
+ */
+export type FailureKind = "system" | "connection" | "settings" | "data" | "bug";
+
+const KINDED_ERROR = Symbol.for("@checkin/component-kit/KindedError");
+
+/** An error sorted where the outside call caught it. */
+export class KindedError extends Error {
+  readonly [KINDED_ERROR] = true;
+
+  constructor(
+    public readonly kind: FailureKind,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "KindedError";
+  }
+}
+
+export function isKindedError(err: unknown): err is KindedError {
+  return err instanceof Error && KINDED_ERROR in err && "kind" in err && typeof err.kind === "string";
+}
+
+/** The kind of any error. Anything unrecognised is a bug, which keeps today's retry-then-hold. */
+export function kindOf(err: unknown): FailureKind {
+  if (isKindedError(err)) return err.kind;
+  if (isServiceError(err) || isComponentHttpError(err)) return err.status >= 500 ? "system" : "data";
+  if (isZodError(err)) return "data";
+  if (isDbUnavailableError(err)) return "system";
+  return "bug";
+}
+
 /** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
-export class NotWiredError extends Error {
+export class NotWiredError extends KindedError {
   constructor(port: string) {
-    super(`${port} is not wired`);
+    super("settings", `${port} is not wired`);
     this.name = "NotWiredError";
   }
 }
