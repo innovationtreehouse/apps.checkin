@@ -569,7 +569,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {e.qbMatchState === "NEEDS_FINANCE" && (
             <Button
               size="xs"
-              onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "QuickBooks post retried")) await decided(); }}
+              onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Posted to QuickBooks")) await decided(); else reloadAll(); }}
             >
               Retry QuickBooks post
             </Button>

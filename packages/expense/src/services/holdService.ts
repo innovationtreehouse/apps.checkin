@@ -5,7 +5,7 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { checkAndProcessExpense, retryQbPost } from "../lib/expense-qb-processor";
-import { POSTING, bookExpenseToQb } from "../lib/expense-qb-poster";
+import { POSTING, bookExpenseToQb, type PostOutcome } from "../lib/expense-qb-poster";
 import { lockExpense } from "../lib/signoff-facts";
 import { writeAudit } from "../lib/audit";
 import { actorOf } from "../lib/caller";
@@ -48,6 +48,24 @@ export async function setHeldLineAccount(
   });
 }
 
+/** Where a retry that did not reach the books leaves the expense, in finance's words. */
+const RETRY_REFUSALS: Record<Exclude<PostOutcome, "posted" | "matched"> | "unbound", [number, string]> = {
+  unbound: [503, "QuickBooks isn't connected, so nothing was sent"],
+  failed: [503, "QuickBooks failed again; the expense waits as POST_FAILED and is retried automatically"],
+  waiting: [409, "Not posted yet: a sign-off is missing, the daily limit is reached, or a post is in flight; it is retried automatically"],
+  queued: [409, "Not posted: the expense waits for finance to match, link or book it in QuickBooks review"],
+  not_sent: [409, "Not posted: the test-data rule keeps this expense out of this QuickBooks company"],
+  needs_finance: [409, "Not posted: the expense still needs finance; see its QuickBooks reasons"],
+  no_class: [409, "Not posted: a line's budget has no QuickBooks Class; it is retried once one is set"],
+};
+
+/** The refusal for a retry's outcome, or null when the expense reached the books. */
+export function retryRefusal(outcome: PostOutcome | "unbound"): ServiceError | null {
+  if (outcome === "posted" || outcome === "matched") return null;
+  const [status, message] = RETRY_REFUSALS[outcome];
+  return new ServiceError(status, message);
+}
+
 export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId: string): Promise<void> {
   requireFinance(principal);
   const orgId = await getOrgId();
@@ -56,9 +74,10 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
   // Processing runs as the system actor across its own transactions; the audit row records who asked.
   if (expense.qbMatchState === "UNBOOKED") return bookExpenseToQb(orgId, expenseId, actorOf(principal));
   if (expense.qbMatchState === "POST_FAILED" || expense.qbMatchState === "NEEDS_FINANCE") {
-    if (!(await retryQbPost(orgId, expenseId, actorOf(principal)))) {
-      throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
-    }
+    const outcome = await retryQbPost(orgId, expenseId, actorOf(principal));
+    if (outcome === false) throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
+    const refusal = retryRefusal(outcome);
+    if (refusal) throw refusal;
     return;
   }
   await writeAudit(db, actorOf(principal), { expenseId, action: "hold_resubmitted" });
