@@ -1,6 +1,7 @@
 import { processPostEventEmails } from "../postEventEmails";
 import prisma from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
+import { logIntegrationError } from "@/lib/logger";
 
 // Mock dependencies
 jest.mock("@/lib/prisma", () => {
@@ -11,6 +12,7 @@ jest.mock("@/lib/prisma", () => {
                 findMany: jest.fn(),
                 update: jest.fn(),
                 updateMany: jest.fn(),
+                findUniqueOrThrow: jest.fn(),
             },
             person: {
                 findUnique: jest.fn(),
@@ -49,6 +51,7 @@ describe("processPostEventEmails", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         (prisma.event.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+        (prisma.event.findUniqueOrThrow as jest.Mock).mockResolvedValue({ postEventEmailAttempts: 1 });
     });
 
     it("uses 1-hour cutoff time when forceImmediate is false", async () => {
@@ -174,7 +177,7 @@ describe("processPostEventEmails", () => {
 
         expect(prisma.event.update).toHaveBeenCalledWith({
             where: { id: 10 },
-            data: { postEventEmailSent: true }
+            data: { postEventEmailSent: true, postEventEmailClaimedAt: null }
         });
 
         expect(result.processedEvents).toBe(1);
@@ -274,6 +277,26 @@ describe("processPostEventEmails", () => {
             data: { postEventEmailClaimedAt: null, postEventEmailAttempts: { increment: 1 } },
         });
         expect(result.emailsSent).toBe(0);
+    });
+
+    it("notes the Board from the re-read count when other runs failed meanwhile", async () => {
+        (prisma.event.findMany as jest.Mock).mockResolvedValueOnce([
+            {
+                id: 16,
+                name: "Stale Count Event",
+                postEventEmailAttempts: 3,
+                program: { leadMentorId: 100, volunteers: [] },
+                rsvps: [],
+                visits: []
+            }
+        ]).mockResolvedValueOnce([]);
+        (prisma.person.findMany as jest.Mock).mockResolvedValue([{ id: 100, email: "lead@example.com" }]);
+        (sendEmail as jest.Mock).mockResolvedValue(false);
+        (prisma.event.findUniqueOrThrow as jest.Mock).mockResolvedValue({ postEventEmailAttempts: 5 });
+
+        await processPostEventEmails();
+
+        expect(logIntegrationError).toHaveBeenCalledWith("post-event-email", expect.stringContaining("event 16"), { eventId: 16 });
     });
 
     it("does not send when another run holds the claim", async () => {

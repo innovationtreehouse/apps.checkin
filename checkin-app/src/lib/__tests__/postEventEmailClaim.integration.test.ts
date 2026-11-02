@@ -78,6 +78,21 @@ describe("processPostEventEmails claims each event before sending", () => {
         expect(sendsToLead()).toBe(1);
         const row = await prisma.event.findUniqueOrThrow({ where: { id: event.id } });
         expect(row.postEventEmailSent).toBe(true);
+        expect(row.postEventEmailClaimedAt).toBeNull();
+        // The taken-over claim was a run that died mid-send, so it counts.
+        expect(row.postEventEmailAttempts).toBe(2);
+    });
+
+    it("stops taking over stale claims at the cap", async () => {
+        (sendEmail as jest.Mock).mockResolvedValue(true);
+        await createEndedEvent({
+            postEventEmailClaimedAt: new Date(Date.now() - 60 * 60 * 1000),
+            postEventEmailAttempts: POST_EVENT_EMAIL_MAX_ATTEMPTS,
+        });
+
+        await processPostEventEmails({ forceImmediate: true });
+
+        expect(sendsToLead()).toBe(0);
     });
 
     it("stops after the attempt cap and leaves the Board a note", async () => {
