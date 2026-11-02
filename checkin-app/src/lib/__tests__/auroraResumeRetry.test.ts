@@ -71,23 +71,3 @@ describe("retryP1001UntilDeadline", () => {
         expect(calls).toBe(1);
     });
 });
-
-describe("isDbResumeError — acquisition-phase signatures only", () => {
-    const { isDbResumeError } = jest.requireActual("@/lib/auroraResumeRetry");
-    it("matches P1001, P2024, and both pg connect-timeout messages", () => {
-        expect(isDbResumeError({ code: "P1001" })).toBe(true);
-        expect(isDbResumeError({ code: "P2024" })).toBe(true);
-        // pg pool: no free connection within connectionTimeoutMillis
-        expect(isDbResumeError(new Error("timeout exceeded when trying to connect"))).toBe(true);
-        // pg client: socket still connecting when connectionTimeoutMillis fired.
-        // Not retrying this logs users out after idle (JWT_SESSION_ERROR).
-        expect(isDbResumeError(new Error("Connection terminated due to connection timeout"))).toBe(true);
-    });
-    it("rejects mid-query drops and unrelated errors (write-safety)", () => {
-        // A LIVE connection dropped mid-statement — the query may have run, so never retry.
-        // Must stay distinct from the "due to connection timeout" acquisition failure above.
-        expect(isDbResumeError(new Error("Connection terminated unexpectedly"))).toBe(false);
-        expect(isDbResumeError({ code: "P2002" })).toBe(false);
-        expect(isDbResumeError(null)).toBe(false);
-    });
-});

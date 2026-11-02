@@ -66,6 +66,23 @@ export function isRecordNotFoundError(err: unknown): boolean {
 }
 
 /**
+ * True when the database could not be reached: Prisma's can't-reach-server (P1001), a pool
+ * timeout acquiring a connection (P2024, or the pg pool's own message), or the pg client's
+ * connect timeout. Every signature is a connection-acquisition failure, so the query never
+ * ran and retrying a write is safe. A mid-query "connection terminated unexpectedly" is not
+ * one: the statement may have executed.
+ */
+export function isDbUnavailableError(err: unknown): boolean {
+  const code = prismaErrorCode(err);
+  if (code === "P1001" || code === "P2024") return true;
+  const message = typeof err === "object" && err !== null ? (err as { message?: unknown }).message : undefined;
+  return (
+    typeof message === "string" &&
+    /timeout exceeded when trying to connect|connection terminated due to connection timeout/i.test(message)
+  );
+}
+
+/**
  * Run an idempotent upsert that may lose a create race against a concurrent caller. On the
  * unique-constraint loss, retry once: the row now exists, so the retry takes the `update` branch.
  */

@@ -7,7 +7,10 @@ import {
   callerId,
   defineRuntime,
   httpError,
+  KindedError,
   isComponentHttpError,
+  isKindedError,
+  kindOf,
   isServiceError,
   mapServiceErrors,
   orgEventStep,
@@ -305,5 +308,36 @@ describe("sweepOrgEvents", () => {
     expect(unreadable).toBe(1);
     expect(res).toMatchObject({ unreadable: true, needsAlert: true });
     expect(res.counts.failed).toBe(1);
+  });
+});
+
+describe("kindOf", () => {
+  const zodError = z.object({ a: z.string() }).safeParse({}).error;
+
+  it.each([
+    ["a KindedError keeps its kind", new KindedError("connection", "revoked"), "connection"],
+    ["a 5xx ServiceError is system", new ServiceError(503, "down"), "system"],
+    ["a 4xx ServiceError is data", new ServiceError(409, "taken"), "data"],
+    ["a 5xx http error is system", httpError(502, "bad gateway"), "system"],
+    ["a 4xx http error is data", httpError(400, "bad"), "data"],
+    ["a zod error is data", zodError, "data"],
+    ["an unreachable database is system", Object.assign(new Error("Can't reach database server"), { code: "P1001" }), "system"],
+    ["a NotWiredError is settings", new NotWiredError("receipt org"), "settings"],
+    ["a plain error is a bug", new Error("boom"), "bug"],
+    ["a unique violation is a bug", Object.assign(new Error("dup"), { code: "P2002" }), "bug"],
+    ["a non-error is a bug", "boom", "bug"],
+  ])("%s", (_label, err, kind) => {
+    expect(kindOf(err)).toBe(kind);
+  });
+
+  it("recognises a kinded error from another copy of the class by its brand", () => {
+    const foreign = Object.assign(new Error("x"), { [Symbol.for("@checkin/component-kit/KindedError")]: true, kind: "system" });
+    expect(isKindedError(foreign)).toBe(true);
+    expect(kindOf(foreign)).toBe("system");
+  });
+
+  it("keeps the cause", () => {
+    const cause = new Error("root");
+    expect(new KindedError("system", "wrapped", { cause }).cause).toBe(cause);
   });
 });
