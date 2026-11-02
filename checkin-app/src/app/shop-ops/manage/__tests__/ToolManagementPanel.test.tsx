@@ -6,7 +6,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
-import { settle } from "@/test-helpers/settle";
+import { settleAfter } from "@/test-helpers/settle";
 import { ToolManagementPanel } from "../ToolManagementPanel";
 
 // Note: GrantForm's member/tool Select mounts its option list in the DOM even
@@ -387,7 +387,7 @@ describe("ToolManagementPanel failed load", () => {
     mockFetchJson({ "/api/shop/org-members": { orgMembers: MEMBERS } });
     renderWithProviders(<ToolManagementPanel />);
 
-    await settle();
+    await settleAfter("/api/shop/tools");
     expect(screen.queryByText("No tools match.")).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load tools")).toBeInTheDocument();
 
@@ -402,7 +402,7 @@ describe("ToolManagementPanel failed load", () => {
     renderWithProviders(<ToolManagementPanel />);
 
     fireEvent.click(await screen.findByRole("tab", { name: "By Person" }));
-    await settle();
+    await settleAfter("/api/shop/org-members");
     expect(screen.queryByText("No members match.")).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load members")).toBeInTheDocument();
   });
@@ -417,7 +417,7 @@ describe("ToolManagementPanel failed load", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: tab }));
     fireEvent.click(await screen.findByText(row));
-    await settle();
+    await settleAfter("/api/shop/certifications?");
     expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load certifications")).toBeInTheDocument();
   });
@@ -428,7 +428,7 @@ describe("ToolManagementPanel failed load", () => {
     renderWithProviders(<ToolManagementPanel />);
 
     fireEvent.click(await screen.findByRole("tab", { name: "All Assignments" }));
-    await settle();
+    await settleAfter("/api/shop/certifications?all=true");
     expect(screen.queryByText("No assignments found.")).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load assignments")).toBeInTheDocument();
   });

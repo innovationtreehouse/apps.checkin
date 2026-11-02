@@ -8,7 +8,7 @@ import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
-import { settle } from "@/test-helpers/settle";
+import { settleAfter } from "@/test-helpers/settle";
 import HouseholdPage from "../page";
 
 // Successes toast via notifications.show (no inline banner); assert on the mock.
@@ -698,7 +698,7 @@ describe("HouseholdPage failed load", () => {
     ]);
     renderWithProviders(<HouseholdPage />);
 
-    await settle();
+    await settleAfter("/api/household/emergency-contacts");
     expect(screen.queryByText(/No emergency contact on file/)).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load emergency contacts")).toBeInTheDocument();
 

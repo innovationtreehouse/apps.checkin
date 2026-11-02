@@ -9,7 +9,7 @@ import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setCheckinEnv, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
 import { invalidateLoads } from "@checkin/component-ui";
-import { settle } from "@/test-helpers/settle";
+import { settleAfter } from "@/test-helpers/settle";
 import MembershipPage from "../page";
 
 beforeEach(() => { resetRtl(); sessionStorage.clear(); (notifications.show as jest.Mock).mockClear(); });
@@ -1279,7 +1279,7 @@ describe("failed load", () => {
     mockFetchJson({});
     renderWithProviders(<MembershipPage />);
 
-    await settle();
+    await settleAfter("/api/membership");
     expect(screen.queryByText("Become a member")).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load your membership")).toBeInTheDocument();
 

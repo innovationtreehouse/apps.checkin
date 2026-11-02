@@ -20,7 +20,7 @@ import { ModalsProvider } from "@mantine/modals";
 import { EnvProvider } from "@/components/EnvProvider";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
-import { settle } from "@/test-helpers/settle";
+import { settleAfter } from "@/test-helpers/settle";
 import AdminMembershipPage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so a confirmed action would
@@ -331,7 +331,7 @@ describe("failed load", () => {
         mockFetchJson({});
         renderPage();
 
-        await settle();
+        await settleAfter("/api/membership-ops/applications");
         expect(screen.queryByText("No in-flight membership applications.")).not.toBeInTheDocument();
         expect(await screen.findByText("Couldn't load applications")).toBeInTheDocument();
 

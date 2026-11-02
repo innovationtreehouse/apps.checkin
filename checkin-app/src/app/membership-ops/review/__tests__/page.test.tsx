@@ -9,7 +9,7 @@ import { notifications } from "@mantine/notifications";
 import { ModalsProvider } from "@mantine/modals";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
-import { settle } from "@/test-helpers/settle";
+import { settleAfter } from "@/test-helpers/settle";
 import MembershipReviewPage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so the confirmed action
@@ -292,7 +292,7 @@ describe("failed load", () => {
     mockFetchJson({});
     renderPage();
 
-    await settle();
+    await settleAfter("/api/membership/reviews");
     expect(screen.queryByText("Nothing awaiting your review right now.")).not.toBeInTheDocument();
     expect(await screen.findByText("Couldn't load the review queue")).toBeInTheDocument();
 
@@ -316,7 +316,7 @@ describe("failed load of a side list", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("checkbox", { name: label }));
-    await settle();
+    await settleAfter(query);
     expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
     expect(await screen.findByText(errorTitle)).toBeInTheDocument();
   });
