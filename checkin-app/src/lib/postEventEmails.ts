@@ -127,7 +127,8 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
                 where: { ...claimable, postEventEmailClaimedAt: null },
                 data: { postEventEmailClaimedAt: claimedAt },
             });
-            if (claim.count !== 1) {
+            const tookOver = claim.count !== 1;
+            if (tookOver) {
                 // A stale claim is a run that died mid-send, possibly after sending:
                 // it counts as a failed attempt so crash re-sends stop at the cap.
                 const takeover = await prisma.event.updateMany({
@@ -157,16 +158,19 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             }
 
             // Release the claim so the next run retries now, not after the stale window.
+            // A takeover already counted this attempt.
             const released = await prisma.event.updateMany({
                 where: { id: event.id, postEventEmailClaimedAt: claimedAt },
-                data: { postEventEmailClaimedAt: null, postEventEmailAttempts: { increment: 1 } },
+                data: { postEventEmailClaimedAt: null, ...(tookOver ? {} : { postEventEmailAttempts: { increment: 1 } }) },
             });
             if (released.count !== 1) continue;
             // Re-read: other runs may have counted failures since this batch was fetched.
-            const { postEventEmailAttempts: attempts } = await prisma.event.findUniqueOrThrow({
+            const current = await prisma.event.findUnique({
                 where: { id: event.id },
                 select: { postEventEmailAttempts: true },
             });
+            if (!current) continue; // Deleted since the release.
+            const attempts = current.postEventEmailAttempts;
             if (attempts >= POST_EVENT_EMAIL_MAX_ATTEMPTS) {
                 await logIntegrationError(
                     "post-event-email",

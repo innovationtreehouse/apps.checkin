@@ -12,7 +12,7 @@ jest.mock("@/lib/prisma", () => {
                 findMany: jest.fn(),
                 update: jest.fn(),
                 updateMany: jest.fn(),
-                findUniqueOrThrow: jest.fn(),
+                findUnique: jest.fn(),
             },
             person: {
                 findUnique: jest.fn(),
@@ -51,7 +51,7 @@ describe("processPostEventEmails", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         (prisma.event.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
-        (prisma.event.findUniqueOrThrow as jest.Mock).mockResolvedValue({ postEventEmailAttempts: 1 });
+        (prisma.event.findUnique as jest.Mock).mockResolvedValue({ postEventEmailAttempts: 1 });
     });
 
     it("uses 1-hour cutoff time when forceImmediate is false", async () => {
@@ -292,7 +292,7 @@ describe("processPostEventEmails", () => {
         ]).mockResolvedValueOnce([]);
         (prisma.person.findMany as jest.Mock).mockResolvedValue([{ id: 100, email: "lead@example.com" }]);
         (sendEmail as jest.Mock).mockResolvedValue(false);
-        (prisma.event.findUniqueOrThrow as jest.Mock).mockResolvedValue({ postEventEmailAttempts: 5 });
+        (prisma.event.findUnique as jest.Mock).mockResolvedValue({ postEventEmailAttempts: 5 });
 
         await processPostEventEmails();
 

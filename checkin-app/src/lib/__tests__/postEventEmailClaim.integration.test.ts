@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 import { processPostEventEmails, POST_EVENT_EMAIL_MAX_ATTEMPTS } from "@/lib/postEventEmails";
@@ -109,5 +110,44 @@ describe("processPostEventEmails claims each event before sending", () => {
         expect(row.postEventEmailAttempts).toBe(POST_EVENT_EMAIL_MAX_ATTEMPTS);
         const notes = await prisma.integrationErrorLog.findMany({ where: { source: "post-event-email", message: { contains: TAG } } });
         expect(notes).toHaveLength(1);
+    });
+
+    it("counts a taken-over claim whose send then fails once", async () => {
+        (sendEmail as jest.Mock).mockResolvedValue(false);
+        const event = await createEndedEvent({ postEventEmailClaimedAt: new Date(Date.now() - 60 * 60 * 1000), postEventEmailAttempts: 1 });
+
+        await processPostEventEmails({ forceImmediate: true });
+
+        expect(sendsToLead()).toBe(1);
+        const row = await prisma.event.findUniqueOrThrow({ where: { id: event.id } });
+        expect(row.postEventEmailClaimedAt).toBeNull();
+        expect(row.postEventEmailAttempts).toBe(2);
+    });
+
+    it("keeps processing the run's other events when one is deleted mid-run", async () => {
+        (sendEmail as jest.Mock).mockResolvedValue(false);
+        const deleted = await createEndedEvent();
+        const other = await prisma.event.create({
+            data: { name: `${TAG} Other Event`, startAt: deleted.startAt, endAt: deleted.endAt, programId: deleted.programId },
+        });
+        // Delete the event right after its claim is released, before the run re-reads it.
+        const realUpdateMany = prisma.event.updateMany.bind(prisma.event);
+        const spy = jest.spyOn(prisma.event, "updateMany").mockImplementation(((args: Prisma.EventUpdateManyArgs) =>
+            realUpdateMany(args).then(async (result) => {
+                if (args.where?.id === deleted.id && args.where.postEventEmailClaimedAt instanceof Date) {
+                    await prisma.event.delete({ where: { id: deleted.id } });
+                }
+                return result;
+            })) as never);
+
+        try {
+            await processPostEventEmails({ forceImmediate: true });
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(await prisma.event.findUnique({ where: { id: deleted.id } })).toBeNull();
+        const row = await prisma.event.findUniqueOrThrow({ where: { id: other.id } });
+        expect(row.postEventEmailAttempts).toBe(1);
     });
 });
