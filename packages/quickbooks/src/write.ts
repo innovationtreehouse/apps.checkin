@@ -1,3 +1,4 @@
+import { KindedError, kindOf, type FailureKind } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import { QboRequestError, appKeyOf, assertAppKey, qboDate, type JournalEntryFields, type JournalLine, type QuickBooksClient, type TxnWrite } from "./client";
 import { billCandidate, depositCandidate, findMatch, journalCandidate, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
@@ -22,7 +23,7 @@ export type FindOrCreateResult =
   | { kind: "found"; id: string; via: "key" | "amount"; txnDate: string }
   | { kind: "ambiguous"; ids: string[] }
   | { kind: "created"; id: string }
-  | { kind: "failed"; error: string }
+  | { kind: "failed"; error: string; failure: FailureKind }
   /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6210): never created. */
   | { kind: "closed" }
   /** Not found and the lane may not create it on its own: finance books it or skips it. */
@@ -100,7 +101,7 @@ function checkDates(date: string, req: { window: { from: string; to: string }; c
   }
 }
 
-const failed = (e: unknown): FindOrCreateResult => ({ kind: "failed", error: e instanceof Error ? e.message : String(e) });
+const failed = (e: unknown): FindOrCreateResult => ({ kind: "failed", error: e instanceof Error ? e.message : String(e), failure: kindOf(e) });
 
 /**
  * Match before create, stateless, through the shared gate. The created entry carries the key in
@@ -173,7 +174,7 @@ function inKindLine(l: InKindJournalLine, accounts: InKindJournalRequest["accoun
   const allowed = l.postingType === "Credit" ? IN_KIND_CREDIT_ROLES : l.postingType === "Debit" ? IN_KIND_DEBIT_ROLES : [];
   if (!allowed.includes(l.role)) throw new Error(`An in-kind journal entry may not ${String(l.postingType).toLowerCase()} ${l.role}`);
   const accountId = accounts[l.role];
-  if (!accountId) throw new Error(`The books map has no account for ${l.role}`);
+  if (!accountId) throw new KindedError("settings", `The books map has no account for ${l.role}`);
   return { postingType: l.postingType, amountCents: l.amountCents, accountId, classId: l.classId, description: l.description };
 }
 

@@ -69,6 +69,8 @@ export interface DrainLane<R, O extends string> {
   failures: readonly O[];
   /** Outcomes that made no QuickBooks call, so they leave the streak as it is. */
   noCall?: readonly O[];
+  /** Outcomes that end the run at once, such as a lost connection: every later post would fail the same way. */
+  stopNow?: readonly O[];
   /** Entries already created today, for a lane held to a daily limit. */
   createdToday?: number;
   /** Defaults to MAX_CREATES_PER_RUN. */
@@ -78,9 +80,9 @@ export interface DrainLane<R, O extends string> {
 }
 
 /** Why a run ended before its last record, and how many records it left unposted. */
-export type DrainStop = { by: "day" | "count" | "failures" | "post"; remaining: number };
+export type DrainStop = { by: "day" | "count" | "failures" | "post" | "stopNow"; remaining: number };
 
-/** Posts each record in order until a cap, a failure streak or the lane ends the run. */
+/** Posts each record in order until a cap, a failure streak, a stopNow outcome or the lane ends the run. */
 export async function runDrain<R, O extends string>(rows: readonly R[], lane: DrainLane<R, O>): Promise<DrainStop | null> {
   let failuresInARow = 0;
   for (const [i, row] of rows.entries()) {
@@ -90,6 +92,7 @@ export async function runDrain<R, O extends string>(rows: readonly R[], lane: Dr
     const outcome = await lane.post(row);
     if (outcome === null) return { by: "post", remaining };
     lane.counts[outcome]++;
+    if (lane.stopNow?.includes(outcome)) return { by: "stopNow", remaining: remaining - 1 };
     if (!lane.noCall?.includes(outcome)) failuresInARow = lane.failures.includes(outcome) ? failuresInARow + 1 : 0;
     if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) return { by: "failures", remaining: remaining - 1 };
   }

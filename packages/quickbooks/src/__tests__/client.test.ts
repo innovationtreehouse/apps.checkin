@@ -1,5 +1,6 @@
+import { kindOf } from "@checkin/component-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_WINDOW_DAYS, QuickBooksClient, assertRealmAllowed, qboDate, qboRealmFromEnv, qboString } from "../client";
+import { MAX_WINDOW_DAYS, QboRequestError, QuickBooksClient, assertRealmAllowed, qboDate, qboRealmFromEnv, qboString } from "../client";
 import type { AccessTokenSource } from "../types";
 
 const tokens: AccessTokenSource = { current: async () => "tok" };
@@ -17,6 +18,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -84,6 +86,32 @@ describe("QuickBooksClient", () => {
     await expect(new QuickBooksClient(tokens, sandbox).billsBetween("2025-01-01", "2025-01-02")).rejects.toThrow(
       /401 \(intuit_tid=t9\)/,
     );
+  });
+
+  it.each([
+    [401, "connection"],
+    [403, "connection"],
+    [500, "system"],
+    [503, "system"],
+    [400, "data"],
+    [404, "data"],
+  ] as const)("sorts a %i as %s, carrying the status and request id", async (status, kind) => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(new Response("", { status, headers: { intuit_tid: "t9" } }));
+    const err = await new QuickBooksClient(tokens, sandbox).billsBetween("2025-01-01", "2025-01-02").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(QboRequestError);
+    expect(err).toMatchObject({ status, requestId: "t9" });
+    expect(kindOf(err)).toBe(kind);
+  });
+
+  it.each([
+    new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    new TypeError("fetch failed"),
+  ])("sorts a request that got no answer (%s) as system", async (thrown) => {
+    fetchMock.mockRejectedValueOnce(thrown);
+    const err = await new QuickBooksClient(tokens, sandbox).billsBetween("2025-01-01", "2025-01-02").catch((e: unknown) => e);
+    expect(kindOf(err)).toBe("system");
+    expect(String(err)).toContain(thrown.message);
   });
 
   it.each([
