@@ -554,10 +554,27 @@ describeDb("QB-2 posting — bounded retry", () => {
   it("a retry that fails again goes back to retrying, raising no flag", async () => {
     const { id } = await outboxedManual("not-an-account");
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
-    await resubmitHeldExpense(principal(500, { isFinance: true }), id);
+    await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({
+      status: 503,
+      message: expect.stringContaining("QuickBooks failed again"),
+    });
 
     expect((await expenseRow(id)).qbMatchState).toBe("POST_FAILED");
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
+  });
+
+  it("a retry while QuickBooks is not connected answers 503 and changes nothing", async () => {
+    const { id, line } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, line, "60");
+    bindPorts({ catalog: catalogResolving({}) });
+
+    await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("isn't connected") });
+
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
+    expect(qbo.posts).toHaveLength(0);
   });
 
   it("a refused retry answers 409 and records no retry", async () => {

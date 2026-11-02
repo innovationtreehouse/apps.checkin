@@ -8,7 +8,8 @@ import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, 
 import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
-import { postExpenseToQb } from "./expense-qb-poster";
+import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
+import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
 import type { Expense } from "../generated/prisma/client";
 
@@ -506,9 +507,11 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
  * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
  * post that books leaves NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that
  * state), and checks off any open QB_POST_HELD flag; one that fails counts as attempt one again.
- * Returns false when a line no longer resolves to one account; the expense stays as it is.
+ * Returns the post's outcome; "unbound" when QuickBooks is not connected, and false when a line no
+ * longer resolves to one account. Either refusal before the re-arm leaves the expense as it is.
  */
-export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
+export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<PostOutcome | "unbound" | false> {
+  if (!(await getExpenseRuntime().quickbooks.posting())) return "unbound";
   const rearmed = await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId } });
@@ -527,6 +530,5 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     return true;
   });
   if (!rearmed) return false;
-  await postExpenseToQb(orgId, expenseId);
-  return true;
+  return postExpenseToQb(orgId, expenseId);
 }
