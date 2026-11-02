@@ -23,6 +23,7 @@ const tx = {
     budgetOwner: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     budgetOwnerTreasurer: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
     auditLog: { create: jest.fn() },
+    $queryRaw: jest.fn(),
 };
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ linesAwaitingBoardSeat: jest.fn() }));
@@ -50,6 +51,7 @@ jest.mock('@/lib/prisma', () => ({
 beforeEach(() => {
     jest.clearAllMocks();
     tx.budgetOwnerTreasurer.findUnique.mockResolvedValue(null);
+    tx.$queryRaw.mockResolvedValue([{ isOrgLevel: false }]);
 });
 
 const nothingWritten = () => {
@@ -134,6 +136,21 @@ describe('setBucketOwner', () => {
     });
 });
 
+describe('approvers and the org-level flag, changed at once', () => {
+    beforeEach(() => tx.$queryRaw.mockResolvedValue([{ isOrgLevel: true }]));
+    const refused = { status: 409, message: 'An org-level bucket has no owner or treasurers.' };
+
+    test('refuses an owner once the locked bucket is org-level, writing nothing', async () => {
+        await expect(setBucketOwner(5, 7, 3)).rejects.toMatchObject(refused);
+        nothingWritten();
+    });
+
+    test('refuses a treasurer once the locked bucket is org-level, writing nothing', async () => {
+        await expect(setBucketTreasurer(5, 7, 3, true)).rejects.toMatchObject(refused);
+        nothingWritten();
+    });
+});
+
 describe('updateBudgetOwner: org-level and restore', () => {
     const awaiting = linesAwaitingBoardSeat as jest.Mock;
     const stored = (over: Record<string, unknown> = {}) => ({
@@ -160,6 +177,7 @@ describe('updateBudgetOwner: org-level and restore', () => {
     test('makes a bucket with no approvers org-level and audits the change', async () => {
         tx.budgetOwner.findUnique.mockResolvedValue(stored());
         await updateBudgetOwner(1, 7, { isOrgLevel: true });
+        expect(tx.$queryRaw).toHaveBeenCalled();
         expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { isOrgLevel: true } }));
         expect(tx.auditLog.create).toHaveBeenCalledWith({
             data: expect.objectContaining({

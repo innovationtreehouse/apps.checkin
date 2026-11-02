@@ -84,6 +84,8 @@ describe("changing a bucket", () => {
     const { id } = await create();
     await send(finance, "PATCH", `/api/budget-owners/${id}`, { quickBooksClassId });
     await send(finance, "POST", `/api/budget-owners/${id}/archive`);
+    const other = await create();
+    expect((await send(finance, "PATCH", `/api/budget-owners/${other.id}`, { quickBooksClassId })).status).toBe(409);
 
     expect((await send(board, "PATCH", `/api/budget-owners/${id}`, { archived: false })).status).toBe(403);
     const restored = await send(finance, "PATCH", `/api/budget-owners/${id}`, { archived: false });
@@ -91,12 +93,16 @@ describe("changing a bucket", () => {
     expect(restored.json).toMatchObject({ archivedAt: null, quickBooksClassId });
   });
 
-  it("finance changes the flag, refused while the Board's approvers hold the bucket", async () => {
+  it("finance changes the flag, refused while the Board's owner or treasurer holds the bucket", async () => {
     const { id } = await create();
     await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId });
     expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
 
     await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: null });
+    await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
+    expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
+
+    await send(board, "DELETE", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
     const orgLevel = await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true });
     expect(orgLevel.status).toBe(200);
     expect(orgLevel.json).toMatchObject({ isOrgLevel: true });
