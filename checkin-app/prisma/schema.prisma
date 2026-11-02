@@ -2003,7 +2003,7 @@ model BudgetOwner {
   id                   Int       @id @default(autoincrement())
   /// @sensitivity:internal
   name                 String
-  /// Finance assigning a line to an org-level bucket approves it; it has no owner or treasurers.
+  /// An org-level bucket has no owner or treasurers; a Board member approves its lines.
   /// @sensitivity:internal
   isOrgLevel           Boolean   @default(false)
   /// Owns the bucket's budget and approves its lines; null until the Board names one.
