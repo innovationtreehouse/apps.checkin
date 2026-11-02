@@ -1305,6 +1305,12 @@ model Event {
   attendanceConfirmedBy   Person? @relation("EventAttendanceConfirmer", fields: [attendanceConfirmedById], references: [id])
   /// @sensitivity:internal
   postEventEmailSent      Boolean      @default(false)
+  /// When a run claimed this event's post-event email; an old claim is free to take over.
+  /// @sensitivity:internal
+  postEventEmailClaimedAt DateTime?
+  /// Failed sends so far; sending stops at the cap.
+  /// @sensitivity:internal
+  postEventEmailAttempts  Int          @default(0)
   /// @sensitivity:public
   recurringGroupId        String?
 

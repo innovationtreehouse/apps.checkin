@@ -317,6 +317,8 @@ export const classifications = {
         attendanceConfirmedAt: 'internal',
         attendanceConfirmedById: 'internal',
         postEventEmailSent: 'internal',
+        postEventEmailClaimedAt: 'internal',
+        postEventEmailAttempts: 'internal',
         recurringGroupId: 'public',
     },
     RSVP: {
