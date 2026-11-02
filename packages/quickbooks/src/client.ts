@@ -414,7 +414,8 @@ export class QuickBooksClient {
   private async byIds<T>(entity: string, ids: readonly string[]): Promise<T[]> {
     if (ids.length === 0) return [];
     if (ids.length > PAGE_SIZE) throw new Error(`QBO id lookup takes at most ${PAGE_SIZE} ids, got ${ids.length}`);
-    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")})`);
+    // QuickBooks returns 100 rows unless MAXRESULTS says otherwise.
+    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")}) MAXRESULTS ${ids.length}`);
   }
 
   /** The BillPayments a Bill's LinkedTxn names. */

@@ -7,7 +7,7 @@
 // into the bank account QBO_SANDBOX_DEPOSIT_ACCOUNT (default "Checking"), booked to the income account
 // QBO_SANDBOX_INCOME_ACCOUNT (default "Services"), each named as the Chart of Accounts shows it.
 // Creates up to two [checkin-test] Deposits in the sandbox per run.
-import { QboRequestError, QuickBooksClient, appKeyOf, qboEnvFromEnv, qbKey, type TxnWrite } from "../src/client";
+import { QboRequestError, QuickBooksClient, appKeyOf, qboEnvFromEnv, qbKey, qboString, type TxnWrite } from "../src/client";
 import type { QboPreferences } from "../src/types";
 import { CREATE } from "../src/internal";
 import { fileAccessTokenSource, loadTokens, tokenFileFromEnv } from "../src/local";
@@ -80,5 +80,12 @@ for (const entity of ["Deposit", "Purchase", "Bill", "JournalEntry"] as const) {
     report(false, `created-since read of ${entity} failed (${String(e)})`);
   }
 }
+
+// 5. An id lookup returns every row. The default-page limit shows only with more than 100 Deposits in the sandbox.
+const depositIds = (await client.createdSince("Deposit", new Date("2000-01-01T00:00:00Z"))).entries.map((d) => d.Id).slice(0, 1000);
+const byId = await client.depositsByIds(depositIds);
+const unbounded = await client.query<{ Id: string }>(`SELECT * FROM Deposit WHERE Id IN (${depositIds.map(qboString).join(", ")})`);
+report(byId.length === depositIds.length, `id lookup returns ${byId.length} of ${depositIds.length} Deposits; with no MAXRESULTS, ${unbounded.length}`);
+if (depositIds.length <= 100) console.log("NOTE  100 or fewer Deposits: this run does not exercise QuickBooks' default page size");
 
 process.exit(failed ? 1 : 0);
