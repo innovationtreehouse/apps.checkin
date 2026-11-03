@@ -102,7 +102,10 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
   if (provisional?.status === "pending") return null;
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
   if (provisional) return `${id} was rejected by the catalog`;
-  const active = await catalogHasActiveItem(gtin13).catch(() => { throw httpError(502, "The catalog couldn't be reached; try again"); });
+  const active = await catalogHasActiveItem(gtin13).catch((err: unknown) => {
+    console.error("[local-inventory] catalog check failed", err);
+    throw httpError(502, "The catalog couldn't be reached; try again");
+  });
   return active ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
 }
 

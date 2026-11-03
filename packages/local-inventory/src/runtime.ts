@@ -34,9 +34,11 @@ export function getCatalogEventSource(): CatalogEventSource {
   return requireRuntime().catalogEventSource ?? inertCatalogEventSource;
 }
 
-/** Whether the catalog the host bound has an active item with this GTIN. */
+/** Whether the catalog the host bound has an active item with this GTIN; throws when the host bound none. */
 export async function catalogHasActiveItem(gtin13: string): Promise<boolean> {
-  return (await requireRuntime().catalog?.getActiveItem(gtin13)) != null;
+  const catalog = requireRuntime().catalog;
+  if (!catalog) throw new Error("local-inventory: no catalog is bound, so no catalog item can be checked");
+  return (await catalog.getActiveItem(gtin13)) != null;
 }
 
 /** The alerts the host bound, if any. */

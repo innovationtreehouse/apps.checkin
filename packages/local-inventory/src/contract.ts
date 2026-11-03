@@ -36,7 +36,7 @@ export interface InventoryRuntimeConfig {
   org: () => Promise<OrgIdentity>;
   /** S5 replay read; inert (no events) until the host binds it to the catalog. */
   catalogEventSource?: CatalogEventSource;
-  /** Active catalog item read; unbound, no catalog GTIN is known. */
+  /** Active catalog item read; unbound, a catalog part is refused as unreachable. */
   catalog?: CatalogItemReader;
   alerts?: InventoryAlerts;
 }

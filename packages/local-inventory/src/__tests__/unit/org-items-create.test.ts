@@ -63,6 +63,14 @@ describeDb("POST org-items", () => {
     expect(await db.orgItem.count()).toBe(0);
   });
 
+  it("answers 502 when the host bound no catalog, rather than calling the part unknown", async () => {
+    configureLocalInventory({
+      auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
+      org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+    });
+    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 502 });
+  });
+
   it("refuses a wrong check digit and a GTIN that is no active catalog item, adding nothing", async () => {
     await expect(post("4006381333932")).rejects.toMatchObject({ status: 400 });
     await expect(post("0012345678905")).rejects.toMatchObject({ status: 400 });
