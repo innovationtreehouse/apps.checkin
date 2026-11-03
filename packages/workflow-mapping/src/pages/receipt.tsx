@@ -5,10 +5,10 @@ import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
+import { MIN_CATALOG_SEARCH_LENGTH, catalogItemLabel, catalogSearchTerm, useCatalogSearch, type CatalogItem } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
 import { type LineFormKind, lineFormBody } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
 
@@ -69,33 +69,6 @@ interface SubcategoryOption {
   number: number;
   categoryId: number;
 }
-/** GET /api/catalog/items rows, with their category and subcategory included. */
-interface CatalogItem {
-  gtin13: string;
-  name: string;
-  category: { name: string };
-  subcategory: { name: string };
-}
-
-const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${formatGtinDisplay(item.gtin13)}`;
-
-/** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
-function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null; answered: boolean } {
-  const [result, setResult] = useState<{ term: string; items: CatalogItem[]; error: string | null } | null>(null);
-  const term = catalogSearchTerm(q);
-  useEffect(() => {
-    if (term === null) return;
-    let live = true;
-    const t = setTimeout(() => {
-      api<CatalogItem[]>(`/api/catalog/items?q=${encodeURIComponent(term)}&limit=20`)
-        .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
-        .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
-    }, 250);
-    return () => { live = false; clearTimeout(t); };
-  }, [term]);
-  return result && result.term === term ? { items: result.items, error: result.error, answered: true } : { items: [], error: null, answered: false };
-}
-
 /** Catalog names by GTIN, one request per distinct GTIN; a name that fails to load is left out and the part still shows its ID. */
 function useCatalogNames(gtins: string[]): Map<string, string> {
   const [names, setNames] = useState<Map<string, string>>(new Map());
@@ -366,7 +339,7 @@ function LineForm({ busy, onSubmit, onCancel }: {
                 onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
               >
                 <Stack gap={6} py={4}>
-                  {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={itemLabel(item)} />)}
+                  {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
                 </Stack>
               </Radio.Group>
             </ScrollArea.Autosize>

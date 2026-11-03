@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
+import { Button, Group, Select, Table, Text, Title } from "@mantine/core";
 import { paged, send, useLoad, useRoles, type Bucket } from "../components/api";
-import { LoadError, Pager } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, Pager } from "@checkin/component-ui";
 
 interface PartOwner {
   id: number;
@@ -21,7 +21,7 @@ export default function OwnershipMapPage() {
   const { isFinance } = useRoles();
   const [page, setPage] = useState(1);
   const map = useLoad<{ PartOwnerMap: PartOwner[]; Item?: CatalogItem[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page), { keepPrevious: true });
-  const [gtin13, setGtin13] = useState("");
+  const [gtin13, setGtin13] = useState<string | null>(null);
   const [owner, setOwner] = useState<string | null>(null);
 
   const buckets = map.data?.ExpenseBucketView ?? [];
@@ -54,11 +54,11 @@ export default function OwnershipMapPage() {
       {map.data?.PartOwnerMap.length === 0 && <Text c="dimmed" mt="sm">No parts mapped yet.</Text>}
       {isFinance && (
         <Group mt="md" align="end">
-          <TextInput label="GTIN-13" value={gtin13} onChange={(e) => setGtin13(e.currentTarget.value)} />
+          <CatalogPicker label="Part" value={gtin13} onChange={setGtin13} w={360} />
           <Select label="Bucket" data={options} value={owner} onChange={setOwner} searchable />
           <Button
-            disabled={!/^\d{13}$/.test(gtin13) || !owner}
-            onClick={async () => { if (await send("/ownership-map", "PUT", { gtin13, ownerId: Number(owner) }, "Mapping saved")) { setGtin13(""); map.reload(); } }}
+            disabled={!gtin13 || !owner}
+            onClick={async () => { if (await send("/ownership-map", "PUT", { gtin13, ownerId: Number(owner) }, "Mapping saved")) { setGtin13(null); map.reload(); } }}
           >Save</Button>
         </Group>
       )}

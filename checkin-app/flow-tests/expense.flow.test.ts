@@ -226,7 +226,7 @@ describe("expense — FINANCE journey", () => {
     expect(account.status).toBe(200);
     const accountId = (account.json as { id: number }).id;
     expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: `6110-${stamp}` })).status).toBe(200);
-    const rule = { category: "*", subcategory: "*", partNumber: `P-${stamp}`, isDelayed: null, isCapital: null, qbAccount: `6110-${stamp}` };
+    const rule = { category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: `6110-${stamp}` };
     const mapping = await send(f, "POST", "/api/expense/account-mapping", rule);
     expect(mapping.status).toBe(200);
     const mappingId = (mapping.json as { id: number }).id;
@@ -237,7 +237,10 @@ describe("expense — FINANCE journey", () => {
     const buckets = await api<{ id: number; name: string }[]>(f, "/api/expense/local-owners");
     const facility = buckets.json.find((b) => b.name === "Facility")!;
     expect(facility).toBeDefined();
-    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(200);
+    const catalog = await api<Array<{ gtin13: string; name: string }>>(f, "/api/catalog/items?q=Power%20Distribution%20Hub");
+    const part = catalog.json.find((i) => i.name === "Power Distribution Hub")!.gtin13;
+    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(400);
+    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: part, ownerId: facility.id })).status).toBe(200);
 
     // Assign the unassigned line to the org-level bucket: assigning is not the approval, so it waits for a Board member's.
     const U = `/api/expense/expenses/${UNASSIGNED_EXPENSE}`;

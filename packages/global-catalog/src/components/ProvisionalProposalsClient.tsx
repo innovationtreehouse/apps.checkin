@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  ActionIcon, Badge, Button, Checkbox, Divider, Group, Modal,
+  ActionIcon, Badge, Button, Checkbox, Divider, Group, Loader, Modal,
   Radio, ScrollArea, Select, Stack, Table, Text, Textarea, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
@@ -9,33 +9,14 @@ import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useCanManage, useLoad } from "./api";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { catalogItemLabel, catalogSearchTerm, errorMessage, LoadError, MIN_CATALOG_SEARCH_LENGTH, showError, useCatalogSearch, type CatalogItem } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
-import type { CategoryRow, ItemRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
+import type { CategoryRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
 const STATUS_COLORS: Record<string, string> = { pending: "yellow", approved: "green", rejected: "red", mapped_to_existing: "blue" };
-const MIN_SEARCH_LENGTH = 2;
 
 const partLabel = (p: ProvisionalItemRow) => [p.manufacturer, p.partNumber].filter(Boolean).join(" ") || "—";
-const itemLabel = (item: ItemRow) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${formatGtinDisplay(item.gtin13)}`;
-
-/** Catalog items matching the typed text; none until a search for the current text returns. */
-function useItemSearch(q: string): { items: ItemRow[]; error: string | null; answered: boolean } {
-  const [result, setResult] = useState<{ term: string; items: ItemRow[]; error: string | null } | null>(null);
-  const term = q.trim().length < MIN_SEARCH_LENGTH ? null : q.trim();
-  useEffect(() => {
-    if (term === null) return;
-    let live = true;
-    const t = setTimeout(() => {
-      api<ItemRow[]>(`/items?q=${encodeURIComponent(term)}&limit=20`)
-        .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
-        .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
-    }, 250);
-    return () => { live = false; clearTimeout(t); };
-  }, [term]);
-  return result && result.term === term ? { items: result.items, error: result.error, answered: true } : { items: [], error: null, answered: false };
-}
 
 /** What the org recorded about the part, shown wherever a reviewer decides on it. */
 function ProposedPart({ p }: { p: ProvisionalItemRow }) {
@@ -85,10 +66,10 @@ export default function ProvisionalProposalsClient() {
 
   const [mapTarget, setMapTarget] = useState<ProvisionalItemRow | null>(null);
   const [mapSearch, setMapSearch] = useState("");
-  const [mapChoice, setMapChoice] = useState<ItemRow | null>(null);
+  const [mapChoice, setMapChoice] = useState<CatalogItem | null>(null);
   const [mapOpen, { open: openMap, close: closeMap }] = useDisclosure(false);
   const [mapping, setMapping] = useState(false);
-  const found = useItemSearch(mapOpen ? mapSearch : "");
+  const found = useCatalogSearch(mapOpen ? mapSearch : "");
   const mapResults = [...(mapChoice ? [mapChoice] : []), ...found.items.filter((item) => item.gtin13 !== mapChoice?.gtin13)];
 
   function openForMap(p: ProvisionalItemRow) {
@@ -251,7 +232,8 @@ export default function ProvisionalProposalsClient() {
             error={found.error && `Couldn't search the catalog: ${found.error}`}
             data-autofocus
           />
-          {mapSearch.trim().length < MIN_SEARCH_LENGTH && <Text size="xs" c="dimmed">Type at least {MIN_SEARCH_LENGTH} characters</Text>}
+          {catalogSearchTerm(mapSearch) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
+          {found.searching && <Group gap={6}><Loader size="xs" /><Text size="xs" c="dimmed">Searching…</Text></Group>}
           {found.answered && !found.error && mapResults.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
           {mapResults.length > 0 && (
             <ScrollArea.Autosize mah={260}>
@@ -261,7 +243,7 @@ export default function ProvisionalProposalsClient() {
                 onChange={(v) => setMapChoice(mapResults.find((item) => item.gtin13 === v) ?? null)}
               >
                 <Stack gap={6} py={4}>
-                  {mapResults.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={itemLabel(item)} />)}
+                  {mapResults.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
                 </Stack>
               </Radio.Group>
             </ScrollArea.Autosize>

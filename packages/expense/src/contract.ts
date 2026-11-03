@@ -124,6 +124,7 @@ export interface CatalogReader {
   listCategories(): Promise<unknown>;
   listSubcategories(): Promise<unknown>;
   getItem(gtin13: string): Promise<unknown>;
+  getActiveItem(gtin13: string): Promise<unknown>;
   getItemNames(gtin13s: string[]): Promise<unknown>;
   lookupItems(retailer: string, lookups: LookupEntry[]): Promise<unknown>;
 }
@@ -133,6 +134,7 @@ export const inertCatalogReader: CatalogReader = {
   listCategories: async () => [],
   listSubcategories: async () => [],
   getItem: async () => null,
+  getActiveItem: async () => null,
   getItemNames: async () => [],
   lookupItems: async () => [],
 };

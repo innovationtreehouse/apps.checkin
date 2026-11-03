@@ -144,10 +144,17 @@ describe("the receiving page for one receipt", () => {
     const hub = { gtin13: "0022222222220", name: "Power Hub", category: { name: "Electronics" }, subcategory: { name: "Control" } };
     const SEARCH = "Search the catalog by name, GTIN or category";
 
-    /** Opens the Wood glue line's associate panel and searches, with the catalog answering `results`. */
+    const realFetch = global.fetch;
+    afterEach(() => { global.fetch = realFetch; });
+
+    /**
+     * Opens the Wood glue line's associate panel and searches. The shared catalog search fetches
+     * directly, so `results` (or an `HttpError`'s status and message) answers through `fetch`.
+     */
     function search(term: string, results: unknown) {
-      mockApi.mockImplementation((path: string) =>
-        results instanceof Error ? Promise.reject(results) : Promise.resolve(path.startsWith("/api/catalog/items") ? results : null));
+      mockApi.mockResolvedValue(null);
+      const [status, body] = results instanceof HttpError ? [results.status, { error: results.message }] : [200, results];
+      global.fetch = jest.fn(async () => ({ ok: status < 400, status, text: async () => JSON.stringify(body) })) as unknown as typeof fetch;
       fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
       fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: term } });
     }

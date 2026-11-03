@@ -3,12 +3,12 @@
  * relations, which the host stripper recurses into. Catalog item names are not
  * here — they live in the catalog's database.
  */
-import { parseGtinInput } from "@checkin/gtin";
+import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
 import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
+import { catalogHasActiveItem, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { pageArgs } from "./_shared";
 
@@ -17,7 +17,7 @@ const include = { location: true, backstockLocation: true } as const;
 const quantity = z.number().int().min(0);
 const locationRef = z.number().int().positive().nullable();
 const createSchema = z.object({
-  gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"),
+  gtin13: z.string().refine(isValidGtin13, "gtin13 must be 13 digits with a valid check digit"),
   existingQuantity: quantity.optional(),
   desiredQuantity: quantity.optional(),
   locationId: locationRef.optional(),
@@ -92,9 +92,28 @@ export const get: InventoryRouteHandler = async ({ params }) => {
   return { OrgItem: item };
 };
 
+/**
+ * Why a new write may not name this part, or null for an active catalog item or a pending
+ * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
+ */
+async function partRefusal(orgId: string, gtin13: string): Promise<string | null> {
+  const provisional = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13: gtin13 }, select: { status: true, resolvedToGtin13: true } });
+  const id = formatGtinDisplay(gtin13);
+  if (provisional?.status === "pending") return null;
+  if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
+  if (provisional) return `${id} was rejected by the catalog`;
+  const active = await catalogHasActiveItem(gtin13).catch((err: unknown) => {
+    console.error("[local-inventory] catalog check failed", err);
+    throw httpError(502, "The catalog couldn't be reached; try again");
+  });
+  return active ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
+}
+
 export const create: InventoryRouteHandler = async ({ req }) => {
   const data = await parseBody(req, createSchema);
   const orgId = await getOrgId();
+  const refusal = await partRefusal(orgId, data.gtin13);
+  if (refusal) throw httpError(400, refusal);
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
     getServices().inventoryService.createItem(orgId, data, principal.id, principal.name ?? undefined),
