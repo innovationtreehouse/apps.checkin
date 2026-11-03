@@ -147,7 +147,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| FD1 | **Benevity** bulk-import + dedup + comment-rule engine + restricted-condition mapping + GL account map | PORT | NEEDS-DESIGN | L | ? | A,B | #1280 (open) |
+| FD1 | **Benevity** bulk-import + dedup + comment-rule engine + restricted-condition mapping + GL account map | PORT | NEEDS-DESIGN | L | ? | A,B | #1280 (closed) |
 | FD2 | Disbursement holds + resubmit; disbursement events/snapshots | PORT | NEEDS-DESIGN | M | ? | A | #1281 (open) |
 | FD3 | Donation entry: online (Shopify), check/cash [board], in-kind [ops]; auto donation-receipt email | PORT | NEEDS-DESIGN | M | ? | A,B | #1282 (open) |
 | FD4 | Income-app **QB reconciliation + conflict resolution** on already-ingested Shopify data (reuse s-read) | PORT | NEEDS-DESIGN | M | ? | A,B | #1283 (open) |

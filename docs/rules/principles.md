@@ -362,8 +362,11 @@ consistency follows risk*, and no double booking follows *apply once*.
   Purchase is paid by card or cash, never by check. Writing any other entry type,
   or another field, changes this rule.
 
-- **Finance's books come first.** Nothing is booked into a year that is closed
-  in the books. Until the app starts posting in an area, it only matches what
+- **Finance's books come first.** Nothing dated on or before the closing date
+  finance sets in the books is booked. With no closing date set, nothing dated
+  before the area's posting switched on is booked, and when the date cannot be
+  read nothing is booked. Matching to an entry finance booked is allowed in a
+  closed year, because it changes nothing in the books. Until the app starts posting in an area, it only matches what
   finance has booked; anything it cannot match goes to finance to book or skip.
   After that it books on its own, matching finance's entries first.
 

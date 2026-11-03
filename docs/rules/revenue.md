@@ -81,6 +81,12 @@ Things the app takes as true because they are handled outside it.
 
 - Nobody decides a scholarship or payment plan for their own household.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- The books map says which QuickBooks Class each budget bucket books to and which
+  account each named role books to, such as a bank or a gift-of-goods account.
+  Only finance edits it, and each edit is recorded. Expenses, income and gifts of
+  goods read it when they book and keep no copy of their own, so one edit reaches
+  every area.  [Decision — *Principle: least privilege*]
+
 - A financial control flags something for a person to sign off, and the sign-off
   is recorded. It never decides on its own.  [Decision — *Principle: accountability*]
 
