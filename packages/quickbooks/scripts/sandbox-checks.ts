@@ -1,4 +1,4 @@
-// Live checks of what the closed-books gate relies on (docs/in-design/QB_CLOSED_BOOKS.md §2, §6).
+// Live checks of what the closed-books gate relies on (packages/quickbooks/README.md, Sandbox checks).
 // Sandbox only. Run it twice: once with the sandbox books not closed (the unset read), then after closing
 // them the way finance does: Settings → Account and settings → Advanced → Close the books, a closing
 // date before today, "Required password" (the closed-period refusal).

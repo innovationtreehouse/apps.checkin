@@ -622,6 +622,19 @@ the parts specific to expenses.
   dollar limit per run applies to expenses.
   [Decision — owner]
 
+- An expense line's account comes from finance's own mapping rules and account
+  list, which finance keeps by hand. Classes, Vendors and the books map's
+  accounts finance picks from QuickBooks' live lists, one at a time. The app
+  never imports the chart of accounts, the Class list or the vendor list in
+  bulk, and never matches vendor names on its own.
+  [Decision — deliberate limit]
+
+- Expense posting switches on the first time the daily catch-up runs with
+  QuickBooks connected, once and for good. An expense submitted after that books
+  on its own, matching first. One submitted before it only matches, and goes to finance to book or
+  skip when nothing matches.
+  [Decision — owner]
+
 - Finance may skip an expense that waits on it to reach the books, giving a
   reason. The record keeps who skipped it and why. The app never books or
   matches a skipped expense again, even if the expense later goes back to an

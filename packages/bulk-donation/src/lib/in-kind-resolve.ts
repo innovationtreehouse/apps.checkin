@@ -1,4 +1,4 @@
-// Finance's QuickBooks actions on an in-kind gift the drain handed over (QB_CLOSED_BOOKS §4 and §6):
+// Finance's QuickBooks actions on an in-kind gift the drain handed over (docs/rules/revenue.md, Donations):
 // book it, skip it with a reason, or match it by id to entries finance booked by hand. Skip and
 // match look first for the app's own entry when a create may have landed. Clear answers a note.
 import { ServiceError } from "@checkin/component-kit";
