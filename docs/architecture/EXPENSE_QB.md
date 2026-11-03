@@ -95,7 +95,10 @@ unchanged and is retried on each run; the queue shows it as `QB_NO_CLASS`.
 
 The poster passes the rows through the outbound gateway (surface
 `quickbooks.create`) first, so `composeWrite` sees only the tiers that surface
-declares. A field it needs that did not pass fails the post.
+declares. A field it needs that did not pass fails the post. An expense whose own
+data cannot make an entry (no receipt date, no lines, or a line with no resolved
+account) goes to `NEEDS_FINANCE` at once with the reason, no attempt counted; the
+drain does not count it toward its failure stop.
 
 **The writer.** `QuickBooksClient` has one private `post`, reached through two
 symbol-keyed methods that `packages/quickbooks/src/internal.ts` keeps off the
@@ -156,7 +159,7 @@ with no entity, so an exclusion drops that id for both Purchases and Bills.
 | `AMBIGUOUS` | Several candidates, or no Vendor | Finance |
 | `UNBOOKED` | Not in QuickBooks, and the app may not create it | Finance |
 | `POST_FAILED` | A post failed | The drain, up to five attempts |
-| `NEEDS_FINANCE` | Posts kept failing, or the app may already have booked it and cannot tell | Finance |
+| `NEEDS_FINANCE` | Posts kept failing, the expense's own data cannot make an entry, or the app may already have booked it and cannot tell | Finance |
 | `SKIPPED` | Finance skipped it, with a reason | Terminal |
 | `NOT_TEST_DATA`, `TEST_DATA_REFUSED` | Stopped by the test-data gate | Re-checked each run |
 

@@ -57,6 +57,7 @@ const RETRY_REFUSALS: Record<Exclude<PostOutcome, "posted" | "matched"> | "unbou
   not_sent: [409, "Not posted: the test-data rule keeps this expense out of this QuickBooks company"],
   needs_finance: [409, "Not posted: the expense still needs finance; see its QuickBooks reasons"],
   no_class: [409, "Not posted: a line's budget has no QuickBooks Class; it is retried once one is set"],
+  unpostable: [409, "Not posted: the expense's own data can't make a QuickBooks entry; see its QuickBooks reasons"],
 };
 
 /** The refusal for a retry's outcome, or null when the expense reached the books. */
