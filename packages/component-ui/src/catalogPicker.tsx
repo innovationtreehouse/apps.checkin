@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Select } from "@mantine/core";
+import { Loader, Select } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { formatGtinDisplay, isProvisionalGtin13, parseGtinInput } from "@checkin/gtin";
 import { errorMessage, request } from "./index";
 
@@ -23,21 +24,28 @@ export function catalogSearchTerm(q: string): string | null {
 export const catalogItemLabel = (item: CatalogItem) =>
   `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${formatGtinDisplay(item.gtin13)}`;
 
-/** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
-export function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null; answered: boolean } {
+export const CATALOG_SEARCH_DEBOUNCE_MS = 250;
+
+/**
+ * Catalog items matching the typed text, from the catalog's own search route. Results are only
+ * ever for the current text: an older search that answers late is dropped, and `searching` holds
+ * until the current text's search answers.
+ */
+export function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null; answered: boolean; searching: boolean } {
   const [result, setResult] = useState<{ term: string; items: CatalogItem[]; error: string | null } | null>(null);
-  const term = catalogSearchTerm(q);
+  const [debounced] = useDebouncedValue(q, CATALOG_SEARCH_DEBOUNCE_MS);
+  const sent = catalogSearchTerm(debounced);
   useEffect(() => {
-    if (term === null) return;
+    if (sent === null) return;
     let live = true;
-    const t = setTimeout(() => {
-      request<CatalogItem[]>(`/api/catalog/items?q=${encodeURIComponent(term)}&limit=20`)
-        .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
-        .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
-    }, 250);
-    return () => { live = false; clearTimeout(t); };
-  }, [term]);
-  return result && result.term === term ? { items: result.items, error: result.error, answered: true } : { items: [], error: null, answered: false };
+    request<CatalogItem[]>(`/api/catalog/items?q=${encodeURIComponent(sent)}&limit=20`)
+      .then((rows) => { if (live) setResult({ term: sent, items: rows, error: null }); })
+      .catch((e: unknown) => { if (live) setResult({ term: sent, items: [], error: errorMessage(e) }); });
+    return () => { live = false; };
+  }, [sent]);
+  const term = catalogSearchTerm(q);
+  if (result && result.term === term) return { items: result.items, error: result.error, answered: true, searching: false };
+  return { items: [], error: null, answered: false, searching: term !== null };
 }
 
 interface Option { value: string; label: string }
@@ -74,7 +82,8 @@ export function CatalogPicker({ label, value, onChange, w, placeholder = "Search
       onSearchChange={setSearch}
       // The catalog has already matched the text; a typed GTIN would not appear in the labels' short IDs.
       filter={({ options: all }) => all}
-      nothingFoundMessage={catalogSearchTerm(search) === null ? `Type at least ${MIN_CATALOG_SEARCH_LENGTH} characters` : found.answered ? "No matching part" : "Searching…"}
+      nothingFoundMessage={found.searching ? "Searching…" : found.answered ? "No matching part" : `Type at least ${MIN_CATALOG_SEARCH_LENGTH} characters`}
+      rightSection={found.searching ? <Loader size="xs" aria-label="Searching the catalog" /> : undefined}
       error={found.error && `Couldn't search the catalog: ${found.error}`}
       w={w}
     />

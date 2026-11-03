@@ -199,7 +199,8 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
   if (provisional?.status === "pending") return null;
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
   if (provisional) return `${id} was rejected by the catalog`;
-  return (await getActiveItem(gtin13)) ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
+  const active = await getActiveItem(gtin13).catch(() => { throw httpError(502, "The catalog couldn't be reached; try again"); });
+  return active ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
 }
 
 export const setOwnership: ExpenseRouteHandler = async ({ req, principal }) => {

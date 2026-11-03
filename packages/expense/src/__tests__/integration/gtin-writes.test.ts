@@ -46,6 +46,17 @@ describeDb("GTIN writes", () => {
     await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "P000123 was rejected by the catalog" });
   });
 
+  it("refuses another org's pending provisional part", async () => {
+    await db.provisionalItemMap.create({ data: { orgId: "other-org", provisionalGtin13: PROVISIONAL } });
+    await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has GTIN P000123" });
+  });
+
+  it("answers 502 and maps nothing when the catalog can't be reached", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), getActiveItem: async () => { throw new Error("catalog down"); } } });
+    await expect(own(CATALOG_GTIN)).rejects.toMatchObject({ status: 502 });
+    expect(await db.partOwnerMap.count()).toBe(0);
+  });
+
   it("still moves a part already mapped to another bucket, whatever its GTIN", async () => {
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: "0012345678905", ownerId: 101 } });
 

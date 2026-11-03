@@ -50,7 +50,17 @@ describeDb("POST org-items", () => {
 
   it("refuses another org's provisional part", async () => {
     await provisional(PROVISIONAL, "pending", { orgId: TEST_ORG_ID_2 });
-    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400 });
+    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has GTIN P000123" });
+  });
+
+  it("answers 502 and adds nothing when the catalog can't be reached", async () => {
+    configureLocalInventory({
+      auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
+      org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+      catalog: { getActiveItem: async () => { throw new Error("catalog down"); } },
+    });
+    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 502 });
+    expect(await db.orgItem.count()).toBe(0);
   });
 
   it("refuses a wrong check digit and a GTIN that is no active catalog item, adding nothing", async () => {
