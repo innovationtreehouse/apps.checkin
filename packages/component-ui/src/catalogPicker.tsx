@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Loader, Select } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { formatGtinDisplay, isProvisionalGtin13, parseGtinInput } from "@checkin/gtin";
-import { errorMessage, request } from "./index";
+import { errorMessage, request } from "./http";
 
 /** GET /api/catalog/items rows, with their category and subcategory included. */
 export interface CatalogItem {
