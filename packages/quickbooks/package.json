@@ -23,6 +23,7 @@
     "sandbox-checks": "tsx scripts/sandbox-checks.ts"
   },
   "dependencies": {
+    "@checkin/component-kit": "*",
     "@checkin/money": "*"
   },
   "devDependencies": {

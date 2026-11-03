@@ -1,3 +1,4 @@
+import { kindOf, type FailureKind } from "@checkin/component-kit";
 import { SWEEP_DAYS, appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
@@ -368,10 +369,12 @@ export async function postPayout(
   const window = matchWindow(row.payoutDate, row.source, opts.benevityWindowDays ?? (await readIncomeSettings(db, orgId)).benevityMatchWindowDays);
   let write: TxnWrite | null = null;
   let buildError = "";
+  let buildFailure: FailureKind = "bug";
   try {
     write = await depositWrite(row.payoutDate, basis, accounts);
   } catch (e) {
     buildError = e instanceof Error ? e.message : String(e);
+    buildFailure = kindOf(e);
   }
 
   const claimedAt = new Date();
@@ -393,7 +396,7 @@ export async function postPayout(
 
   let result: PostResult;
   if (!write) {
-    result = { kind: "failed", error: buildError };
+    result = { kind: "failed", error: buildError, failure: buildFailure };
   } else {
     let own: OwnEntry = { kind: "none" };
     if (claim.attempted) {
@@ -429,7 +432,7 @@ export async function postPayout(
   if (result.kind === "found") {
     const foundId = result.id;
     [found] = (await posting.client.depositsBetween(window.from, window.to)).filter((x) => x.Id === foundId).map(toQbDeposit);
-    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window` };
+    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window`, failure: "bug" };
   }
 
   const settleIn = () => db.$transaction(async (tx) => {

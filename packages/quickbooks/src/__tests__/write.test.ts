@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
@@ -210,17 +211,29 @@ describe("request limits", () => {
     expect(posts().map((c) => c.url.searchParams.get("requestid"))).toEqual([KEY, KEY]);
   });
 
-  it("fails on a second 429", async () => {
+  it("fails on a second 429, as a system failure", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }));
-    await expect(client()[CREATE](deposit, KEY)).rejects.toThrow(/failed 429/);
+    const err = await client()[CREATE](deposit, KEY).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/failed 429/);
+    expect(kindOf(err)).toBe("system");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs each refusal once with its lane, operation, status, codes and request id, never the fault text", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6240", Detail: "Pat O'Neil" }] } }, 400));
+    await client()[CREATE](deposit, KEY).catch(() => {});
+    expect(warn.mock.calls).toEqual([
+      ["[quickbooks] request failed", { lane: "income", operation: "create Deposit", status: 400, codes: ["6240"], requestId: "tid-w" }],
+    ]);
+    warn.mockRestore();
   });
 
   it("returns failed when a request times out, without posting", async () => {
     fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/timeout/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/timeout/), failure: "system" });
     expect(posts()).toEqual([]);
   });
 });
@@ -375,7 +388,7 @@ describe("findOrCreate", () => {
 
   it("failed: a closing-date read that fails never falls through to a create", async () => {
     fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(new Response("down", { status: 503 }));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/503/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/503/), failure: "system" });
     expect(posts()).toEqual([]);
   });
 
@@ -401,18 +414,18 @@ describe("findOrCreate", () => {
       .mockResolvedValueOnce(rows("Deposit", []))
       .mockResolvedValueOnce(prefs())
       .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6000" }] } }, 400));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/), failure: "data" });
   });
 
   it("failed: a read error never falls through to a create", async () => {
     fetchMock.mockResolvedValueOnce(new Response("expired", { status: 401 }));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/401/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/401/), failure: "connection" });
     expect(posts()).toEqual([]);
   });
 
   it("failed: a TxnDate outside the window is refused before any request", async () => {
     const late: TxnWrite = { entity: "Deposit", fields: { ...deposit.fields, txnDate: "2025-03-11" } };
-    await expect(findOrCreate(client(), req({ write: late }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/outside the match window/) });
+    await expect(findOrCreate(client(), req({ write: late }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/outside the match window/), failure: "bug" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -526,7 +539,9 @@ describe("findOrCreateInKindJournal", () => {
   });
 
   it("refuses a role the books map has no account for", async () => {
-    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { INKIND_INCOME: "400", INKIND_EXPENSE: "600" } }))).rejects.toThrow(/no account for FIXED_ASSETS/);
+    const err = await findOrCreateInKindJournal(client(), jreq({ accounts: { INKIND_INCOME: "400", INKIND_EXPENSE: "600" } })).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/no account for FIXED_ASSETS/);
+    expect(kindOf(err)).toBe("settings");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

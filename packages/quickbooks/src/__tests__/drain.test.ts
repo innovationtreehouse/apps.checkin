@@ -49,6 +49,13 @@ describe("runDrain", () => {
     expect(await runDrain<number, Outcome>(rows(4), { counts: fresh(), failures: ["failed"], noCall: ["skipped"], post: script(pattern) })).toEqual({ by: "failures", remaining: 0 });
   });
 
+  it("ends the run on a stopNow outcome, tallying it", async () => {
+    const counts = fresh();
+    const stop = await runDrain<number, Outcome>(rows(3), { counts, failures: ["failed"], stopNow: ["skipped"], post: async () => "skipped" });
+    expect(stop).toEqual({ by: "stopNow", remaining: 2 });
+    expect(counts.skipped).toBe(1);
+  });
+
   it("ends the run when the lane's post returns null, tallying nothing", async () => {
     const counts = fresh();
     const stop = await runDrain<number, Outcome>(rows(2), { counts, failures: [], post: async () => null });
