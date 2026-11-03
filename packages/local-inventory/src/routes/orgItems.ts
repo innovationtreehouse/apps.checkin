@@ -8,7 +8,7 @@ import { httpError, mapServiceErrors, parseBody, query } from "@checkin/componen
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { catalogHasItem, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
+import { catalogHasActiveItem, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { pageArgs } from "./_shared";
 
@@ -92,16 +92,24 @@ export const get: InventoryRouteHandler = async ({ params }) => {
   return { OrgItem: item };
 };
 
-/** A catalog item, or a provisional part of this org the catalog has not rejected. */
-async function isKnownPart(orgId: string, gtin13: string): Promise<boolean> {
-  const provisional = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13: gtin13, status: { not: "rejected" } }, select: { id: true } });
-  return provisional !== null || catalogHasItem(gtin13);
+/**
+ * Why a new write may not name this part, or null for an active catalog item or a pending
+ * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
+ */
+async function partRefusal(orgId: string, gtin13: string): Promise<string | null> {
+  const provisional = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13: gtin13 }, select: { status: true, resolvedToGtin13: true } });
+  const id = formatGtinDisplay(gtin13);
+  if (provisional?.status === "pending") return null;
+  if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
+  if (provisional) return `${id} was rejected by the catalog`;
+  return (await catalogHasActiveItem(gtin13)) ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
 }
 
 export const create: InventoryRouteHandler = async ({ req }) => {
   const data = await parseBody(req, createSchema);
   const orgId = await getOrgId();
-  if (!(await isKnownPart(orgId, data.gtin13))) throw httpError(400, `No catalog item or provisional part has GTIN ${formatGtinDisplay(data.gtin13)}`);
+  const refusal = await partRefusal(orgId, data.gtin13);
+  if (refusal) throw httpError(400, refusal);
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
     getServices().inventoryService.createItem(orgId, data, principal.id, principal.name ?? undefined),

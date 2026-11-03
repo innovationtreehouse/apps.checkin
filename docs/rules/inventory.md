@@ -47,8 +47,10 @@ How the pieces are built is described in
 
 - A person picks a part from the catalog rather than typing its GTIN. A new org
   item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
-  names a catalog item or one of the org's provisional parts the catalog has not
-  rejected. Rows stored before this check are kept as they are. `[Decision]`
+  names an active catalog item or a pending provisional part of the org. A
+  provisional part the catalog approved or mapped is refused, naming the real
+  part that replaced it; a rejected one is refused. Rows stored before this
+  check are kept as they are. `[Decision — coordinator ruling 2026-11-02]`
 
 - A category is keyed by a letter, and a subcategory by a number within its
   category; each item carries a category, a subcategory and a sequence number.

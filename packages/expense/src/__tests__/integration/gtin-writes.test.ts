@@ -20,7 +20,7 @@ const rule = (partNumber: string) => ({ category: "*", subcategory: "*", partNum
 describeDb("GTIN writes", () => {
   beforeEach(() => bindPorts({ catalog: catalogResolving({ 1: CATALOG_GTIN }) }));
 
-  it("maps a catalog part or one of the org's provisional parts to a bucket", async () => {
+  it("maps an active catalog part or a pending provisional part of the org to a bucket", async () => {
     await db.provisionalItemMap.create({ data: { orgId: ORG, provisionalGtin13: PROVISIONAL } });
 
     await own(CATALOG_GTIN);
@@ -29,14 +29,21 @@ describeDb("GTIN writes", () => {
     expect(await db.partOwnerMap.count({ where: { orgId: ORG } })).toBe(2);
   });
 
-  it("refuses a wrong check digit, an unknown GTIN and a rejected provisional part", async () => {
-    const rejected = buildProvisionalGtin13(124);
-    await db.provisionalItemMap.create({ data: { orgId: ORG, provisionalGtin13: rejected, status: "rejected" } });
-
-    for (const gtin13 of ["4006381333932", "0012345678905", rejected]) {
+  it("refuses a wrong check digit and a GTIN that is no active catalog item", async () => {
+    for (const gtin13 of ["4006381333932", "0012345678905"]) {
       await expect(own(gtin13)).rejects.toMatchObject({ status: 400 });
     }
     expect(await db.partOwnerMap.count()).toBe(0);
+  });
+
+  it.each(["approved", "mapped_to_existing"])("refuses a %s provisional part, naming the real part it became", async (status) => {
+    await db.provisionalItemMap.create({ data: { orgId: ORG, provisionalGtin13: PROVISIONAL, status, resolvedToGtin13: CATALOG_GTIN } });
+    await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: `P000123 is now ${CATALOG_GTIN}; pick that part instead` });
+  });
+
+  it("refuses a rejected provisional part", async () => {
+    await db.provisionalItemMap.create({ data: { orgId: ORG, provisionalGtin13: PROVISIONAL, status: "rejected" } });
+    await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "P000123 was rejected by the catalog" });
   });
 
   it("still moves a part already mapped to another bucket, whatever its GTIN", async () => {

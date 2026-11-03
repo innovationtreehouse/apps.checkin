@@ -17,7 +17,7 @@ export function configureLocalInventoryRuntime(): void {
     auth: { getPrincipal },
     org: getOrg,
     catalogEventSource: { eventsSince: catalogEventsSince },
-    catalog: { getItem: catalogReader.getItem },
+    catalog: { getActiveItem: catalogReader.getActiveItem },
     alerts,
   });
 }
