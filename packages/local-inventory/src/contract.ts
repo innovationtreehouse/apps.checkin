@@ -36,7 +36,14 @@ export interface InventoryRuntimeConfig {
   org: () => Promise<OrgIdentity>;
   /** S5 replay read; inert (no events) until the host binds it to the catalog. */
   catalogEventSource?: CatalogEventSource;
+  /** Catalog item read; unbound, no catalog GTIN is known. */
+  catalog?: CatalogItemReader;
   alerts?: InventoryAlerts;
+}
+
+/** The catalog item with this GTIN, or null. */
+export interface CatalogItemReader {
+  getItem(gtin13: string): Promise<{ gtin13: string } | null>;
 }
 
 /** Alerts the host binds to reach a person. */

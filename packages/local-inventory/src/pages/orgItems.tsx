@@ -1,14 +1,14 @@
 "use client";
 import { useState } from "react";
 import {
-  ActionIcon, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
+  ActionIcon, Box, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { CatalogPicker, LoadError } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {
@@ -114,7 +114,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         ? api("/org-items", {
           method: "POST",
           body: JSON.stringify({
-            gtin13: form.gtin13.replace(/\D/g, ""),
+            gtin13: form.gtin13,
             existingQuantity: form.existingQuantity,
             desiredQuantity: form.desiredQuantity,
             locationId: toId(form.locationId),
@@ -243,7 +243,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         {form && (
           <form onSubmit={save}>
             {isNew && (
-              <TextInput label="GTIN-13" required value={form.gtin13} onChange={(e) => setForm({ ...form, gtin13: e.currentTarget.value })} mb="sm" />
+              <Box mb="sm"><CatalogPicker label="Part" value={form.gtin13 || null} onChange={(v) => setForm({ ...form, gtin13: v ?? "" })} /></Box>
             )}
             <NumberInput label="Have (existing quantity)" value={form.existingQuantity} onChange={(v) => setForm({ ...form, existingQuantity: Number(v) || 0 })} min={0} allowDecimal={false} mb="sm" />
             <NumberInput label="Desired quantity" value={form.desiredQuantity} onChange={(v) => setForm({ ...form, desiredQuantity: Number(v) || 0 })} min={0} allowDecimal={false} mb="sm" />
@@ -251,7 +251,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
             <Select label="Backstock location" data={locationOptions} value={form.backstockLocationId} onChange={(v) => setForm({ ...form, backstockLocationId: v })} clearable mb="md" />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setForm(null)}>Cancel</Button>
-              <Button type="submit" loading={saving}>Save</Button>
+              <Button type="submit" loading={saving} disabled={isNew && !form.gtin13}>Save</Button>
             </Group>
           </form>
         )}

@@ -34,6 +34,11 @@ export function getCatalogEventSource(): CatalogEventSource {
   return requireRuntime().catalogEventSource ?? inertCatalogEventSource;
 }
 
+/** Whether the catalog the host bound has an item with this GTIN. */
+export async function catalogHasItem(gtin13: string): Promise<boolean> {
+  return (await requireRuntime().catalog?.getItem(gtin13)) != null;
+}
+
 /** The alerts the host bound, if any. */
 export function getInventoryAlerts(): InventoryAlerts | undefined {
   return requireRuntime().alerts;

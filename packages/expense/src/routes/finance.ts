@@ -4,13 +4,14 @@
  * route; every service that changes data checks FINANCE again.
  */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { writeOrgAudit } from "../lib/audit";
-import { getItemNames } from "../lib/catalog";
+import { getItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
 import { withLiveParties, withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
@@ -66,6 +67,10 @@ const mappingSchema = z.object({
   isCapital: triBool,
   qbAccount: z.string().min(1),
 });
+/** A rule's part is `*` or a GTIN-13: the processor matches it against the line's catalog GTIN. */
+function checkRulePart(partNumber: string): void {
+  if (partNumber !== "*" && !isValidGtin13(partNumber)) throw httpError(400, "A rule's part must be * or a 13-digit GTIN with a valid check digit");
+}
 const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: z.string().trim().min(1) });
 
 export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
@@ -75,6 +80,7 @@ export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
 export const createAccountMapping: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, mappingSchema);
   const actor = actorOf(await asFinance(principal));
+  checkRulePart(data.partNumber);
   const orgId = await getOrgId();
   return {
     AccountMapping: await db.$transaction(async (tx) => {
@@ -97,6 +103,7 @@ export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params, p
   const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
+  if (data.partNumber !== before.partNumber) checkRulePart(data.partNumber);
   return {
     AccountMapping: await db.$transaction(async (tx) => {
       const row = await tx.accountMapping.update({ where: { id }, data });
@@ -182,14 +189,25 @@ export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   return { PartOwnerMap: rows, Item: await getItemNames(rows.map((r) => r.gtin13)), ExpenseBucketView: await buckets() };
 };
 
+/** A catalog item, or a provisional part of this org the catalog has not rejected. */
+async function isKnownPart(orgId: string, gtin13: string): Promise<boolean> {
+  const provisional = await db.provisionalItemMap.findFirst({ where: { orgId, provisionalGtin13: gtin13, status: { not: "rejected" } }, select: { id: true } });
+  return provisional !== null || (await getItem(gtin13)) !== null;
+}
+
 export const setOwnership: ExpenseRouteHandler = async ({ req, principal }) => {
   const { gtin13, ownerId } = await parseBody(
     req,
-    z.object({ gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"), ownerId: z.number().int().positive() }),
+    z.object({
+      gtin13: z.string().refine(isValidGtin13, "gtin13 must be 13 digits with a valid check digit"),
+      ownerId: z.number().int().positive(),
+    }),
   );
   const actor = actorOf(await asFinance(principal));
   if (!(await buckets()).some((b) => b.id === ownerId && !b.archivedAt)) throw httpError(400, "Unknown or archived bucket");
   const orgId = await getOrgId();
+  const mapped = await db.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { id: true } });
+  if (!mapped && !(await isKnownPart(orgId, gtin13))) throw httpError(400, `No catalog item or provisional part has GTIN ${formatGtinDisplay(gtin13)}`);
   await db.$transaction(async (tx) => {
     const before = await tx.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { ownerId: true } });
     await createPartOwnerRepository(tx).updateItemOwner(orgId, gtin13, ownerId);

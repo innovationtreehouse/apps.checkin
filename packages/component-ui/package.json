@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@checkin/gtin": "*",
     "swr": "2.5.1"
   },
   "peerDependencies": {

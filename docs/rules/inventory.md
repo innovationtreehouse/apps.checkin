@@ -45,6 +45,11 @@ How the pieces are built is described in
   digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
   digits. `[Decision]`
 
+- A person picks a part from the catalog rather than typing its GTIN. A new org
+  item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
+  names a catalog item or one of the org's provisional parts the catalog has not
+  rejected. Rows stored before this check are kept as they are. `[Decision]`
+
 - A category is keyed by a letter, and a subcategory by a number within its
   category; each item carries a category, a subcategory and a sequence number.
   The letter and number are part of how items are named, so they must not

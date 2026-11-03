@@ -607,6 +607,11 @@ the parts specific to expenses.
   set it.
   [Decision]
 
+- An account rule names its part by the part's GTIN-13, or `*` for any part. A
+  new or changed part must be one of these; a rule stored with any other value
+  is kept, and its page shows that it never matches.
+  [Decision]
+
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]

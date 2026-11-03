@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogSearchTerm } from "../../lib/catalog-search";
+import { catalogSearchTerm } from "./catalogPicker";
 
 describe("catalogSearchTerm", () => {
   it.each(["", " ", "a", " b "])("gives no search term for %j", (q) => {

@@ -118,9 +118,11 @@ describe("local inventory — manager journey", () => {
     const shelfId = (shelf.json as LocationRow).id;
     expect((await send(m, "POST", "/api/inventory/locations", { name: "  " })).status).toBe(400);
 
-    // Org item: create at the bin, then edit its quantities.
-    const gtin = "0000000000017";
+    // Org item: create a seeded catalog item at the bin, then edit its quantities.
+    const catalog = await api<Array<{ gtin13: string; name: string }>>(m, "/api/catalog/items?q=Power%20Distribution%20Hub");
+    const gtin = catalog.json.find((i) => i.name === "Power Distribution Hub")!.gtin13;
     expect((await send(m, "POST", "/api/inventory/org-items", { gtin13: "123" })).status).toBe(400);
+    expect((await send(m, "POST", "/api/inventory/org-items", { gtin13: "0000000000017" })).status).toBe(400);
     const created = await send(m, "POST", "/api/inventory/org-items", { gtin13: gtin, existingQuantity: 2, locationId: binId });
     expect(created.status).toBe(200);
     expect((created.json as OrgItemRow).location?.name).toBe(`Bin ${stamp}`);

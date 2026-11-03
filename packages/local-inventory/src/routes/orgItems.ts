@@ -3,12 +3,12 @@
  * relations, which the host stripper recurses into. Catalog item names are not
  * here — they live in the catalog's database.
  */
-import { parseGtinInput } from "@checkin/gtin";
+import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
 import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
+import { catalogHasItem, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { pageArgs } from "./_shared";
 
@@ -17,7 +17,7 @@ const include = { location: true, backstockLocation: true } as const;
 const quantity = z.number().int().min(0);
 const locationRef = z.number().int().positive().nullable();
 const createSchema = z.object({
-  gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"),
+  gtin13: z.string().refine(isValidGtin13, "gtin13 must be 13 digits with a valid check digit"),
   existingQuantity: quantity.optional(),
   desiredQuantity: quantity.optional(),
   locationId: locationRef.optional(),
@@ -92,9 +92,16 @@ export const get: InventoryRouteHandler = async ({ params }) => {
   return { OrgItem: item };
 };
 
+/** A catalog item, or a provisional part of this org the catalog has not rejected. */
+async function isKnownPart(orgId: string, gtin13: string): Promise<boolean> {
+  const provisional = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13: gtin13, status: { not: "rejected" } }, select: { id: true } });
+  return provisional !== null || catalogHasItem(gtin13);
+}
+
 export const create: InventoryRouteHandler = async ({ req }) => {
   const data = await parseBody(req, createSchema);
   const orgId = await getOrgId();
+  if (!(await isKnownPart(orgId, data.gtin13))) throw httpError(400, `No catalog item or provisional part has GTIN ${formatGtinDisplay(data.gtin13)}`);
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
     getServices().inventoryService.createItem(orgId, data, principal.id, principal.name ?? undefined),
