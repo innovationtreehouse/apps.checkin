@@ -192,6 +192,12 @@ export interface ReceiptPeople {
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
 }
 
+/** The host's names for its people, for finance reading who uploaded a receipt. */
+export interface ReceiptPersonNames {
+  /** Each person's name by id; an id it can't name is missing. */
+  namesOf(personIds: number[]): Promise<Map<number, string>>;
+}
+
 /** A person the uploader may name as reimbursee. `id` is the Person.id. */
 export interface ReimburseeOption {
   id: number;
@@ -338,6 +344,7 @@ export interface ReceiptConfig {
   personIds?: ReceiptPersonIds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
+  personNames?: ReceiptPersonNames;
   reimbursees?: ReceiptReimbursees;
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */

@@ -35,7 +35,7 @@ beforeAll(() => {
   } as unknown as typeof ResizeObserver;
 });
 
-it("once the match moves to another receipt, shows no reject control until that receipt's own values load", async () => {
+it("once a dismissed match leaves, the next column offers no decision until its own values load", async () => {
   let members = group("r1", "rA", "rB");
   let releaseB: (r: unknown) => void = () => {};
   global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
@@ -60,17 +60,18 @@ it("once the match moves to another receipt, shows no reject control until that 
   );
 
   expect(await screen.findByText("R-AAA")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reject the original" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Different purchases" })).not.toBeInTheDocument();
+  expect(screen.getByText("Loading…")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Not this one" }));
-  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringMatching(/\/rB$/), expect.anything()));
+  fireEvent.click(screen.getByRole("button", { name: "Not this one: match 1" }));
+  await waitFor(() => expect(screen.queryByText("R-AAA")).not.toBeInTheDocument());
 
-  expect(screen.queryByText("R-AAA")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Reject the original" })).not.toBeInTheDocument();
-  expect(await screen.findByText("Loading the suspected original…")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Not this one" })).not.toBeInTheDocument();
+  expect(screen.getByText("Loading…")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Not this one/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Different purchases" })).not.toBeInTheDocument();
 
   await act(async () => { releaseB(ok(receipt("rB", "R-BBB", "submitter_review", 3))); });
   expect(await screen.findByText("R-BBB")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reject the original" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Not this one: match 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Different purchases" })).toBeInTheDocument();
 });
