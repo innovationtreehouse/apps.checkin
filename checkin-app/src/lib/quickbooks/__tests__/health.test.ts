@@ -12,6 +12,8 @@ const inKindPostingMissing = jest.fn();
 jest.mock("@/lib/bulkDonation/configure", () => ({ inKindPostingMissing }));
 const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
+const misTypedRoleAccounts = jest.fn();
+jest.mock("@/lib/finance/booksMap", () => ({ misTypedRoleAccounts }));
 const getOrg = jest.fn();
 jest.mock("@/lib/components/host", () => ({ getOrg }));
 // The libraries' root entries pull in their generated Prisma clients, which the jest env does not build.
@@ -29,11 +31,12 @@ async function rows(): Promise<Record<string, ConfigCheck>> {
     return Object.fromEntries((await getQuickBooksHealth(clock)).map((c) => [c.id, c]));
 }
 
+const accounts = jest.fn();
 const connected = (bookCloseDate: jest.Mock, current: jest.Mock = jest.fn().mockResolvedValue("tok")) => ({
     ok: true,
     env: "sandbox",
     tokens: { current },
-    client: { bookCloseDate },
+    client: { bookCloseDate, accounts },
 });
 
 const ENV = { ...process.env };
@@ -48,6 +51,8 @@ beforeEach(() => {
     postingOnAt.mockResolvedValue({ shopify: null, benevity: null });
     inKindOnAt.mockResolvedValue(null);
     expenseOnAt.mockResolvedValue(null);
+    accounts.mockResolvedValue([]);
+    misTypedRoleAccounts.mockResolvedValue([]);
 });
 afterEach(() => {
     process.env = { ...ENV };
@@ -113,6 +118,43 @@ describe("QuickBooks books closing date row", () => {
     it("is red when the read fails", async () => {
         tryBuildQuickBooks.mockReturnValue(connected(jest.fn().mockRejectedValue(new Error("QBO 500"))));
         expect((await rows())["quickbooks-close-date"]).toMatchObject({ ok: false, detail: "Could not read it: QBO 500." });
+    });
+});
+
+describe("books map account types row", () => {
+    it("is ok when every stored account is of a type its role accepts", async () => {
+        tryBuildQuickBooks.mockReturnValue(connected(jest.fn().mockResolvedValue(null)));
+        const live = [{ Id: "8001", AccountType: "Bank" }];
+        accounts.mockResolvedValue(live);
+        expect((await rows())["quickbooks-account-types"]).toEqual({
+            id: "quickbooks-account-types",
+            label: "QuickBooks books map: account types",
+            ok: true,
+            detail: "Every account picked is of a type its role accepts.",
+        });
+        expect(misTypedRoleAccounts).toHaveBeenCalledWith(live);
+    });
+
+    it("names each role whose stored account is of the wrong type, for finance to re-pick", async () => {
+        tryBuildQuickBooks.mockReturnValue(connected(jest.fn().mockResolvedValue(null)));
+        misTypedRoleAccounts.mockResolvedValue(["Shopify: fees (Sales is Income; takes Expense or Other Expense)"]);
+        expect((await rows())["quickbooks-account-types"]).toMatchObject({
+            ok: false,
+            detail: "Re-pick on the books map: Shopify: fees (Sales is Income; takes Expense or Other Expense).",
+        });
+    });
+
+    it("is red when the account list can't be read", async () => {
+        tryBuildQuickBooks.mockReturnValue(connected(jest.fn().mockResolvedValue(null)));
+        accounts.mockRejectedValue(new Error("QBO 500"));
+        expect((await rows())["quickbooks-account-types"]).toMatchObject({ ok: false, detail: "Could not read it: QBO 500." });
+    });
+
+    it("follows the connection row while QuickBooks is off", async () => {
+        tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" });
+        expect((await rows())["quickbooks-account-types"]).toMatchObject({ ok: false, detail: "Not read while QuickBooks is off." });
+        process.env.CHECKIN_ENV = "stg";
+        expect((await rows())["quickbooks-account-types"]).toMatchObject({ ok: true, detail: "Not read while QuickBooks is off." });
     });
 });
 

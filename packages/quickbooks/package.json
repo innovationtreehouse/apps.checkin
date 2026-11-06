@@ -13,6 +13,10 @@
     "./oauth": {
       "types": "./src/oauth.ts",
       "import": "./src/oauth.ts"
+    },
+    "./accountTypes": {
+      "types": "./src/accountTypes.ts",
+      "import": "./src/accountTypes.ts"
     }
   },
   "scripts": {

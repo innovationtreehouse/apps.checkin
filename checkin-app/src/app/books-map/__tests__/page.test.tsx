@@ -14,7 +14,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 const map = {
   BooksMapClass: [{ budgetOwnerId: 7, budgetOwnerName: "Robotics", quickBooksClassId: null }],
-  BooksMapAccount: [{ role: "SHOPIFY_BANK", quickBooksAccountId: null }],
+  BooksMapAccount: [{ role: "SHOPIFY_BANK", quickBooksAccountId: null }, { role: "SHOPIFY_FEES", quickBooksAccountId: "8002" }],
 };
 
 let write: () => Promise<Response>;
@@ -23,12 +23,19 @@ let fetchMock: jest.Mock;
 beforeEach(() => {
   resetRtl();
   jest.clearAllMocks();
+  // jsdom has no scrollIntoView, which Mantine's combobox calls on open with a value picked.
+  window.HTMLElement.prototype.scrollIntoView = jest.fn();
   write = async () => jsonResponse(200, { role: "SHOPIFY_BANK", quickBooksAccountId: "8001" });
   fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (init?.method) return write();
     if (url.includes("/quickbooks-classes")) return jsonResponse(200, [{ id: "9003", name: "Programs:Robotics", active: true }]);
-    if (url.includes("/quickbooks-accounts")) return jsonResponse(200, [{ id: "8001", name: "Checking", accountType: "Bank", active: true }]);
+    if (url.includes("/quickbooks-accounts")) return jsonResponse(200, [
+      { id: "8001", name: "Checking", accountType: "Bank", active: true },
+      { id: "8002", name: "Sales:Shop sales", accountType: "Income", active: true },
+      { id: "8004", name: "Merchant fees", accountType: "Expense", active: true },
+      { id: "8008", name: "Kit materials", accountType: "Cost of Goods Sold", active: true },
+    ]);
     return jsonResponse(200, map);
   });
   global.fetch = fetchMock as unknown as typeof fetch;
@@ -45,6 +52,20 @@ describe("books map page", () => {
       method: "PUT",
       body: JSON.stringify({ quickBooksAccountId: "8001" }),
     })));
+  });
+
+  it("offers a role only the account types it accepts", async () => {
+    setSession({ id: 1, isFinance: true });
+    renderWithProviders(<BooksMapPage />);
+    fireEvent.click(await screen.findByRole("textbox", { name: "Shopify payouts: bank account" }));
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Checking"]);
+  });
+
+  it("keeps a saved account of the wrong type in the list, marked", async () => {
+    setSession({ id: 1, isFinance: true });
+    renderWithProviders(<BooksMapPage />);
+    fireEvent.click(await screen.findByRole("textbox", { name: "Shopify: fees" }));
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Sales:Shop sales (wrong type: Income)", "Merchant fees"]);
   });
 
   it("shows a refused save in a red chip", async () => {
