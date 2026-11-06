@@ -80,9 +80,12 @@ export const LOCAL_QUICKBOOKS_ACCOUNTS = [
     { id: "8003", name: "Donations:Benevity", accountType: "Income", active: true },
     { id: "8004", name: "Merchant fees", accountType: "Expense", active: true },
     { id: "8005", name: "Old savings", accountType: "Bank", active: false },
+    { id: "8006", name: "Shop supplies", accountType: "Expense", active: true },
+    { id: "8007", name: "Equipment repairs", accountType: "Other Expense", active: true },
+    { id: "8008", name: "Kit materials", accountType: "Cost of Goods Sold", active: true },
 ];
 
-/** Every QuickBooks account by its full name, inactive ones flagged, for the role picker. */
+/** Every QuickBooks account by its full name, inactive ones flagged, for the role picker and expense's account list. */
 export async function listQuickBooksAccounts() {
     if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_ACCOUNTS.map((a) => ({ ...a }));
     const qb = await quickBooks();
