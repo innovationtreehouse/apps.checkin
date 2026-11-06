@@ -109,7 +109,7 @@ Allowed on dev:
 
 - **Org accounts.** A `Person` whose email is on the org domain, created by a
   staff member's own Google sign-in. Dev cannot be used without one. This matches
-  the staging scrub, which keeps org-domain emails.
+  the staging scrub, which keeps org-domain emails (DR-6, decided).
 - **Seeded personas** on `@example.com`, and anything a macro or seed creates.
 - **`DevLedger`**, which names the real staff member behind each action. It is
   the dev instance's own audit record and is kept on purpose.
@@ -363,7 +363,7 @@ Stable ids; a resolved question keeps its number.
   by a Workspace admin. The alternative is widening the dev refresher's grant
   from `gmail.readonly` to `gmail.modify` so the reset can trash mail; that adds
   write access to a mailbox for a job a retention rule does with no code.
-- **DR-6. Treat staff org accounts on dev as allowed?** Recommendation: yes. Dev
+- **DR-6. Treat staff org accounts on dev as allowed?** Decided: yes. Dev
   cannot be entered without one, and staging already keeps them.
 - **DR-7. Delete manual dev database snapshots once?** Recommendation: yes, on
   the first full reset, by hand; automated backups age out on their own.
