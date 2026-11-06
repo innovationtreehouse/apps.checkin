@@ -104,6 +104,21 @@ export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Runs each named count; a failed one is logged and left out, so one failing count never blanks the others. */
+export async function settleCounts<T extends Record<string, unknown>>(
+  label: string,
+  counts: { [K in keyof T]: () => Promise<T[K]> },
+): Promise<Partial<T>> {
+  const keys = Object.keys(counts) as (keyof T & string)[];
+  const results = await Promise.allSettled(keys.map(async (k) => counts[k]()));
+  const settled: Partial<T> = {};
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") settled[keys[i]] = r.value;
+    else console.error(`nav counts: ${label} ${keys[i]} failed`, r.reason);
+  });
+  return settled;
+}
+
 /** A positive integer path or query id: decimal digits only, so `0x1f`, `1e2` and ` 42` are a 400. */
 export function parseId(raw: string | null | undefined, label = "id"): number {
   const n = Number(raw);

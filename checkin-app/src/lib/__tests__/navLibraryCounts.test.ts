@@ -5,12 +5,14 @@ const mockCountAwaitingFinance = jest.fn(async (viewerId: number) => ({
   byState: { financial_review: viewerId - 1, duplicate_flagged: 1, flow_error: 0 },
 }));
 
+// A Board member's count adds the confirmations only the Board gives.
+const mockCountToConfirm = jest.fn(async (id: number, isBoardMember = false) => id + (isBoardMember ? 100 : 0));
+
 jest.mock("@checkin/receipt", () => ({
   receiptService: {
     countAwaitingFinance: (viewerId: number) => mockCountAwaitingFinance(viewerId),
     countAwaitingSubmitter: async (id: number) => id * 10,
-    // A Board member's count adds the confirmations only the Board gives.
-    countToConfirm: async (id: number, isBoardMember = false) => id + (isBoardMember ? 100 : 0),
+    countToConfirm: (id: number, isBoardMember?: boolean) => mockCountToConfirm(id, isBoardMember),
   },
 }));
 
@@ -45,6 +47,16 @@ describe("the receipt provider", () => {
   it("reports an uploader their own count and the confirmations waiting on them", async () => {
     const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
     expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20, toConfirm: 2 } });
+  });
+
+  it("leaves out a failed count and logs it, keeping the others", async () => {
+    const boom = new Error("db down");
+    mockCountToConfirm.mockRejectedValueOnce(boom);
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
+    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
+    expect(error).toHaveBeenCalledWith("nav counts: receipt toConfirm failed", boom);
+    error.mockRestore();
   });
 
   it("reports an adult whose membership lapsed only the confirmations waiting on them", async () => {

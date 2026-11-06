@@ -3,7 +3,7 @@
  * boot; routes read it through the accessors below. Binding touches no
  * database — the services below build lazily on first request.
  */
-import { defineRuntime } from "@checkin/component-kit";
+import { defineRuntime, settleCounts } from "@checkin/component-kit";
 import { db } from "./lib/db";
 import { createInventoryRepository } from "./lib/repositories/inventoryRepository";
 import { createLocationRepository } from "./lib/repositories/locationRepository";
@@ -84,13 +84,12 @@ export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonatio
 /** An org's items with no location: the Needs a location list and its pill. */
 export const unlocatedWhere = (orgId: string) => ({ orgId, locationId: null });
 
-/** The host nav's pill counts for the current org: open receive-queue lines, pending merge conflicts and unlocated items. */
-export async function getNavCounts(): Promise<{ openBackorders: number; pendingMergeConflicts: number; unlocated: number }> {
+/** The host nav's pill counts for the current org: open receive-queue lines, pending merge conflicts and unlocated items. A failed count is left out. */
+export async function getNavCounts(): Promise<Partial<Record<"openBackorders" | "pendingMergeConflicts" | "unlocated", number>>> {
   const orgId = await getOrgId();
-  const [openBackorders, pendingMergeConflicts, unlocated] = await Promise.all([
-    getServices().receiveQueueService.countOpen(orgId),
-    db.inventoryMergeConflict.count({ where: { orgId, status: "pending" } }),
-    db.orgItem.count({ where: unlocatedWhere(orgId) }),
-  ]);
-  return { openBackorders, pendingMergeConflicts, unlocated };
+  return settleCounts("local-inventory", {
+    openBackorders: () => getServices().receiveQueueService.countOpen(orgId),
+    pendingMergeConflicts: () => db.inventoryMergeConflict.count({ where: { orgId, status: "pending" } }),
+    unlocated: () => db.orgItem.count({ where: unlocatedWhere(orgId) }),
+  });
 }
