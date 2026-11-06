@@ -276,17 +276,19 @@ const appKeysOf = (entry: { PrivateNote?: string }) => appKeyOf(entry)?.split(" 
 /**
  * Look for the deposit the app created for an attempted payout: every deposit QuickBooks
  * created since the first attempt, kept when its memo carries the payout's key. An entry
- * carrying more than one key is never taken as the payout's own. Throws when the read fails.
+ * carrying more than one key is never taken as the payout's own. A voided deposit keeps its
+ * memo at a zero total, so a $0 deposit is not the payout's own unless the payout nets to $0.
+ * Throws when the read fails.
  */
 export async function ownEntry(
   client: QuickBooksClient,
   orgId: string,
-  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid">,
+  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid" | "payoutNetCents">,
   since: Date,
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
   const key = rowKey(row);
-  const keyed = entries.filter((e) => appKeysOf(e).includes(key));
+  const keyed = entries.filter((e) => appKeysOf(e).includes(key) && (e.TotalAmt !== 0 || row.payoutNetCents === 0));
   if (full) return { kind: "unsure", note: "the app may already have booked this payout: QuickBooks returned a full page of new deposits" };
   const shared = keyed.find((e) => appKeysOf(e).length > 1);
   if (shared) return { kind: "unsure", note: `the app may already have booked this payout: deposit ${shared.Id} carries more than one app key` };
