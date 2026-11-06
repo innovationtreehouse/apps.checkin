@@ -3,8 +3,8 @@ import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Stock reads admit any inventory viewer through the reused `catalog-viewer`
 // resolver — on-hand stock is read by the catalog audience. Receiving reads (the
-// receive queue, the inventory log and the received deltas) show spending, so
-// they admit INVENTORY_MANAGER, FINANCE or BOARD only, with no sysadmin
+// receive queue, and the inventory log with its received deltas) show spending,
+// so they admit INVENTORY_MANAGER, FINANCE or BOARD only, with no sysadmin
 // auto-admit. Writes and the manager work-queue reads are INVENTORY_MANAGER-only.
 // Inventory reference data is `public`; the non-public
 // fields are `internal` (orgId, actor attribution, free text, cross-app
