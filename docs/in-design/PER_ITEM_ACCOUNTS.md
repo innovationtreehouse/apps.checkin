@@ -52,9 +52,9 @@ app books to is of a QuickBooks type that fits the line.
   writes is the only catch-all, and it is a deliberate choice.
 - **Custom store items**, typed into an order with no store item behind them,
   book to one account finance sets for them.
-- **Five books-map roles retire:** Shopify sales, Benevity donations and
-  employer matches, in-kind expense, and fixed assets. "Benevity: fees" retires
-  too, because fees now reduce income.
+- **Six books-map roles retire:** Shopify sales, Benevity donations, Benevity
+  employer matches, in-kind expense and fixed assets, because per-item mappings
+  replace them; and Benevity fees, because fees now reduce income.
 - **Giving-platform fees** stop booking to a fees account. Each spreadsheet
   row's fee is split across that row's amount columns, and each part is netted
   into its column's income line.
@@ -160,10 +160,13 @@ map, the three mapping screens and the posting code read one list.
   it does today for a missing bucket, and the next run books it once finance
   decides. The income items screen lists items missing an account the way it
   lists items missing a bucket.
-- `buildDepositLines` already splits each charge across the order's lines; each
-  line now carries its item's account. Lines are grouped by account and bucket
-  instead of bucket alone, so membership sales and program sales in one payout
-  become two deposit lines.
+- `buildDepositLines` already splits each charge across the order's lines and
+  groups the parts by logical account (sales, card remainder, fees, adjustments)
+  and bucket. Every sale today shares the one logical account "income". Each
+  sale part now carries its item's QuickBooks account id, and sale parts are
+  grouped by that id and bucket, so membership sales and program sales in one
+  payout become two deposit lines. `depositWrite` in `outbox.ts` then books each
+  sale line to its own id instead of looking up `SHOPIFY_SALES`.
 - A custom item books as general income to the "Shopify: custom items" account.
   While that account is unset, a payout with a custom item waits for it.
 - Card remainder, adjustments and fees are unchanged.

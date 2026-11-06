@@ -20,7 +20,7 @@ the last PR merges. Its last step is "extract the rules, delete both files".
   - `packages/income/src/lib/intake.ts`: an expected-deposit line is a role,
     bucket, amount and description, with no account field, so nothing could
     carry one.
-  - `packages/income/src/lib/outbox.ts`: `buildDeposit` resolves every line's
+  - `packages/income/src/lib/outbox.ts`: `depositWrite` resolves every line's
     account from the role's books-map account.
 
   The result: every gift books to "Benevity: donations", every match to
