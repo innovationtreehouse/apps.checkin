@@ -54,10 +54,11 @@ describe("SystemStatusUnsyncedScansPage", () => {
         expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     });
 
-    it("records a closed visit: departure entered, POSTed with the row id, row dropped", async () => {
+    it("records a closed visit: departure entered, POSTed with the row id, queue re-read", async () => {
+        let scans = [scan()];
         const fetchMock = mockFetchJson({
-            "/api/system-status/unsynced-scans/5": {},
-            "/api/system-status/unsynced-scans": { scans: [scan()] },
+            "/api/system-status/unsynced-scans/5": () => { scans = []; return {}; },
+            "/api/system-status/unsynced-scans": () => ({ scans }),
         });
         renderWithProviders(<SystemStatusUnsyncedScansPage />);
 
@@ -123,12 +124,13 @@ describe("SystemStatusUnsyncedScansPage", () => {
         expect(screen.queryByText("● No scans awaiting review.")).not.toBeInTheDocument();
     });
 
-    it("dismisses a row by POSTing to it, then drops it from the list", async () => {
+    it("dismisses a row by POSTing to it, then re-reads the queue", async () => {
+        let scans = [scan()];
         // Longest key first: mockFetchJson matches by substring, so the list
         // route would otherwise swallow the dismiss URL.
         const fetchMock = mockFetchJson({
-            "/api/system-status/unsynced-scans/5": {},
-            "/api/system-status/unsynced-scans": { scans: [scan()] },
+            "/api/system-status/unsynced-scans/5": () => { scans = []; return {}; },
+            "/api/system-status/unsynced-scans": () => ({ scans }),
         });
         renderWithProviders(<SystemStatusUnsyncedScansPage />);
 
@@ -139,6 +141,14 @@ describe("SystemStatusUnsyncedScansPage", () => {
             expect.objectContaining({ method: "POST" }),
         );
         expect(await screen.findByText("● No scans awaiting review.")).toBeInTheDocument();
+    });
+
+    it("shows the failure, not an all-clear, when the load fails", async () => {
+        mockFetchJson({});
+        renderWithProviders(<SystemStatusUnsyncedScansPage />);
+
+        expect(await screen.findByText("Couldn't load unsynced scans")).toBeInTheDocument();
+        expect(screen.queryByText("● No scans awaiting review.")).not.toBeInTheDocument();
     });
 
     it("shows an empty state when nothing is awaiting review", async () => {
