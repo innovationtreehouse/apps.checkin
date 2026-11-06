@@ -16,7 +16,7 @@ type TxFields = {
 // the query, matching is in determineAccountsFromMap).
 async function determineAccounts(orgId: string, tx: TxFields) {
   const rules = await db.accountMap.findMany({ where: { orgId } });
-  return determineAccountsFromMap(rules, tx);
+  return determineAccountsFromMap(rules, { ...tx, donationAmountCents: 1000, matchAmountCents: 0 });
 }
 
 let orgId: string;
@@ -50,8 +50,7 @@ describeDb('exact match', () => {
     expect('result' in result).toBe(true);
     if ('result' in result) {
       expect(result.result.donationAccount).toBe('4000');
-      expect(result.result.matchAccount).toBe('4001');
-      expect(result.result.feesAccount).toBe('6000');
+      expect(result.result.donationAccountId).toBe('60');
     }
   });
 });

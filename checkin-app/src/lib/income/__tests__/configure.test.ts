@@ -120,14 +120,14 @@ describe("income posting binding", () => {
 });
 
 describe("Benevity posting readiness", () => {
-  it("names every Benevity role the books map leaves unset", async () => {
+  it("names every live Benevity role the books map leaves unset; gifts and matches book to their rules' accounts", async () => {
     const { benevityPostingMissing } = await import("../configure");
     process.env.QBO_REALM_ID = "123";
-    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_DONATIONS: "2" });
-    await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity: employer matches, Benevity: fees"]);
+    roleAccounts.mockResolvedValue({ BENEVITY_DONATIONS: "2" });
+    await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity disbursements: bank account, Benevity: fees"]);
 
     delete process.env.QBO_REALM_ID;
-    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_DONATIONS: "2", BENEVITY_MATCHES: "3", BENEVITY_FEES: "4" });
+    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_FEES: "4" });
     await expect(benevityPostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)"]);
   });
 });

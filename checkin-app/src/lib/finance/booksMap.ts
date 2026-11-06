@@ -5,7 +5,7 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
-import { BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole } from "@checkin/quickbooks";
+import { LIVE_BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole } from "@checkin/quickbooks";
 
 // The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
 // stored on BudgetOwner, and named role -> QuickBooks account, stored in
@@ -24,7 +24,7 @@ export async function listBooksMap() {
     const set = new Map(rows.map((r) => [r.role, r.quickBooksAccountId]));
     return {
         BooksMapClass: buckets.map((b) => ({ budgetOwnerId: b.id, budgetOwnerName: b.name, quickBooksClassId: b.quickBooksClassId })),
-        BooksMapAccount: BOOKS_MAP_ROLES.map((role) => ({ role, quickBooksAccountId: set.get(role) ?? null })),
+        BooksMapAccount: LIVE_BOOKS_MAP_ROLES.map((role) => ({ role, quickBooksAccountId: set.get(role) ?? null })),
     };
 }
 

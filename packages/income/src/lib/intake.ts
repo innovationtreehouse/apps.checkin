@@ -9,15 +9,20 @@ import { assertOrg } from "../runtime";
 import { RECON_KIND, RECON_ORIGIN, RECON_RESOLUTION, RECON_STATUS, audit, isClaimed, lockReconciliation } from "./reconcile";
 import { DEPOSIT_SOURCE, type DepositSourceName } from "./sources";
 
-/** One line of an expected deposit: an account role and a budget bucket (null for organization level). */
+/**
+ * One line of an expected deposit: the QuickBooks account it books to and a budget bucket (null for
+ * organization level). A Benevity fee line names its books-map role instead; a line stored before
+ * lanes named accounts carries only a role, and goes to finance.
+ */
 export type ExpectedDepositLine = {
-  role: BooksMapRole;
+  accountId?: string;
+  role?: BooksMapRole;
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;
 };
 
-/** The deposit a lane expects to land in the bank. Income resolves every role and bucket through the books map when it posts. */
+/** The deposit a lane expects to land in the bank. Income resolves its bank role, fee role and buckets through the books map when it posts. */
 export type ExpectedDeposit = {
   /** YYYY-MM-DD. */
   txnDate: string;
@@ -39,15 +44,28 @@ export type DepositStatus =
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+/** The one role a new line may name in place of an account, until fees reduce income. */
+export const FEE_LINE_ROLE: BooksMapRole = "BENEVITY_FEES";
+
+const QB_ID = /^\d+$/;
+
 /** The expected deposit, checked; throws a 400 naming the first problem. */
 export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
+  return checkExpected(raw, true);
+}
+
+/** `fresh` is a new hand-over; a stored row may carry a role-only line from before lanes named accounts. */
+function checkExpected(raw: ExpectedDeposit, fresh: boolean): ExpectedDeposit {
   const bad = (msg: string) => new ServiceError(400, msg);
   if (!DAY.test(raw.txnDate) || Number.isNaN(Date.parse(`${raw.txnDate}T00:00:00Z`))) throw bad("txnDate must be YYYY-MM-DD");
   if (!Number.isInteger(raw.netCents) || raw.netCents <= 0) throw bad("netCents must be a positive whole number");
   if (!isBooksMapRole(raw.bankRole)) throw bad(`bankRole "${raw.bankRole}" is not a books-map role`);
   if (!raw.lines.length) throw bad("an expected deposit needs at least one line");
   for (const l of raw.lines) {
-    if (!isBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a books-map role`);
+    if (l.accountId !== undefined && l.role !== undefined) throw bad("a line names an account or a role, not both");
+    if (l.accountId !== undefined && !QB_ID.test(l.accountId)) throw bad("line accountId must be a QuickBooks id (digits only)");
+    if (l.role !== undefined && !isBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a books-map role`);
+    if (l.accountId === undefined && (fresh ? l.role !== FEE_LINE_ROLE : l.role === undefined)) throw bad("a line needs its QuickBooks account id");
     if (!Number.isInteger(l.amountCents)) throw bad("line amountCents must be a whole number");
     if (l.budgetOwnerId !== null && (!Number.isInteger(l.budgetOwnerId) || l.budgetOwnerId <= 0)) throw bad("line budgetOwnerId must be a positive integer or null");
   }
@@ -58,7 +76,7 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
     netCents: raw.netCents,
     bankRole: raw.bankRole,
     lines: raw.lines.map((l) => ({
-      role: l.role,
+      ...(l.accountId !== undefined ? { accountId: l.accountId } : { role: l.role }),
       budgetOwnerId: l.budgetOwnerId,
       amountCents: l.amountCents,
       ...(l.description ? { description: l.description } : {}),
@@ -69,7 +87,7 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
 
 /** A row's expected deposit, rebuilt in parseExpected's key order (JSONB keeps its own). Null on a Shopify row. */
 export function expectedOf(row: Pick<PayoutReconciliation, "expected">): ExpectedDeposit | null {
-  return row.expected === null ? null : parseExpected(row.expected as ExpectedDeposit);
+  return row.expected === null ? null : checkExpected(row.expected as ExpectedDeposit, false);
 }
 
 /** Whether nothing in QuickBooks can yet depend on the row: no deposit held, no create attempted, no post running, not settled. */

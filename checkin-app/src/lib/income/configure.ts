@@ -59,7 +59,7 @@ import {
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
-import { BOOKS_MAP_ROLES } from "@checkin/quickbooks";
+import { LIVE_BOOKS_MAP_ROLES } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -154,10 +154,10 @@ export async function incomePostingMissing(): Promise<string[]> {
   ];
 }
 
-/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every Benevity role must be picked. */
+/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every live Benevity role must be picked. */
 export async function benevityPostingMissing(): Promise<string[]> {
   const accounts = await roleAccounts();
-  const unpicked = BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
+  const unpicked = LIVE_BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
   return [
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),

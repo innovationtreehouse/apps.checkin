@@ -157,7 +157,7 @@ describe("bulk-donation wiring", () => {
     process.env.CHECKIN_ENV = "dev";
     process.env.QBO_REALM_ID = "123";
     const { deposits } = await config();
-    const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ role: "BENEVITY_DONATIONS" as const, budgetOwnerId: null, amountCents: 100 }] };
+    const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ accountId: "60", budgetOwnerId: null, amountCents: 100 }] };
     depositStatus.mockResolvedValue({ D1: { state: "waiting" } });
 
     expect(deposits!.prod).toBe(false);
