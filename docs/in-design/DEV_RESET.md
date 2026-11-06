@@ -440,3 +440,10 @@ confirms it is done.
   stable.
 - **A per-developer dev store or sandbox.** Ruled out by the dev-store doc's
   one-shared-store decision, and it would multiply the setup this design removes.
+
+---
+
+## Provenance
+
+Design for #3031, the owner's asks to clear real data off dev and to reset dev,
+including QuickBooks and Shopify, to a seeded state.
