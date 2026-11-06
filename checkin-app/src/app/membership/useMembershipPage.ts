@@ -64,6 +64,18 @@ export const apiError = (data: { error?: string; detail?: string } | null | unde
 
 const networkError = () => notifications.show({ color: "red", message: "Network error.", autoClose: false });
 
+const SAVED_READ_ATTEMPTS = 3;
+
+/** Reads the state after a save, retrying a network failure or a 5xx with useLoad's backoff. Null when every attempt fails. */
+async function readSavedState(): Promise<IntakeState | null> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch("/api/membership").catch(() => null);
+    if (res?.ok) return res.json().catch(() => null);
+    if ((res && res.status < 500) || attempt >= SAVED_READ_ATTEMPTS) return null;
+    await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** (attempt - 1)));
+  }
+}
+
 /** State, data loading and actions for the membership page. */
 export function useMembershipPage() {
   const { data: session, status: sessionStatus } = useSession();
@@ -259,16 +271,18 @@ export function useMembershipPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        // A null state means saved but unread; read it once so new people get their ids
-        // and a second save updates them rather than creating them again. A failed read
-        // leaves the form as typed. This read is direct, not through useLoad, because only
-        // its own answer may replace the form: a later background reload must not.
-        const saved: IntakeState | null = data.state ?? await fetch("/api/membership")
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null);
+        // A null state means saved but unread; read it so new people get their ids and a
+        // second save updates them rather than creating them again. A failed read leaves
+        // the form as typed. This read is direct, not through useLoad, because only its
+        // own answer may replace the form: a later background reload must not.
+        const saved: IntakeState | null = data.state ?? await readSavedState();
         if (saved) hydrate(saved);
         flash("Progress saved.");
-        setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
+        const rejections: string[] = (data.rejections ?? []).map((r: { message: string }) => r.message);
+        setWarnings(saved ? rejections : [
+          "The page couldn't refresh after saving. Reload the page before saving again, or people you just added may be added twice.",
+          ...rejections,
+        ]);
       } else flash(apiError(data, "Could not save."), true);
     } catch {
       networkError();
