@@ -33,7 +33,8 @@ describe("LinkStatusPanel", () => {
   it("shows a failure message when the fetch fails", async () => {
     mockFetchJson({});
     renderWithProviders(<LinkStatusPanel />);
-    expect(await screen.findByText("Failed to load link status.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load link status")).toBeInTheDocument();
+    expect(screen.queryByText("● No integration errors logged.")).not.toBeInTheDocument();
   });
 
   it("PATCHes resolved on click", async () => {
@@ -45,6 +46,10 @@ describe("LinkStatusPanel", () => {
       const patchCall = fetchFn.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PATCH");
       expect(patchCall?.[0]).toContain("/api/system-status/links/1");
       expect(JSON.parse((patchCall?.[1] as RequestInit).body as string)).toEqual({ resolved: true });
+    });
+    await waitFor(() => {
+      const gets = fetchFn.mock.calls.filter((c) => !(c[1] as RequestInit | undefined)?.method);
+      expect(gets).toHaveLength(2);
     });
   });
 });

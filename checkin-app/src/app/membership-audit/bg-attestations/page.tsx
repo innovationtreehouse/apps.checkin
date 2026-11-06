@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Badge, Card, Center, Chip, Group, Stack, Text, TextInput, Title } from "@mantine/core";
+import { useState, useMemo } from "react";
+import { Badge, Card, Chip, Group, Stack, Text, TextInput } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { formatDateOnly } from "@/lib/time";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
@@ -91,32 +93,13 @@ const COLUMNS: DataTableColumn<Attestation>[] = [
 ];
 
 export default function BgAttestationsPage() {
-  const [attestations, setAttestations] = useState<Attestation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { data, error, reload } = useLoad<Attestation[]>("/api/membership-audit/bg-attestations");
   const [search, setSearch] = useState("");
   const [kinds, setKinds] = useState<string[]>([]);
   const [results, setResults] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
 
-  const load = useCallback(() => fetch("/api/membership-audit/bg-attestations")
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setAttestations(Array.isArray(data) ? data : []);
-      } else {
-        setError("Failed to load attestation data.");
-      }
-    })
-    .catch(() => {
-      setError("Network error loading attestation data.");
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => { load(); }, [load]);
+  const attestations = useMemo(() => (Array.isArray(data) ? data : []), [data]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -130,8 +113,8 @@ export default function BgAttestationsPage() {
     });
   }, [attestations, search, kinds, results, statuses]);
 
-  if (loading) return <PageLoader />;
-  if (error) return <Center mih="60vh"><Title order={3} c="red">{error}</Title></Center>;
+  if (error) return <LoadError what="attestation data" message={error} onRetry={reload} />;
+  if (!data) return <PageLoader />;
 
   return (
     <Stack>
