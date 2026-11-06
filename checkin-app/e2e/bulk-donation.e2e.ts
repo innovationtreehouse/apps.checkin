@@ -10,7 +10,7 @@ import { BOARD, FINANCE, MEMBER, releaseLibraries, type Undo } from "./support/s
 import { signIn } from "./support/session";
 
 const HEADER =
-  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Merchant Fee,Donor First Name,Donor Last Name,Donor Comment";
+  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee,Donor First Name,Donor Last Name,Donor Comment";
 /** A bucket in the seed (checkin-app/prisma/seed). */
 const SEEDED_BUCKET = "Facility";
 /** Longer than Mantine's default auto-close, so a chip that closes itself is gone by then. */
@@ -38,8 +38,8 @@ function batch(): Batch {
   const comment = `robotics ${stamp}`;
   const csv = [
     HEADER,
-    `${company},Spring,${disbursement},2026-09-10,${stamp}-1,2026-09-01,40.00,40.00,1.00,Org,Level,`,
-    `${company},Spring,${disbursement},2026-09-10,${stamp}-2,2026-09-02,60.00,0,1.50,Rosa,Parks,${comment}`,
+    `${company},Spring,${disbursement},2026-09-10,${stamp}-1,2026-09-01,40.00,40.00,0.00,1.00,Org,Level,`,
+    `${company},Spring,${disbursement},2026-09-10,${stamp}-2,2026-09-02,60.00,0,0.00,1.50,Rosa,Parks,${comment}`,
   ].join("\n");
   return { company, disbursement, comment, name: `e2e-${stamp}.csv`, csv };
 }
