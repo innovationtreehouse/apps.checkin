@@ -415,8 +415,8 @@ Things the app takes as true because they are handled outside it.
 
 - The same change voids the signature when the uploader makes it on a
   reimbursement for someone else, whether the person reimbursed confirmed it or
-  a Board member did on their behalf. The person reimbursed changing their own
-  confirmed receipt does not void it.
+  a Board member did on their behalf. An uploader who is also the person
+  reimbursed does not void their own confirmation by changing the receipt.
   [Decision — owner]
 
 - A line's program approver signs it by approving it: the approval records who
