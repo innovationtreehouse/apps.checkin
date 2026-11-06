@@ -101,6 +101,19 @@ describeDb('account unresolved handling', () => {
     expect(holds[0].reason).toBe('MULTIPLE_MATCHES');
   });
 
+  it('holds a gift whose one matching rule has no account for its amount, naming the rule', async () => {
+    const disbursementId = 'disb-no-account';
+    await makeTransaction(orgId, fileId, { disbursementId, ownerId: 1, donationAmountCents: 100, matchAmountCents: 100 });
+    const rule = await makeAccountMapRule(orgId, { matchAccountId: null });
+
+    await sendDisbursementEvent(orgId, disbursementId, { type: 'OWNER_ASSIGNED', allReady: true });
+
+    const holds = await db.disbursementHold.findMany({ where: { orgId, disbursementId } });
+    expect(holds.map((h) => h.reason)).toEqual(['NO_ACCOUNT']);
+    expect(JSON.parse(holds[0].matchedRows)[0].id).toBe(rule.id);
+    expect(await db.disbursementEvent.count({ where: { orgId, disbursementId } })).toBe(0);
+  });
+
   it('does not create a disbursement event when any transaction conflicts', async () => {
     const disbursementId = 'disb-partial-conflict';
     await makeTransaction(orgId, fileId, { disbursementId, ownerId: 1, companyName: 'Acme Corp' });
@@ -146,10 +159,8 @@ describeDb('successful processing', () => {
     expect(payload.disbursementId).toBe(disbursementId);
     expect(payload.disbursementDate).toBe('2025-06-01');
     expect(payload.disbursementFrom).toBe('Benevity');
-    const types = payload.items.map((i: { type: string }) => i.type);
-    expect(types).toContain('donation');
-    expect(types).toContain('match');
-    expect(types).toContain('fees');
+    const accounts = Object.fromEntries(payload.items.map((i: { type: string; accountId?: string }) => [i.type, i.accountId ?? null]));
+    expect(accounts).toEqual({ donation: '60', match: '61', fees: null });
 
     const snap = await db.disbursementSnapshot.findFirst({
       where: { orgId, disbursementId },

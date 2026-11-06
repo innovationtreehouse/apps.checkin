@@ -1,12 +1,12 @@
 import type { DbOrTx } from "../db";
-import { determineAccountsFromMap } from "./account-map-lookup";
+import { determineAccountsFromMap, type AccountConflictReason } from "./account-map-lookup";
 import { ownerRequiredWhere } from "./domain-rules";
 import { sumCents } from "@checkin/money";
 import { DisbursementPayloadV1 } from "@checkin/donations";
 
-type ConflictRecord = {
+export type ConflictRecord = {
   txId: number;
-  reason: "NO_MATCH" | "MULTIPLE_MATCHES";
+  reason: AccountConflictReason;
   matchedRows: unknown[];
 };
 
@@ -39,12 +39,7 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
 
   const rules = await handle.accountMap.findMany({ where: { orgId } });
 
-  type Resolved = {
-    tx: typeof txs[number];
-    donationAccount: string;
-    matchAccount: string;
-    feesAccount: string;
-  };
+  type Resolved = { tx: typeof txs[number]; rule: typeof rules[number] };
 
   const resolved: Resolved[] = [];
   const conflicts: ConflictRecord[] = [];
@@ -55,17 +50,14 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
       corporatePeerCampaign: tx.corporatePeerCampaign,
       donationMethod: tx.donationMethod,
       donationType: tx.donationType,
+      donationAmountCents: tx.donationAmountCents,
+      matchAmountCents: tx.matchAmountCents,
     });
 
     if ("conflict" in lookup) {
       conflicts.push({ txId: tx.id, reason: lookup.conflict.reason, matchedRows: lookup.conflict.matchedRows });
     } else {
-      resolved.push({
-        tx,
-        donationAccount: lookup.result.donationAccount,
-        matchAccount: lookup.result.matchAccount,
-        feesAccount: lookup.result.feesAccount,
-      });
+      resolved.push({ tx, rule: lookup.result });
     }
   }
 
@@ -77,17 +69,17 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
   const disbursementDate = firstTx?.disbursementDate ?? null;
   const disbursementFrom = firstTx?.disbursementFrom ?? null;
 
-  const items: Array<{ type: "match" | "donation" | "fees"; account: string; amountCents: number; transactionId: string }> = [];
-  for (const r of resolved) {
-    if (r.tx.donationAmountCents !== 0) {
-      items.push({ type: "donation", account: r.donationAccount, amountCents: r.tx.donationAmountCents, transactionId: r.tx.transactionId });
+  const items: DisbursementPayloadV1["items"] = [];
+  for (const { tx, rule } of resolved) {
+    if (tx.donationAmountCents !== 0 && rule.donationAccountId) {
+      items.push({ type: "donation", account: rule.donationAccount, accountId: rule.donationAccountId, amountCents: tx.donationAmountCents, transactionId: tx.transactionId });
     }
-    if (r.tx.matchAmountCents !== 0) {
-      items.push({ type: "match", account: r.matchAccount, amountCents: r.tx.matchAmountCents, transactionId: r.tx.transactionId });
+    if (tx.matchAmountCents !== 0 && rule.matchAccountId) {
+      items.push({ type: "match", account: rule.matchAccount, accountId: rule.matchAccountId, amountCents: tx.matchAmountCents, transactionId: tx.transactionId });
     }
-    const fees = sumCents(r.tx.causeSupportFeeCents ?? 0, r.tx.merchantFeeCents ?? 0, r.tx.checkFeeCents ?? 0);
+    const fees = sumCents(tx.causeSupportFeeCents ?? 0, tx.merchantFeeCents ?? 0, tx.checkFeeCents ?? 0);
     if (fees !== 0) {
-      items.push({ type: "fees", account: r.feesAccount, amountCents: fees, transactionId: r.tx.transactionId });
+      items.push({ type: "fees", account: rule.feesAccount, amountCents: fees, transactionId: tx.transactionId });
     }
   }
 

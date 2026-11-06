@@ -172,13 +172,19 @@ stops the lane from posting, but the switch-on date stays.
 |---|---|---|---|
 | Expenses | Organisation card | Must be a Bank or Credit Card account; any other type is refused and finance is alerted | QuickBooks posting: expenses |
 | Shopify income | Shopify payouts: bank account; Shopify: sales, card remainder, fees, adjustments | All five | QuickBooks posting: Shopify income |
-| Benevity | Benevity disbursements: bank account; Benevity: donations, employer matches, fees | All four | QuickBooks posting: Benevity donations |
+| Benevity | Benevity disbursements: bank account; Benevity: fees | Both | QuickBooks posting: Benevity donations |
 | Gifts of goods | Gifts of goods: in-kind income, in-kind expense, fixed assets (donated equipment), clearing account (finance's past bookings) | All four, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
 Then give each budget bucket its QuickBooks Class on the same screen, and assign
 Shopify items to buckets on the income items screen (`/income/items`). A payout with
 an undecided item, or a bucket that can't be used, holds for finance rather than
 posting.
+
+Benevity gifts and employer matches book to the accounts on their account rules,
+not to a role. On the account map (`/donations/account-map`), pick a donation
+account and a match account for every rule; the picker reads QuickBooks live. A
+batch with a gift whose rule lacks the account it needs holds on the disbursement
+holds screen until finance picks one and resubmits.
 
 **Done when** the Expenses, Benevity and gifts-of-goods rows read "Bound.", and the
 Shopify income row lists only the switch as missing:

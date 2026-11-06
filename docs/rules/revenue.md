@@ -341,6 +341,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - A giving-platform batch is finished only when every gift in it has a clear place in
   the books. The app never guesses, and a finished batch can't be changed.  [Decision]
 
+- A giving-platform batch finishes only when every gift's rule has an account for
+  each amount the gift carries. Each gift and match books to its rule's account,
+  fixed when the batch finishes; nothing books it to a fallback account.  [Decision — owner]
+
 - Every finished giving-platform batch must match one deposit in the books.
   Finance settles any the app can't match and records why. [Decision]
 

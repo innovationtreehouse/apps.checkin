@@ -76,6 +76,8 @@ type RuleOverrides = {
   donationAccount?: string;
   matchAccount?: string;
   feesAccount?: string;
+  donationAccountId?: string | null;
+  matchAccountId?: string | null;
 };
 
 export async function makeAccountMapRule(orgId: string = TEST_ORG_ID, overrides: RuleOverrides = {}) {
@@ -89,6 +91,8 @@ export async function makeAccountMapRule(orgId: string = TEST_ORG_ID, overrides:
       donationAccount: overrides.donationAccount ?? '4000-Donations',
       matchAccount: overrides.matchAccount ?? '4001-Match',
       feesAccount: overrides.feesAccount ?? '6000-Fees',
+      donationAccountId: 'donationAccountId' in overrides ? overrides.donationAccountId ?? null : '60',
+      matchAccountId: 'matchAccountId' in overrides ? overrides.matchAccountId ?? null : '61',
     },
   });
 }

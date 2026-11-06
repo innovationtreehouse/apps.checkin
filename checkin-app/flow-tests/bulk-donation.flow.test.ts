@@ -206,9 +206,8 @@ describe("bulk donation — finance journey", () => {
     const rule = await send(f, "POST", "/api/donations/account-map", {
       companyName: company,
       corporatePeerCampaign: "*",
-      donationAccount: "Contributions:Corporate Giving",
-      matchAccount: "Contributions:Corporate Match",
-      feesAccount: "Fees:Benevity",
+      donationAccountId: "8003",
+      matchAccountId: "8003",
     });
     expect(rule.status).toBe(200);
     expect((await send(f, "POST", `/api/donations/disbursement-holds/${disbursement}/resubmit`)).status).toBe(200);

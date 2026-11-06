@@ -48,6 +48,9 @@ async function main(): Promise<void> {
         donationAccount: "Contributions:Corporate Giving",
         matchAccount: "Contributions:Corporate Match",
         feesAccount: "Fees:Benevity",
+        // The local stand-in income account (LOCAL_QUICKBOOKS_ACCOUNTS in checkin).
+        donationAccountId: "8003",
+        matchAccountId: "8003",
       },
     });
   }

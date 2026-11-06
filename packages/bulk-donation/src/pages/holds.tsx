@@ -13,7 +13,14 @@ interface HoldRow {
   transaction: { companyName: string | null; corporatePeerCampaign: string | null; donationMethod: string | null; donationType: string | null } | null;
 }
 
-/** /donations/holds — disbursements whose gifts match zero or several account rules. */
+/** Each hold reason as finance reads it. */
+const REASON: Record<string, string> = {
+  NO_MATCH: "No rule matches",
+  MULTIPLE_MATCHES: "Several rules match",
+  NO_ACCOUNT: "Rule has no QuickBooks account for this gift's amount",
+};
+
+/** /donations/holds — disbursements whose gifts match zero or several account rules, or a rule without the account a gift needs. */
 export default function HoldsPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
@@ -46,7 +53,7 @@ export default function HoldsPage() {
               <Table.Tbody>
                 {rows.map((h) => (
                   <Table.Tr key={h.id}>
-                    <Table.Td>{h.reason}</Table.Td>
+                    <Table.Td>{REASON[h.reason] ?? h.reason}</Table.Td>
                     <Table.Td>{h.transaction?.companyName ?? "—"}</Table.Td>
                     <Table.Td>{h.transaction?.corporatePeerCampaign ?? "—"}</Table.Td>
                     <Table.Td>{[h.transaction?.donationMethod, h.transaction?.donationType].filter(Boolean).join(" / ") || "—"}</Table.Td>
