@@ -1,4 +1,5 @@
-import { screen, fireEvent } from "@testing-library/react";
+import { act, screen, fireEvent } from "@testing-library/react";
+import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox } from "../SystemHealthPanels";
 
@@ -186,6 +187,24 @@ describe("KioskHeartbeatBox", () => {
     expect(await screen.findByText("Couldn't load kiosk last-seen")).toBeInTheDocument();
     expect(screen.queryByText(/Kiosk clock/)).not.toBeInTheDocument();
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the last clock line when a refresh fails", async () => {
+    let down = false;
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": () => {
+        if (down) throw new Error("down");
+        return { heartbeat: [{ metric: "kiosk_clock_skew", value: 0, timestamp: new Date().toISOString() }] };
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText(/Kiosk clock agrees with the server/)).toBeInTheDocument();
+
+    down = true;
+    act(() => invalidateLoads());
+
+    expect(await screen.findByText("Couldn't load kiosk last-seen")).toBeInTheDocument();
+    expect(screen.queryByText(/Kiosk clock/)).not.toBeInTheDocument();
   });
 
   it("warns for a kiosk refused before it was ever accepted, with no last-seen row", async () => {

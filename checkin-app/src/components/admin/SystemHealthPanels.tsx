@@ -427,7 +427,7 @@ export function KioskHeartbeatBox() {
     <Card withBorder radius="md" padding="lg">
       <Title order={4} mb="xs">Kiosk last seen</Title>
       {error ? <LoadError what="kiosk last-seen" message={error} onRetry={reload} /> : <Text size="sm" c="dimmed">{body}</Text>}
-      {rows && (
+      {rows && !error && (
         <Text size="sm" c={clockOff ? "red" : "dimmed"} fw={clockOff ? 700 : undefined}>{clockLine(skew)}</Text>
       )}
     </Card>
