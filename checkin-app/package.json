@@ -19,7 +19,7 @@
     "test:integration": "INTEGRATION_DB=1 jest --ci -w ${INTEGRATION_WORKERS:-1} --workerIdleMemoryLimit=1GB --testTimeout=60000 --testEnvironment=node --testPathIgnorePatterns=/node_modules/ --testRegex \"\\.integration\\.test\\.[jt]sx?$\" --logHeapUsage",
     "test:coverage": "INTEGRATION_DB=1 jest --ci --runInBand --coverage --testPathIgnorePatterns \"/node_modules/|/\\.next/|\\.flow\\.test\\.\"",
     "test:coverage:unit": "jest --ci --coverage --testPathIgnorePatterns \"/node_modules/|/\\.next/|\\.flow\\.test\\.|\\.integration\\.test\\.\"",
-    "test:coverage:integration": "INTEGRATION_DB=1 jest --ci -w ${INTEGRATION_WORKERS:-1} --workerIdleMemoryLimit=1GB --testTimeout=60000 --coverage --testEnvironment=node --logHeapUsage --testPathIgnorePatterns=/node_modules/ --testRegex \"\\.integration\\.test\\.[jt]sx?$\"",
+    "test:coverage:integration": "INTEGRATION_DB=1 jest --ci -w ${INTEGRATION_WORKERS:-1} --workerIdleMemoryLimit=1GB --testTimeout=60000 --coverage --testEnvironment=node --testPathIgnorePatterns=/node_modules/ --testRegex \"\\.integration\\.test\\.[jt]sx?$\" --logHeapUsage",
     "check-route-coverage": "ts-node --project scripts/tsconfig.json scripts/check-route-coverage.ts",
     "shopify:webhook": "tsx scripts/register-shopify-webhook.ts",
     "coalesce-migrations": "tsx scripts/coalesce-migrations.ts",
