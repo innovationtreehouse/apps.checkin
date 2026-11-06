@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Runs the kiosk flow tier: builds the kiosk images locally, brings up the flow
-# stack with a throwaway signing key, and runs checkin-app/kiosk-flow inside it.
+# Runs a kiosk tier: builds the kiosk images locally, brings up the flow stack with
+# a throwaway signing key, and runs checkin-app/kiosk-flow inside it.
+#   deploy/kiosk-flow.sh       the flow tier (jest)
+#   deploy/kiosk-flow.sh e2e   the browser tier (Playwright, the new image only)
 set -euo pipefail
+TIER="${1:-flow}"
 cd "$(dirname "$0")/.."
 
 # The old image: the first commit with client/Dockerfile, from before the saved view's table.
@@ -11,7 +14,9 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-kiosk-flow-$(basename "$PWD
 compose() { docker compose -f deploy/docker-compose.flow.yml -f deploy/docker-compose.flow-kiosk.yml "$@"; }
 
 docker build -q -t $COMPOSE_PROJECT_NAME:new client/
-git archive "$OLD_IMAGE_COMMIT:client" | docker build -q -t $COMPOSE_PROJECT_NAME:old -
+if [ "$TIER" = flow ]; then
+  git archive "$OLD_IMAGE_COMMIT:client" | docker build -q -t $COMPOSE_PROJECT_NAME:old -
+fi
 
 keys="$(docker run --rm --entrypoint python $COMPOSE_PROJECT_NAME:new -c \
   'from nacl.signing import SigningKey as K; k = K.generate(); print(k.encode().hex(), k.verify_key.encode().hex())')"
@@ -30,4 +35,8 @@ cleanup() {
 trap cleanup EXIT
 
 compose up -d --wait --wait-timeout 600
-compose exec -T app sh -lc "cd checkin-app && npx jest --config jest.kiosk-flow.config.mjs --ci --runInBand --forceExit"
+if [ "$TIER" = e2e ]; then
+  compose exec -T -e CI="${CI:-}" app sh -lc "cd checkin-app && npx playwright install --with-deps chromium && npx playwright test --config playwright.kiosk.config.ts"
+else
+  compose exec -T app sh -lc "cd checkin-app && npx jest --config jest.kiosk-flow.config.mjs --ci --runInBand --forceExit"
+fi
