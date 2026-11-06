@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, setCheckinEnv, resetRtl } from "@/test-helpers/rtl";
@@ -127,11 +127,15 @@ describe("MembershipSettingsPage", () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
       status: 409,
-      json: async () => ({ error: "The product has 2 variants — paste the ID of the right one into the variant-ID field: 111 — Member — $150.00; 222 — Non-Member — $250.00" }),
+      text: async () => JSON.stringify({ error: "The product has 2 variants — paste the ID of the right one into the variant-ID field: 111 — Member — $150.00; 222 — Non-Member — $250.00" }),
     })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Extract variant from URL" }));
 
-    expect(await screen.findByText(/The product has 2 variants/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: expect.stringMatching(/^The product has 2 variants/), autoClose: false }),
+      ),
+    );
     // The variant-ID field keeps its previous value.
     expect(screen.getByDisplayValue("123456")).toBeInTheDocument();
   });
@@ -227,9 +231,11 @@ describe("MembershipSettingsPage", () => {
     renderWithProviders(<MembershipSettingsPage />);
     await screen.findByDisplayValue("150.00");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Save blocked." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: "Save blocked." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(await screen.findByText("Save blocked.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Save blocked.", autoClose: false })),
+    );
   });
 
   it("shows a network-error message when saving throws", async () => {
@@ -241,7 +247,7 @@ describe("MembershipSettingsPage", () => {
     global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error." })),
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })),
     );
   });
 
@@ -288,7 +294,11 @@ describe("MembershipSettingsPage", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
-    expect(await screen.findByText("Opened 12 renewal(s); 3 already in progress.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "green", message: "Opened 12 renewal(s); 3 already in progress." }),
+      ),
+    );
   });
 
   it("cancels the go-live confirmation without calling the API", async () => {
@@ -308,11 +318,13 @@ describe("MembershipSettingsPage", () => {
     renderWithProviders(<MembershipSettingsPage />);
     await screen.findByDisplayValue("150.00");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Already open." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: "Already open." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Open renewals for all active members" }));
     let modal = await screen.findByRole("dialog", { name: "Open Renewals For All Active Members" });
     fireEvent.click(within(modal).getByRole("button", { name: "Open Renewals" }));
-    expect(await screen.findByText("Already open.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Already open.", autoClose: false })),
+    );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Open Renewals For All Active Members" })).not.toBeInTheDocument());
 
     global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
@@ -320,7 +332,7 @@ describe("MembershipSettingsPage", () => {
     modal = await screen.findByRole("dialog", { name: "Open Renewals For All Active Members" });
     fireEvent.click(within(modal).getByRole("button", { name: "Open Renewals" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error." })),
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })),
     );
   });
 

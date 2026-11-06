@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Box, Button, Group, Modal, Stack, Switch, Text, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { modals } from "@mantine/modals";
 import { roleLabel } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
@@ -67,10 +68,6 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
     }
   }
 
-  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    notifications.show({ message, color: type === 'error' ? 'red' : 'green', autoClose: type === 'error' ? false : 4000 });
-  };
-
   // Client-side mirror of the server's authority matrix — UX only, so
   // switches the actor can't legally flip are disabled with an explanation.
   // The endpoint enforces the real rule regardless of what this renders.
@@ -90,26 +87,18 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
   const saveRoles = async (t: RolesEditTarget, delta: Delta) => {
     setSavingRoles(true);
     try {
-      const res = await fetch('/api/roles', {
+      const data = await api<{ user: RolesEditTarget }>('/api/roles', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUserId: t.id, ...delta }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        showNotification("Roles updated.");
-        onSaved(data.user);
-        onClose();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        // Revert the form to the target's last-known-good state.
-        setRolesForm(flagsFromTarget(t));
-        setStagingForm(!!t.canAccessStaging);
-        showNotification(data.error || "Failed to update roles", "error");
-      }
+      showSuccess("Roles updated.");
+      onSaved(data.user);
+      onClose();
     } catch (err) {
-      console.error("Failed to update roles:", err);
-      showNotification("Network error updating roles", "error");
+      // Revert the form to the target's last-known-good state.
+      setRolesForm(flagsFromTarget(t));
+      setStagingForm(!!t.canAccessStaging);
+      showError(errorMessage(err));
     } finally {
       setSavingRoles(false);
     }

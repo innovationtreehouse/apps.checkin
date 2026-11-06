@@ -5,7 +5,8 @@ import {
   Alert, Badge, Button, Card, Center, Group, Loader, Modal, Progress, Radio, Stack, Text, Textarea, TextInput, Title,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
@@ -57,7 +58,6 @@ export default function OutreachSettingsPage() {
   const [initial, setInitial] = useState<{ opening: { subject: string; body: string }; reminder: { subject: string; body: string } } | null>(null);
   const [nextDeadline, setNextDeadline] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [testSending, setTestSending] = useState<TemplateKey | null>(null);
 
   const load = useCallback(() => fetch("/api/settings/outreach")
@@ -90,12 +90,10 @@ export default function OutreachSettingsPage() {
   useUnsavedGuard(isDirty);
 
   const saveSettings = async () => {
-    setSaveNotice(null);
     setSaving(true);
     try {
-      const res = await fetch("/api/settings/outreach", {
+      await api("/api/settings/outreach", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           outreachOpeningSubject: opening.subject,
           outreachOpeningBody: opening.body,
@@ -103,16 +101,11 @@ export default function OutreachSettingsPage() {
           outreachReminderBody: reminder.body,
         }),
       });
-      if (res.ok) {
-        notifications.show({ color: "green", message: "Outreach templates saved." });
-        setLoading(true);
-        await load();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setSaveNotice({ text: d.error || "Save failed.", err: true });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      showSuccess("Outreach templates saved.");
+      setLoading(true);
+      await load();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -122,16 +115,10 @@ export default function OutreachSettingsPage() {
     const t = key === "opening" ? opening : reminder;
     setTestSending(key);
     try {
-      const res = await fetch("/api/outreach/test-send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: t.subject, body: t.body }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok) notifications.show({ color: "green", message: "Test email sent (both variants) to your address." });
-      else notifications.show({ color: "red", message: d.error || "Test send failed.", autoClose: false });
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api("/api/outreach/test-send", { method: "POST", body: JSON.stringify({ subject: t.subject, body: t.body }) });
+      showSuccess("Test email sent (both variants) to your address.");
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setTestSending(null);
     }
@@ -172,7 +159,6 @@ export default function OutreachSettingsPage() {
             onSendTest={() => sendTest("reminder")}
           />
 
-          {saveNotice && <Alert color={saveNotice.err ? "red" : "green"} variant="light">{saveNotice.text}</Alert>}
           <Group>
             <Button disabled={saving} loading={saving} onClick={saveSettings}>Save templates</Button>
           </Group>
@@ -265,7 +251,6 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
   const [inFlight, setInFlight] = useState<BulkSendSummary | null>(null);
   const [lastCompleted, setLastCompleted] = useState<BulkSendSummary | null>(null);
   const [draining, setDraining] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ emailType: TemplateKey; bulkSendId: number; counts: { queued: number; skippedUnsubscribed: number; leadsWithoutEmail: number } } | null>(null);
   const [confirmOpened, { open: openConfirm, close: closeConfirm }] = useDisclosure(false);
   const [starting, setStarting] = useState<TemplateKey | null>(null);
@@ -287,44 +272,38 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
 
   const drain = async (bulkSendId: number) => {
     setDraining(true);
-    setSendError(null);
     try {
       for (;;) {
-        const res = await fetch("/api/outreach/process-batch", {
+        const data = await api<{ remaining: number; processed: number }>("/api/outreach/process-batch", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ bulkSendId }),
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { setSendError(data.error || "Send failed mid-batch."); break; }
         await refreshStatus();
         if (data.remaining === 0 || data.processed === 0) break;
       }
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setDraining(false);
     }
   };
 
   const startSend = async (emailType: TemplateKey) => {
-    setSendError(null);
     setStarting(emailType);
     try {
-      const res = await fetch("/api/outreach/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailType, audience }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 409) { setSendError(data.error || "A send is already in progress."); await refreshStatus(); return; }
-      if (!res.ok) { setSendError(data.error || "Failed to start send."); return; }
+      const data = await api<{
+        bulkSend: { id: number };
+        counts: { queued: number; skippedUnsubscribed: number; leadsWithoutEmail: number };
+      }>("/api/outreach/send", { method: "POST", body: JSON.stringify({ emailType, audience }) });
       setConfirm({
         emailType,
         bulkSendId: data.bulkSend.id,
         counts: { queued: data.counts.queued, skippedUnsubscribed: data.counts.skippedUnsubscribed, leadsWithoutEmail: data.counts.leadsWithoutEmail },
       });
       openConfirm();
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) await refreshStatus();
     } finally {
       setStarting(null);
     }
@@ -339,19 +318,14 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
   };
 
   const retryFailed = async (bulkSendId: number) => {
-    setSendError(null);
-    const res = await fetch("/api/outreach/status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "retry", bulkSendId }),
-    });
-    if (res.ok) {
-      await refreshStatus();
-      await drain(bulkSendId);
-    } else {
-      const d = await res.json().catch(() => ({}));
-      setSendError(d.error || "Retry failed.");
+    try {
+      await api("/api/outreach/status", { method: "POST", body: JSON.stringify({ action: "retry", bulkSendId }) });
+    } catch (e) {
+      showError(errorMessage(e));
+      return;
     }
+    await refreshStatus();
+    await drain(bulkSendId);
   };
 
   const done = (c: Counts) => c.sent + c.failed + c.skipped_unsubscribed + c.skipped_denied;
@@ -427,7 +401,6 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
         </Stack>
       )}
 
-      {sendError && <Alert color="red" variant="light" mt="md">{sendError}</Alert>}
 
       <Modal opened={confirmOpened} onClose={closeConfirm} title="Confirm send" centered>
         {confirm && (

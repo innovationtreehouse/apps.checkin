@@ -4,11 +4,10 @@ import { centsToDecimalString } from "@checkin/money";
 import { useState } from "react";
 import { Alert, Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useSeedForm } from "@/hooks/useSeedForm";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -88,8 +87,6 @@ export default function MembershipSettingsPage() {
 
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
-  const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
-  const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
   const { data, error, reload } = useLoad<{ settings: SettingsBody }>("/api/settings/membership");
@@ -103,7 +100,6 @@ export default function MembershipSettingsPage() {
   const boundaryWasSet = !!initial?.boundary;
 
   const saveSettings = async () => {
-    setSaveNotice(null);
     setFieldErrors({});
     const fe: { standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string } = {};
     const nd = parseFloat(standardFee); if (standardFee.trim() === "" || isNaN(nd) || nd < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
@@ -126,9 +122,8 @@ export default function MembershipSettingsPage() {
       (slot.variantId.trim() !== savedSlots[i]?.variantId || slot.productUrl.trim() !== savedSlots[i]?.productUrl));
     setSaving(true);
     try {
-      const res = await fetch("/api/settings/membership", {
+      await api("/api/settings/membership", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           perYearVariantClient: true,
           standardMembershipFeeCents: Math.round(parseFloat(standardFee || "0") * 100),
@@ -152,9 +147,12 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setInitial(current); setSavedSlots(slots); reload(); }
-      else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      showSuccess("Settings saved.");
+      setBoundaryUnlocked(false);
+      notifyNavRefresh();
+      setInitial(current);
+      setSavedSlots(slots);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
@@ -163,22 +161,15 @@ export default function MembershipSettingsPage() {
   // there is nowhere to copy it from). Fills the variant-ID field only —
   // nothing is persisted until the admin presses Save settings.
   const extractVariant = async (slot: number | "single", url: string, fill: (variantId: string) => void) => {
-    setSaveNotice(null);
     setExtracting(slot);
     try {
-      const res = await fetch("/api/settings/membership/extract-variant", {
+      const { variantId } = await api<{ variantId: string }>("/api/settings/membership/extract-variant", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productUrl: url.trim() }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        fill(data.variantId);
-        notifications.show({ message: `Variant ${data.variantId} filled in — press Save settings to keep it.` });
-      } else {
-        setSaveNotice({ text: data.error || "Could not extract the variant.", err: true });
-      }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      fill(variantId);
+      showSuccess(`Variant ${variantId} filled in — press Save settings to keep it.`);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setExtracting(null); }
   };
 
@@ -190,13 +181,10 @@ export default function MembershipSettingsPage() {
   const bulkOpenRenewals = async () => {
     closeConfirmOpenRenewals();
     setSaving(true);
-    setRenewalNotice(null);
     try {
-      const res = await fetch("/api/settings/membership/bulk-open-renewals", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) setRenewalNotice({ text: `Opened ${data.opened} renewal(s); ${data.skipped} already in progress.`, err: false });
-      else setRenewalNotice({ text: data.error || "Failed.", err: true });
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      const data = await api<{ opened: number; skipped: number }>("/api/settings/membership/bulk-open-renewals", { method: "POST" });
+      showSuccess(`Opened ${data.opened} renewal(s); ${data.skipped} already in progress.`);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
@@ -440,12 +428,6 @@ export default function MembershipSettingsPage() {
               </Alert>
             )}
 
-            {saveNotice && (
-              <Alert mt="lg" color={saveNotice.err ? "red" : "treehouseGreen"} variant="light">
-                {saveNotice.text}
-              </Alert>
-            )}
-
             <Button mt="lg" disabled={saving} loading={saving} onClick={saveSettings} style={{ alignSelf: "flex-start" }}>
               Save settings
             </Button>
@@ -460,11 +442,6 @@ export default function MembershipSettingsPage() {
               they renew for the upcoming year. Press this once, after your existing members are
               imported (board or isSysadmin).
             </Text>
-            {renewalNotice && (
-              <Alert mt="md" mb="md" color={renewalNotice.err ? "red" : "treehouseGreen"} variant="light">
-                {renewalNotice.text}
-              </Alert>
-            )}
             <Button color="yellow" disabled={saving} loading={saving} onClick={openConfirmOpenRenewals}>
               Open renewals for all active members
             </Button>

@@ -3,10 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Alert, Card, Checkbox, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Card, Checkbox, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { LoadError } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { useSeedForm } from "@/hooks/useSeedForm";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -32,7 +32,6 @@ export default function CommunicationPage() {
   const router = useRouter();
   const hasEmail = !!session?.user?.email;
 
-  const [message, setMessage] = useState("");
 
   const [settings, setSettings] = useState({
     emailCheckinReceipts: false,
@@ -66,19 +65,12 @@ export default function CommunicationPage() {
     const prev = settings;
     const next = { ...settings, ...patch };
     setSettings(next);
-    setMessage("");
     setSaving((n) => n + 1);
     try {
-      const res = await fetch('/api/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notificationSettings: next })
-      });
-      if (!res.ok) throw new Error();
-      reload();
-    } catch {
+      await api('/api/profile', { method: 'PATCH', body: JSON.stringify({ notificationSettings: next }) });
+    } catch (e) {
       setSettings(prev);
-      setMessage("Failed to update settings.");
+      showError(errorMessage(e));
     } finally {
       setSaving((n) => n - 1);
     }
@@ -89,19 +81,12 @@ export default function CommunicationPage() {
   const persistSuppression = async (value: boolean) => {
     const prev = emailSuppressed;
     setEmailSuppressed(value);
-    setMessage("");
     setSaving((n) => n + 1);
     try {
-      const res = await fetch('/api/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailSuppressed: value })
-      });
-      if (!res.ok) throw new Error();
-      reload();
-    } catch {
+      await api('/api/profile', { method: 'PATCH', body: JSON.stringify({ emailSuppressed: value }) });
+    } catch (e) {
       setEmailSuppressed(prev);
-      setMessage("Failed to update settings.");
+      showError(errorMessage(e));
     } finally {
       setSaving((n) => n - 1);
     }
@@ -149,7 +134,6 @@ export default function CommunicationPage() {
         </Stack>
         </>)}
 
-        {message && <Alert color="red" mt="md">{message}</Alert>}
       </Card>
     </PageContainer>
   );

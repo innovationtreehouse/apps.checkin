@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import Link from "next/link";
 import { Alert, Anchor, Badge, Button, Card, Center, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -117,20 +118,11 @@ export default function CompliancePage() {
   const submitBg = async (personId: number) => {
     setBusyId(personId);
     try {
-      const res = await fetch("/api/membership-audit/person-bg", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ personId }),
-      });
-      if (res.ok) {
-        setSubmittedIds((s) => new Set(s).add(personId));
-        notifications.show({ message: "Submitted for background-check review." });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", autoClose: false, message: data.error || "Could not submit for review." });
-      }
-    } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error." });
+      await api("/api/membership-audit/person-bg", { method: "POST", body: JSON.stringify({ personId }) });
+      setSubmittedIds((s) => new Set(s).add(personId));
+      showSuccess("Submitted for background-check review.");
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setBusyId(null);
     }
@@ -142,20 +134,11 @@ export default function CompliancePage() {
   const requestAgreement = async (personId: number) => {
     setBusyId(personId);
     try {
-      const res = await fetch("/api/membership-audit/person-agreement", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ personId }),
-      });
-      if (res.ok) {
-        setRequestedIds((s) => new Set(s).add(personId));
-        notifications.show({ message: "Individual agreement requested." });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", autoClose: false, message: data.error || "Could not request an agreement." });
-      }
-    } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error." });
+      await api("/api/membership-audit/person-agreement", { method: "POST", body: JSON.stringify({ personId }) });
+      setRequestedIds((s) => new Set(s).add(personId));
+      showSuccess("Individual agreement requested.");
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setBusyId(null);
     }
