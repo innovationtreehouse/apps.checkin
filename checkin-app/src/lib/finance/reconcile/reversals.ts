@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { systemActor, type SystemActorName } from "@/lib/auditActor";
 import { programVariantIds } from "@/lib/programs/variants";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
+import { clearFutureRsvps } from "@/lib/program/capacity";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
@@ -344,6 +345,7 @@ async function removeRefundedEnrollment(programId: number, personId: number, ord
         if (!row) return false;
         const { count } = await tx.programParticipant.deleteMany({ where: active });
         if (count === 0) return false;
+        await clearFutureRsvps(tx, programId, personId);
         await tx.auditLog.create({
             data: {
                 ...systemActor("webhook:shopify-refund"),

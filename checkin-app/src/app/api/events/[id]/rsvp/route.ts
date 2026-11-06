@@ -58,8 +58,7 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
                         programId: event.programId,
                         personId: currentUserId
                     },
-                    // Someone who withdrew may still decline, so an earlier Yes can be retracted.
-                    ...(status === "NOT_ATTENDING" ? {} : ENROLLED_PARTICIPANT),
+                    ...ENROLLED_PARTICIPANT,
                 }
             });
             const isVolunteer = await prisma.programVolunteer.findUnique({
