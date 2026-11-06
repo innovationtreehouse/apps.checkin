@@ -127,7 +127,7 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
     // stale/forged request, not a real checkout.
     const pending = await prisma.programParticipant.findMany({
         where: { programId, personId: { in: participantIds }, status: "PENDING" },
-        select: { personId: true, person: { select: { householdId: true } } },
+        select: { personId: true, pendingSince: true, person: { select: { householdId: true } } },
     });
     if (pending.length === 0) {
         return apiError("No matching participants awaiting payment", 404);
@@ -152,9 +152,9 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
 
     // note_attributes carry the comma-joined account ids + program id exactly as
     // buildShopifyCheckoutUrl encodes them; the handler splits on ',' and activates
-    // each PENDING participant. Stable order id → idempotent re-fire.
+    // each PENDING participant.
     const status = await fireWebhook({
-        id: `dev-mock-order-prog-${programId}`,
+        id: mockProgramOrderId(programId, pending),
         note_attributes: [
             { name: "CheckMeIn_Account_ID", value: pendingIds.join(",") },
             { name: "Program_ID", value: String(programId) },
@@ -172,4 +172,13 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
         select: { personId: true, status: true },
     });
     return NextResponse.json({ ok: true, participants: activated });
+}
+
+// One order per checkout: the handler counts a program seat as spent by order id, so
+// another household, or the same people enrolling again, needs a new id. Two fires for
+// the same pending enrollments share an id and replay.
+function mockProgramOrderId(programId: number, pending: { personId: number; pendingSince: Date | null }[]): string {
+    const people = pending.map((p) => p.personId).sort((a, b) => a - b).join("-");
+    const since = Math.max(...pending.map((p) => p.pendingSince?.getTime() ?? 0));
+    return `dev-mock-order-prog-${programId}-${people}-${since}`;
 }
