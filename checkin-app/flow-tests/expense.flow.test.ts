@@ -222,11 +222,11 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: -1 })).status).toBe(400);
 
     // QuickBooks accounts and an account-mapping rule: create, edit, delete.
-    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: `6100-${stamp}` });
+    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: `6100${stamp}` });
     expect(account.status).toBe(200);
     const accountId = (account.json as { id: number }).id;
-    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: `6110-${stamp}` })).status).toBe(200);
-    const rule = { category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: `6110-${stamp}` };
+    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: `6110${stamp}` })).status).toBe(200);
+    const rule = { category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: `6110${stamp}` };
     const mapping = await send(f, "POST", "/api/expense/account-mapping", rule);
     expect(mapping.status).toBe(200);
     const mappingId = (mapping.json as { id: number }).id;
@@ -262,7 +262,7 @@ describe("expense — FINANCE journey", () => {
     const [hold] = held.json.Expense.holds;
     expect(hold).toBeDefined();
     const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
-    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
+    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110${stamp}` })).status).toBe(200);
     expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
 
     // Reimbursee: FINANCE names an adult other than the uploader, never itself or a minor, which clears the queue reason.

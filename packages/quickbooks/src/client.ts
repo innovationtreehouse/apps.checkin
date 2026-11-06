@@ -222,8 +222,13 @@ function privateNote(memo: string | undefined, key: string, env: QboEnv): string
   return note;
 }
 
+/** QuickBooks ref ids (accounts, Classes, Vendors) are digits only. */
+export function isQuickBooksId(id: string): boolean {
+  return /^\d+$/.test(id);
+}
+
 function ref(id: string): { value: string } {
-  if (!/^\d+$/.test(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
+  if (!isQuickBooksId(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
   return { value: id };
 }
 
