@@ -160,7 +160,7 @@ real data dev holds today. It reads; it never deletes.
 
 - **Database backups.** Aurora's automated backups keep the old data until they
   age out of the cluster's retention window. Nothing in this design shortens that.
-  Any manual snapshot of the dev database should be deleted by hand once (DR-7).
+  The owner expects no manual snapshots of the dev database exist (DR-7).
 - **Application logs.** CloudWatch keeps whatever the app logged, emails
   included, until the log group's retention expires.
 - **Recent mail** in the dev mailbox, until the retention rule (DR-5) deletes it.
@@ -365,8 +365,8 @@ Stable ids; a resolved question keeps its number.
   write access to a mailbox for a job a retention rule does with no code.
 - **DR-6. Treat staff org accounts on dev as allowed?** Decided: yes. Dev
   cannot be entered without one, and staging already keeps them.
-- **DR-7. Delete manual dev database snapshots once?** Recommendation: yes, on
-  the first full reset, by hand; automated backups age out on their own.
+- **DR-7. Delete manual dev database snapshots once?** Decided: no step needed.
+  The owner expects none exist; automated backups age out on their own.
 
 ---
 
