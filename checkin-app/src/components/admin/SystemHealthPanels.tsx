@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 type DailyStat = {
   date: string;
@@ -404,26 +406,16 @@ function clockLine(skewSeconds: number | undefined): string {
 }
 
 export function KioskHeartbeatBox() {
-  const [rows, setRows] = useState<HeartbeatRow[] | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/system-status/kiosk-heartbeat")
-      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
-      .then((data: { heartbeat?: HeartbeatRow[] }) => {
-        setRows(Array.isArray(data?.heartbeat) ? data.heartbeat : []);
-      })
-      .catch(() => setRows(null))
-      .finally(() => setLoading(false));
-  }, []);
+  // No retry: this box reports health, and retries would hide a down server.
+  const { data, error, reload } = useLoad<{ heartbeat?: HeartbeatRow[] }>("/api/system-status/kiosk-heartbeat", { retry: false });
+  const rows = data ? (Array.isArray(data.heartbeat) ? data.heartbeat : []) : null;
 
   const lastSeen = rows?.find((r) => r.metric === "kiosk_last_seen");
   const skew = rows?.find((r) => r.metric === "kiosk_clock_skew")?.value;
   const clockOff = skew !== undefined && Math.abs(skew) >= CLOCK_WARN_SECONDS;
 
   let body: string;
-  if (loading) body = "Checking…";
-  else if (rows == null) body = "Unable to read kiosk last-seen.";
+  if (!rows) body = "Checking…";
   else if (!lastSeen) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
   else {
     const age = lastSeen.value;
@@ -434,8 +426,8 @@ export function KioskHeartbeatBox() {
   return (
     <Card withBorder radius="md" padding="lg">
       <Title order={4} mb="xs">Kiosk last seen</Title>
-      <Text size="sm" c="dimmed">{body}</Text>
-      {!loading && rows != null && (
+      {error ? <LoadError what="kiosk last-seen" message={error} onRetry={reload} /> : <Text size="sm" c="dimmed">{body}</Text>}
+      {rows && (
         <Text size="sm" c={clockOff ? "red" : "dimmed"} fw={clockOff ? 700 : undefined}>{clockLine(skew)}</Text>
       )}
     </Card>
@@ -443,20 +435,8 @@ export function KioskHeartbeatBox() {
 }
 
 export function BadgeScanChart() {
-  const [stats, setStats] = useState<DailyStat[] | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch('/api/system-status/health')
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.days) {
-          setStats(data.days);
-        }
-      })
-      .catch((err) => console.error("Failed to load system health:", err))
-      .finally(() => setLoading(false));
-  }, []);
+  const { data, error, reload } = useLoad<{ days?: DailyStat[] }>("/api/system-status/health");
+  const stats = data?.days ?? null;
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -466,7 +446,9 @@ export function BadgeScanChart() {
         indicate faster responses.
       </Text>
 
-      {loading ? (
+      {error ? (
+        <LoadError what="metrics" message={error} onRetry={reload} />
+      ) : !data ? (
         <Center py="xl"><Loader /></Center>
       ) : stats ? (
         <SvgLineChart data={stats} />

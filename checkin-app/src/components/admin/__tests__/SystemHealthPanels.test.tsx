@@ -54,10 +54,17 @@ describe("BadgeScanChart", () => {
     expect(screen.getByText("P99")).toBeInTheDocument();
   });
 
-  it("shows a failure message when the health endpoint has no data", async () => {
-    mockFetchJson({});
+  it("shows a failure message when the health endpoint answers without data", async () => {
+    mockFetchJson({ "/api/system-status/health": {} });
     renderWithProviders(<BadgeScanChart />);
     expect(await screen.findByText("Failed to load metrics.")).toBeInTheDocument();
+  });
+
+  it("shows the load failure with a retry when the health endpoint refuses", async () => {
+    mockFetchJson({});
+    renderWithProviders(<BadgeScanChart />);
+    expect(await screen.findByText("Couldn't load metrics")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });
 
@@ -171,6 +178,14 @@ describe("KioskHeartbeatBox", () => {
     renderHeartbeat([{ metric: "kiosk_last_seen", value: 5 }, { metric: "kiosk_clock_skew", value }]);
     expect(await screen.findByText(copy)).toBeInTheDocument();
     expect(screen.getByText(/Kiosk last seen 5s ago/)).toBeInTheDocument();
+  });
+
+  it("shows a failed read at once, without retrying", async () => {
+    const fetchFn = mockFetchJson({ "/api/system-status/kiosk-heartbeat": () => { throw new Error("down"); } });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText("Couldn't load kiosk last-seen")).toBeInTheDocument();
+    expect(screen.queryByText(/Kiosk clock/)).not.toBeInTheDocument();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
   it("warns for a kiosk refused before it was ever accepted, with no last-seen row", async () => {

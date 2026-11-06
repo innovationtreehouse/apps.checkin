@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { Button, Card, Center, Group, Loader, Modal, Stack, Table, Text, Title } from "@mantine/core";
 import { relTime } from "@/lib/time";
 import { useOrgTime } from "@/components/TimezoneProvider";
@@ -50,8 +52,8 @@ const reasonCopy = (reason: string) => {
 };
 
 export function UnsyncedScansPanel() {
-  const [scans, setScans] = useState<UnsyncedScan[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { data, error, reload } = useLoad<{ scans: UnsyncedScan[] }>("/api/system-status/unsynced-scans");
+  const scans = data ? data.scans ?? [] : null;
   const [actionError, setActionError] = useState<string | null>(null);
   const [dismissing, setDismissing] = useState<Set<number>>(new Set());
   const [recording, setRecording] = useState<UnsyncedScan | null>(null);
@@ -59,16 +61,6 @@ export function UnsyncedScansPanel() {
   const [recordBusy, setRecordBusy] = useState(false);
   const [recordError, setRecordError] = useState<string | null>(null);
   const { formatTime } = useOrgTime();
-
-  useEffect(() => {
-    fetch("/api/system-status/unsynced-scans")
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => setScans(data.scans ?? []))
-      .catch(() => setFailed(true));
-  }, []);
 
   function openRecord(scan: UnsyncedScan) {
     setRecording(scan);
@@ -95,7 +87,7 @@ export function UnsyncedScansPanel() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error ?? `HTTP ${res.status}`);
       }
-      setScans((rows) => (rows ?? []).filter((r) => r.id !== recording.id));
+      await reload();
       setRecording(null);
     } catch (e) {
       setRecordError(e instanceof Error ? e.message : "Could not record that visit.");
@@ -110,7 +102,7 @@ export function UnsyncedScansPanel() {
     try {
       const res = await fetch(`/api/system-status/unsynced-scans/${id}`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setScans((rows) => (rows ?? []).filter((r) => r.id !== id));
+      await reload();
     } catch {
       setActionError("Could not dismiss that scan. Reload and try again.");
     } finally {
@@ -122,7 +114,7 @@ export function UnsyncedScansPanel() {
     }
   }
 
-  if (failed) return <Text c="red">Failed to load unsynced scans.</Text>;
+  if (error) return <LoadError what="unsynced scans" message={error} onRetry={reload} />;
   if (!scans) {
     return (
       <Center mih="30vh">

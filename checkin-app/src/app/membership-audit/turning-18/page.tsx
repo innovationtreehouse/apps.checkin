@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { Alert, Anchor, Badge, Card, Center, Checkbox, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Card, Checkbox, Group, Stack, Table, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { calculateAge, formatDateOnly } from "@/lib/time";
 import { memberYearStarts } from "@/lib/programYear";
@@ -29,38 +31,11 @@ type Payload = {
  * here, because the security stripper drops computed fields from a response.
  */
 export default function TurningEighteenPage() {
-  const [data, setData] = useState<Payload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { data, error, reload } = useLoad<Payload>("/api/membership-audit/turning-18");
   const [enrolledOnly, setEnrolledOnly] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/membership-audit/turning-18");
-        if (res.ok) {
-          setData(await res.json());
-        } else {
-          setError("Failed to load the roster. Ensure you have the proper authorizations.");
-        }
-      } catch (e) {
-        console.error("Failed to load the 18+ roster:", e);
-        setError("Network error loading the roster.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  if (loading) return <PageLoader />;
-
-  if (error || !data) {
-    return (
-      <Center mih="60vh">
-        <Title order={3} c="red">{error || "No data."}</Title>
-      </Center>
-    );
-  }
+  if (error) return <LoadError what="the roster" message={error} onRetry={reload} />;
+  if (!data) return <PageLoader />;
 
   const boundary = data.BoardSettings?.orgMembershipYearBoundary;
   if (!boundary) {
