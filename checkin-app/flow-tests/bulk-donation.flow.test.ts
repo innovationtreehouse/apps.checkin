@@ -58,7 +58,7 @@ const send = (s: Session, method: string, path: string, body?: unknown) =>
   api(s, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
 const HEADER =
-  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee,Donor First Name,Donor Last Name,Donor Comment";
+  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee,Check Fee,Donor First Name,Donor Last Name,Donor Comment";
 
 /** POST a Benevity CSV as multipart, the way the upload screen does. */
 async function upload(s: Session, name: string, lines: string[]) {
@@ -165,8 +165,8 @@ describe("bulk donation — finance journey", () => {
     const disbursement = `FLOW-${stamp}`;
     const comment = `robotics ${stamp}`;
     const firstFile = [
-      `${company},Spring,${disbursement},2026-09-10,${stamp}-1,2026-09-01,40.00,40.00,0.00,1.00,Org,Level,`,
-      `${company},Spring,${disbursement},2026-09-10,${stamp}-2,2026-09-02,60.00,0,0.00,1.50,Rosa,Parks,${comment}`,
+      `${company},Spring,${disbursement},2026-09-10,${stamp}-1,2026-09-01,40.00,40.00,0.00,1.00,0.00,Org,Level,`,
+      `${company},Spring,${disbursement},2026-09-10,${stamp}-2,2026-09-02,60.00,0,0.00,1.50,0.00,Rosa,Parks,${comment}`,
     ];
 
     // Upload: the comment-less gift is organizational-level; the other waits for an owner.
@@ -219,7 +219,7 @@ describe("bulk donation — finance journey", () => {
 
     // A later gift with the same comment takes the rule's owner at upload.
     expect((await upload(f, `flow-${stamp}-b.csv`, [
-      `${company},Spring,${disbursement}-B,2026-09-11,${stamp}-3,2026-09-03,10.00,0,0.00,0.25,Ruth,Ginsburg,${comment}`,
+      `${company},Spring,${disbursement}-B,2026-09-11,${stamp}-3,2026-09-03,10.00,0,0.00,0.25,0.00,Ruth,Ginsburg,${comment}`,
     ])).status).toBe(200);
     const assignedGifts = await api<GiftRow[]>(f, "/api/donations/transactions?assigned=true");
     expect(assignedGifts.json.find((g) => g.transactionId === `${stamp}-3`)?.ownerId).toBe(facility.id);
