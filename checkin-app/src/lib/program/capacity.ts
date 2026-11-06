@@ -69,6 +69,19 @@ async function seatReturnDelta(tx: TxClient, programId: number, released: boolea
 }
 
 /**
+ * Delete the RSVPs a departing participant holds for this program's events that
+ * have not started. Started and past events keep theirs for attendance, and
+ * someone who also volunteers on or leads the program keeps theirs.
+ */
+export async function clearFutureRsvps(tx: TxClient, programId: number, personId: number): Promise<void> {
+    const staffs = await tx.program.count({
+        where: { id: programId, OR: [{ leadMentorId: personId }, { volunteers: { some: { personId } } }] },
+    });
+    if (staffs > 0) return;
+    await tx.rSVP.deleteMany({ where: { personId, event: { programId, startAt: { gt: new Date() } } } });
+}
+
+/**
  * Delete a participant who never really took part (the never-there exit) and
  * put its seat back on sale (+1) when the seat was taken out of Shopify without
  * a payment, exactly once: a scholarship hold (inventoryHeldAt set), or a
@@ -95,6 +108,7 @@ export async function deleteAndReleaseHold(
         const enrollment = await tx.programParticipant.delete({
             where: { programId_personId: { programId, personId }, ...onlyWhere(only) },
         });
+        await clearFutureRsvps(tx, programId, personId);
         const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;
         const released = !!enrollment.inventoryHeldAt || unsoldPlace;
         return { result: { enrollment, released }, delta: await seatReturnDelta(tx, programId, released) };
@@ -126,6 +140,7 @@ export async function withdrawParticipant(
             data: { ...ENROLLMENT_WRITES.withdraw.data(), endedAt: new Date() },
         });
         if (won === 0) return { result: null, delta: 0 };
+        await clearFutureRsvps(tx, programId, personId);
         const { count: heldReleased } = await tx.programParticipant.updateMany({
             where: { programId, personId, ...ENROLLMENT_WRITES.releaseWithdrawnHold.where },
             data: ENROLLMENT_WRITES.releaseWithdrawnHold.data(),

@@ -12,6 +12,7 @@ import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
 import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
@@ -394,6 +395,15 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
               select: { eventId: true, personId: true, status: true },
           })
         : [];
+    // A participant's RSVP counts only while they are enrolled; the lead's and volunteers' always count.
+    const enrolledKeys = new Set(
+        rsvpRows.length
+            ? (await prisma.programParticipant.findMany({
+                  where: { programId: { in: ledIds }, personId: { in: [...new Set(rsvpRows.map((r) => r.personId))] }, ...ENROLLED_PARTICIPANT },
+                  select: { programId: true, personId: true },
+              })).map((p) => `${p.programId}:${p.personId}`)
+            : [],
+    );
     const emptyTally = (): { participants: RsvpTally; volunteers: RsvpTally } => ({
         participants: { yes: 0, maybe: 0, no: 0 },
         volunteers: { yes: 0, maybe: 0, no: 0 },
@@ -401,8 +411,9 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     const tallyByEvent = new Map<number, { participants: RsvpTally; volunteers: RsvpTally }>();
     for (const r of rsvpRows) {
         const t = tallyByEvent.get(r.eventId) ?? emptyTally();
-        const programId = eventProgram.get(r.eventId);
-        const bucket = programId !== undefined && volunteerKeys.has(`${programId}:${r.personId}`) ? t.volunteers : t.participants;
+        const key = `${eventProgram.get(r.eventId)}:${r.personId}`;
+        if (!volunteerKeys.has(key) && r.personId !== userId && !enrolledKeys.has(key)) continue;
+        const bucket = volunteerKeys.has(key) ? t.volunteers : t.participants;
         if (r.status === "ATTENDING") bucket.yes += 1;
         else if (r.status === "MAYBE") bucket.maybe += 1;
         else if (r.status === "NOT_ATTENDING") bucket.no += 1;

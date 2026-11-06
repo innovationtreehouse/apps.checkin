@@ -70,6 +70,8 @@ describe('a refunded order never activates a program place', () => {
             await prisma.auditLog.deleteMany({ where: { tableName: t, newData: { path: ['shopifyOrderId'], string_starts_with: `${TAG}-` } } });
         }
         await prisma.auditLog.deleteMany({ where: { tableName: 'ShopifyRefundSettlement', secondaryAffectedEntity: programId } });
+        await prisma.rSVP.deleteMany({ where: { event: { programId } } });
+        await prisma.event.deleteMany({ where: { programId } });
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.program.delete({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { householdId } });
@@ -167,6 +169,21 @@ describe('a refunded order never activates a program place', () => {
         expect(raised.map((r) => [r.personId, r.severity])).toEqual([[a, 'CRITICAL'], [b, 'CRITICAL']]);
         expect(mockAdjust).toHaveBeenCalledTimes(1);
         expect(mockAdjust).toHaveBeenCalledWith({ id: programId, shopifyVariantId: VARIANT }, -2, 'refund-before-activation', { deferred: true });
+    });
+
+    it("a refund that removes a paid place deletes the child's RSVPs for sessions that have not started", async () => {
+        const oid = orderId('H');
+        const child = (await prisma.person.create({ data: { name: `Child ${TAG}`, email: `child-${nextPerson++}-${TAG}@example.com`, householdId } })).id;
+        await prisma.programParticipant.create({ data: { programId, personId: child, status: 'ACTIVE', shopifyOrderId: oid } });
+        const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const event = await prisma.event.create({ data: { name: TAG, programId, startAt: start, endAt: new Date(start.getTime() + 2 * 60 * 60 * 1000) } });
+        await prisma.rSVP.create({ data: { eventId: event.id, personId: child, status: 'ATTENDING' } });
+        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 1, currentQuantity: 1 }]);
+
+        await raiseReversalByOrderId(oid, 'REFUND', [{ variantId: VARIANT, quantity: 1, lineQuantity: 1 }], `refund-${oid}`);
+
+        expect(await prisma.programParticipant.count({ where: { programId, personId: child } })).toBe(0);
+        expect(await prisma.rSVP.count({ where: { eventId: event.id, personId: child } })).toBe(0);
     });
 
     it('a reversal only the reconciler saw is written to the ledger, so a late orders/paid stays refused after the flag is resolved', async () => {

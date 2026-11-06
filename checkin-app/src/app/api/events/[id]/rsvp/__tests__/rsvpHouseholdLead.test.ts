@@ -97,18 +97,11 @@ describe('a withdrawn enrollment', () => {
         (prisma.programParticipant.findUnique as jest.Mock).mockImplementation(withdrawnRow);
     });
 
-    it.each(['ATTENDING', 'MAYBE', 'NO_RESPONSE'])('cannot RSVP %s', async (status) => {
+    it.each(['ATTENDING', 'MAYBE', 'NOT_ATTENDING', 'NO_RESPONSE'])('cannot RSVP %s', async (status) => {
         const res = await PATCH(body({ status }), { params });
 
         expect(res.status).toBe(403);
         expect(mockRsvpUpsert).not.toHaveBeenCalled();
-    });
-
-    it('can still decline', async () => {
-        const res = await PATCH(body({ status: 'NOT_ATTENDING' }), { params });
-
-        expect(res.status).toBe(200);
-        expect(mockRsvpUpsert).toHaveBeenCalledTimes(1);
     });
 });
 
