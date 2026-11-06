@@ -178,9 +178,31 @@ interface Located {
   info: { lines: number };
 }
 
+/** csv-parse's own messages can quote a cell, which may be a donor's name, so only its position is kept. */
+const QUOTING: Record<string, string> = {
+  CSV_QUOTE_NOT_CLOSED: "a quoted cell is never closed",
+  CSV_INVALID_CLOSING_QUOTE: "text follows a closing quote",
+  INVALID_OPENING_QUOTE: "a quote mark sits inside an unquoted cell",
+};
+
+function csvErrorIssue(err: CsvError): string {
+  const line: unknown = err.lines;
+  const col: unknown = err.column;
+  const where = typeof line === "number" ? `line ${line}` : "somewhere in the file";
+  const column = typeof col === "number" ? `, column ${col + 1}` : "";
+  return `${where}${column}: ${QUOTING[err.code] ?? "the file is not valid CSV"}`;
+}
+
+/** Every .xlsx starts with the zip signature. */
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
 function readRecords(buffer: Buffer): Located[] {
+  if (buffer.subarray(0, 4).equals(ZIP_MAGIC)) {
+    throw new CsvValidationError(["this is an Excel workbook, not a CSV; export it from Benevity as CSV"]);
+  }
+  let records: Located[];
   try {
-    return parse(buffer, {
+    records = parse(buffer, {
       bom: true,
       trim: true,
       skip_empty_lines: true,
@@ -188,9 +210,11 @@ function readRecords(buffer: Buffer): Located[] {
       info: true,
     }) as Located[];
   } catch (err) {
-    if (err instanceof CsvError) throw new CsvValidationError([err.message]);
+    if (err instanceof CsvError) throw new CsvValidationError([csvErrorIssue(err)]);
     throw err;
   }
+  if (records.length === 0) throw new CsvValidationError(["the file is empty"]);
+  return records;
 }
 
 /** The Donations Report's footer labels, which sit under the gift table with fewer cells than the header. */

@@ -336,3 +336,26 @@ describe('malformed CSV', () => {
       .toThrow(/Could not import the CSV \(1 problem\):\n.*line/i);
   });
 });
+
+describe('file-level problems', () => {
+  it('says an empty file is empty', () => {
+    expect(() => parseBenevityCsv(Buffer.from(''))).toThrow('the file is empty');
+    expect(() => parseBenevityCsv(Buffer.from('\uFEFF\n\n'))).toThrow('the file is empty');
+  });
+
+  it('says an Excel workbook renamed to .csv is not a CSV', () => {
+    const xlsx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('rest of zip')]);
+    expect(() => parseBenevityCsv(xlsx)).toThrow(/Excel workbook.*CSV/);
+  });
+
+  it('names the line and column of broken quoting without echoing the cell', () => {
+    let message = '';
+    try {
+      parseBenevityCsv(Buffer.from('Transaction ID,Donor Last Name\nT1,x"Example"\n'));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain('line 2, column 2');
+    expect(message).not.toContain('Example');
+  });
+});
