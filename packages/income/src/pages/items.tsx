@@ -4,6 +4,7 @@ import { Button, Code, Group, Select, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
 import { LoadError } from "@checkin/component-ui";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface ItemRow {
   variantId: string;
@@ -19,12 +20,20 @@ interface ItemRow {
 interface AccountOption {
   id: string;
   name: string;
+  accountType: string;
   active: boolean;
 }
 
-/** Picker choices: active accounts, plus the saved one even when inactive or gone from QuickBooks. */
+const SALE_TYPES: readonly string[] = LINE_ACCOUNT_TYPES.storeSale;
+
+/** Picker choices: active accounts of a type a sale takes, plus the saved one, marked when inactive, of another type or gone from QuickBooks. */
 function accountChoices(options: AccountOption[] | null, saved: string | null) {
-  const list = (options ?? []).filter((o) => o.active || o.id === saved).map((o) => ({ value: o.id, label: o.active ? o.name : `${o.name} (inactive)` }));
+  const list = (options ?? [])
+    .filter((o) => (o.active && SALE_TYPES.includes(o.accountType)) || o.id === saved)
+    .map((o) => ({
+      value: o.id,
+      label: !SALE_TYPES.includes(o.accountType) ? `${o.name} (wrong type: ${o.accountType})` : o.active ? o.name : `${o.name} (inactive)`,
+    }));
   if (saved && !list.some((o) => o.value === saved)) list.push({ value: saved, label: `QuickBooks id ${saved}` });
   return list;
 }
