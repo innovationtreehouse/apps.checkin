@@ -77,9 +77,14 @@ describe("createClient api", () => {
     await expect(api("/x", { method: "PUT" })).rejects.toThrow("QuickBooks is not connected.");
   });
 
-  it("says the server is unavailable on a non-JSON 502 or 504", async () => {
-    stub(504, "<html>");
+  it.each([502, 504])("says the server is unavailable on a read that gets a non-JSON %i", async (status) => {
+    stub(status, "<html>");
     await expect(api("/x")).rejects.toThrow("The server is unavailable. Try again in a minute.");
+  });
+
+  it.each([502, 504])("asks to check before retrying a write that gets a non-JSON %i, since it may have saved", async (status) => {
+    stub(status, "<html>");
+    await expect(api("/x", { method: "POST" })).rejects.toThrow("The server didn't answer. Check whether it saved before trying again.");
   });
 
   it("sends a write once when the app is asleep", async () => {

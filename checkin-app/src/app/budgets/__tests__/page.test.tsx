@@ -114,13 +114,13 @@ describe("budgets page write errors", () => {
     })));
   });
 
-  it.each([502, 504])("says the server is unavailable on a bare %i", async (status) => {
+  it.each([502, 504])("asks to check before retrying a create that gets a bare %i", async (status) => {
     mockServer(async () => htmlResponse(status));
     await createBucket();
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      message: "The server is unavailable. Try again in a minute.",
+      message: "The server didn't answer. Check whether it saved before trying again.",
     })));
   });
 
