@@ -1,10 +1,10 @@
+import { allocateCents } from "@checkin/money";
 import type { MirrorBalanceTxn, MirrorOrderLine } from "../contract";
 
 /**
  * Logical account a deposit line books to; the create path maps each to a configured
  * QuickBooks account. `income` carries the item's bucket, or null for organization level.
- * The mirror has no per-order tax or shipping, so both land in `charge_remainder` together
- * with the rounding left over from splitting a charge across its lines.
+ * The mirror has no per-order tax or shipping, so both land in `charge_remainder`.
  */
 export type DepositAccount = "income" | "charge_remainder" | "fees" | "adjustments";
 
@@ -40,22 +40,23 @@ function refundWeights(lines: MirrorOrderLine[]): number[] {
 
 /**
  * Split `amount` (any sign) by per-line `amounts`: each line gets its own amount when the total
- * covers them all, otherwise its proportional share, rounded toward zero. Returns the per-line
- * parts and what is left for organization level.
+ * covers them all, the rest left for organization level; otherwise the lines share it all in
+ * whole cents through the shared allocator.
  */
 function split(amount: number, amounts: number[]): { parts: number[]; remainder: number } {
-  const sign = Math.sign(amount);
-  const abs = Math.abs(amount);
   const total = amounts.reduce((s, a) => s + a, 0);
   if (total === 0) return { parts: amounts.map(() => 0), remainder: amount };
-  const parts = amounts.map((a) => sign * (abs >= total ? a : Math.floor((abs * a) / total)));
-  return { parts, remainder: amount - parts.reduce((s, p) => s + p, 0) };
+  if (Math.abs(amount) >= total) {
+    const parts = amounts.map((a) => Math.sign(amount) * a);
+    return { parts, remainder: amount - parts.reduce((s, p) => s + p, 0) };
+  }
+  return { parts: allocateCents(amount, amounts), remainder: 0 };
 }
 
 /**
  * Build the lines of a deposit the app creates for one payout. A charge splits across
  * its order's lines by line amount and a refund by the lines' refunded units, and each part
- * books to its line's bucket; tax, shipping and rounding book at organization level; each transaction's fee (net − amount) books to
+ * books to its line's bucket; tax and shipping book at organization level; each transaction's fee (net − amount) books to
  * fees; every other transaction type books whole to adjustments. Lines sum to the payout net.
  */
 export function buildDepositLines(input: DepositLineInput): DepositLine[] {

@@ -12,6 +12,7 @@ import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENT
 import type { CapitalReviewLine } from "../contract";
 import { ServiceError } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
+import { allocateCents } from "@checkin/money";
 
 export type InKindSource = "receipt" | "manual";
 export type InKindOutcome = "ACCEPTED" | "REFUSED" | "RETURNED";
@@ -157,24 +158,11 @@ async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id:
 
 /**
  * Spreads the difference between `totalCents` and the values (a receipt's tax, shipping or
- * discount) across them by value, largest remainder first, so they sum to the total exactly.
- * All-zero values share it equally.
+ * discount) across them by value, so they sum to the total exactly.
  */
 export function spreadToTotal(values: number[], totalCents: number): number[] {
-  const sum = values.reduce((a, b) => a + b, 0);
-  const weights = sum > 0 ? values : values.map(() => 1);
-  const weightSum = sum > 0 ? sum : values.length;
-  const extra = totalCents - sum;
-  const exact = weights.map((w) => (extra * w) / weightSum);
-  const shares = exact.map(Math.floor);
-  let left = extra - shares.reduce((a, b) => a + b, 0);
-  const order = exact.map((e, i) => ({ i, rem: e - shares[i] })).sort((a, b) => b.rem - a.rem || a.i - b.i);
-  for (const { i } of order) {
-    if (left <= 0) break;
-    shares[i]++;
-    left--;
-  }
-  return values.map((v, i) => v + shares[i]);
+  const extra = allocateCents(totalCents - values.reduce((a, b) => a + b, 0), values);
+  return values.map((v, i) => v + extra[i]);
 }
 
 /** An accepted gift's lines as capital review takes them: a receipt's lines carry its tax and shipping. */
