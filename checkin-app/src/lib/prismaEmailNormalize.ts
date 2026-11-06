@@ -31,22 +31,26 @@ import { Prisma } from '@/generated/prisma/client'
  */
 export const normalizeEmail = (email: string): string => email.trim().toLowerCase()
 
-/** Lowercase `data.email`, handling the plain (`email: "X"`) and wrapped
- * (`email: { set: "X" }`) forms. Null/undefined/non-string emails are left
- * untouched. Idempotent. Mutates `data` in place. */
+/** The value a Person.email write stores: the normalized address, or null when
+ * it is blank, so blank addresses never collide on the unique index. */
+export const storedEmail = (email: string): string | null => normalizeEmail(email) || null
+
+/** Run `data.email` through `storedEmail`, handling the plain (`email: "X"`)
+ * and wrapped (`email: { set: "X" }`) forms. Null/undefined/non-string emails
+ * are left untouched. Idempotent. Mutates `data` in place. */
 function lowerEmailOnData(data: unknown): void {
     if (data == null || typeof data !== 'object') return
     const d = data as { email?: unknown }
     const email = d.email
-    if (typeof email === 'string' && email.length > 0) {
-        d.email = normalizeEmail(email)
+    if (typeof email === 'string') {
+        d.email = storedEmail(email)
         return
     }
     // Wrapped update form: { email: { set: "X" } }
     if (email != null && typeof email === 'object' && 'set' in email) {
         const wrapped = email as { set?: unknown }
-        if (typeof wrapped.set === 'string' && wrapped.set.length > 0) {
-            wrapped.set = normalizeEmail(wrapped.set)
+        if (typeof wrapped.set === 'string') {
+            wrapped.set = storedEmail(wrapped.set)
         }
     }
 }

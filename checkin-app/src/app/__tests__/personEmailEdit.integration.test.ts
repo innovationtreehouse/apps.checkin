@@ -121,15 +121,14 @@ describe('person email edits', () => {
             expect(res.status).toBe(200);
         });
 
-        it('leaves a blank write as it was: a second blank collides and stays a 500', async () => {
-            const other = await prisma.person.create({ data: { name: 'Other blank', householdId } });
-            const logged = jest.spyOn(console, 'error').mockImplementation();
+        it('stores a blank as null, so two people in turn can save one', async () => {
+            const other = await prisma.person.create({ data: { email: `other-${TAG}@example.com`, name: 'Other blank', householdId } });
             try {
                 expect((await put(targetId, { email: '', emailChangeReason: REASON })).status).toBe(200);
-                expect(await storedEmail(targetId)).toBe('');
-                expect((await put(other.id, { email: '', emailChangeReason: REASON })).status).toBe(500);
+                expect((await put(other.id, { email: '   ', emailChangeReason: REASON })).status).toBe(200);
+                expect(await storedEmail(targetId)).toBeNull();
+                expect(await storedEmail(other.id)).toBeNull();
             } finally {
-                logged.mockRestore();
                 await prisma.person.deleteMany({ where: { id: other.id } });
             }
         });
@@ -171,6 +170,12 @@ describe('person email edits', () => {
 
         it('clears the address on a blank', async () => {
             const res = await patch({ participantId: targetId, email: '' });
+            expect(res.status).toBe(200);
+            expect(await storedEmail(targetId)).toBeNull();
+        });
+
+        it('clears the address on a whitespace-only email', async () => {
+            const res = await patch({ participantId: targetId, email: '   ' });
             expect(res.status).toBe(200);
             expect(await storedEmail(targetId)).toBeNull();
         });
