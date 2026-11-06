@@ -8,10 +8,11 @@ import { useDevMocks, useIsDevInstance } from "@/components/EnvProvider";
 import { devToolLinks } from "@/lib/nav/sections/devTools";
 
 /**
- * Persistent top tabs for the dev tools (captured-email inbox + Zoho Sign mock),
- * mirroring system-status/layout.tsx. No role gate — dev tools are for any signed-in
- * user on a dev instance (the cloud-dev box is already behind org login; local is
- * open). Off a dev instance the tabs are hidden and each child page 404s on its own.
+ * Persistent top tabs for the dev tools (devToolLinks: the Shopify and BG Check tabs
+ * show only while their mock is active), mirroring system-status/layout.tsx. No role
+ * gate — dev tools are for any signed-in user on a dev instance (the cloud-dev box is
+ * already behind org login; local is open). Off a dev instance the tabs are hidden
+ * and each child page 404s on its own.
  */
 export default function DevToolsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
