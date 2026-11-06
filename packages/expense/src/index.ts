@@ -12,7 +12,7 @@ export * from "./lib/expense-rules";
 export * from "./financeQueue";
 export * from "./lib/flags";
 export * from "./lib/signoff";
-export { allocateAmount, checkAndProcessExpense, recoverStrandedQbExpenses } from "./lib/expense-qb-processor";
+export { checkAndProcessExpense, recoverStrandedQbExpenses } from "./lib/expense-qb-processor";
 export { drainExpenseOutbox, postExpenseToQb, qbPostingOnAt } from "./lib/expense-qb-poster";
 export { checkQbDrift } from "./lib/expense-qb-drift";
 export { isLegalTransition, legalEventTypes, isTerminalState } from "./workflows/expense.invariants";

@@ -1,3 +1,4 @@
+import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
@@ -12,46 +13,6 @@ import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
 import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
 import type { Expense } from "../generated/prisma/client";
-
-// ── Allocation helpers ────────────────────────────────────────────────────────
-
-export function allocateAmount(
-  items: { id: number; totalPriceCents: number }[],
-  total: number,
-): Map<number, number> {
-  const result = new Map<number, number>();
-  if (total === 0 || items.length === 0) {
-    for (const item of items) result.set(item.id, 0);
-    return result;
-  }
-
-  const grandTotal = items.reduce((s, i) => s + i.totalPriceCents, 0);
-  if (grandTotal === 0) {
-    for (const item of items) result.set(item.id, 0);
-    return result;
-  }
-
-  let distributed = 0;
-  const rawAllocs: { id: number; totalPriceCents: number; floored: number }[] = [];
-
-  for (const item of items) {
-    const floored = Math.floor((item.totalPriceCents * total) / grandTotal);
-    rawAllocs.push({ id: item.id, totalPriceCents: item.totalPriceCents, floored });
-    distributed += floored;
-  }
-
-  const remainder = total - distributed;
-  const sorted = [...rawAllocs].sort((a, b) =>
-    b.totalPriceCents !== a.totalPriceCents ? b.totalPriceCents - a.totalPriceCents : a.id - b.id,
-  );
-
-  for (let i = 0; i < sorted.length; i++) {
-    const extra = i < remainder ? 1 : 0;
-    result.set(sorted[i].id, sorted[i].floored + extra);
-  }
-
-  return result;
-}
 
 // ── Translation lookup ────────────────────────────────────────────────────────
 
@@ -255,12 +216,18 @@ async function persistConflicts(
 
 // ── Stage 3 (pure): allocate tax, shipping and discount over the lines ────────
 
+// Lines in id order, so a tie in the allocator goes to the earlier line.
 function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
-  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
+  const lines = [...lineItems].sort((a, b) => a.id - b.id);
+  const weights = lines.map((li) => li.totalPriceCents);
+  const allocate = (totalCents: number) => {
+    const parts = allocateCents(totalCents, weights);
+    return new Map(lines.map((li, i) => [li.id, parts[i]]));
+  };
   return {
-    taxAlloc: allocateAmount(allocItems, expense.taxCents),
-    shippingAlloc: allocateAmount(allocItems, expense.shippingCents),
-    discountAlloc: allocateAmount(allocItems, expense.discountCents),
+    taxAlloc: allocate(expense.taxCents),
+    shippingAlloc: allocate(expense.shippingCents),
+    discountAlloc: allocate(expense.discountCents),
   };
 }
 
