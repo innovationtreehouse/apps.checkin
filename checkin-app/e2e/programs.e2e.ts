@@ -6,8 +6,7 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { addYouth, asViewer, settledFamily } from "./support/families";
-import { persona } from "./support/kiosk";
-import { claim, inDays, LEADER, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
+import { claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
 import { BOARD } from "./support/seedState";
 
 const ONLY_BOARD_REMOVES = "Only the Board removes a paid place";
@@ -60,13 +59,13 @@ async function auditOf(page: Page, personId: number): Promise<Locator> {
 test.describe("programs in the browser", () => {
   test("P1: the Board creates a program", async ({ browser }) => {
     const name = `Browser Program ${Date.now()}`;
-    const leader = await persona(LEADER);
+    const leader = await newLeader();
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/program-ops/new");
       await page.getByLabel("Program Name").fill(name);
-      await page.getByLabel("Program Leader").fill(leader.name);
-      await page.getByText(LEADER, { exact: true }).click();
+      await page.getByLabel("Program Leader").fill(leader);
+      await page.getByText(leader, { exact: true }).click();
       await page.getByLabel("Start Date").fill(PROGRAM_DATES.startAt);
       await page.getByLabel("End Date").fill(PROGRAM_DATES.endAt);
       await page.getByLabel("This is a free program").uncheck();
@@ -102,7 +101,7 @@ test.describe("programs in the browser", () => {
       await expect(page.getByText(`${youth.name} — Enrolled`, { exact: true })).toBeVisible();
     });
 
-    await asViewer(browser, LEADER, async (page) => {
+    await asViewer(browser, program.leader, async (page) => {
       await roster(page, program.id);
       await expect(page.getByRole("heading", { name: "Active Participants (1)" })).toBeVisible();
       await expect(place(page, youth.name)).toBeVisible();
@@ -160,7 +159,7 @@ test.describe("programs in the browser", () => {
   test("P4: a program leader cannot add participants; the Board can", async ({ browser }) => {
     const program = await newProgram();
 
-    await asViewer(browser, LEADER, async (page) => {
+    await asViewer(browser, program.leader, async (page) => {
       await roster(page, program.id);
       await expect(page.getByText(/Program Leads cannot manually enroll participants/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Enroll", exact: true })).toHaveCount(0);
@@ -176,7 +175,7 @@ test.describe("programs in the browser", () => {
     const program = await newProgram();
     const { youth } = await paidYouth(program.id);
 
-    await asViewer(browser, LEADER, async (page) => {
+    await asViewer(browser, program.leader, async (page) => {
       await roster(page, program.id);
       const remove = place(page, youth.name).getByRole("button", { name: "Remove" });
       await expect(remove).toBeDisabled();
@@ -272,7 +271,7 @@ test.describe("programs in the browser", () => {
       await expect(page.getByRole("heading", { name: "Household Check-ins" })).toBeVisible();
     };
 
-    await asViewer(browser, LEADER, async (page) => {
+    await asViewer(browser, program.leader, async (page) => {
       await page.goto(`/program-ops/sessions/${session.id}`);
       await mark(page, "Present");
     });
@@ -281,7 +280,7 @@ test.describe("programs in the browser", () => {
       await expect(visit(page)).toBeVisible();
     });
 
-    await asViewer(browser, LEADER, async (page) => {
+    await asViewer(browser, program.leader, async (page) => {
       await page.goto(`/program-ops/sessions/${session.id}`);
       await mark(page, "Absent");
 
