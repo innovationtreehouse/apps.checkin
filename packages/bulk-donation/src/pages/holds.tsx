@@ -21,7 +21,7 @@ const REASON: Record<string, string> = {
   FEES_ONLY: "Row has fees but no donation or match to take them from",
 };
 
-/** /donations/holds — disbursements whose gifts match zero or several account rules, or a rule without the account a gift needs. */
+/** /donations/holds — disbursements whose gifts match zero or several account rules, a rule without the account a gift needs, or a row with fees and no amount. */
 export default function HoldsPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
@@ -47,6 +47,11 @@ export default function HoldsPage() {
                 )}>Resubmit</Button>
               )}
             </Group>
+            {rows.some((h) => h.reason === "FEES_ONLY") && (
+              <Text size="sm" c="dimmed" mb="sm">
+                A row with fees and no donation or match can&apos;t be cleared here: no account map change finishes this disbursement. Book it by hand in QuickBooks.
+              </Text>
+            )}
             <Table>
               <Table.Thead>
                 <Table.Tr><Table.Th>Reason</Table.Th><Table.Th>Company</Table.Th><Table.Th>Campaign</Table.Th><Table.Th>Method / type</Table.Th><Table.Th>Matched rules</Table.Th></Table.Tr>
