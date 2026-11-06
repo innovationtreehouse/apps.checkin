@@ -6,7 +6,9 @@ the last PR merges. Its last step is "extract the rules, delete both files".
 
 ## Where it stands
 
-- Designed. PIA-1 to PIA-9 are open (design, "Waiting on the owner").
+- Designed. PIA-1 (proportional) and PIA-2 (blank is zero; a fees-only row goes
+  to finance) are settled. PIA-3 to PIA-9 are open (design, "Waiting on the
+  owner").
 - **Giving-platform gifts have lost their per-rule accounts.** PR 1 below
   restores them. The trace, on `main` at the time of writing:
   - `packages/bulk-donation/src/lib/disbursement-processor.ts`: when a batch
@@ -66,9 +68,9 @@ lines it establishes into `docs/rules/` and updates the books-map table in
 
 | PR | Kind | What | Waits on |
 |---|---|---|---|
-| 1 | Code | **Restore giving-platform accounts.** Nullable account-id columns on the account rules (annotated `@sensitivity` in the schema; the routes' registry entries are unchanged, so no boundary PR) and pickers for them on `/donations/account-map`. At batch finish each item also takes its rule's id. The hand-over carries it on each line, grouped by kind, account and bucket. Income's expected line gains an optional account id that it uses in place of the role; the role is the fallback. If PIA-1 to PIA-4 and PIA-6 are answered before it opens, the per-row fee split (design §5.2) ships here too, since it touches the same two functions. | Nothing |
+| 1 | Code | **Restore giving-platform accounts.** Nullable account-id columns on the account rules (annotated `@sensitivity` in the schema; the routes' registry entries are unchanged, so no boundary PR) and pickers for them on `/donations/account-map`. At batch finish each item also takes its rule's id. The hand-over carries it on each line, grouped by kind, account and bucket. Income's expected line gains an optional account id that it uses in place of the role; the role is the fallback. If PIA-3, PIA-4 and PIA-6 are answered before it opens, the per-row fee split (design §5.2) ships here too, since it touches the same two functions. | Nothing |
 | 2 | Code | Account types per role in `@checkin/quickbooks`. Books-map save refuses a wrong type; System Status and the lane checks flag a stored one; every override is checked against its role; pickers filter by type. | PIA-9 |
-| 3 | Code | Giving-platform fees reduce income, if not already in PR 1: per-row split at batch finish, fee parts on each amount item, fees role and column no longer read. | 1, PIA-1 to PIA-4, PIA-6, PIA-7 |
+| 3 | Code | Giving-platform fees reduce income, if not already in PR 1: per-row split at batch finish, fee parts on each amount item, fees role and column no longer read. | 1, PIA-3, PIA-4, PIA-6, PIA-7 |
 | 4a | Boundary only | The account id on the synthetic `IncomeItemView` classification, and any new picker route's registry entry. | Nothing |
 | 4 | Code | Online-store sales per item: account on income items, `/income/items` picker, deposit lines grouped by account and bucket. Fee split too if PIA-5 is yes. | 4a, PIA-5 |
 | 5 | Code | Gifts of goods per part: port from bulk-donation to expense's rule matcher, bound by the host; debit lines take the rule's account or fall to the role. | PIA-8 |

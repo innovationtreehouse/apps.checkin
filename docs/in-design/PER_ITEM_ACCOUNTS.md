@@ -63,17 +63,8 @@ follow the giving-platform treatment (PIA-5).
 
 ## Waiting on the owner
 
-Stable IDs; a settled question keeps its number and moves to §9.
+Stable IDs; a settled question keeps its number and moves to §10.
 
-- **PIA-1. How a row's fee splits across its columns.** *Proportional* (each
-  column takes the share of the fee its amount is of the row's total) or *equal*
-  (each non-zero column takes the same share). Recommended: proportional. Equal
-  gives a small donation riding on a large match half the fee, so a $5 gift
-  could book negative. Worked examples in §5.2.
-- **PIA-2. A column with no amount.** Recommended: a column whose amount is zero
-  takes no part of the fee, under either basis. A row that carries a fee but no
-  amount in any column holds its batch for finance, as an unmatched rule does
-  today.
 - **PIA-3. Leftover cents.** Recommended: whole cents by largest remainder; a tie
   goes to Donation Amount, then Match Amount. The parts always sum to the row's
   fee exactly.
@@ -233,22 +224,25 @@ The export's columns, per row:
 | Match Amount | The employer's match |
 | Cause Support Fee, Merchant Fee, Check Fee | Fees taken from the row (PIA-4) |
 
-The row's fee is split across the row's amount columns (PIA-1, PIA-2, PIA-3), and
-each part books as a reduction of income on that column's account and the gift's
-Class (PIA-6). Rows are never pooled: the split is per row, and parts are summed
+The row's fee is split across the row's amount columns in proportion to their
+amounts (PIA-1, settled). A blank amount counts as zero and a zero column takes
+no part of the fee (PIA-2, settled). A row with only fees holds its batch for
+finance, on the same holds screen as a gift no rule matches. Leftover cents
+follow PIA-3, as recommended. Each part books as a reduction of income on that
+column's account and the gift's Class (PIA-6). Rows are never pooled: the split is per row, and parts are summed
 into lines only after each row is split.
 
 Worked examples (fee $2.50 on each row):
 
-| Donation | Match | Proportional | Equal |
-|---|---|---|---|
-| $100.00 | $100.00 | $1.25 / $1.25 | $1.25 / $1.25 |
-| $100.00 | $50.00 | $1.67 / $0.83 | $1.25 / $1.25 |
-| $5.00 | $95.00 | $0.13 / $2.37 | $1.25 / $1.25 |
-| $40.00 | $0.00 | $2.50 / — | $2.50 / — |
-| $0.01 | $0.02 | $0.83 / $1.67 | $1.25 / $1.25 |
+| Donation | Match | Fee parts |
+|---|---|---|
+| $100.00 | $100.00 | $1.25 / $1.25 |
+| $100.00 | $50.00 | $1.67 / $0.83 |
+| $5.00 | $95.00 | $0.13 / $2.37 |
+| $40.00 | $0.00 | $2.50 / — |
+| $0.01 | $0.02 | $0.83 / $1.67 |
 
-Proportional rounding: compute each column's exact share, take the floor in
+Rounding: compute each column's exact share, take the floor in
 cents, then hand the leftover cents one at a time to the columns with the largest
 fractional remainders, ties to Donation then Match. In the third row the
 shares are 12.5¢ and 237.5¢, a tie, so the leftover cent goes to Donation. The
@@ -324,12 +318,24 @@ part lands:
   and an item whose account can't be used holds for finance rather than falling
   back to the role. [Decision — owner]
 - Revenue, Donations: A giving-platform fee reduces income. Each spreadsheet
-  row's fee is split across that row's amount columns, and each part reduces
-  income on its column's account. Rows are never pooled, and the parts sum to
-  the row's fee exactly. [Decision — owner] (plus the PIA-1 to PIA-3 answers)
+  row's fee is split across that row's amount columns in proportion to their
+  amounts, and each part reduces income on its column's account. A blank amount
+  counts as zero and takes no part. A row with fees but no amount goes to
+  finance. Rows are never pooled, and the parts sum to the row's fee exactly.
+  [Decision — owner] (plus the PIA-3 answer)
 - Revenue, Income: online-store fees, per PIA-5.
 - Expenses, Sending expenses to the books: A gift of goods' line books to the
   account the expense account rules give its part, or to the in-kind role when no
   rule names it. [Decision — owner] (if PIA-8 is yes)
 - Revenue, Ownership: Each books-map role accepts only accounts of the types
   listed for it. [Decision]
+
+## 10. Settled questions
+
+- **PIA-1. How a row's fee splits across its columns.** Proportional: each
+  column takes the share of the fee its amount is of the row's total. Equal
+  shares were the alternative; they would give a small donation riding on a
+  large match half the fee. — owner, 2026-11-06
+- **PIA-2. A column with no amount.** A blank amount counts as zero, and a zero
+  column takes no part of the fee. A row that carries only fees, with no amount
+  in any column, goes to finance. — owner, 2026-11-06
