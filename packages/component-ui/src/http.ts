@@ -34,7 +34,7 @@ function gatewayMessage(res: Response, isJson: boolean, isRead: boolean): string
   }
   // A gateway timeout or dropped connection may come after the app committed a write.
   if (!isJson && (res.status === 502 || res.status === 504)) {
-    return isRead ? "The server is unavailable. Try again in a minute." : "The server didn't answer. Check whether it saved before trying again.";
+    return isRead ? "The server is unavailable. Try again in a minute." : "The server didn't answer. Reload to check whether your change saved before trying again.";
   }
   return null;
 }

@@ -84,7 +84,7 @@ describe("createClient api", () => {
 
   it.each([502, 504])("asks to check before retrying a write that gets a non-JSON %i, since it may have saved", async (status) => {
     stub(status, "<html>");
-    await expect(api("/x", { method: "POST" })).rejects.toThrow("The server didn't answer. Check whether it saved before trying again.");
+    await expect(api("/x", { method: "POST" })).rejects.toThrow("The server didn't answer. Reload to check whether your change saved before trying again.");
   });
 
   it("sends a write once when the app is asleep", async () => {

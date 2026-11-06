@@ -120,7 +120,7 @@ describe("budgets page write errors", () => {
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      message: "The server didn't answer. Check whether it saved before trying again.",
+      message: "The server didn't answer. Reload to check whether your change saved before trying again.",
     })));
   });
 
