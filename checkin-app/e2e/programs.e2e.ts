@@ -260,7 +260,9 @@ test.describe("programs in the browser", () => {
     const visit = (page: Page) => page.getByRole("row").filter({ hasText: youth.name }).filter({ hasText: session.name });
 
     const mark = async (page: Page, status: "Present" | "Absent") => {
-      const row = page.getByRole("row").filter({ hasText: youth.name });
+      // The RSVP list below lists the youth too; the marks live in the attendance card.
+      const tracking = card(page, "Attendance Tracking").last();
+      const row = tracking.getByRole("row").filter({ hasText: youth.name });
       await row.getByRole("button", { name: "Manual Edit" }).click();
       await dialog(page).getByRole("textbox", { name: "Status" }).click();
       await page.getByRole("option", { name: status }).click();
