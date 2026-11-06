@@ -72,13 +72,6 @@ Stable IDs; a settled question keeps its number and moves to §10.
   fractional remainders the owner named. Either keep its rule for both, or
   change the shared code to largest remainder, which also changes how new
   expenses split tax and shipping. Row 3 of §5.2 is the case where they differ.
-- **PIA-6. How a fee shows on the deposit.** Recommended: a separate negative
-  line on the column's account and Class, described as fees, so the gross gift
-  stays readable in QuickBooks. The alternative nets the fee into the gift's
-  line.
-- **PIA-8. Donated goods use the expense account rules.** Recommended: yes, one
-  rule set, so a donated item and the same item bought book to the same account.
-  The alternative is a second rule set of the same shape for gifts of goods only.
 - **PIA-9. Account types per role.** Confirm the table in §7.
 
 ## Rules this relies on
@@ -220,8 +213,9 @@ The row's fee is split across the row's amount columns in proportion to their
 amounts (PIA-1, settled). A blank amount counts as zero and a zero column takes
 no part of the fee (PIA-2, settled). A row with only fees holds its batch for
 finance, on the same holds screen as a gift no rule matches. Leftover cents
-follow PIA-3. Each part books as a reduction of income on that column's account
-and the gift's Class (PIA-6). Rows are never pooled: the split is per row, and
+follow PIA-3. Each part is netted into its column's line, on that column's
+account and the gift's Class, so the deposit shows net income and no fee line
+(PIA-6, settled). Rows are never pooled: the split is per row, and
 parts are summed into lines only after each row is split.
 
 Worked examples (fee $2.50 on each row):
@@ -264,8 +258,10 @@ so the hand-over to income needs no fee item and income needs no fee logic.
 Nothing new is needed on the QuickBooks side. A Deposit already carries one
 account and Class per line, and income already writes one line per role and
 bucket; overrides only make more lines. A JournalEntry already carries an account
-per line. A negative Deposit line (a fee) is accepted as long as the deposit's
-total is positive, which the existing nets-to-zero check guarantees.
+per line. Fees are netted into their gift lines, so a deposit has no fee line.
+A line goes negative only where an account and Class took more fees than gifts.
+QuickBooks accepts that as long as the deposit's total is positive, which the
+existing nets-to-zero check guarantees.
 
 ### 6.2 Matching and drift
 
@@ -325,7 +321,7 @@ part lands:
   income. [Decision — owner]
 - Expenses, Sending expenses to the books: A gift of goods' line books to the
   account the expense account rules give its part, or to the in-kind role when no
-  rule names it. [Decision — owner] (if PIA-8 is yes)
+  rule names it. [Decision — owner]
 - Revenue, Ownership: Each books-map role accepts only accounts of the types
   listed for it. [Decision]
 
@@ -347,3 +343,9 @@ part lands:
   "Benevity: fees" and each rule's fees account stop being read and the screens
   hide them. Then they are removed, by the plan in the cutover file.
   "Shopify: fees" stays in use (PIA-5). — owner, 2026-11-06
+- **PIA-6. How a fee shows on the deposit.** Netted into the gift's line, so the
+  deposit carries net income and no separate fee line. A separate negative fee
+  line was the alternative. — owner, 2026-11-06
+- **PIA-8. Donated goods use the expense account rules.** Yes: one rule set, so
+  a donated item and the same item bought book to the same account. A second
+  rule set for gifts of goods was the alternative. — owner, 2026-11-06
