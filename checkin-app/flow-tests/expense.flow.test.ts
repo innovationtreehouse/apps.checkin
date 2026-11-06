@@ -221,11 +221,13 @@ describe("expense — FINANCE journey", () => {
     expect(settings.json).toMatchObject({ boardReviewTotalCents: 150_000 });
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: -1 })).status).toBe(400);
 
-    // QuickBooks accounts and an account-mapping rule: create, edit, delete.
-    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: `6100${stamp}` });
+    // QuickBooks accounts and an account-mapping rule: create, edit, delete. The ids are LOCAL_QUICKBOOKS_ACCOUNTS'
+    // expense accounts; a Bank account is refused.
+    expect((await send(f, "POST", "/api/expense/qb-accounts", { name: `Checking ${stamp}`, qbAccount: "8001" })).status).toBe(400);
+    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: "8006" });
     expect(account.status).toBe(200);
     const accountId = (account.json as { id: number }).id;
-    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: `6110${stamp}` })).status).toBe(200);
+    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: "8007" })).status).toBe(200);
     const rule = { category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: `6110${stamp}` };
     const mapping = await send(f, "POST", "/api/expense/account-mapping", rule);
     expect(mapping.status).toBe(200);

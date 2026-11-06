@@ -118,6 +118,8 @@ describeDb("FINANCE writes are audited", () => {
   });
 
   it("QuickBooks account create, update and delete each record one row", async () => {
+    const accounts = ["5100", "5200"].map((id) => ({ id, name: `Supplies ${id}`, accountType: "Expense" }));
+    bindPorts({ quickbooks: { accounts: async () => accounts } });
     const created = await auditOf(() => call(finance.createQbAccount, "POST", {}, { name: "Supplies", qbAccount: "5100" }));
     expect(created).toMatchObject({ entityType: "qb_account", action: "created" });
     const id = created.entityId!;

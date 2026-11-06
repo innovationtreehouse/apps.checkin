@@ -3,7 +3,7 @@
 // or QuickBooks until the host binds it.
 import { z } from "zod";
 import { ServiceError } from "@checkin/component-kit";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import type { QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
@@ -260,6 +260,8 @@ export interface QbVendors {
 }
 
 export const inertQbVendors: QbVendors = { open: async () => null };
+
+export const inertQbAccounts: QboAccountList = notConnected;
 
 /** Display names of checkin people. */
 export interface PeopleDirectory {

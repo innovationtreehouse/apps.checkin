@@ -18,7 +18,7 @@
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
 import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/components/host";
-import { booksMap, budgetOwners, quickBooks } from "@/lib/components/ports";
+import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
 import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation/donorSurname";
@@ -125,5 +125,6 @@ export function configureRuntime(): void {
     deposits: donationPostingMissing().length ? undefined : incomeDeposits,
     inKind,
     capital,
+    quickBooksAccounts,
   });
 }

@@ -5,7 +5,7 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
-import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, LIVE_BOOKS_MAP_ROLES, isBooksMapRole, isQuickBooksId, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, LIVE_BOOKS_MAP_ROLES, accountTypeRefusal, isBooksMapRole, isQuickBooksId, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 // The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
@@ -45,21 +45,10 @@ export async function setBooksMapClass(actorId: number, budgetOwnerId: number, b
     return { budgetOwnerId: bucket.id, budgetOwnerName: bucket.name, quickBooksClassId: bucket.quickBooksClassId };
 }
 
-const either = new Intl.ListFormat("en", { type: "disjunction" });
-
-/** "an Expense or Other Expense account": the types a role accepts, as finance reads them. */
-function acceptedTypes(role: BooksMapRole): string {
-    const types = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
-    return `${/^[AEIOU]/.test(types[0]) ? "an" : "a"} ${either.format(types)} account`;
-}
-
 /** Refuses an account QuickBooks doesn't list, or lists under a type the role does not accept. Reads QuickBooks live. */
 async function refuseWrongType(role: BooksMapRole, quickBooksAccountId: string) {
-    const account = (await listQuickBooksAccounts()).find((a) => a.id === quickBooksAccountId);
-    if (!account) throw badRequest(`QuickBooks has no account with id ${quickBooksAccountId}`);
-    if (!BOOKS_MAP_ROLE_ACCOUNT_TYPES[role].includes(account.accountType)) {
-        throw badRequest(`${BOOKS_MAP_ROLE_LABELS[role]} takes ${acceptedTypes(role)}; ${account.name} is ${account.accountType}`);
-    }
+    const refusal = accountTypeRefusal(await listQuickBooksAccounts(), quickBooksAccountId, BOOKS_MAP_ROLE_ACCOUNT_TYPES[role], BOOKS_MAP_ROLE_LABELS[role]);
+    if (refusal) throw badRequest(refusal);
 }
 
 /** Sets or clears one role's account, audited with the old and new id. A new account must be of a type the role accepts. */
@@ -117,6 +106,8 @@ export async function listQuickBooksAccounts() {
         .map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "", active: a.Active !== false }))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
+
+const either = new Intl.ListFormat("en", { type: "disjunction" });
 
 /**
  * Each set live role whose account QuickBooks lists under a type the role does
