@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { Badge, Button, Group, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, errorMessage } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Alias {
@@ -18,17 +18,15 @@ interface Alias {
 
 const API = "/api/finance/mail-aliases";
 
-/** Sends the request; on failure shows why and returns null. */
-async function send<T>(url: string, init?: RequestInit): Promise<T | null> {
+/** Sends the request; on failure shows why. Returns whether it worked. */
+async function send(url: string, init?: RequestInit): Promise<boolean> {
   try {
-    const res = await fetch(url, init);
-    const data = await res.json().catch(() => null);
-    if (res.ok) return data as T;
-    notifications.show({ color: "red", title: "Mail aliases", message: data?.error ?? `The server returned an error (${res.status}).`, autoClose: false });
-  } catch {
-    notifications.show({ color: "red", title: "Mail aliases", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false });
+    await api(url, init);
+    return true;
+  } catch (e) {
+    notifications.show({ color: "red", title: "Mail aliases", message: errorMessage(e), autoClose: false });
+    return false;
   }
-  return null;
 }
 
 export default function MailAliasesPage() {
@@ -42,16 +40,13 @@ export default function MailAliasesPage() {
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
-    const done = await send(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ personEmail, address }) });
+    const done = await send(API, { method: "POST", body: JSON.stringify({ personEmail, address }) });
     if (done) {
       setPersonEmail("");
       setAddress("");
-      reload();
     }
   };
-  const act = async (url: string, method: "POST" | "DELETE") => {
-    if (await send(url, { method })) reload();
-  };
+  const act = (url: string, method: "POST" | "DELETE") => void send(url, { method });
 
   return (
     <Stack>

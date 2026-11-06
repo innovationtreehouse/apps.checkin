@@ -9,7 +9,7 @@ import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import BooksMapPage from "../page";
 
 function jsonResponse(status: number, body: unknown): Response {
-  return { ok: status < 400, status, json: async () => body } as Response;
+  return new Response(JSON.stringify(body), { status });
 }
 
 const map = {
@@ -57,8 +57,23 @@ describe("books map page", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Class not saved",
-      message: "That QuickBooks Class is already mapped to another bucket. (409)",
+      message: "That QuickBooks Class is already mapped to another bucket.",
     })));
+  });
+
+  it("says nothing was saved when a sleeping app answers the save", async () => {
+    setSession({ id: 1, isFinance: true });
+    write = async () => new Response("<html>Waking up</html>", { status: 503, headers: { "Retry-After": "30" } });
+    renderWithProviders(<BooksMapPage />);
+    fireEvent.click(await screen.findByRole("textbox", { name: "Class for Robotics" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Programs:Robotics" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Class not saved",
+      message: "The app was asleep and is starting up. Nothing was saved. Try again in a minute.",
+    })));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
   });
 
   it("shows the board the map without letting it edit", async () => {

@@ -38,8 +38,8 @@ describe("a failed catalog write", () => {
     expect(await clickAccept()).toMatchObject({ message: "Challenge already resolved", color: "red", autoClose: false });
   });
 
-  it("shows fixed text, not the exception's, when the failure is not the server's", async () => {
+  it("shows fixed text, not the exception's, when the request never reaches the server", async () => {
     answerAcceptWith(() => Promise.reject(new TypeError("fetch failed: ECONNRESET 10.0.0.5")));
-    expect(await clickAccept()).toMatchObject({ message: "Something went wrong. Try again.", color: "red", autoClose: false });
+    expect(await clickAccept()).toMatchObject({ message: "Couldn't reach the server. Check your connection and try again.", color: "red", autoClose: false });
   });
 });

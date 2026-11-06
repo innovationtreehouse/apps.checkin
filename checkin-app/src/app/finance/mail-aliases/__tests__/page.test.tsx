@@ -20,7 +20,7 @@ describe("mail aliases page", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`${ROUTE}/5/approve`, { method: "POST" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`${ROUTE}/5/approve`, expect.objectContaining({ method: "POST" })));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url, init]) => url === ROUTE && !init?.method)).toHaveLength(2));
   });
 
