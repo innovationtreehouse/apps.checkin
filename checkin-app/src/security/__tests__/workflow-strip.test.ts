@@ -116,6 +116,11 @@ describe('workflow-mapping stripper under the read view', () => {
         );
         expect(out).toEqual({ id: 7, state: 'apply_failed', lineItemCount: 2 });
     });
+
+    it.each(['WorkflowReceiptSummary', 'WorkflowReceiptView'])('%s keeps the open-backorder count for a public-only view', (model) => {
+        const out = stripValue(model, { state: 'resolved', openBackorders: 2 }, ['public'], ctx) as Record<string, unknown>;
+        expect(out.openBackorders).toBe(2);
+    });
 });
 
 describe('workflow-mapping admission', () => {
