@@ -10,6 +10,7 @@
   "scripts": {
     "build": "npm -w checkin-app run build",
     "build:functions": "npm run build $(printf ' -w %s' *-function)",
+    "typecheck:packages": "npm run typecheck -w ./packages",
     "typecheck:functions": "npm run typecheck $(printf ' -w %s' *-function)",
     "build:prisma-layer": "node scripts/build-prisma-layer.mjs",
     "lint": "npm -w checkin-app run lint",

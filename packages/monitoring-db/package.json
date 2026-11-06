@@ -17,6 +17,7 @@
     "db:migrate": "node --env-file=.env node_modules/.bin/prisma migrate dev && node node_modules/.bin/prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
