@@ -1,5 +1,5 @@
 import { Client } from 'pg';
-import type { withArchivedHouseholds as WithArchivedHouseholds } from '../archived';
+import type * as Archived from '../archived';
 import type PrismaSingleton from '@/lib/prisma';
 
 const TAG = `household-archive-${Date.now()}`;
@@ -11,7 +11,9 @@ const admin = new Client({ connectionString: process.env.DATABASE_URL });
 process.env.DATABASE_URL = process.env.DML_DATABASE_URL;
 
 let prisma: typeof PrismaSingleton;
-let withArchivedHouseholds: typeof WithArchivedHouseholds;
+let withArchivedHouseholds: typeof Archived.withArchivedHouseholds;
+let isLiveHousehold: typeof Archived.isLiveHousehold;
+let IN_LIVE_HOUSEHOLD: typeof Archived.IN_LIVE_HOUSEHOLD;
 let activeId: number;
 let archivedId: number;
 
@@ -29,7 +31,7 @@ async function seedHousehold(name: string, archived: boolean): Promise<number> {
 beforeAll(async () => {
     await admin.connect();
     prisma = (await import('@/lib/prisma')).default;
-    withArchivedHouseholds = (await import('../archived')).withArchivedHouseholds;
+    ({ withArchivedHouseholds, isLiveHousehold, IN_LIVE_HOUSEHOLD } = await import('../archived'));
     activeId = await seedHousehold('active', false);
     archivedId = await seedHousehold('archived', true);
     await admin.query(
@@ -124,6 +126,30 @@ describe('household archive coverage beyond direct reads', () => {
             tx.household.update({ where: { id }, data: { archivedAt: null } }),
         );
         expect(await prisma.household.findUnique({ where: { id }, select: { id: true } })).toEqual({ id });
+    });
+
+    // The relation is required in the schema, so its type says non-null; readers
+    // that can reach an archived member must still tolerate null.
+    it('returns a null household for an archived member through an include', async () => {
+        const rows = await prisma.person.findMany({
+            where: { name: { endsWith: TAG } },
+            select: { householdId: true, household: { select: { id: true } } },
+            orderBy: { householdId: 'asc' },
+        });
+        expect(rows).toEqual([
+            { householdId: activeId, household: { id: activeId } },
+            { householdId: archivedId, household: null },
+        ]);
+    });
+
+    it('drops archived members from a person query that never joins Household', async () => {
+        const rows = await prisma.person.findMany({
+            where: { name: { endsWith: TAG }, ...IN_LIVE_HOUSEHOLD },
+            select: { householdId: true },
+        });
+        expect(rows).toEqual([{ householdId: activeId }]);
+        expect(await isLiveHousehold(activeId)).toBe(true);
+        expect(await isLiveHousehold(archivedId)).toBe(false);
     });
 
     it('matches nothing when writing an archived row without the opt-in', async () => {

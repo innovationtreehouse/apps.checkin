@@ -35,7 +35,7 @@ jest.mock("@/lib/emailRecipients", () => ({ notifyFinanceAlert }));
 const sendPurchaseOutcome = jest.fn();
 jest.mock("@/lib/purchaseOutcomeMail", () => ({ sendPurchaseOutcome }));
 
-const NOT_DENIED = { NOT: { household: { orgMembership: { status: "DENIED" } } } };
+const NOT_DENIED = { household: { archivedAt: null }, NOT: { household: { orgMembership: { status: "DENIED" } } } };
 
 async function signoff(): Promise<SignoffDirectory> {
   await jest.isolateModulesAsync(async () => {

@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { birthCutoff, memberYearStarts } from "@/lib/programYear";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,7 @@ export const GET = handler('GET /api/membership-audit/turning-18', async () => {
     const people = await prisma.person.findMany({
         where: {
             isHouseholdLead: false,
+            ...IN_LIVE_HOUSEHOLD,
             OR: [
                 // 18 by the NEXT boundary is the superset — anyone already 18 at the
                 // current one clears it too, and the two rendered ages tell them apart.

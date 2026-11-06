@@ -13,6 +13,7 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
         // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition.
         where: {
             isPaymentPlanRequested: true,
+            orgMembership: { household: { archivedAt: null } },
             ...fromWhere('PENDING_PAYMENT'),
         },
         // Selects stay narrow: finance holds everyones:pii here for the lead

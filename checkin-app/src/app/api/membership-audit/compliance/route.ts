@@ -257,6 +257,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         where: {
             lastBackgroundCheck: { not: null },
             mergedArchive: { some: {} },
+            household: { archivedAt: null },
         },
         select: {
             id: true,
