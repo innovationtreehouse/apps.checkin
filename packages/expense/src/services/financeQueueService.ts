@@ -1,7 +1,7 @@
 // The finance queue's expense tabs: every reason is read from the record's own state when
 // the queue is read, so doing the thing a reason asks for is what takes it out of the queue. The
 // reasons are the expense page's (reasonService), so the queue and the page always agree.
-import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
+import { CURRENCY_CODE, DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import type { Expense } from "../generated/prisma/client";
@@ -58,15 +58,16 @@ async function withContext<T>(step: string, fn: () => Promise<T>): Promise<T> {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** The intake payload's display facts; a payload that no longer parses shows none. */
+/** The intake payload's display facts; a payload that no longer parses shows none, and a currency that is not a code shows as the default. */
 function payloadFacts(payloadJson: string) {
   try {
     const p = JSON.parse(payloadJson) as Record<string, unknown>;
+    const code = typeof p.currency === "string" ? p.currency.trim().toUpperCase() : "";
     return {
       vendorName: typeof p.vendorName === "string" ? p.vendorName : null,
       date: typeof p.receiptDate === "string" ? p.receiptDate : null,
       amountCents: typeof p.receiptTotalCents === "number" ? p.receiptTotalCents : 0,
-      currency: typeof p.currency === "string" ? p.currency : DEFAULT_CURRENCY,
+      currency: CURRENCY_CODE.test(code) ? code : DEFAULT_CURRENCY,
     };
   } catch {
     return { vendorName: null, date: null, amountCents: 0, currency: DEFAULT_CURRENCY };
