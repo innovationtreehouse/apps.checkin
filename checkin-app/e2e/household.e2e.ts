@@ -4,22 +4,14 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { loginAs } from "../flow-tests/helpers";
-import { asViewer, settledFamily } from "./support/families";
+import { asViewer, settledFamily, YOUTH_AGE, youthBirthDate } from "./support/families";
 import { persona } from "./support/kiosk";
 import { send } from "./support/seedState";
 
 const KEYHOLDER = "keyholder1@example.com";
-const YOUTH_AGE = 10;
 const BOARD_ONLY_EMAIL = "can only be changed by the board";
 
 const uniqueEmail = (label: string) => `${label}+${Date.now()}@example.com`;
-
-/** A month past the birthday, so the age holds in the org's zone as well as the runner's. */
-function youthBirthDate(): string {
-  const date = new Date();
-  date.setFullYear(date.getFullYear() - YOUTH_AGE, date.getMonth() - 1);
-  return date.toISOString().slice(0, 10);
-}
 
 async function myHousehold(page: Page): Promise<void> {
   await page.goto("/my-household");
