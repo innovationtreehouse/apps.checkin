@@ -469,9 +469,9 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
               })
             : 0,
         // Households awaiting board approval of a membership-fee payment plan.
-        seesFinance ? prisma.orgMembershipProcess.count({ where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true } }) : 0,
+        seesFinance ? prisma.orgMembershipProcess.count({ where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true, orgMembership: { household: { archivedAt: null } } } }) : 0,
         prisma.trustedAdultReview.count({
-            where: { status: "PENDING_BOARD_REVIEW" },
+            where: { status: "PENDING_BOARD_REVIEW", trustedAdult: { household: { archivedAt: null } } },
         }),
         countHouseholdsMissingValidContact(),
         // Households nobody has claimed via Google sign-in yet: either a lead has an
