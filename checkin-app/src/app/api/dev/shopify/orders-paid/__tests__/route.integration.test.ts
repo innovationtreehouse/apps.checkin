@@ -284,5 +284,23 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
             expect(row?.status).toBe('ACTIVE');
             expect(row?.pendingSince).toBeNull();
         });
+
+        it('activates a second household paying for the same program', async () => {
+            asSession();
+            await prisma.program.update({
+                where: { id: programId },
+                data: { shopifyVariantId: 'dev-mock-variant-route-program-test' },
+            });
+            const hh2 = await prisma.household.create({ data: { name: `Dev Mock Program HH2 ${TAG}` } });
+            const other = await prisma.person.create({ data: { name: 'Dev Mock Participant 2', household: { connect: { id: hh2.id } } } });
+            await prisma.programParticipant.createMany({
+                data: [personId, other.id].map((id) => ({ programId, personId: id, status: 'PENDING' as const, pendingSince: new Date() })),
+            });
+
+            expect((await POST(jsonReq({ programId, participantIds: [personId] }))).status).toBe(200);
+            const res = await POST(jsonReq({ programId, participantIds: [other.id] }));
+            expect(res.status).toBe(200);
+            expect(await res.json()).toEqual({ ok: true, participants: [{ personId: other.id, status: 'ACTIVE' }] });
+        });
     });
 });
