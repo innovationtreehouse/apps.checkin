@@ -17,6 +17,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "consent": "tsx scripts/consent.ts",
     "consent:manual": "tsx scripts/consent-manual.ts",
     "pull": "tsx scripts/pull.ts",

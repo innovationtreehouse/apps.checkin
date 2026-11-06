@@ -33,6 +33,7 @@
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
