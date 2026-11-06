@@ -95,7 +95,7 @@ export const signoff: SignoffDirectory = {
   async searchAdults(query, limit) {
     const { isKnownAdult } = await import("@/lib/programAge");
     const matches = await (await db()).person.findMany({
-      where: { name: { contains: query, mode: "insensitive" } },
+      where: { name: { contains: query, mode: "insensitive" }, household: { archivedAt: null } },
       select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });

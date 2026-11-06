@@ -31,7 +31,7 @@ import { ingestReceipt, receivingOutcomes } from "@checkin/workflow-mapping";
 import { giftOutcomes, recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
 import { getOrg, sessionUser } from "@/lib/components/host";
 import { householdOf } from "@/lib/components/ports";
-import { householdWithMembership } from "@/lib/household/archived";
+import { householdWithMembership, IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
@@ -132,7 +132,7 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
     import("@/lib/programAge"),
   ]);
   const matches = await prisma.person.findMany({
-    where: { name: { contains: query, mode: "insensitive" } },
+    where: { name: { contains: query, mode: "insensitive" }, ...IN_LIVE_HOUSEHOLD },
     select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
   });
