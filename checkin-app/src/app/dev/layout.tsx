@@ -4,8 +4,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { Box, Tabs } from "@mantine/core";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { useIsDevInstance } from "@/components/EnvProvider";
-import { DEV_TOOLS } from "@/lib/nav/sections/devTools";
+import { useDevMocks, useIsDevInstance } from "@/components/EnvProvider";
+import { devToolLinks } from "@/lib/nav/sections/devTools";
 
 /**
  * Persistent top tabs for the dev tools (captured-email inbox + Zoho Sign mock),
@@ -17,16 +17,17 @@ export default function DevToolsLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const router = useRouter();
   const isDev = useIsDevInstance();
+  const links = devToolLinks(useDevMocks());
 
   if (!isDev) return <>{children}</>;
 
-  const active = DEV_TOOLS.links.find((link) => pathname === link.href)?.href ?? null;
+  const active = links.find((link) => pathname === link.href)?.href ?? null;
 
   return (
     <PageContainer>
       <Tabs value={active} onChange={(value) => value && value !== active && router.push(value)} mb="md">
         <ScrollableTabsList>
-          {DEV_TOOLS.links.map((link) => (
+          {links.map((link) => (
             <Tabs.Tab key={link.href} value={link.href}>
               {link.name}
             </Tabs.Tab>
