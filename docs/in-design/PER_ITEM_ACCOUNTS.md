@@ -65,13 +65,6 @@ revenue, so they stay an expense on "Shopify: fees" (PIA-5).
 
 Stable IDs; a settled question keeps its number and moves to §10.
 
-- **PIA-3. Leftover cents, which rule the shared allocator uses.** Settled so
-  far: whole cents, with the parts summing to the fee exactly, through the same
-  code that splits an expense's tax and shipping across its lines (§5.2). Open:
-  that code hands leftover cents to the *largest amounts*, not the largest
-  fractional remainders the owner named. Either keep its rule for both, or
-  change the shared code to largest remainder, which also changes how new
-  expenses split tax and shipping. Row 3 of §5.2 is the case where they differ.
 - **PIA-9. Account types per role.** Confirm the table in §7.
 
 ## Rules this relies on
@@ -220,35 +213,43 @@ parts are summed into lines only after each row is split.
 
 Worked examples (fee $2.50 on each row):
 
-| Donation | Match | Largest amount (expense today) | Largest remainder |
+| Donation | Match | Fee parts | Net lines |
 |---|---|---|---|
-| $100.00 | $100.00 | $1.25 / $1.25 | $1.25 / $1.25 |
-| $100.00 | $50.00 | $1.67 / $0.83 | $1.67 / $0.83 |
-| $5.00 | $95.00 | $0.12 / $2.38 | $0.13 / $2.37 |
-| $40.00 | $0.00 | $2.50 / — | $2.50 / — |
-| $0.01 | $0.02 | $0.83 / $1.67 | $0.83 / $1.67 |
+| $100.00 | $100.00 | $1.25 / $1.25 | $98.75 / $98.75 |
+| $100.00 | $50.00 | $1.67 / $0.83 | $98.33 / $49.17 |
+| $5.00 | $95.00 | $0.12 / $2.38 | $4.88 / $92.62 |
+| $40.00 | $0.00 | $2.50 / — | $37.50 / — |
+| $0.01 | $0.02 | $0.83 / $1.67 | −$0.82 / −$1.65 |
 
-Rounding: each column's exact share is floored to whole cents. The leftover
-cents go one at a time to the columns with the largest amounts (expense's rule
-today) or the largest fractional remainders (PIA-3). In the third row the
-shares are 12.5¢ and 237.5¢: by amount the cent goes to Match; by remainder it
-is a tie, and the tie goes to Donation. The last row shows a fee larger than its
-gifts: both parts book negative, which is what happened. A batch that nets to
-zero or less is already refused and raised for finance.
+Rounding, largest fraction (PIA-3, settled): each column's exact share is
+floored to whole cents, and the leftover cents go one at a time to the columns
+with the largest fractional remainders. A tie goes to the larger amount, then to
+the earlier column. In the third row the shares are 12.5¢ and 237.5¢, a tie, so
+the cent goes to Match. The last row shows a fee larger than its gifts: both
+net lines go negative, which is what happened. A batch that nets to zero or
+less is already refused and raised for finance.
 
-One allocator does this for both areas. Expense's `allocateAmount`, which splits
-tax, shipping and discount across an expense's lines, moves to `@checkin/money`.
-Expense and bulk-donation both call it, so there is one rounding rule to keep.
-Income's own split of a Shopify charge across order lines rounds differently
-(toward zero, with the remainder at organisation level). It splits sales, not
-fees, and this design leaves it as it is.
+One allocator does every such split in the app. Expense's `allocateAmount`
+moves to `@checkin/money` and changes from largest amount to largest fraction,
+with the tie rule above. It then serves:
+
+- an expense's tax, shipping and discount across its lines;
+- a Benevity row's fee across its columns;
+- income's split of a Shopify charge or refund across its order lines, which
+  today rounds each part toward zero and books the leftover at organisation
+  level. Under the shared allocator the leftover cents go to the lines instead.
+  When a charge covers more than its lines (tax and shipping), the lines still
+  take their own amounts and the excess still books to card remainder.
+
+An allocation already stored on an expense line, or a deposit already created,
+keeps its numbers. The change reaches what is allocated after it ships.
 
 This replaces the fees role and each rule's fees account (PIA-7).
 
 ### 5.3 Where it runs
 
 The split happens in bulk-donation when the batch finishes, because that is
-where the row is whole. The batch's items gain the fee part on each amount item,
+where the row is whole. Each amount item carries its fee part netted in,
 so the hand-over to income needs no fee item and income needs no fee logic.
 
 ## 6. QuickBooks entries
@@ -315,7 +316,10 @@ part lands:
   amounts, and each part reduces income on its column's account. A blank amount
   counts as zero and takes no part. A row with fees but no amount goes to
   finance. Rows are never pooled, and the parts sum to the row's fee exactly.
-  [Decision — owner] (plus the PIA-3 answer)
+  [Decision — owner]
+- Principles or conventions: Whenever the app splits an amount across parts, it
+  uses whole cents, the parts sum to the amount exactly, and leftover cents go to
+  the largest fractional remainders. [Decision — owner]
 - Revenue, Income: Online-store fees are merchant-account fees on direct revenue.
   They book as an expense on their own account, never as a reduction of
   income. [Decision — owner]
@@ -349,3 +353,7 @@ part lands:
 - **PIA-8. Donated goods use the expense account rules.** Yes: one rule set, so
   a donated item and the same item bought book to the same account. A second
   rule set for gifts of goods was the alternative. — owner, 2026-11-06
+- **PIA-3. Leftover cents.** Whole cents by largest fraction, everywhere: the
+  fee split, and the shared allocator that already splits an expense's tax and
+  shipping, which changes from largest amount to largest fraction. Income's
+  Shopify charge split moves to it too. — owner, 2026-11-06
