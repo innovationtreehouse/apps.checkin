@@ -12,10 +12,7 @@ import { getIncomeDeposits } from "../runtime";
 /** Disbursement ids per depositStatus read. */
 const STATUS_BATCH = 200;
 
-const DESCRIPTION = { donation: "Benevity donations", match: "Benevity matches", fees: "Benevity fees" } as const;
-
-/** Fees book to their books-map role until they reduce income. */
-const FEES_ROLE = "BENEVITY_FEES" as const;
+const DESCRIPTION = { donation: "Benevity donations", match: "Benevity matches" } as const;
 
 /** Outside prod only a TEST_PREFIX disbursement is handed over; prod never hands one over. */
 const sendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_PREFIX) !== deposits.prod;
@@ -29,23 +26,24 @@ class DepositNotBuildable extends Error {}
 type PayoutItem = DisbursementPayloadV1["items"][number];
 
 /**
- * A finished batch's deposit lines: one per kind, account and bucket, fees negative on the fees
- * role. `bucketOf` gives each gift's bucket, null for organization level. Zero lines are kept.
+ * A finished batch's deposit lines: one per kind, account and bucket, each fee already netted into
+ * its item. `bucketOf` gives each gift's bucket, null for organization level. Zero lines are kept.
  */
 export function depositLines(items: PayoutItem[], bucketOf: (transactionId: string) => number | null): DonationDepositLine[] {
   const lines = new Map<string, DonationDepositLine>();
   for (const item of items) {
     const budgetOwnerId = bucketOf(item.transactionId);
-    if (item.type !== "fees" && !item.accountId) {
+    if (item.type === "fees") {
+      throw new DepositNotBuildable("it was finished before fees came out of income, so its fees have no account to book to");
+    }
+    if (!item.accountId) {
       throw new DepositNotBuildable("it was finished before its account rules named QuickBooks accounts, so the app can't tell which accounts it books to");
     }
-    const target = item.type === "fees" ? { role: FEES_ROLE } : { accountId: item.accountId };
-    const key = `${item.type}|${item.accountId ?? ""}|${budgetOwnerId ?? ""}`;
-    const signed = item.type === "fees" ? -item.amountCents : item.amountCents;
+    const key = `${item.type}|${item.accountId}|${budgetOwnerId ?? ""}`;
     lines.set(key, {
-      ...target,
+      accountId: item.accountId,
       budgetOwnerId,
-      amountCents: sumCents(lines.get(key)?.amountCents ?? 0, signed),
+      amountCents: sumCents(lines.get(key)?.amountCents ?? 0, item.amountCents),
       description: DESCRIPTION[item.type],
     });
   }

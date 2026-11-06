@@ -11,8 +11,8 @@ import { DEPOSIT_SOURCE, type DepositSourceName } from "./sources";
 
 /**
  * One line of an expected deposit: the QuickBooks account it books to and a budget bucket (null for
- * organization level). A Benevity fee line names its books-map role instead; a line stored before
- * lanes named accounts carries only a role, and goes to finance.
+ * organization level). A line stored before lanes named accounts, or a fee line stored before fees
+ * reduced income, carries only a role, and goes to finance.
  */
 export type ExpectedDepositLine = {
   accountId?: string;
@@ -22,7 +22,7 @@ export type ExpectedDepositLine = {
   description?: string;
 };
 
-/** The deposit a lane expects to land in the bank. Income resolves its bank role, fee role and buckets through the books map when it posts. */
+/** The deposit a lane expects to land in the bank. Income resolves its bank role and buckets through the books map when it posts. */
 export type ExpectedDeposit = {
   /** YYYY-MM-DD. */
   txnDate: string;
@@ -44,9 +44,6 @@ export type DepositStatus =
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** The one role a new line may name in place of an account, until fees reduce income. */
-export const FEE_LINE_ROLE: BooksMapRole = "BENEVITY_FEES";
-
 const QB_ID = /^\d+$/;
 
 /** The expected deposit, checked; throws a 400 naming the first problem. */
@@ -65,7 +62,7 @@ function checkExpected(raw: ExpectedDeposit, fresh: boolean): ExpectedDeposit {
     if (l.accountId !== undefined && l.role !== undefined) throw bad("a line names an account or a role, not both");
     if (l.accountId !== undefined && !QB_ID.test(l.accountId)) throw bad("line accountId must be a QuickBooks id (digits only)");
     if (l.role !== undefined && !isBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a books-map role`);
-    if (l.accountId === undefined && (fresh ? l.role !== FEE_LINE_ROLE : l.role === undefined)) throw bad("a line needs its QuickBooks account id");
+    if (l.accountId === undefined && (fresh || l.role === undefined)) throw bad("a line needs its QuickBooks account id");
     if (!Number.isInteger(l.amountCents)) throw bad("line amountCents must be a whole number");
     if (l.budgetOwnerId !== null && (!Number.isInteger(l.budgetOwnerId) || l.budgetOwnerId <= 0)) throw bad("line budgetOwnerId must be a positive integer or null");
   }

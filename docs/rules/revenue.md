@@ -352,6 +352,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   each amount the gift carries. Each gift and match books to its rule's account,
   fixed when the batch finishes; nothing books it to a fallback account.  [Decision — owner]
 
+- A giving-platform fee reduces income. Each spreadsheet row's fee is split across
+  that row's amount columns in proportion to their amounts, and each part is netted
+  into its column's income line. A blank amount counts as zero and takes no part. A
+  row with fees but no amount goes to finance. Rows are never pooled, and the parts
+  sum to the row's fee exactly.  [Decision — owner]
+
 - Every finished giving-platform batch must match one deposit in the books.
   Finance settles any the app can't match and records why. [Decision]
 

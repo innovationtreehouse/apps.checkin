@@ -7,7 +7,7 @@ import { getIncomeConfig, incomeRuntime, isoDay } from "../runtime";
 import { readIncomeSettings } from "../services/settingsService";
 import { bucketProblems, checkBuckets, type BucketProblem } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
-import { expectedOf, FEE_LINE_ROLE, type ExpectedDeposit } from "./intake";
+import { expectedOf, type ExpectedDeposit } from "./intake";
 import { toQbDeposit } from "./qb-deposits";
 import type { TxClient } from "./audit";
 import {
@@ -148,13 +148,13 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   return parts.length ? parts.join("; ") : null;
 }
 
-/** What finance is told about a deposit handed over before its lines named their accounts. */
+/** What finance is told about a deposit with a line that names no account: one handed over before its lines named accounts or before fees reduced income. */
 export const NO_LINE_ACCOUNT =
-  "handed over before the giving-platform account rules named QuickBooks accounts, so the app can't tell which accounts it books to; book it by hand or dismiss it";
+  "handed over before every line named its QuickBooks account (the giving-platform account rules, or fees taken from income), so the app can't tell which accounts it books to; book it by hand or dismiss it";
 
 /** Why a Benevity deposit can't be built yet: a line without its account, or its unusable buckets; null when it can. */
 export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): string | null {
-  if (expected.lines.some((l) => l.accountId === undefined && l.role !== FEE_LINE_ROLE)) return NO_LINE_ACCOUNT;
+  if (expected.lines.some((l) => l.accountId === undefined)) return NO_LINE_ACCOUNT;
   const broken = new Map<number, string>();
   for (const l of expected.lines) {
     const issue = l.budgetOwnerId == null ? undefined : problem(l.budgetOwnerId);
@@ -163,12 +163,9 @@ export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): 
   return [...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`).join("; ") || null;
 }
 
-/** The books-map roles a row's deposit needs that the map leaves unset. A Benevity row with no deposit yet needs only its bank. */
+/** The books-map roles a row's deposit needs that the map leaves unset. A Benevity row needs only its bank: its lines name their accounts. */
 export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
-  const expected = isBenevity(row) ? expectedOf(row) : null;
-  const roles = isBenevity(row)
-    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).flatMap((l) => (l.accountId === undefined && l.role ? [l.role] : []))]
-    : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
+  const roles = isBenevity(row) ? [expectedOf(row)?.bankRole ?? BANK_ROLE.benevity] : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
   return [...new Set(roles)].filter((r) => !accounts[r]);
 }
 

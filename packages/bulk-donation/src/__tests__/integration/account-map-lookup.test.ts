@@ -16,7 +16,7 @@ type TxFields = {
 // the query, matching is in determineAccountsFromMap).
 async function determineAccounts(orgId: string, tx: TxFields) {
   const rules = await db.accountMap.findMany({ where: { orgId } });
-  return determineAccountsFromMap(rules, { ...tx, donationAmountCents: 1000, matchAmountCents: 0 });
+  return determineAccountsFromMap(rules, { ...tx, donationAmountCents: 1000, matchAmountCents: 0, feeCents: 0 });
 }
 
 let orgId: string;

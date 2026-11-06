@@ -1,6 +1,6 @@
 import { type AccountMap as AccountMapRule } from "../generated/prisma/client";
 
-export type AccountConflictReason = "NO_MATCH" | "MULTIPLE_MATCHES" | "NO_ACCOUNT";
+export type AccountConflictReason = "NO_MATCH" | "MULTIPLE_MATCHES" | "NO_ACCOUNT" | "FEES_ONLY";
 
 export type AccountConflict = {
   reason: AccountConflictReason;
@@ -14,6 +14,8 @@ type TxFields = {
   donationType: string | null;
   donationAmountCents: number;
   matchAmountCents: number;
+  /** The row's fee columns, summed. */
+  feeCents: number;
 };
 
 function matchesTransaction(rule: AccountMapRule, tx: TxFields): boolean {
@@ -28,6 +30,10 @@ export function determineAccountsFromMap(
   rules: AccountMapRule[],
   tx: TxFields,
 ): { result: AccountMapRule } | { conflict: AccountConflict } {
+  // A fee needs an amount to net into; one with none goes to finance.
+  if (tx.feeCents !== 0 && tx.donationAmountCents === 0 && tx.matchAmountCents === 0) {
+    return { conflict: { reason: "FEES_ONLY", matchedRows: [] } };
+  }
   const matches = rules.filter((rule) => matchesTransaction(rule, tx));
 
   if (matches.length === 0) {
