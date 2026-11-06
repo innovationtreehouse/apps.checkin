@@ -12,6 +12,7 @@ export const BOOKS_MAP_ROLES = [
   "SHOPIFY_CHARGE_REMAINDER",
   "SHOPIFY_FEES",
   "SHOPIFY_ADJUSTMENTS",
+  "SHOPIFY_CUSTOM_ITEMS",
   "BENEVITY_BANK",
   "BENEVITY_DONATIONS",
   "BENEVITY_MATCHES",
@@ -26,7 +27,7 @@ export const BOOKS_MAP_ROLES = [
 export type BooksMapRole = (typeof BOOKS_MAP_ROLES)[number];
 
 /** Roles nothing books to any more: hidden from finance and from readiness checks, kept so stored rows still read. */
-export const RETIRED_BOOKS_MAP_ROLES: readonly BooksMapRole[] = ["BENEVITY_DONATIONS", "BENEVITY_MATCHES"];
+export const RETIRED_BOOKS_MAP_ROLES: readonly BooksMapRole[] = ["SHOPIFY_SALES", "BENEVITY_DONATIONS", "BENEVITY_MATCHES"];
 
 /** The roles finance sets: every role but the retired ones. */
 export const LIVE_BOOKS_MAP_ROLES: readonly BooksMapRole[] = BOOKS_MAP_ROLES.filter((r) => !RETIRED_BOOKS_MAP_ROLES.includes(r));

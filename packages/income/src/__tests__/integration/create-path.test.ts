@@ -18,7 +18,7 @@ const NOW = new Date("2026-06-30T12:00:00Z");
 /** When the shared setup switches income posting on: before any payout the tests add. */
 const ON_AT = new Date("2026-06-30T11:00:00Z");
 const BANK = "35";
-const SHOPIFY_ROLES: Partial<Record<BooksMapRole, string>> = { SHOPIFY_BANK: BANK, SHOPIFY_SALES: "80", SHOPIFY_CHARGE_REMAINDER: "81", SHOPIFY_FEES: "90", SHOPIFY_ADJUSTMENTS: "91" };
+const SHOPIFY_ROLES: Partial<Record<BooksMapRole, string>> = { SHOPIFY_BANK: BANK, SHOPIFY_CUSTOM_ITEMS: "80", SHOPIFY_CHARGE_REMAINDER: "81", SHOPIFY_FEES: "90", SHOPIFY_ADJUSTMENTS: "91" };
 const tokens = { current: async () => "tok" };
 const realm = { env: "sandbox" as const, realmId: "123" };
 
@@ -103,7 +103,7 @@ let activeClasses: string[];
 
 const gid = (n: number) => `gid://shopify/ShopifyPaymentsPayout/${n}`;
 
-/** A paid payout of one charge on order `O<n>` with one custom-item line, so the whole charge books at org level. */
+/** A paid payout of one charge on order `O<n>` with one custom-item line, so the whole charge books at org level on the custom-items account. */
 function payout(n: number, day: string, netCents: number): string {
   const g = gid(n);
   payouts.push({ payoutGid: g, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD", source: "api" });
@@ -987,11 +987,11 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     return g;
   }
 
-  it("splits each charge by order line to its bucket's Class; general income, fees and adjustments book at org level; sums to net", async () => {
+  it("splits each charge by order line to its item's account and bucket's Class; general income, fees and adjustments book at org level; sums to net", async () => {
     const g = orderPayout(2);
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "83" } });
 
     await drain();
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", depositTotalCents: 9830 });
@@ -1002,8 +1002,8 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     }));
     expect(lines).toEqual(
       expect.arrayContaining([
-        { cents: 6000, account: "80", cls: "700" },
-        { cents: 4000, account: "80", cls: undefined },
+        { cents: 6000, account: "82", cls: "700" },
+        { cents: 4000, account: "83", cls: undefined },
         { cents: -320, account: "90", cls: undefined },
         { cents: 150, account: "91", cls: undefined },
       ]),
@@ -1013,12 +1013,12 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
   });
 
   const camp = { id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" };
-  const general = () => db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null } });
+  const general = () => db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "82" } });
 
   it("an undecided item holds the payout as NEEDS_MAPPING; it never becomes NO_DEPOSIT, and deciding releases it on the next run", async () => {
     const g = orderPayout(2);
     owners = [camp];
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
 
     expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "undecided items: V2" });
@@ -1031,14 +1031,41 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(qbo.posts).toHaveLength(0);
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.needs_mapping" } })).toBe(1);
 
-    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 }, "82");
     expect(await drain(late)).toMatchObject({ post: { posted: 1, held: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 9830 });
   });
 
+  it("an item with a bucket choice but no account holds the payout; picking the account releases it", async () => {
+    const g = orderPayout(2);
+    owners = [camp];
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await general();
+
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "undecided items: V1" });
+
+    await itemCategoryService.setCategory(ORG_A, "V1", 7, { userId: 1 }, "84");
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    const accounts = qbo.posts[0].body.Line.map((l) => l.DepositLineDetail.AccountRef.value);
+    expect(accounts).toEqual(expect.arrayContaining(["84", "82"]));
+  });
+
+  it("a custom item holds the payout while Shopify: custom items has no account", async () => {
+    bind({ booksMap: { ...shopifyMap, accounts: async () => ({ ...SHOPIFY_ROLES, SHOPIFY_CUSTOM_ITEMS: undefined }) } });
+    const g = payout(3, "2026-06-28", 500);
+
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "custom items: no account picked for Shopify: custom items" });
+
+    bind();
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts[0].body.Line.map((l) => l.DepositLineDetail.AccountRef.value)).toEqual(["80"]);
+  });
+
   it("a decision made before an item's first sale is honoured on its first payout", async () => {
-    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
-    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 }, "82");
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 }, "82");
 
     const g = orderPayout(2);
 
@@ -1048,7 +1075,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
 
   it("an item marked general income books without a Class and is not held", async () => {
     const g = orderPayout(2);
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null, quickBooksAccountId: "82" } });
     await general();
 
     expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
@@ -1075,7 +1102,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
   ])("a bucket %s alerts once before any payout, marks its items, holds its payouts, and releases once restored", async (_label, owner, active, issue) => {
     owners = owner ? [owner] : [];
     activeClasses = active;
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
     await general();
 
     await drain();
@@ -1110,7 +1137,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409 });
 
     await general();
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null, quickBooksAccountId: "82" } });
     await drain(new Date("2026-06-30T13:00:00Z"));
     expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: null });
     expect(qbo.posts).toHaveLength(0);
@@ -1244,7 +1271,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
   it("while the Classes can't be read, only payouts with a bucketed sale hold, and no alert fires", async () => {
     owners = [camp];
     bind({ classes: { activeClassIds: async () => { throw new Error("socket hang up"); } } });
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
     await general();
     const held = orderPayout(2);
     const plain = payout(3, "2026-06-28", 500);
@@ -1264,7 +1291,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     owners = [{ ...camp, quickBooksClassId: null }];
     let sends = 0;
     bind({ alerts: { postCapReached: async () => {}, bucketUnusable: async () => { sends++; throw new Error("SES down"); }, sweepIncomplete: async () => {} } });
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
 
     await drain();
     await drain();
@@ -1274,13 +1301,13 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
 
   it("reassigning a broken bucket's items releases the payout without touching the bucket", async () => {
     owners = [{ ...camp, quickBooksClassId: null }];
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
     await general();
     const g = orderPayout(2);
     await drain();
     expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING" });
 
-    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 }, "82");
     await drain();
     expect(await rowFor(g)).toMatchObject({ status: "POSTED" });
     expect(bucketAlerts).toHaveLength(1);
@@ -1290,6 +1317,14 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
 describeDb("item assignment", () => {
   const actor = { userId: 1 };
   const assign = (id: number | null) => itemCategoryService.setCategory(ORG_A, "V1", id, actor);
+
+  it("sets the item's account with its bucket choice, keeps it when the bucket alone changes, and lists it", async () => {
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    expect(await itemCategoryService.setCategory(ORG_A, "V1", null, actor, "84")).toMatchObject({ budgetOwnerId: null, quickBooksAccountId: "84" });
+    expect(await assign(7)).toMatchObject({ budgetOwnerId: 7, quickBooksAccountId: "84" });
+    expect((await itemCategoryService.listItems(ORG_A)).find((i) => i.variantId === "V1")).toMatchObject({ decision: "bucket", quickBooksAccountId: "84" });
+    expect(await itemCategoryService.setCategory(ORG_A, "V1", 7, actor, null)).toMatchObject({ quickBooksAccountId: null });
+  });
 
   it("assigns to a live bucket with an active Class, or to general income", async () => {
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];

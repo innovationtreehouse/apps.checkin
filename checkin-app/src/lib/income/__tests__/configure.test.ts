@@ -8,7 +8,7 @@ const configureIncome = jest.fn<void, [IncomeConfig]>();
 const roleAccounts = jest.fn();
 jest.mock("@checkin/income", () => ({
   BANK_ROLE: { shopify: "SHOPIFY_BANK", benevity: "BENEVITY_BANK" },
-  SHOPIFY_LINE_ROLES: { income: "SHOPIFY_SALES", charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
+  SHOPIFY_LINE_ROLES: { charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
   roleAccounts,
   configureIncome,
   mirrorPayoutStatus: (s: string) => s.toLowerCase(),
@@ -107,14 +107,14 @@ describe("income posting binding", () => {
 
   it("names what posting still lacks, counting the Shopify roles as the drain resolves them", async () => {
     const { incomePostingMissing } = await import("../configure");
-    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_FEES: "3" });
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_FEES: "3" });
     await expect(incomePostingMissing()).resolves.toEqual([
       "Shopify mirror",
       "the switch INCOME_MIRROR_NEWEST_WINS=true",
       "no account picked for: Shopify: card remainder, Shopify: adjustments",
     ]);
     delete process.env.QBO_REALM_ID;
-    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
     await expect(incomePostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
   });
 });

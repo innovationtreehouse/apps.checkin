@@ -13,6 +13,20 @@ interface ItemRow {
   budgetOwnerId: number | null;
   budgetOwnerName: string | null;
   bucketIssue: string | null;
+  quickBooksAccountId: string | null;
+}
+
+interface AccountOption {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+/** Picker choices: active accounts, plus the saved one even when inactive or gone from QuickBooks. */
+function accountChoices(options: AccountOption[] | null, saved: string | null) {
+  const list = (options ?? []).filter((o) => o.active || o.id === saved).map((o) => ({ value: o.id, label: o.active ? o.name : `${o.name} (inactive)` }));
+  if (saved && !list.some((o) => o.value === saved)) list.push({ value: saved, label: `QuickBooks id ${saved}` });
+  return list;
 }
 
 const GENERAL = "general";
@@ -24,21 +38,23 @@ interface Bucket {
 
 /**
  * /income/items — every item the store has sold, and finance's decision for it: a budget-owner
- * bucket (its QuickBooks Class) or general income. Payouts with an undecided item's sale wait.
+ * bucket (its QuickBooks Class) or general income, and the QuickBooks account its sales book to.
+ * Payouts with a sale of an item missing either wait.
  */
 export default function ItemsPage() {
   const items = useLoad<ItemRow[]>("/items");
   const isFinance = useIsFinance();
   const buckets = useLoad<Bucket[]>(isFinance ? "/api/budget-owners" : null);
+  const accounts = useLoad<AccountOption[]>("/api/books-map/quickbooks-accounts");
   const [busy, setBusy] = useState<string | null>(null);
 
-  /** A bucket id, null for general income, or "undecided" to remove the decision. */
-  async function save(variantId: string, budgetOwnerId: number | null | "undecided") {
+  /** A bucket id, null for general income, or "undecided" to remove the decision; `account` changes the item's account too. */
+  async function save(variantId: string, budgetOwnerId: number | null | "undecided", account?: { quickBooksAccountId: string | null }) {
     setBusy(variantId);
     try {
       await api(`/items/${variantId}/category`, budgetOwnerId === "undecided"
         ? { method: "DELETE" }
-        : { method: "PUT", body: JSON.stringify({ budgetOwnerId }) });
+        : { method: "PUT", body: JSON.stringify({ budgetOwnerId, ...account }) });
       notifications.show({ message: "Category saved; applies to deposits created from now on", color: "green" });
       items.reload();
       notifyNavCounts();
@@ -59,10 +75,11 @@ export default function ItemsPage() {
     <>
       <Title order={3} mb="md">Item Categories</Title>
       <Text size="sm" c="dimmed" mb="md">
-        Assign each item to a bucket or to general income. A payout with a sale of an undecided item, or of an item whose bucket has a problem, waits until finance fixes it.
+        Assign each item to a bucket or to general income, then pick the QuickBooks account its sales book to. A payout with a sale of an item missing either, or of an item whose bucket has a problem, waits until finance fixes it.
       </Text>
       {items.error && <LoadError what="items" message={items.error} onRetry={items.reload} />}
       {buckets.error && <Text size="sm" c="red" mb="sm">Couldn&apos;t load buckets: {buckets.error}</Text>}
+      {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}
       {items.data === null ? <Text c="dimmed">Loading…</Text>
         : items.data.length === 0 ? <Text c="dimmed">No items in the store mirror.</Text>
         : (
@@ -73,6 +90,7 @@ export default function ItemsPage() {
                 <Table.Th>SKU</Table.Th>
                 <Table.Th>Variant</Table.Th>
                 <Table.Th>Bucket</Table.Th>
+                <Table.Th>QuickBooks account</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -100,6 +118,22 @@ export default function ItemsPage() {
                       </Group>
                     ) : decisionLabel(item)}
                     {item.bucketIssue && <Text size="xs" c="red">Bucket {item.bucketIssue}; its payouts wait</Text>}
+                  </Table.Td>
+                  <Table.Td>
+                    {isFinance ? (
+                      <Select
+                        size="xs"
+                        aria-label={`QuickBooks account for ${item.title || item.variantId}`}
+                        placeholder={item.decision === "undecided" ? "Choose a bucket first" : "Not set"}
+                        searchable
+                        clearable
+                        data={accountChoices(accounts.data, item.quickBooksAccountId)}
+                        value={item.quickBooksAccountId}
+                        onChange={(v) => save(item.variantId, item.budgetOwnerId, { quickBooksAccountId: v })}
+                        disabled={busy === item.variantId || item.decision === "undecided"}
+                      />
+                    ) : item.quickBooksAccountId ? (accountChoices(accounts.data, item.quickBooksAccountId).find((o) => o.value === item.quickBooksAccountId)?.label) : "Not set"}
+                    {item.decision !== "undecided" && !item.quickBooksAccountId && <Text size="xs" c="red">No account; its payouts wait</Text>}
                   </Table.Td>
                 </Table.Tr>
               ))}

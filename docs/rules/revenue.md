@@ -259,12 +259,16 @@ Income checks each online-store payout against the deposits in the books.
 
 - The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
-- Sales are booked to the program or fund they belong to. Sales are booked as
-  general Treehouse income only where finance chose that for the item, with one
-  exception: a custom item, typed into an order with no store item behind it, books
-  as general income without asking, because custom items are rare. A payout with a
-  sale of any other item finance has not decided on waits until finance does, and
-  the next run books it once finance decides.  [Decision — owner]
+- Sales are booked to the program or fund they belong to, on the account finance
+  chose for the item. Sales are booked as general Treehouse income only where
+  finance chose that for the item. An item is decided once finance has chosen both
+  its bucket (or general income) and its account. A payout with a sale of an item
+  finance has not decided on waits until finance does, and the next run books it
+  once finance decides; nothing books it to a fallback account.  [Decision — owner]
+
+- A custom item, typed into an order with no store item behind it, needs no
+  per-item decision: it books as general income to the books map's custom-items
+  account. A payout with a custom item waits while that account is unset.  [Decision — owner]
 
 - Finance can decide on the app's program and membership items before their first
   sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]

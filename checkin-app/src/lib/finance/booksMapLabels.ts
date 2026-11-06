@@ -7,6 +7,7 @@ export const BOOKS_MAP_ROLE_LABELS: Record<BooksMapRole, string> = {
   SHOPIFY_CHARGE_REMAINDER: "Shopify: card remainder",
   SHOPIFY_FEES: "Shopify: fees",
   SHOPIFY_ADJUSTMENTS: "Shopify: adjustments",
+  SHOPIFY_CUSTOM_ITEMS: "Shopify: custom items",
   BENEVITY_BANK: "Benevity disbursements: bank account",
   BENEVITY_DONATIONS: "Benevity: donations",
   BENEVITY_MATCHES: "Benevity: employer matches",

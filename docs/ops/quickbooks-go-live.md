@@ -171,14 +171,15 @@ stops the lane from posting, but the switch-on date stays.
 | Lane | Roles on the screen | What the app enforces | Status row |
 |---|---|---|---|
 | Expenses | Organisation card | Must be a Bank or Credit Card account; any other type is refused and finance is alerted | QuickBooks posting: expenses |
-| Shopify income | Shopify payouts: bank account; Shopify: sales, card remainder, fees, adjustments | All five | QuickBooks posting: Shopify income |
+| Shopify income | Shopify payouts: bank account; Shopify: card remainder, fees, adjustments, custom items | The first four; a payout with a custom item holds until custom items has an account | QuickBooks posting: Shopify income |
 | Benevity | Benevity disbursements: bank account; Benevity: fees | Both | QuickBooks posting: Benevity donations |
 | Gifts of goods | Gifts of goods: in-kind income, in-kind expense, fixed assets (donated equipment), clearing account (finance's past bookings) | All four, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
-Then give each budget bucket its QuickBooks Class on the same screen, and assign
-Shopify items to buckets on the income items screen (`/income/items`). A payout with
-an undecided item, or a bucket that can't be used, holds for finance rather than
-posting.
+Then give each budget bucket its QuickBooks Class on the same screen. On the income
+items screen (`/income/items`), give each Shopify item a bucket (or general income)
+and then the QuickBooks account its sales book to; the picker reads QuickBooks live.
+An item is decided only once it has both. A payout with an undecided item, or a
+bucket that can't be used, holds for finance rather than posting.
 
 Benevity gifts and employer matches book to the accounts on their account rules,
 not to a role. On the account map (`/donations/account-map`), pick a donation
