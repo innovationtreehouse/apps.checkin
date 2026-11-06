@@ -104,6 +104,19 @@ describe("Receiving › Apply failed Retry all", () => {
     expect(mockReload).toHaveBeenCalledTimes(2);
   });
 
+  it("counts a receipt left applying as still sending, not applied", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes("/2/apply")) return reply(200, { state: "applying", validationNotes: "Inventory: applied but not recorded" });
+      if (url.includes("/3/apply")) return reply(200, { state: "apply_failed", validationNotes: "Expense: down" });
+      return reply(200, { state: url.endsWith("/apply") ? "resolved" : "applying" });
+    });
+    renderWithProviders(<ReceivingPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry all (3)" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalled());
+    expect(notifications.show).toHaveBeenCalledWith({ message: "1 applied, 1 still sending, 1 still failed", color: "red", autoClose: false });
+  });
+
   it("skips receipts whose stored data can't be read", async () => {
     mockFailed = [row(1), row(2, "Stored receipt data is not valid JSON"), row(3, "Stored receipt data failed validation")];
     fetchMock.mockImplementation((url: string) => reply(200, { state: url.endsWith("/apply") ? "resolved" : "applying" }));

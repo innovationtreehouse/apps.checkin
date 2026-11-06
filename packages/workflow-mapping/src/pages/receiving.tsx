@@ -50,21 +50,23 @@ export default function ReceivingPage() {
     notifyNavCounts();
   }
 
-  // Retry resets the receipt to applying, then applies it, as the receipt page's Retry apply does. Resolves to the failure, or null.
-  async function retryOne(id: number): Promise<string | null> {
+  // Retry resets the receipt to applying, then applies it, as the receipt page's Retry apply does.
+  // "sending": a part went through but wasn't recorded, so the receipt stays applying.
+  async function retryOne(id: number): Promise<{ outcome: "applied" | "sending" } | { outcome: "failed"; message: string }> {
     try {
       await api(`/receipts/${id}/retry-apply`, { method: "POST" });
       const res = await api<{ state?: string; validationNotes?: string | null }>(`/receipts/${id}/apply`, { method: "POST" });
-      return res.state === "apply_failed" ? res.validationNotes ?? "Apply failed" : null;
+      if (res.state === "apply_failed") return { outcome: "failed", message: res.validationNotes ?? "Apply failed" };
+      return { outcome: res.state === "applying" ? "sending" : "applied" };
     } catch (err) {
-      return errorMessage(err);
+      return { outcome: "failed", message: errorMessage(err) };
     }
   }
 
   async function retry(id: number) {
     setRetrying(id);
-    const failure = await retryOne(id);
-    notifications.show(failure ? { message: failure, color: "red", autoClose: false } : { message: "Applied", color: "green" });
+    const result = await retryOne(id);
+    notifications.show(result.outcome === "failed" ? { message: result.message, color: "red", autoClose: false } : { message: "Applied", color: "green" });
     setRetrying(null);
     reloadAll();
   }
@@ -75,15 +77,20 @@ export default function ReceivingPage() {
 
   async function retryAll() {
     const ids = retryable.map((r) => r.id);
-    let applied = 0;
+    const tally = { applied: 0, sending: 0, failed: 0 };
     for (const [i, id] of ids.entries()) {
       setBulk({ at: i + 1, of: ids.length });
-      if ((await retryOne(id)) === null) applied++;
+      tally[(await retryOne(id)).outcome]++;
     }
     setBulk(null);
-    const failed = ids.length - applied;
-    const message = `${applied} applied, ${failed} still failed${skipped ? `, ${skipped} skipped (stored data unreadable)` : ""}`;
-    notifications.show(failed ? { message, color: "red", autoClose: false } : { message, color: "green" });
+    const message = [
+      `${tally.applied} applied`,
+      tally.sending ? `${tally.sending} still sending` : "",
+      `${tally.failed} still failed`,
+      skipped ? `${skipped} skipped (stored data unreadable)` : "",
+    ].filter(Boolean).join(", ");
+    const allApplied = tally.applied === ids.length;
+    notifications.show(allApplied ? { message, color: "green" } : { message, color: "red", autoClose: false });
     reloadAll();
   }
 
