@@ -234,10 +234,9 @@ test.describe("programs in the browser", () => {
     await asViewer(browser, email, async (page) => {
       await programPage(page, program.id);
       await expect(page.getByText(/Capacity:\s*2\/2/)).toBeVisible();
-      await pickYouth(page, "Enroll", youth.name);
-      await page.getByRole("button", { name: "Pay on Shopify" }).click();
-      await expect(page.getByText(full)).toBeVisible();
-    }, new RegExp(full));
+      await expect(page.getByRole("button", { name: "Enrollment Closed (Full)" })).toBeDisabled();
+    });
+    await expect(claim(email, program.id, [youth.id])).rejects.toThrow(full);
 
     await asViewer(browser, BOARD, async (page) => {
       await roster(page, program.id);
@@ -311,10 +310,8 @@ test.describe("programs in the browser", () => {
 
     await asViewer(browser, email, async (page) => {
       await programPage(page, program.id);
-      await pickYouth(page, "Enroll", youth.name);
-      await page.getByRole("button", { name: "Pay on Shopify" }).click();
-      await expect(page.getByText(ended)).toBeVisible();
-      await expect(page.getByText("Already enrolled from your household")).toHaveCount(0);
-    }, new RegExp(ended));
+      await expect(page.getByRole("button", { name: "Enrollment Closed (Sales ended)" })).toBeDisabled();
+    });
+    await expect(claim(email, program.id, [youth.id])).rejects.toThrow(ended);
   });
 });

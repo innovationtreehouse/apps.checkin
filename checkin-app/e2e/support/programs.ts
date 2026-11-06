@@ -66,7 +66,7 @@ export async function claim(email: string, programId: number, youthIds: number[]
   const lead = await loginAs(email);
   for (const participantId of youthIds) {
     const claimed = await send(lead, "POST", `/api/programs/${programId}/participants`, { participantId });
-    if (claimed.status !== 200) throw new Error(`claim place: ${claimed.status}`);
+    if (claimed.status !== 200) throw new Error(`claim place: ${claimed.status} ${(claimed.json as { error?: string }).error ?? ""}`);
   }
 }
 
