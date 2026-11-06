@@ -36,6 +36,8 @@ skips a failed digest.
 - A registry or pull failure moves nothing and is retried at the next check.
 - A forced digest is recorded after the pull and before the swap, so it is applied
   once. Only a new digest on `kiosk-urgent` forces again.
+- The first urgent check on a new or reinstalled Pi records the tag's digest and
+  moves nothing, so an old force is not applied at any hour.
 - `deploy` and `back` record the digest they leave as failed, so the nightly check
   does not return to it until the release tag moves on.
 
@@ -45,6 +47,9 @@ State lives in `/var/lib/kiosk-host`, which the container cannot reach.
 
 A power cut between the swap and the health check leaves the new digest in place
 with no rollback. A new force, or `kioskctl back` over SSH, recovers it.
+
+A force published before a new Pi's first urgent check is recorded, not applied.
+Forcing also moves `kiosk-release`, so it lands at the next nightly window.
 
 The nightly reboot waits up to 30 minutes for the update lock, then reboots anyway
 so a hung pull cannot stop reboots for good.
