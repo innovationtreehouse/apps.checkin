@@ -6,7 +6,7 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { addYouth, asViewer, settledFamily } from "./support/families";
-import { claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
+import { claim, inDays, newLeader, newProgram, newSession, paidYouths, PROGRAM_DATES } from "./support/programs";
 import { BOARD } from "./support/seedState";
 
 const ONLY_BOARD_REMOVES = "Only the Board removes a paid place";
@@ -175,7 +175,7 @@ test.describe("programs in the browser", () => {
 
   test("P5: only the Board removes a paid place, with a reason", async ({ browser }) => {
     const program = await newProgram();
-    const { youth } = await paidYouth(program.id);
+    const [youth] = (await paidYouths(program.id)).youths;
 
     await asViewer(browser, program.leader, async (page) => {
       await roster(page, program.id);
@@ -201,8 +201,7 @@ test.describe("programs in the browser", () => {
 
   test("P6: withdraw keeps the place as history, remove deletes it", async ({ browser }) => {
     const program = await newProgram();
-    const withdrawn = (await paidYouth(program.id)).youth;
-    const removed = (await paidYouth(program.id)).youth;
+    const [withdrawn, removed] = (await paidYouths(program.id, 2)).youths;
 
     await asViewer(browser, BOARD, async (page) => {
       await roster(page, program.id);
@@ -227,8 +226,7 @@ test.describe("programs in the browser", () => {
 
   test("P7: a full program refuses new claims; the Board can comp", async ({ browser }) => {
     const program = await newProgram();
-    await paidYouth(program.id);
-    await paidYouth(program.id);
+    await paidYouths(program.id, 2);
     const email = await settledFamily();
     const youth = await addYouth(email);
     const full = "Program has reached maximum capacity.";
@@ -254,7 +252,7 @@ test.describe("programs in the browser", () => {
 
   test("P8: a leader marks attendance", async ({ browser }) => {
     const program = await newProgram();
-    const { email, youth } = await paidYouth(program.id);
+    const { email, youths: [youth] } = await paidYouths(program.id);
     const session = await newSession(program.id, -90, -30);
     const upcoming = await newSession(program.id, 24 * 60, 25 * 60);
     const visit = (page: Page) => page.getByRole("row").filter({ hasText: youth.name }).filter({ hasText: session.name });

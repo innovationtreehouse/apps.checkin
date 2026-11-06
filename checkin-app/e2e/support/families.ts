@@ -38,10 +38,12 @@ export async function settledFamily(): Promise<string> {
   return email;
 }
 
+let youthCount = 0;
+
 /** Has the family's lead add a youth to the household; returns the youth's id and name. */
 export async function addYouth(email: string): Promise<{ id: number; name: string }> {
   const lead = await loginAs(email);
-  const name = `Youth ${Date.now()}`;
+  const name = `Youth ${Date.now()}-${++youthCount}`;
   const added = await send(lead, "PATCH", "/api/household", { memberName: name, memberDob: youthBirthDate() });
   if (added.status !== 200) throw new Error(`add youth: ${added.status}`);
   const { json } = await api<{ household: { householdMembers: Array<{ id: number; name: string }> } }>(lead, "/api/household");
