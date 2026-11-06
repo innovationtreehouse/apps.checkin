@@ -45,7 +45,10 @@ async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, Purch
     giftOutcomes(receiptIds),
   ]);
   return new Map(
-    receiptIds.map((id) => [id, { receiving: receiving.get(id) ?? null, money: money.get(id) ?? null, gift: gift.get(id) ?? null }]),
+    receiptIds.map((id) => {
+      const r = receiving.get(id);
+      return [id, { receiving: r?.receiving ?? null, openBackorders: r?.openBackorders ?? 0, money: money.get(id) ?? null, gift: gift.get(id) ?? null }];
+    }),
   );
 }
 

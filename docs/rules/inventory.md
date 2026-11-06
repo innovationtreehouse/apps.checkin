@@ -154,6 +154,10 @@ How the pieces are built is described in
   the money side, under the conflict rules in `expenses.md`.
   `[Decision — owner]`
 
+- A receipt reads "Received, N on backorder", not done, while N of its lines
+  are open on the receive queue, and "Received" once none are. A cancelled
+  line counts as closed. `[Decision — owner]`
+
 ### Access
 
 - The catalog is public reference data with no personal data. Item, category,

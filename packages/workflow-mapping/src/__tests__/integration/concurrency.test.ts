@@ -89,6 +89,7 @@ describeDb("apply and retry-apply are claimed once", () => {
     configure({
       ...sinks,
       inventorySink: {
+        openBackorders: async () => new Map(),
         applyDelta: async (d) => {
           sinks.calls.inventory.push(d);
           await gate;

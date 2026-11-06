@@ -77,7 +77,7 @@ beforeAll(async () => {
         auth: { getPrincipal: async () => ({ id: 1, name: 'Manager' }) },
         org: async () => ORG,
         expenseSink,
-        inventorySink: { applyDelta: async () => {} },
+        inventorySink: { applyDelta: async () => {}, openBackorders: async () => new Map() },
     });
 }, 120_000);
 

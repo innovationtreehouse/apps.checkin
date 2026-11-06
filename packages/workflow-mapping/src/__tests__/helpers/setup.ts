@@ -33,6 +33,7 @@ export function recordingSinks() {
       },
     },
     inventorySink: {
+      openBackorders: async () => new Map(),
       applyDelta: async (d: ResolvedInventoryDelta) => {
         calls.inventory.push(d);
         if (fail.inventory) throw new Error("inventory down");

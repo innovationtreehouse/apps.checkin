@@ -184,6 +184,7 @@ describeDb("sweepStuckApplying attempt cap", () => {
     configure({
       ...sinks,
       inventorySink: {
+        openBackorders: async () => new Map(),
         applyDelta: async (d) => {
           sinks.calls.inventory.push(d);
           changes.add(d.receiptId);

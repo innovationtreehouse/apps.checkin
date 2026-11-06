@@ -261,15 +261,17 @@ describe('receipt runtime: outcome emails', () => {
 
 describe('receipt runtime: purchase outcome binding', () => {
     it('joins receiving, the expense and the gift for each receipt asked about', async () => {
-        jest.mocked(receivingOutcomes).mockResolvedValue(new Map([['r-1', 'received'], ['r-2', 'waiting']]));
+        jest.mocked(receivingOutcomes).mockResolvedValue(
+            new Map([['r-1', { receiving: 'received', openBackorders: 2 }], ['r-2', { receiving: 'waiting', openBackorders: 0 }]]),
+        );
         jest.mocked(expenseOutcomes.forReceipts).mockResolvedValue(new Map([['r-1', { status: 'line_rejected', notes: ['Not a program cost'] }]]));
         jest.mocked(giftOutcomes).mockResolvedValue(new Map());
         const answer = await boundConfig().purchaseOutcomes?.forReceipts(['r-1', 'r-2', 'r-3']);
         expect(answer).toEqual(
             new Map([
-                ['r-1', { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null }],
-                ['r-2', { receiving: 'waiting', money: null, gift: null }],
-                ['r-3', { receiving: null, money: null, gift: null }],
+                ['r-1', { receiving: 'received', openBackorders: 2, money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null }],
+                ['r-2', { receiving: 'waiting', openBackorders: 0, money: null, gift: null }],
+                ['r-3', { receiving: null, openBackorders: 0, money: null, gift: null }],
             ]),
         );
     });

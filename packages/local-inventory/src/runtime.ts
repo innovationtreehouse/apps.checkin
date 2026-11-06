@@ -81,6 +81,10 @@ export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonatio
   donationFailureReason: (...args) => getServices().receiptService.donationFailureReason(...args),
 };
 
+/** What the host binds receiving's backorder count to: each receipt's lines still open on the receive queue. */
+export const openBackordersByReceipt = (orgId: string, receiptIds: string[]): Promise<Map<string, number>> =>
+  getServices().receiveQueueService.openBackordersByReceipt(orgId, receiptIds);
+
 /** An org's items with no location: the Needs a location list and its pill. */
 export const unlocatedWhere = (orgId: string) => ({ orgId, locationId: null });
 
