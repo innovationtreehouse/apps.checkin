@@ -244,8 +244,8 @@ existing mocks and stand-in Classes apply.
 Linking the membership variant reverses decision O4 in
 `docs/ops/shopify-dev-store.md`, which keeps the dev store's variant unset. O4's
 reason was that a seeded placeholder id would fail the real store's variant
-check; a looked-up id is the store's own, so that failure cannot happen. DR-4
-asks the owner to confirm.
+check; a looked-up id is the store's own, so that failure cannot happen. The owner
+agreed (DR-4).
 
 ---
 
@@ -356,11 +356,11 @@ Stable ids; a resolved question keeps its number.
   workflow only, never from the dashboard or the posting path. The alternative is
   to leave them; after a reset the app no longer knows them, and they show up to
   the matcher as entries finance booked.
-- **DR-4. Seed the Shopify membership variant on dev?** Recommendation: yes, by
+- **DR-4. Seed the Shopify membership variant on dev?** Decided: yes, by
   looking up the dev store's own variant, which reverses O4 in the dev-store doc.
-- **DR-5. How is the dev mailbox cleared?** Recommendation: a Workspace
-  retention rule on that mailbox, deleting mail older than seven days, set once
-  by a Workspace admin. The alternative is widening the dev refresher's grant
+- **DR-5. How is the dev mailbox cleared?** Decided: a Workspace retention rule
+  on that mailbox, deleting mail older than seven days, set once by a Workspace
+  admin as a rollout step (below). The rejected alternative is widening the dev refresher's grant
   from `gmail.readonly` to `gmail.modify` so the reset can trash mail; that adds
   write access to a mailbox for a job a retention rule does with no code.
 - **DR-6. Treat staff org accounts on dev as allowed?** Decided: yes. Dev
@@ -390,12 +390,23 @@ entry ships first in its own PR.
 6. **One-time setup scripts** for sandbox Classes and accounts, and dev-store
    products (scripts only).
 7. **Link step** (app): read-only lookups after the seed; updates
-   `shopify-dev-store.md` O4 if DR-4 is yes.
+   `shopify-dev-store.md` O4 to match DR-4.
 8. **Full-reset workflow and script** (app): files, dev store, then the PR 4
    reset, then the check. Sandbox wipe left out until DR-3.
 9. **Sandbox entry wipe** (`packages/quickbooks/scripts`), if DR-3 is yes.
 10. **Docs:** fold the standing parts into `docs/ops/dev-instance.md` and delete
     this file.
+
+## Rollout steps for a person
+
+These need someone with admin access and no PR. Each stays open until someone
+confirms it is done.
+
+- **R1. Dev mailbox retention rule (DR-5).** A Google Workspace admin adds a
+  retention rule on the dev receipt mailbox that deletes mail older than seven
+  days. Confirm by checking the mailbox holds nothing older than seven days
+  after the rule's first run. Needed before the first full reset counts as
+  clean.
 
 ---
 
