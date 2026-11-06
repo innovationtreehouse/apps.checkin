@@ -5,7 +5,7 @@ import {
 } from "@mantine/core";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
-import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import { NOT_SENT, QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reviewKindOf, type ReviewKind } from "../lib/flags";
 import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
@@ -106,16 +106,6 @@ type Detail = Expense | { Expense: Expense; ExpenseQueueReason?: QueueReason[] }
 const expenseOf = (d: Detail | null) => (d && "Expense" in d ? d.Expense : d);
 /** The open reasons; null when the response carried none, so nothing is known about them. */
 const reasonsOf = (d: Detail | null) => (d && "Expense" in d ? d.ExpenseQueueReason ?? null : null);
-
-/** Why the QuickBooks drain is holding an expense back. */
-const NOT_SENT: Record<string, string> = {
-  NOT_TEST_DATA: "Not sent to QuickBooks: not test data",
-  TEST_DATA_REFUSED: "Not sent to QuickBooks: test data is never posted in prod",
-  NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
-  AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
-  UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
-  SKIPPED: "Not sent to QuickBooks: finance skipped it",
-};
 
 const REVIEW_LABEL: Record<ReviewKind, { title: string; act: string }> = {
   QB_DUPLICATE_TO_VOID: { title: "Duplicate entry in QuickBooks needs voiding", act: "I voided it" },
@@ -579,7 +569,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               <Text size="sm">Not in QuickBooks. Book it to have the app create the entry, or pick the entry finance already booked.</Text>
               <Button
                 size="xs"
-                onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Booked in QuickBooks")) await decided(); }}
+                onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Booked in QuickBooks")) await decided(); else reloadAll(); }}
               >
                 Book it
               </Button>
@@ -713,7 +703,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Table.Tbody>
       </Table>
 
-      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={() => void decided()} />
+      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={() => void decided()} onRefused={reloadAll} />
 
       {isFinance && reviews.length > 0 && <ReviewsPanel e={e} reviews={reviews} onDecided={() => void decided()} />}
 
