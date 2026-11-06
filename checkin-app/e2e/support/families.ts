@@ -9,6 +9,15 @@ export const REVIEWER = "bg.reviewer@example.com";
 
 const CONTACT = { emergencyContactName: "Pat Outside", emergencyContactPhone: "555-987-6543" };
 
+export const YOUTH_AGE = 10;
+
+/** A month past the birthday, so the age holds in the org's zone as well as the runner's. */
+export function youthBirthDate(): string {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - YOUTH_AGE, date.getMonth() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 /** Mints a one-person household with no membership and returns its lead's email. */
 export async function newFamily(): Promise<string> {
   const minted = await api<{ personaId: number }>(null, "/api/auth/dev-personas", { method: "POST" });
@@ -27,6 +36,18 @@ export async function settledFamily(): Promise<string> {
   const onboarded = await send(await loginAs(email), "POST", "/api/profile/onboarding", { phone: "555-123-4567", ...CONTACT });
   if (onboarded.status !== 200) throw new Error(`onboard family: ${onboarded.status}`);
   return email;
+}
+
+/** Has the family's lead add a youth to the household; returns the youth's id and name. */
+export async function addYouth(email: string): Promise<{ id: number; name: string }> {
+  const lead = await loginAs(email);
+  const name = `Youth ${Date.now()}`;
+  const added = await send(lead, "PATCH", "/api/household", { memberName: name, memberDob: youthBirthDate() });
+  if (added.status !== 200) throw new Error(`add youth: ${added.status}`);
+  const { json } = await api<{ household: { householdMembers: Array<{ id: number; name: string }> } }>(lead, "/api/household");
+  const youth = json.household.householdMembers.find((m) => m.name === name);
+  if (!youth) throw new Error(`added youth ${name} not in the household`);
+  return youth;
 }
 
 /** Opens the family's application with a saved address, still at intake; returns its id. */
