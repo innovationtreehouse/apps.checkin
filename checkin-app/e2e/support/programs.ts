@@ -22,7 +22,7 @@ export async function newLeader(): Promise<string> {
   return email;
 }
 
-/** A priced program the Board created with a new leader, open for enrollment. */
+/** A priced program the Board created with a new leader, still in planning and open for enrollment. */
 export async function newProgram(capacity = 2): Promise<Named & { leader: string }> {
   const board = await loginAs(BOARD);
   const name = `Browser Program ${Date.now()}`;
@@ -37,7 +37,7 @@ export async function newProgram(capacity = 2): Promise<Named & { leader: string
   });
   if (created.status !== 200) throw new Error(`create program: ${created.status}`);
   const { id } = (created.json as { program: { id: number } }).program;
-  const opened = await send(board, "PATCH", `/api/programs/${id}`, { enrollmentStatus: "OPEN", phase: "UPCOMING" });
+  const opened = await send(board, "PATCH", `/api/programs/${id}`, { enrollmentStatus: "OPEN" });
   if (opened.status !== 200) throw new Error(`open program: ${opened.status}`);
   return { id, name, leader };
 }

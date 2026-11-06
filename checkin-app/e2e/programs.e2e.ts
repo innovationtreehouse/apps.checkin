@@ -77,7 +77,9 @@ test.describe("programs in the browser", () => {
       await expect(page.getByRole("heading", { name })).toBeVisible();
 
       await page.goto("/program-ops/programs");
-      await expect(page.getByRole("link", { name })).toBeVisible();
+      const row = page.getByRole("row").filter({ hasText: name });
+      await expect(row).toContainText("0/2");
+      await expect(row.getByRole("link", { name: "View →" })).toBeVisible();
 
       await page.goto("/programs");
       const listed = card(page, name);
