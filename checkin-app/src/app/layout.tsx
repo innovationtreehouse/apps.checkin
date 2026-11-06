@@ -47,7 +47,7 @@ export default async function RootLayout({
             <ModalsProvider>
               <Notifications />
               <DialogFocusGuard />
-              <EnvProvider value={{ checkinEnv: config.checkinEnv(), shopifyStoreDomain: config.shopifyStoreDomain(), isStaging: config.isStaging() }}>
+              <EnvProvider value={{ checkinEnv: config.checkinEnv(), shopifyStoreDomain: config.shopifyStoreDomain(), isStaging: config.isStaging(), devMocks: { shopify: config.shopifyMockActive(), bgConsent: config.bgMockActive() } }}>
                 <AuthProvider>
                   <OnboardingGate>
                     <StagingBar />
