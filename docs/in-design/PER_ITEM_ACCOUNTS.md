@@ -53,8 +53,10 @@ sensibly hold.
   passes the same check as the role it stands in for.
 - **Nothing in QuickBooks changes**, and no stored setting is rewritten. A new
   setting applies to entries created after it is saved.
-- **Cost:** five or six small PRs, one of them boundary-only. No new screen and
-  no new table; three existing tables gain a nullable column.
+- **Cost:** six or seven small PRs, one of them boundary-only. No new screen and
+  no new table; three existing tables gain a nullable column. The
+  giving-platform accounts come back first and on their own, since losing them
+  is a regression; the cutover file traces it.
 
 Online-store fees keep their own account until the owner decides whether they
 follow the giving-platform treatment (PIA-5).
