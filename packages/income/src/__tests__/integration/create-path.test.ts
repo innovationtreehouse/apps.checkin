@@ -910,6 +910,65 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
   });
 });
 
+describeDb("postPayout — a deposit finance voided", () => {
+  beforeEach(switchOn);
+
+  /** An attempted payout whose create landed but never settled: QuickBooks holds its keyed deposit. */
+  const landed = async () => {
+    const g = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "POST_FAILED" });
+    qbo.mode = "ok";
+    const first = qbo.deposits.at(-1);
+    if (!first) throw new Error("no deposit");
+    return { g, first };
+  };
+  /** QuickBooks keeps a voided entry's memo, at a zero total. */
+  const voidEntry = (entry: QboDeposit) => void (entry.TotalAmt = 0);
+  const secondKeyedEntry = (entry: QboDeposit) => {
+    const copy = { ...entry, Id: "7001" };
+    qbo.deposits.push(copy);
+    qbo.createdAt.set(copy.Id, Date.now());
+    return copy;
+  };
+
+  it("finance's retry books a replacement when the only keyed deposit was voided, and never links the voided one", async () => {
+    const { g, first } = await landed();
+    voidEntry(first);
+
+    const row = await resolve(g, { action: "retry" });
+
+    expect(qbo.posts).toHaveLength(2);
+    const replacement = qbo.deposits.at(-1);
+    expect(replacement?.Id).not.toBe(first.Id);
+    expect(row).toMatchObject({ status: "POSTED", origin: "created", depositId: replacement?.Id });
+  });
+
+  it("finance's dismiss links the live deposit when one of two keyed deposits was voided", async () => {
+    const { g, first } = await landed();
+    const live = secondKeyedEntry(first);
+    voidEntry(first);
+
+    expect(await resolve(g, { action: "dismiss", reason: "booked elsewhere" })).toMatchObject({ status: "POSTED", origin: "created", depositId: live.Id });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("finance's dismiss is refused while two live deposits carry the payout's key", async () => {
+    const { g, first } = await landed();
+    secondKeyedEntry(first);
+
+    await expect(resolve(g, { action: "dismiss", reason: "booked elsewhere" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("finance's dismiss applies when the payout's only keyed deposit was voided", async () => {
+    const { g, first } = await landed();
+    voidEntry(first);
+
+    expect(await resolve(g, { action: "dismiss", reason: "booked elsewhere" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", depositId: null });
+  });
+});
+
 describeDb("drainIncomeOutbox — deposit lines", () => {
   beforeEach(switchOn);
 
