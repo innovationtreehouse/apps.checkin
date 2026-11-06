@@ -65,11 +65,13 @@ follow the giving-platform treatment (PIA-5).
 
 Stable IDs; a settled question keeps its number and moves to §10.
 
-- **PIA-3. Leftover cents.** Recommended: whole cents by largest remainder; a tie
-  goes to Donation Amount, then Match Amount. The parts always sum to the row's
-  fee exactly.
-- **PIA-4. Which columns make up "the fee".** Recommended: Cause Support Fee,
-  Merchant Fee and Check Fee together, as the app sums them today.
+- **PIA-3. Leftover cents, which rule the shared allocator uses.** Settled so
+  far: whole cents, with the parts summing to the fee exactly, through the same
+  code that splits an expense's tax and shipping across its lines (§5.2). Open:
+  that code hands leftover cents to the *largest amounts*, not the largest
+  fractional remainders the owner named. Either keep its rule for both, or
+  change the shared code to largest remainder, which also changes how new
+  expenses split tax and shipping. Row 3 of §5.2 is the case where they differ.
 - **PIA-5. Online-store fees.** Do they follow the same treatment? If yes, each
   charge's fee splits across the order's lines by the weights the charge already
   splits by, and each part reduces that item's sales account; the part that
@@ -222,33 +224,40 @@ The export's columns, per row:
 |---|---|
 | Donation Amount (or Total Donation to be Acknowledged) | The employee's gift |
 | Match Amount | The employer's match |
-| Cause Support Fee, Merchant Fee, Check Fee | Fees taken from the row (PIA-4) |
+| Cause Support Fee, Merchant Fee, Check Fee | Fees taken from the row, summed (PIA-4, settled) |
 
 The row's fee is split across the row's amount columns in proportion to their
 amounts (PIA-1, settled). A blank amount counts as zero and a zero column takes
 no part of the fee (PIA-2, settled). A row with only fees holds its batch for
 finance, on the same holds screen as a gift no rule matches. Leftover cents
-follow PIA-3, as recommended. Each part books as a reduction of income on that
-column's account and the gift's Class (PIA-6). Rows are never pooled: the split is per row, and parts are summed
-into lines only after each row is split.
+follow PIA-3. Each part books as a reduction of income on that column's account
+and the gift's Class (PIA-6). Rows are never pooled: the split is per row, and
+parts are summed into lines only after each row is split.
 
 Worked examples (fee $2.50 on each row):
 
-| Donation | Match | Fee parts |
-|---|---|---|
-| $100.00 | $100.00 | $1.25 / $1.25 |
-| $100.00 | $50.00 | $1.67 / $0.83 |
-| $5.00 | $95.00 | $0.13 / $2.37 |
-| $40.00 | $0.00 | $2.50 / — |
-| $0.01 | $0.02 | $0.83 / $1.67 |
+| Donation | Match | Largest amount (expense today) | Largest remainder |
+|---|---|---|---|
+| $100.00 | $100.00 | $1.25 / $1.25 | $1.25 / $1.25 |
+| $100.00 | $50.00 | $1.67 / $0.83 | $1.67 / $0.83 |
+| $5.00 | $95.00 | $0.12 / $2.38 | $0.13 / $2.37 |
+| $40.00 | $0.00 | $2.50 / — | $2.50 / — |
+| $0.01 | $0.02 | $0.83 / $1.67 | $0.83 / $1.67 |
 
-Rounding: compute each column's exact share, take the floor in
-cents, then hand the leftover cents one at a time to the columns with the largest
-fractional remainders, ties to Donation then Match. In the third row the
-shares are 12.5¢ and 237.5¢, a tie, so the leftover cent goes to Donation. The
-last row shows a fee
-larger than its gifts: both parts book negative, which is what happened. A batch
-that nets to zero or less is already refused and raised for finance.
+Rounding: each column's exact share is floored to whole cents. The leftover
+cents go one at a time to the columns with the largest amounts (expense's rule
+today) or the largest fractional remainders (PIA-3). In the third row the
+shares are 12.5¢ and 237.5¢: by amount the cent goes to Match; by remainder it
+is a tie, and the tie goes to Donation. The last row shows a fee larger than its
+gifts: both parts book negative, which is what happened. A batch that nets to
+zero or less is already refused and raised for finance.
+
+One allocator does this for both areas. Expense's `allocateAmount`, which splits
+tax, shipping and discount across an expense's lines, moves to `@checkin/money`.
+Expense and bulk-donation both call it, so there is one rounding rule to keep.
+Income's own split of a Shopify charge across order lines rounds differently
+(toward zero, with the remainder at organisation level); PIA-5 decides whether
+it moves to the shared allocator too.
 
 This replaces the fees role and each rule's fees account (PIA-7).
 
@@ -339,3 +348,5 @@ part lands:
 - **PIA-2. A column with no amount.** A blank amount counts as zero, and a zero
   column takes no part of the fee. A row that carries only fees, with no amount
   in any column, goes to finance. — owner, 2026-11-06
+- **PIA-4. Which columns make up "the fee".** Cause Support Fee, Merchant Fee
+  and Check Fee, summed, as the app sums them today. — owner, 2026-11-06
