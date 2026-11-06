@@ -8,27 +8,23 @@ import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "../db/s
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
-import { ServiceError } from "@checkin/component-kit";
+import { ServiceError, settleCounts } from "@checkin/component-kit";
 import { reviewTransitionError } from "./categoryService";
 import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
 import { normalizeDescription } from "../lib/normalizeDescription";
 import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 import { assertNoReferenceConflict } from "./referenceMatchingService";
 
-/** The host nav's pill counts: every org's open items in the queues a catalog manager reviews. */
-export async function getNavCounts(): Promise<{
-  pendingProvisionalItems: number;
-  pendingItemReferences: number;
-  unresolvedConflicts: number;
-  pendingChallenges: number;
-}> {
-  const [pendingProvisionalItems, pendingItemReferences, unresolvedConflicts, pendingChallenges] = await Promise.all([
-    proposalRepo.countPendingProvisionalItems(),
-    proposalRepo.countPendingItemReferenceProposals(),
-    createItemReferenceRepository(db).countUnresolvedConflicts(),
-    createConversionChallengeRepository(db).countPending(),
-  ]);
-  return { pendingProvisionalItems, pendingItemReferences, unresolvedConflicts, pendingChallenges };
+/** The host nav's pill counts: every org's open items in the queues a catalog manager reviews. A failed count is left out. */
+export async function getNavCounts(): Promise<
+  Partial<Record<"pendingProvisionalItems" | "pendingItemReferences" | "unresolvedConflicts" | "pendingChallenges", number>>
+> {
+  return settleCounts("catalog", {
+    pendingProvisionalItems: () => proposalRepo.countPendingProvisionalItems(),
+    pendingItemReferences: () => proposalRepo.countPendingItemReferenceProposals(),
+    unresolvedConflicts: () => createItemReferenceRepository(db).countUnresolvedConflicts(),
+    pendingChallenges: () => createConversionChallengeRepository(db).countPending(),
+  });
 }
 
 export interface CreateItemReferenceProposalParams {

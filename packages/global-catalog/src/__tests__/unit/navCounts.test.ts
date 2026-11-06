@@ -61,9 +61,9 @@ describeDb("catalog nav counts", () => {
 
     expect(counts).toEqual({ pendingProvisionalItems: 2, pendingItemReferences: 2, unresolvedConflicts: 1, pendingChallenges: 2 });
     // The provisional list returns every status and its screen filters to pending.
-    expect((await rows(listProvisional, "ProvisionalItem")).filter((p) => p.status === "pending")).toHaveLength(counts.pendingProvisionalItems);
-    expect(await rows(listReferences, "ItemReferenceProposal")).toHaveLength(counts.pendingItemReferences);
-    expect(await rows(listConflicts, "ReferenceConflict")).toHaveLength(counts.unresolvedConflicts);
-    expect(await rows(listChallenges, "ConversionChallenge")).toHaveLength(counts.pendingChallenges);
+    expect((await rows(listProvisional, "ProvisionalItem")).filter((p) => p.status === "pending").length).toBe(counts.pendingProvisionalItems);
+    expect((await rows(listReferences, "ItemReferenceProposal")).length).toBe(counts.pendingItemReferences);
+    expect((await rows(listConflicts, "ReferenceConflict")).length).toBe(counts.unresolvedConflicts);
+    expect((await rows(listChallenges, "ConversionChallenge")).length).toBe(counts.pendingChallenges);
   });
 });

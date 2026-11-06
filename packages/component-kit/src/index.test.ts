@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   ComponentHttpError,
@@ -17,6 +17,7 @@ import {
   parseBody,
   parseId,
   readJson,
+  settleCounts,
   sweepOrgEvents,
   toHttpError,
   zodMessage,
@@ -339,5 +340,21 @@ describe("kindOf", () => {
   it("keeps the cause", () => {
     const cause = new Error("root");
     expect(new KindedError("system", "wrapped", { cause }).cause).toBe(cause);
+  });
+});
+
+describe("settleCounts", () => {
+  it("keeps the counts that succeed and logs and leaves out the ones that fail", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = new Error("db down");
+    const counts = await settleCounts("demo", {
+      ok: async () => 3,
+      rejected: async () => { throw boom; },
+      thrown: () => { throw boom; },
+    });
+    expect(counts).toEqual({ ok: 3 });
+    expect(error).toHaveBeenCalledWith("nav counts: demo rejected failed", boom);
+    expect(error).toHaveBeenCalledWith("nav counts: demo thrown failed", boom);
+    error.mockRestore();
   });
 });
