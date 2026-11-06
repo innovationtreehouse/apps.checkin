@@ -119,6 +119,9 @@ export type TodoCounts = {
     releasedLibraries?: string[];
 };
 
+/** The todo-counts route's body: the counts, and the person they were read for. */
+export type TodoCountsResponse = TodoCounts & { personId: number };
+
 /** RSVP tally (Yes/Maybe/No; NO_RESPONSE omitted). */
 export type RsvpTally = { yes: number; maybe: number; no: number };
 
