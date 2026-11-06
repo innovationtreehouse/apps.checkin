@@ -74,15 +74,17 @@ export function matchedRulesOf(matchedRows: string): MatchedRule[] {
 
 /**
  * Lines the QuickBooks processor could not give an account. FINANCE sets one per line and resubmits;
- * Resubmit stays disabled while a held line has no account, and the server refuses it as well.
+ * Resubmit stays disabled while a held line has no account, and the server refuses it as well. A
+ * refused resubmit may still have moved the expense, so `onRefused` rereads it.
  */
-export default function AccountHoldsPanel({ expenseId, holds, lines, currency, isFinance, onChanged }: {
+export default function AccountHoldsPanel({ expenseId, holds, lines, currency, isFinance, onChanged, onRefused }: {
   expenseId: string;
   holds: Hold[];
   lines: HeldLine[];
   currency: string;
   isFinance: boolean;
   onChanged: () => void;
+  onRefused: () => void;
 }) {
   const pending = holds.filter((h) => h.status === "PENDING");
   const accounts = useLoad<QbAccount[]>(pending.length > 0 ? "/qb-accounts" : null);
@@ -110,7 +112,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
             <Button
               size="xs"
               disabled={withoutAccount > 0}
-              onClick={async () => { if (await send(`${base}/resubmit`, "POST", {}, "Resubmitted")) onChanged(); }}
+              onClick={async () => { if (await send(`${base}/resubmit`, "POST", {}, "Resubmitted")) onChanged(); else onRefused(); }}
             >Resubmit</Button>
           </Group>
         )}
