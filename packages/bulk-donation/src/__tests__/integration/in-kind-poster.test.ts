@@ -531,6 +531,68 @@ describeDb("in-kind drain", () => {
   });
 });
 
+describeDb("in-kind drain — a journal entry finance voided", () => {
+  /** An attempted gift whose create landed but never settled: QuickBooks holds its keyed entry. */
+  const landed = async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.dropAfterCreate = true;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
+    qbo.dropAfterCreate = false;
+    return { id, first: qbo.journals[0] };
+  };
+  /** QuickBooks keeps a voided entry's memo, at a zero total. */
+  const voidEntry = (entry: QboJournalEntry) => void (entry.TotalAmt = 0);
+  const secondKeyedEntry = (entry: QboJournalEntry) => {
+    const copy = { ...entry, Id: "9100" };
+    qbo.journals.push(copy);
+    qbo.createTimes.set(copy.Id, new Date());
+    return copy;
+  };
+
+  it("books a replacement when the only keyed entry was voided, and the sweep raises nothing for the void", async () => {
+    const { id, first } = await landed();
+    voidEntry(first);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, sweep: { flagged: 0 } });
+
+    expect(qbo.posts).toHaveLength(2);
+    const replacement = qbo.journals[1];
+    expect(replacement.Id).not.toBe(first.Id);
+    expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: replacement.Id }]);
+    expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbNote: null });
+  });
+
+  it("links the live entry when one of two keyed entries was voided", async () => {
+    const { id, first } = await landed();
+    const live = secondKeyedEntry(first);
+    voidEntry(first);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+
+    expect(qbo.posts).toHaveLength(1);
+    expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: live.Id }]);
+  });
+
+  it("two live keyed entries still go to finance", async () => {
+    const { id, first } = await landed();
+    secondKeyedEntry(first);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 1 });
+
+    expect(qbo.posts).toHaveLength(1);
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE" });
+  });
+
+  it("finance's skip applies when the gift's only keyed entry was voided", async () => {
+    const { id, first } = await landed();
+    voidEntry(first);
+
+    expect(await resolveInKindQb(orgId, "receipt", id, { action: "skip", reason: "booked by hand" }, ACTOR)).toMatchObject({ qbState: "DISMISSED" });
+    expect(await bookings(id)).toEqual([]);
+  });
+});
+
 const resolve = (id: number, input: InKindQbResolveInput) => resolveInKindQb(orgId, "receipt", id, input, ACTOR);
 const events = (type: string) => db.workflowEvent.findMany({ where: { orgId, eventType: type }, orderBy: { id: "asc" } });
 /** Gifts recorded before the lane switched on, which the drain handed to finance: nothing in QuickBooks matched them. */
