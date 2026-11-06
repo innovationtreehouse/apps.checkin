@@ -47,7 +47,7 @@ describe("errorMessage", () => {
 
 describe("what the server says", () => {
   it.each([
-    ["a network failure", () => new TypeError("Failed to fetch"), "Something went wrong. Try again.", null],
+    ["a network failure", () => new TypeError("Failed to fetch"), "Couldn't reach the server. Check your connection and try again.", null],
     ["a 5xx", () => json({ error: "Boom" }, 503), "Boom", 503],
   ])("%s retries at 2s, 4s, 8s, 16s without a message, then sets error", async (_name, answer, message, status) => {
     const fetchMock = stubFetch(answer);
@@ -164,7 +164,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x", { retry: false }));
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.current).toMatchObject({ error: "Something went wrong. Try again.", retrying: false });
+    expect(result.current).toMatchObject({ error: "Couldn't reach the server. Check your connection and try again.", retrying: false });
   });
 
   it("keeps retrying in a hidden tab", async () => {
@@ -182,7 +182,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x"));
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(result.current.error).toBe("Something went wrong. Try again.");
+    expect(result.current.error).toBe("Couldn't reach the server. Check your connection and try again.");
   });
 
   it("two hooks on one key report the same retry state", async () => {
