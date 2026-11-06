@@ -75,9 +75,10 @@ export function zodMessage(error: { issues: readonly ZodIssueLike[] }, fallback 
 }
 
 /**
- * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named: a
- * deeper segment can be a submitted `z.record` key, so a schema whose top level is a
- * `z.record` must not reach this with request input.
+ * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named, since
+ * a deeper segment can be a submitted key. A schema whose top level is a `z.record`, a
+ * `z.map` or an object with `.catchall()` puts a submitted key in `path[0]` too, so it must
+ * not reach this with request input.
  */
 export function zodHttpError(error: { issues: readonly ZodIssueLike[] }, fallback?: string): ComponentHttpError {
   const names = error.issues.map((issue) => issue.path[0]).filter((name): name is string => typeof name === "string");
