@@ -58,8 +58,8 @@ sensibly hold.
   giving-platform accounts come back first and on their own, since losing them
   is a regression; the cutover file traces it.
 
-Online-store fees keep their own account until the owner decides whether they
-follow the giving-platform treatment (PIA-5).
+Online-store fees do not change. They are merchant-account fees on direct
+revenue, so they stay an expense on "Shopify: fees" (PIA-5).
 
 ## Waiting on the owner
 
@@ -72,11 +72,6 @@ Stable IDs; a settled question keeps its number and moves to §10.
   fractional remainders the owner named. Either keep its rule for both, or
   change the shared code to largest remainder, which also changes how new
   expenses split tax and shipping. Row 3 of §5.2 is the case where they differ.
-- **PIA-5. Online-store fees.** Do they follow the same treatment? If yes, each
-  charge's fee splits across the order's lines by the weights the charge already
-  splits by, and each part reduces that item's sales account; the part that
-  follows tax and shipping reduces the card-remainder account. If no, they stay
-  on "Shopify: fees". §6.3.
 - **PIA-6. How a fee shows on the deposit.** Recommended: a separate negative
   line on the column's account and Class, described as fees, so the gross gift
   stays readable in QuickBooks. The alternative nets the fee into the gift's
@@ -84,8 +79,8 @@ Stable IDs; a settled question keeps its number and moves to §10.
 - **PIA-7. Retiring the fees settings.** Once fees reduce income, "Benevity: fees"
   and each rule's fees account choose nothing. Recommended: the role and the
   column stop being read and the screens stop showing them; the stored values
-  stay until a later decommission the owner schedules. Same for "Shopify: fees"
-  if PIA-5 is yes.
+  stay until a later decommission the owner schedules. "Shopify: fees" stays in
+  use (PIA-5).
 - **PIA-8. Donated goods use the expense account rules.** Recommended: yes, one
   rule set, so a donated item and the same item bought book to the same account.
   The alternative is a second rule set of the same shape for gifts of goods only.
@@ -256,8 +251,8 @@ One allocator does this for both areas. Expense's `allocateAmount`, which splits
 tax, shipping and discount across an expense's lines, moves to `@checkin/money`.
 Expense and bulk-donation both call it, so there is one rounding rule to keep.
 Income's own split of a Shopify charge across order lines rounds differently
-(toward zero, with the remainder at organisation level); PIA-5 decides whether
-it moves to the shared allocator too.
+(toward zero, with the remainder at organisation level). It splits sales, not
+fees, and this design leaves it as it is.
 
 This replaces the fees role and each rule's fees account (PIA-7).
 
@@ -285,12 +280,10 @@ an app-created entry with what the app posted; it starts comparing line accounts
 only if it already does for that area. A matched entry booked by finance is
 never rebooked to apply an override (deliberate limit, unchanged).
 
-### 6.3 Online-store fees (if PIA-5 is yes)
+### 6.3 Online-store fees
 
-Each charge's fee splits by the same weights the charge used across its order
-lines, with the part that follows tax and shipping on the card-remainder
-account. Refund fees follow the refund's weights. Fees on transactions with no
-order lines (adjustments) stay whole on adjustments.
+Unchanged. Each transaction's fee stays whole on "Shopify: fees", an expense
+account (PIA-5).
 
 ## 7. Account types (PIA-9)
 
@@ -300,7 +293,7 @@ order lines (adjustments) stay whole on adjustments.
 | Expense payment | Bank, Credit Card (unchanged) |
 | Shopify: sales; Benevity: donations, employer matches; Gifts of goods: in-kind income | Income, Other Income |
 | Shopify: card remainder, adjustments | Income, Other Income, Other Current Liability (tax collected) |
-| Shopify: fees (while it exists) | Expense, Other Expense, Income, Other Income |
+| Shopify: fees | Expense, Other Expense |
 | Gifts of goods: in-kind expense | Expense, Other Expense, Cost of Goods Sold |
 | Gifts of goods: fixed assets | Fixed Asset |
 | Gifts of goods: clearing account | Bank, Other Current Asset, Other Current Liability |
@@ -332,7 +325,9 @@ part lands:
   counts as zero and takes no part. A row with fees but no amount goes to
   finance. Rows are never pooled, and the parts sum to the row's fee exactly.
   [Decision — owner] (plus the PIA-3 answer)
-- Revenue, Income: online-store fees, per PIA-5.
+- Revenue, Income: Online-store fees are merchant-account fees on direct revenue.
+  They book as an expense on their own account, never as a reduction of
+  income. [Decision — owner]
 - Expenses, Sending expenses to the books: A gift of goods' line books to the
   account the expense account rules give its part, or to the in-kind role when no
   rule names it. [Decision — owner] (if PIA-8 is yes)
@@ -350,3 +345,6 @@ part lands:
   in any column, goes to finance. — owner, 2026-11-06
 - **PIA-4. Which columns make up "the fee".** Cause Support Fee, Merchant Fee
   and Check Fee, summed, as the app sums them today. — owner, 2026-11-06
+- **PIA-5. Online-store fees.** No: they are direct fees on direct revenue, so
+  they are merchant-account fees, booked as an expense on "Shopify: fees", not
+  a reduction of income. — owner, 2026-11-06

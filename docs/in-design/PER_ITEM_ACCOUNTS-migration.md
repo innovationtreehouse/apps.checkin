@@ -7,9 +7,10 @@ the last PR merges. Its last step is "extract the rules, delete both files".
 ## Where it stands
 
 - Designed. Settled: PIA-1 (proportional), PIA-2 (blank is zero; a fees-only
-  row goes to finance) and PIA-4 (the three fee columns, summed). PIA-3 is half
-  settled: whole cents through the shared allocator, with its leftover-cent rule
-  open. PIA-5 to PIA-9 are open (design, "Waiting on the owner").
+  row goes to finance), PIA-4 (the three fee columns, summed) and PIA-5
+  (Shopify fees stay an expense). PIA-3 is half settled: whole cents through
+  the shared allocator, with its leftover-cent rule open. PIA-6 to PIA-9 are
+  open (design, "Waiting on the owner").
 - **Giving-platform gifts have lost their per-rule accounts.** PR 1 below
   restores them. The trace, on `main` at the time of writing:
   - `packages/bulk-donation/src/lib/disbursement-processor.ts`: when a batch
@@ -73,9 +74,9 @@ lines it establishes into `docs/rules/` and updates the books-map table in
 | 2 | Code | Account types per role in `@checkin/quickbooks`. Books-map save refuses a wrong type; System Status and the lane checks flag a stored one; every override is checked against its role; pickers filter by type. | PIA-9 |
 | 3 | Code | Giving-platform fees reduce income, if not already in PR 1: per-row split at batch finish through the allocator moved from expense to `@checkin/money`, fee parts on each amount item, fees role and column no longer read. | 1, PIA-3, PIA-6, PIA-7 |
 | 4a | Boundary only | The account id on the synthetic `IncomeItemView` classification, and any new picker route's registry entry. | Nothing |
-| 4 | Code | Online-store sales per item: account on income items, `/income/items` picker, deposit lines grouped by account and bucket. Fee split too if PIA-5 is yes. | 4a, PIA-5 |
+| 4 | Code | Online-store sales per item: account on income items, `/income/items` picker, deposit lines grouped by account and bucket. Fees unchanged. | 4a |
 | 5 | Code | Gifts of goods per part: port from bulk-donation to expense's rule matcher, bound by the host; debit lines take the rule's account or fall to the role. | PIA-8 |
-| 6 | Decommission | Drop the fees role(s) and the rule fees column, if and when the owner schedules it. Boundary entries for removed fields only, under the decommission exception. | 3 (and 4), owner |
+| 6 | Decommission | Drop "Benevity: fees" and the rule fees column, if and when the owner schedules it. Boundary entries for removed fields only, under the decommission exception. | 3, owner |
 
 PR 2 can land in any order with the others; an override saved before it lands is
 checked from then on.
