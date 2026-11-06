@@ -62,6 +62,7 @@ function baseProgram(overrides: Record<string, unknown> = {}) {
         name: "Robotics Club",
         startAt: "2026-06-01T00:00:00.000Z",
         endAt: "2026-12-31T00:00:00.000Z",
+        enrollmentClosedBy: null,
         leadMentorId: 5,
         leadMentor: { name: "Coach K", email: "coach@example.com" },
         participants: [{ personId: 100, status: "ACTIVE" }],
@@ -910,15 +911,15 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.queryByText(/renew your membership first/)).not.toBeInTheDocument();
     });
 
-    it("shows different closed-enrollment reasons depending on fullness, phase, and count source", async () => {
+    it("shows different closed-enrollment reasons depending on the server's cause and the phase", async () => {
         setSession({ id: 101 });
         const cases: [string, Record<string, unknown>][] = [
-            ["Full", { maxParticipants: 1 }],
-            ["Full", { maxParticipants: 5, _count: { participants: 5 } }],
-            ["Running", { maxParticipants: null, phase: "RUNNING" }],
-            ["Ended", { maxParticipants: null, phase: "FINISHED" }],
-            ["", { maxParticipants: null, phase: "SOMETHING_ELSE" }],
-            ["Upcoming", { maxParticipants: 1, phase: "UPCOMING", participants: undefined, _count: undefined }],
+            ["Full", { enrollmentClosedBy: "FULL", phase: "RUNNING" }],
+            ["Sales ended", { enrollmentClosedBy: "SALE_ENDED", phase: "UPCOMING" }],
+            ["Running", { enrollmentClosedBy: "CLOSED", phase: "RUNNING" }],
+            ["Ended", { enrollmentClosedBy: "CLOSED", phase: "FINISHED" }],
+            ["", { enrollmentClosedBy: "CLOSED", phase: "SOMETHING_ELSE" }],
+            ["Upcoming", { enrollmentClosedBy: "CLOSED", phase: "UPCOMING" }],
         ];
         for (const [expected, overrides] of cases) {
             mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", ...overrides }) });
@@ -933,9 +934,54 @@ describe("ProgramEnrollmentPage", () => {
         }
     });
 
+    // enrollmentStatus stays OPEN: the server's cause alone closes the page.
+    it.each([
+        ["Full", "FULL"],
+        ["Sales ended", "SALE_ENDED"],
+    ])("closes an OPEN program the server would refuse (%s)", async (reason, closedBy) => {
+        setSession({ id: 101, ageBand: 'adult' });
+        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentClosedBy: closedBy }) });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: new RegExp(`Enrollment Closed \\(${reason}\\)`) })).toBeDisabled();
+        expect(screen.getByText("Closed")).toBeInTheDocument();
+    });
+
+    it("keeps a full or ended program payable for a household with an unpaid claim", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                enrollmentClosedBy: "FULL",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    });
+
+    it("offers no way to pay an unpaid claim once enrollment is closed by hand", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: "CLOSED",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: /Enrollment Closed/ })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+    });
+
     it("shows a disabled closed CTA to a signed-out visitor", async () => {
         setSession(null, "unauthenticated");
-        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", phase: "UPCOMING", maxParticipants: null }) });
+        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", enrollmentClosedBy: "CLOSED", phase: "UPCOMING", maxParticipants: null }) });
         renderPage();
 
         await screen.findByText("Robotics Club");
