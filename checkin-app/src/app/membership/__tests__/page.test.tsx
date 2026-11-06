@@ -296,6 +296,60 @@ describe("membership page", () => {
     expect(await screen.findByText("Renewal in progress")).toBeInTheDocument();
   });
 
+  describe("the read after a save that returned no state", () => {
+    const intake = { process: { id: 1, kind: "INITIAL", status: "INTAKE" } };
+    const household = { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
+    const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
+    const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
+
+    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. */
+    function mockReads(reads: Array<[ok: boolean, body: unknown]>) {
+      let n = 0;
+      const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        void init;
+        const [ok, body] = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] : reads[Math.min(n++, reads.length - 1)];
+        return { ok, status: ok ? 200 : 403, ...jsonBody(body) } as Response;
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      return { fetchMock, reads: () => n };
+    }
+    const emName = () => screen.getByLabelText(/Emergency contact name/) as HTMLInputElement;
+
+    it("keeps unsaved input on a later reload when that read fails", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [false, { error: "denied" }], [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      expect(await screen.findByText("Progress saved.")).toBeInTheDocument();
+      await waitFor(() => expect(mock.reads()).toBe(2));
+
+      fireEvent.change(emName(), { target: { value: "Uncle Bo" } });
+      invalidateLoads();
+      await waitFor(() => expect(mock.reads()).toBe(3));
+      await settleAfter("/api/membership");
+      expect(emName().value).toBe("Uncle Bo");
+    });
+
+    it("fills in the saved people's ids, so a second save updates them", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(emName().value).toBe("From server"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.fetchMock.mock.calls.filter(([url]) => String(url).includes("/intake"))).toHaveLength(2));
+      const [, second] = mock.fetchMock.mock.calls.filter(([url]) => String(url).includes("/intake"));
+      expect(JSON.parse(String(second[1]?.body)).secondaryParent).toMatchObject({ id: 7, name: "Sam Second" });
+    });
+  });
+
   it("keeps the loader, never the become-a-member card, while a network failure is retried", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async () => { throw new Error("boom"); });

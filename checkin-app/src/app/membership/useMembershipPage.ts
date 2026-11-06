@@ -135,12 +135,10 @@ export function useMembershipPage() {
     sessionStatus === "authenticated" ? "/api/membership" : null,
   );
   const loading = state === null && !loadError;
-  // A background re-read keeps unsaved input, except the read after a save that returned no state.
-  const [reseedForm, setReseedForm] = useState(false);
+  // A background re-read keeps unsaved input.
   useSeedForm(loaded, false, (s) => {
-    if (form.isDirty && !reseedForm) applyState(s);
+    if (form.isDirty) applyState(s);
     else hydrate(s);
-    setReseedForm(false);
   });
 
   // Return from embedded signing: Zoho redirects back with ?signed=1 (or
@@ -261,10 +259,14 @@ export function useMembershipPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        // A null state means saved but unread; refetch so new people get their ids
-        // and a second save updates them rather than creating them again.
-        if (data.state) hydrate(data.state);
-        else { setReseedForm(true); load(); }
+        // A null state means saved but unread; read it once so new people get their ids
+        // and a second save updates them rather than creating them again. A failed read
+        // leaves the form as typed. This read is direct, not through useLoad, because only
+        // its own answer may replace the form: a later background reload must not.
+        const saved: IntakeState | null = data.state ?? await fetch("/api/membership")
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null);
+        if (saved) hydrate(saved);
         flash("Progress saved.");
         setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
       } else flash(apiError(data, "Could not save."), true);
