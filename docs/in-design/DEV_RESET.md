@@ -132,7 +132,7 @@ own name typed into a Shopify checkout. DR-1 asks the owner to confirm this.
 | Each library dev database (catalog, local-inventory, expense, income, receipt, bulk-donation, workflow-mapping) | Every table except its `_prisma_migrations` | Same catalog-driven truncate, per database |
 | Shopify-read dev database | Every ingested row | Same truncate |
 | Receipt-files bucket and uploaded-files storage, dev | Every object, every version | `DeleteObjects` over the dev bucket, including noncurrent versions if versioning is on |
-| Dev receipt mailbox | Every message older than a few days | A Workspace retention rule on that mailbox, set once by an admin (DR-5); the app's mail grant is read-only |
+| Dev receipt mailbox | Every message older than seven days | A Workspace retention rule on that mailbox, set once by an admin (DR-5); the app's mail grant is read-only |
 | Shopify dev store | Orders, customers, and app-minted discount codes that the seed did not create | Admin API, through the live-test guard |
 | QuickBooks sandbox | Entries carrying the app's key marker | Sandbox-only script (DR-3) |
 
@@ -148,7 +148,7 @@ queries anyone could run by hand and writes its result to `DevLedger`:
 - every library database holds exactly the rows its seed writes, by count per
   table;
 - the dev bucket holds no object dated before the reset, and the mailbox no
-  message older than its retention window;
+  message older than seven days;
 - the dev store holds no order, and no customer or product outside the seed's
   tags and the live-test suite's `citest-` prefix;
 - the sandbox holds no entry with the app's key marker dated before the reset.
@@ -195,15 +195,26 @@ to checkin's ids:
 
 1. Truncate checkin, then every library database, then Shopify-read.
 2. `seedBaseline` (checkin personas, roles, tools, a program, buckets).
-3. Each library's existing `db:seed`, in dependency order: global-catalog,
-   local-inventory, workflow-mapping, expense, income, bulk-donation. Receipt
-   starts empty, as it does today.
+3. Each library's seed, in dependency order: global-catalog, local-inventory,
+   workflow-mapping, expense, income, bulk-donation, receipt.
 4. Link: look up the external objects by name and write their ids (below).
 5. Ledger row.
 
-A library without a seed stays empty after a reset, which is the state it starts
-in on a fresh install. A library whose screens need data to be testable gets a
-seed in its own PR.
+Two things in the library seeds change for this:
+
+- **They refuse dev today.** Each seed script throws unless `CHECKIN_ENV` is
+  `local`. Each package exports its seed as a function, and the gate moves to the
+  callers: the CLI keeps its `local`-only refusal, and the reset calls the
+  function behind `assertDevActor`, which allows `local` and a verified org
+  member on `dev` and is dead on everything else. The seeds write only synthetic
+  rows, so allowing `dev` adds no reach into anything real.
+- **Receipt has no seed.** Its `db:seed` writes nothing, and nothing resets the
+  receipt database today, so receipt screens on dev show whatever has piled up.
+  After this change every reset empties it. A new receipt seed writes a few
+  synthetic receipts, one per state the screens show, so the receipt and
+  workflow-mapping screens have something to show after a reset. The contract
+  fixtures package holds validated sample payloads but no write path; the seed
+  can borrow their shapes, not load them.
 
 ### Seeded users
 
@@ -257,8 +268,10 @@ never deletes, what the full reset wipes, and what nothing touches.
 ### QuickBooks sandbox
 
 - **Set up once:** the Classes the seeded buckets name and the accounts the books
-  map roles name, created by an idempotent script in `packages/quickbooks/scripts`
-  that creates only what is missing.
+  map roles name. No script does this today; PR 6 adds one to
+  `packages/quickbooks/scripts` that creates only what is missing. It is also the
+  recovery step whenever the link step reports a Class or account it cannot find,
+  for example after the sandbox company is reset by hand.
 - **Wiped by a full reset:** Deposits, Purchases, Bills and Journal Entries
   carrying the app's key marker, found with the same created-since read the
   closed-books checks use. The closing date is set back to a fixed value so the
@@ -278,8 +291,8 @@ never deletes, what the full reset wipes, and what nothing touches.
 ### Shopify dev store
 
 - **Set up once:** a `dev-seed-membership` product with one variant per seeded
-  membership year, and one product per seeded program, tagged `dev-seed`. An
-  idempotent script creates what is missing.
+  membership year, and one product per seeded program, tagged `dev-seed`. A new
+  idempotent script (PR 6) creates what is missing.
 - **Wiped by a full reset:** every order; every customer; discount codes the app
   minted. Products are untouched unless they carry neither the `dev-seed` tag nor
   the `citest-` prefix, in which case they are listed, not deleted, so a
@@ -293,15 +306,14 @@ never deletes, what the full reset wipes, and what nothing touches.
 ### Gmail (dev receipt mailbox)
 
 - **Set up once:** a Google Workspace retention rule on the dev mailbox that
-  deletes mail older than a few days. The refresher's grant is
+  deletes mail older than seven days (DR-5). The refresher's grant is
   `gmail.readonly`, so neither the app nor the reset can delete mail, and this
   design keeps it that way.
 - **Wiped by a full reset:** nothing directly; the retention rule clears the
   mailbox continuously, and the reset clears the receipt database that holds
   what was read from it.
 - **Seeded:** nothing in the mailbox. Seeded receipts go straight into the
-  receipt database from `packages/receipt-contract-fixtures`, which is how the
-  pipeline's tests already feed it.
+  receipt database through the new receipt seed (see *Order*).
 - **Guards:** no reset code reaches the mailbox. Intake keeps
   `receiptMailboxConfig`, which refuses to bind dev to the production mailbox.
 
@@ -312,10 +324,11 @@ never deletes, what the full reset wipes, and what nothing touches.
   dev names, as the dev ledger-reconcile workflow does. The bucket name must be
   dev's.
 
-The QuickBooks and Shopify guards check *which target*, not *which
-environment*. Whether the reset exists at all is still decided by `CHECKIN_ENV`
-alone, so this pairs with the principle rather than adding a second
-environment signal.
+Whether the reset exists at all is decided by `CHECKIN_ENV` alone. The guards
+above then decide which target each step may touch. The QuickBooks guard also
+reads `CHECKIN_ENV` and refuses anything but `prod` or `dev` before it checks the
+realm; the reset calls it unchanged, so that refusal still applies. No reset step
+may reach QuickBooks or Shopify without going through its guard.
 
 ---
 
@@ -385,10 +398,12 @@ entry ships first in its own PR.
    dev deploy role run the full-reset task.
 4. **Dashboard Reset covers every database** (app): truncate and reseed the
    libraries in order, with the database-name assertion.
-5. **Library seeds look up ids by email and name** (app, one PR per library that
-   hard-codes them).
+5. **Library seeds run on dev and look up ids by email and name** (app, one PR
+   per library): export the seed as a function, move the environment gate to the
+   callers, drop the hard-coded checkin ids.
+5a. **Receipt seed** (app): synthetic receipts, one per screen state.
 6. **One-time setup scripts** for sandbox Classes and accounts, and dev-store
-   products (scripts only).
+   products (scripts only; neither exists today).
 7. **Link step** (app): read-only lookups after the seed; updates
    `shopify-dev-store.md` O4 to match DR-4.
 8. **Full-reset workflow and script** (app): files, dev store, then the PR 4
