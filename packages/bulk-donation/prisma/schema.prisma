@@ -165,6 +165,12 @@ model AccountMap {
   matchAccount          String   @map("match_account")
   /// @sensitivity:internal
   feesAccount           String   @map("fees_account")
+  /// QuickBooks account id a matched gift's donation amount books to; null until finance picks one.
+  /// @sensitivity:internal
+  donationAccountId     String?  @map("donation_account_id")
+  /// QuickBooks account id a matched gift's employer match books to; null until finance picks one.
+  /// @sensitivity:internal
+  matchAccountId        String?  @map("match_account_id")
   /// @sensitivity:internal
   createdAt             DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal

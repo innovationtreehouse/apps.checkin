@@ -40,6 +40,16 @@ describeDb("finance queue — expenses tab", () => {
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/inventory/receiving?queue=failed" }]);
   });
 
+  it("shows a failed intake's currency as a code: trimmed and upper-cased, or the default when it is not one", async () => {
+    for (const [receiptId, currency] of [["r-lower", " eur "], ["r-symbol", "$"]] as const) {
+      await db.receivedExpensePayload.create({
+        data: { orgId: ORG, receiptId, status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: receiptId, receiptTotalCents: 900, currency }) },
+      });
+    }
+    const rows = await financeQueueRows(FINANCE, "expenses");
+    expect(Object.fromEntries(rows.map((r) => [r.vendorName, r.currency]))).toMatchObject({ "r-lower": "EUR", "r-symbol": "USD" });
+  });
+
   it("counts a decision for FINANCE not conflicted on the expense, bookkeeping for any FINANCE, and nothing for the Board", async () => {
     await seedExpense({ state: "capital_review", submitterId: 11, needsReimbursement: true });
     expect((await financeQueueCounts(FINANCE)).expenses).toEqual({ actionable: 2, total: 2, byReason: { CAPITAL_REVIEW: 1, REIMBURSEE_TO_NAME: 1 } });

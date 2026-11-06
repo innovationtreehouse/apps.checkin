@@ -54,7 +54,7 @@ async function completed(disbursementId: string, overrides: { date?: string | nu
   const file = await makeFile(orgId);
   const tx = await makeTransaction(orgId, file.id, { disbursementId, disbursementDate: "2026-09-10", ownerId: 1 });
   const items = [
-    { type: "donation", account: "4000-Donations", amountCents: 1000, transactionId: tx.transactionId },
+    { type: "donation", account: "4000-Donations", accountId: "60", amountCents: 1000, transactionId: tx.transactionId },
     { type: "fees", account: "6000-Fees", amountCents: feeCents, transactionId: tx.transactionId },
   ];
   const payload = { version: 1, orgId, disbursementId, disbursementDate: date, disbursementFrom: "Benevity", items };
@@ -100,7 +100,7 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
       txnDate: "2026-09-10",
       netCents: 1000,
       bankRole: "BENEVITY_BANK",
-      lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 1, amountCents: 1000, description: "Benevity donations" }],
+      lines: [{ accountId: "60", budgetOwnerId: 1, amountCents: 1000, description: "Benevity donations" }],
       memo: "Benevity disbursement TEST-C1",
     });
   });
@@ -166,6 +166,21 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
     income.expectFails = false;
     expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 1, failed: 0 });
     expect(income.raised).toHaveLength(1);
+  });
+
+  it("raises a batch finished before its rules named accounts to finance, and hands over nothing", async () => {
+    const file = await makeFile(orgId);
+    const tx = await makeTransaction(orgId, file.id, { disbursementId: "TEST-OLD", disbursementDate: "2026-09-10", ownerId: 1 });
+    const items = [{ type: "donation", account: "4000-Donations", amountCents: 1000, transactionId: tx.transactionId }];
+    const payload = { version: 1, orgId, disbursementId: "TEST-OLD", disbursementDate: "2026-09-10", disbursementFrom: "Benevity", items };
+    await db.disbursementEvent.create({ data: { orgId, disbursementId: "TEST-OLD", payload: JSON.stringify(payload) } });
+
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+
+    expect(income.raised).toHaveLength(1);
+    expect(income.raised[0]).toEqual([{ disbursementId: "TEST-OLD", reason: expect.stringMatching(/finished before its account rules named QuickBooks accounts/) }]);
+    expect(income.expected.size).toBe(0);
   });
 
   it("raises again next run when the alert itself fails", async () => {

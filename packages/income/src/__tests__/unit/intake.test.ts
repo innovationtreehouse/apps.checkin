@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { qbKey } from "@checkin/quickbooks";
-import { parseExpected, statusOf, type ExpectedDeposit } from "../../lib/intake";
+import { expectedOf, parseExpected, statusOf, type ExpectedDeposit } from "../../lib/intake";
+import { expectedGap, missingRoles } from "../../lib/outbox";
 import { closedNote, CLOSED_NOTE, rowKey } from "../../lib/sources";
 import { matchWindow } from "../../lib/reconcile";
 import type { PayoutReconciliation } from "../../generated/prisma/client";
@@ -10,7 +11,7 @@ const deposit: ExpectedDeposit = {
   netCents: 900,
   bankRole: "BENEVITY_BANK",
   lines: [
-    { role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 1000 },
+    { accountId: "60", budgetOwnerId: 7, amountCents: 1000 },
     { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -100 },
   ],
 };
@@ -28,8 +29,30 @@ describe("parseExpected", () => {
     [{ lines: [] }, /at least one line/],
     [{ netCents: 901 }, /sum to 900/],
     [{ lines: [{ role: "BENEVITY_FEES", budgetOwnerId: 0, amountCents: 900 }] }, /budgetOwnerId/],
+    [{ lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: null, amountCents: 900 }] }, /QuickBooks account id/],
+    [{ lines: [{ budgetOwnerId: null, amountCents: 900 }] }, /QuickBooks account id/],
+    [{ lines: [{ accountId: "60", role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: 900 }] }, /not both/],
+    [{ lines: [{ accountId: "Donations", budgetOwnerId: null, amountCents: 900 }] }, /digits/],
   ])("refuses %j", (patch, message) => {
     expect(() => parseExpected({ ...deposit, ...patch } as ExpectedDeposit)).toThrow(message);
+  });
+});
+
+describe("a deposit handed over before rules named accounts", () => {
+  const legacy = { ...deposit, lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 1000 }, deposit.lines[1]] } as ExpectedDeposit;
+
+  it("still reads from a stored row", () => {
+    expect(expectedOf({ expected: legacy as never })?.lines[0]).toEqual({ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 1000 });
+  });
+
+  it("goes to finance rather than booking on the role's account", () => {
+    expect(expectedGap(legacy, () => undefined)).toMatch(/book it by hand or dismiss it/);
+    expect(expectedGap(deposit, () => undefined)).toBeNull();
+  });
+
+  it("needs no books-map role for a line that names its account", () => {
+    expect(missingRoles({ source: "benevity", expected: deposit as never }, { BENEVITY_BANK: "1", BENEVITY_FEES: "2" })).toEqual([]);
+    expect(missingRoles({ source: "benevity", expected: deposit as never }, { BENEVITY_BANK: "1" })).toEqual(["BENEVITY_FEES"]);
   });
 });
 

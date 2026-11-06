@@ -16,6 +16,7 @@ const inv = vi.hoisted(() => ({
   listSubcategories: vi.fn(),
   lookupItems: vi.fn(),
   getItem: vi.fn(),
+  getActiveItem: vi.fn(),
   getItemNames: vi.fn(),
 }));
 

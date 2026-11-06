@@ -12,8 +12,10 @@ import { getIncomeDeposits } from "../runtime";
 /** Disbursement ids per depositStatus read. */
 const STATUS_BATCH = 200;
 
-const ROLE = { donation: "BENEVITY_DONATIONS", match: "BENEVITY_MATCHES", fees: "BENEVITY_FEES" } as const;
 const DESCRIPTION = { donation: "Benevity donations", match: "Benevity matches", fees: "Benevity fees" } as const;
+
+/** Fees book to their books-map role until they reduce income. */
+const FEES_ROLE = "BENEVITY_FEES" as const;
 
 /** Outside prod only a TEST_PREFIX disbursement is handed over; prod never hands one over. */
 const sendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_PREFIX) !== deposits.prod;
@@ -24,9 +26,35 @@ const RAISED_EVENT = "DEPOSIT_HANDOVER_RAISED";
 /** A disbursement no re-send can hand over; its message goes to finance. */
 class DepositNotBuildable extends Error {}
 
+type PayoutItem = DisbursementPayloadV1["items"][number];
+
 /**
- * The deposit a completed disbursement should land as: one line per kind and bucket,
- * fees negative, an organization-level gift without a bucket. Throws DepositNotBuildable when it cannot be built.
+ * A finished batch's deposit lines: one per kind, account and bucket, fees negative on the fees
+ * role. `bucketOf` gives each gift's bucket, null for organization level. Zero lines are kept.
+ */
+export function depositLines(items: PayoutItem[], bucketOf: (transactionId: string) => number | null): DonationDepositLine[] {
+  const lines = new Map<string, DonationDepositLine>();
+  for (const item of items) {
+    const budgetOwnerId = bucketOf(item.transactionId);
+    if (item.type !== "fees" && !item.accountId) {
+      throw new DepositNotBuildable("it was finished before its account rules named QuickBooks accounts, so the app can't tell which accounts it books to");
+    }
+    const target = item.type === "fees" ? { role: FEES_ROLE } : { accountId: item.accountId };
+    const key = `${item.type}|${item.accountId ?? ""}|${budgetOwnerId ?? ""}`;
+    const signed = item.type === "fees" ? -item.amountCents : item.amountCents;
+    lines.set(key, {
+      ...target,
+      budgetOwnerId,
+      amountCents: sumCents(lines.get(key)?.amountCents ?? 0, signed),
+      description: DESCRIPTION[item.type],
+    });
+  }
+  return [...lines.values()];
+}
+
+/**
+ * The deposit a completed disbursement should land as: its lines, without zero ones, and an
+ * organization-level gift without a bucket. Throws DepositNotBuildable when it cannot be built.
  */
 export async function expectedDeposit(e: Pick<DisbursementEvent, "orgId" | "disbursementId" | "payload">): Promise<DonationExpectedDeposit> {
   const payload = DisbursementPayloadV1.parse(JSON.parse(e.payload));
@@ -39,23 +67,13 @@ export async function expectedDeposit(e: Pick<DisbursementEvent, "orgId" | "disb
       })
     ).map((t) => [t.transactionId, t]),
   );
-  const lines = new Map<string, DonationDepositLine>();
-  for (const item of payload.items) {
-    const gift = gifts.get(item.transactionId);
-    if (!gift) throw new DepositNotBuildable(`gift ${item.transactionId} is not in the disbursement`);
-    if (!gift.isOrganizationalLevel && gift.ownerId === null) throw new DepositNotBuildable(`gift ${item.transactionId} has no owner`);
-    const budgetOwnerId = gift.isOrganizationalLevel ? null : gift.ownerId;
-    const key = `${item.type}|${budgetOwnerId ?? ""}`;
-    const signed = item.type === "fees" ? -item.amountCents : item.amountCents;
-    const prev = lines.get(key);
-    lines.set(key, {
-      role: ROLE[item.type],
-      budgetOwnerId,
-      amountCents: sumCents(prev?.amountCents ?? 0, signed),
-      description: DESCRIPTION[item.type],
-    });
-  }
-  const nonZero = [...lines.values()].filter((l) => l.amountCents !== 0);
+  const bucketOf = (transactionId: string) => {
+    const gift = gifts.get(transactionId);
+    if (!gift) throw new DepositNotBuildable(`gift ${transactionId} is not in the disbursement`);
+    if (!gift.isOrganizationalLevel && gift.ownerId === null) throw new DepositNotBuildable(`gift ${transactionId} has no owner`);
+    return gift.isOrganizationalLevel ? null : gift.ownerId;
+  };
+  const nonZero = depositLines(payload.items, bucketOf).filter((l) => l.amountCents !== 0);
   const netCents = sumCents(...nonZero.map((l) => l.amountCents));
   if (netCents <= 0) throw new DepositNotBuildable("it nets to zero or less, so no deposit is due");
   return { txnDate: payload.disbursementDate, netCents, bankRole: "BENEVITY_BANK", lines: nonZero, memo: `Benevity disbursement ${e.disbursementId}` };

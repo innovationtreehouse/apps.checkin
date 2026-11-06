@@ -104,6 +104,8 @@ check_release() {
 check_urgent() {
   local target
   target=$(resolve_tag "$KIOSK_URGENT_TAG") || return 0
+  # A new or reinstalled Pi takes the tag it first sees as an old force, not a new one.
+  [ -z "$(get urgent)" ] && { put urgent "$target"; log "recorded $target as the last force"; return 0; }
   [ "$target" = "$(get urgent)" ] && return 0
   # A failed pull stays unrecorded, so an offline kiosk applies the force on reconnect.
   docker pull "$KIOSK_IMAGE@$target" >/dev/null || { log "pull failed; will retry"; return 0; }

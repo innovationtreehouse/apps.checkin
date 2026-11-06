@@ -7,6 +7,7 @@ import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
 import { checkoutVariantId } from '@/lib/programs/variants';
+import type { EnrollmentClosedBy } from '@/lib/programs/saleState';
 import { useIsLocalInstance, useShopifyStoreDomain } from '@/components/EnvProvider';
 
 
@@ -25,6 +26,8 @@ export type ProgramDetail = {
   phase: string;
   maxParticipants: number | null;
   enrollmentStatus: string;
+  // Server-derived: why a new claim would be refused, null when open.
+  enrollmentClosedBy: EnrollmentClosedBy | null;
   orgMemberPriceCents: number | null;
   nonOrgMemberPriceCents: number | null;
   // Single-pool model: the ONE variant for both tiers — member pricing comes

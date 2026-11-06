@@ -442,21 +442,34 @@ export async function bookExpenseToQb(orgId: string, expenseId: string, actor: A
   const outcome = await postExpenseToQb(orgId, expenseId, { book: true, close });
   if (outcome === "unbound") throw new ServiceError(503, "QuickBooks is not connected");
   const saved = await db.expense.findFirstOrThrow({ where: { id: expenseId, orgId }, select: { qbMatchState: true } });
-  switch (saved.qbMatchState) {
-    case "CREATED":
-    case "MATCHED":
-      return;
+  if (saved.qbMatchState === "CREATED" || saved.qbMatchState === "MATCHED") return;
+  const detail = saved.qbMatchState === "NEEDS_FINANCE" ? await lastPostError(expenseId) : null;
+  throw bookRefusal(saved.qbMatchState, outcome, detail);
+}
+
+/** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
+const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
+
+/** Why the expense last went to NEEDS_FINANCE, as finance reads it on the expense; null when no note says. */
+export async function lastPostError(expenseId: string): Promise<string | null> {
+  const last = await db.expenseAuditLog.findFirst({ where: { expenseId, action: "qb_needs_finance" }, orderBy: { changedAt: "desc" }, select: { notes: true } });
+  return last?.notes?.replace(ATTEMPT_PREFIX, "") || null;
+}
+
+/** The refusal for a "book it" that left the expense in `state`; `detail` is why a NEEDS_FINANCE expense waits. */
+export function bookRefusal(state: string, outcome: PostOutcome, detail: string | null): ServiceError {
+  switch (state) {
     case "UNBOOKED":
-      throw new ServiceError(
+      return new ServiceError(
         409,
         outcome === "waiting"
           ? "Not booked yet: a sign-off is missing, the daily limit is reached, or a post is in flight; try again later"
           : "The expense is dated in closed books; it can only be matched",
       );
     case "POST_FAILED":
-      throw new ServiceError(503, "QuickBooks failed while booking; the expense waits as POST_FAILED and the drain retries it");
+      return new ServiceError(503, "QuickBooks failed while booking; the expense waits as POST_FAILED and the drain retries it");
     default:
-      throw new ServiceError(409, `Not booked: the expense now waits as ${saved.qbMatchState}`);
+      return new ServiceError(409, `Not booked: ${detail ? `${detail}; ` : ""}the expense now waits as ${state}`);
   }
 }
 

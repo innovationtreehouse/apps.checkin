@@ -14,15 +14,15 @@ async function actor(req: Request): Promise<{ userId: number; username: string; 
 
 const required = (label: string) => z.string().trim().min(1, `${label} is required`);
 const optional = z.string().trim().nullish().transform((s) => (s ? s : null));
+const qbAccountId = optional.refine((s) => s === null || /^\d+$/.test(s), "must be a QuickBooks account id (digits only)");
 
 const accountMapSchema = z.object({
   companyName: required("companyName"),
   corporatePeerCampaign: required("corporatePeerCampaign"),
   donationMethod: optional,
   donationType: optional,
-  donationAccount: required("donationAccount"),
-  matchAccount: required("matchAccount"),
-  feesAccount: required("feesAccount"),
+  donationAccountId: qbAccountId,
+  matchAccountId: qbAccountId,
 });
 
 export const listCommentRules: DonationRouteHandler = async ({ req }) => {

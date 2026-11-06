@@ -71,6 +71,8 @@ export const classifications = {
         donationAccount: 'internal',
         matchAccount: 'internal',
         feesAccount: 'internal',
+        donationAccountId: 'internal',
+        matchAccountId: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },

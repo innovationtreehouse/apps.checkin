@@ -910,6 +910,65 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
   });
 });
 
+describeDb("postPayout — a deposit finance voided", () => {
+  beforeEach(switchOn);
+
+  /** An attempted payout whose create landed but never settled: QuickBooks holds its keyed deposit. */
+  const landed = async () => {
+    const g = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "POST_FAILED" });
+    qbo.mode = "ok";
+    const first = qbo.deposits.at(-1);
+    if (!first) throw new Error("no deposit");
+    return { g, first };
+  };
+  /** QuickBooks keeps a voided entry's memo, at a zero total. */
+  const voidEntry = (entry: QboDeposit) => void (entry.TotalAmt = 0);
+  const secondKeyedEntry = (entry: QboDeposit) => {
+    const copy = { ...entry, Id: "7001" };
+    qbo.deposits.push(copy);
+    qbo.createdAt.set(copy.Id, Date.now());
+    return copy;
+  };
+
+  it("finance's retry books a replacement when the only keyed deposit was voided, and never links the voided one", async () => {
+    const { g, first } = await landed();
+    voidEntry(first);
+
+    const row = await resolve(g, { action: "retry" });
+
+    expect(qbo.posts).toHaveLength(2);
+    const replacement = qbo.deposits.at(-1);
+    expect(replacement?.Id).not.toBe(first.Id);
+    expect(row).toMatchObject({ status: "POSTED", origin: "created", depositId: replacement?.Id });
+  });
+
+  it("finance's dismiss links the live deposit when one of two keyed deposits was voided", async () => {
+    const { g, first } = await landed();
+    const live = secondKeyedEntry(first);
+    voidEntry(first);
+
+    expect(await resolve(g, { action: "dismiss", reason: "booked elsewhere" })).toMatchObject({ status: "POSTED", origin: "created", depositId: live.Id });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("finance's dismiss is refused while two live deposits carry the payout's key", async () => {
+    const { g, first } = await landed();
+    secondKeyedEntry(first);
+
+    await expect(resolve(g, { action: "dismiss", reason: "booked elsewhere" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("finance's dismiss applies when the payout's only keyed deposit was voided", async () => {
+    const { g, first } = await landed();
+    voidEntry(first);
+
+    expect(await resolve(g, { action: "dismiss", reason: "booked elsewhere" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", depositId: null });
+  });
+});
+
 describeDb("drainIncomeOutbox — deposit lines", () => {
   beforeEach(switchOn);
 
@@ -1554,7 +1613,7 @@ describeDb("income settings", () => {
 
 describeDb("a second source: Benevity deposits handed over through expectDeposit", () => {
   const BENEVITY_BANK = "36";
-  const ROLES: Partial<Record<BooksMapRole, string>> = { ...SHOPIFY_ROLES, BENEVITY_BANK, BENEVITY_DONATIONS: "60", BENEVITY_MATCHES: "61", BENEVITY_FEES: "62" };
+  const ROLES: Partial<Record<BooksMapRole, string>> = { ...SHOPIFY_ROLES, BENEVITY_BANK, BENEVITY_FEES: "62" };
   let roleAccounts: Partial<Record<BooksMapRole, string>>;
   const booksMap: BooksMap = { accounts: async () => roleAccounts, classes: async () => new Map([[7, "700"]]) };
 
@@ -1564,8 +1623,8 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     netCents: 14_700,
     bankRole: "BENEVITY_BANK",
     lines: [
-      { role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 10_000, description: "Benevity donations" },
-      { role: "BENEVITY_MATCHES", budgetOwnerId: null, amountCents: 5_000 },
+      { accountId: "60", budgetOwnerId: 7, amountCents: 10_000, description: "Benevity donations" },
+      { accountId: "61", budgetOwnerId: null, amountCents: 5_000 },
       { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -300 },
     ],
     memo: "Benevity disbursement D1",
@@ -1586,7 +1645,7 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await rowFor("D1")).toMatchObject({ source: "benevity", status: "WAITING", payoutDate: "2026-06-28", payoutNetCents: 14_700 });
     expect(await status()).toEqual({ state: "waiting" });
 
-    const later = disbursement("2026-06-29", { netCents: 14_800, lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_800 }] });
+    const later = disbursement("2026-06-29", { netCents: 14_800, lines: [{ accountId: "60", budgetOwnerId: 7, amountCents: 14_800 }] });
     expect(await expect1("D1", later)).toBe("updated");
     expect(await rowFor("D1")).toMatchObject({ payoutDate: "2026-06-29", payoutNetCents: 14_800 });
 
@@ -1764,10 +1823,22 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await settings()).toMatchObject({ qbPostingOnAt: ON_AT, benevityQbPostingOnAt: null });
   });
 
-  it("a Benevity source with no deposit yet needs only its bank; a line needs its role", () => {
+  it("a Benevity source with no deposit yet needs only its bank; a fee line needs its role", () => {
     expect(missingRoles({ source: "benevity", expected: null }, {})).toEqual(["BENEVITY_BANK"]);
     expect(missingRoles({ source: "benevity", expected: null }, { BENEVITY_BANK })).toEqual([]);
-    const one = disbursement("2026-06-28", { lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: null, amountCents: 14_700 }] });
-    expect(missingRoles({ source: "benevity", expected: one }, { BENEVITY_BANK })).toEqual(["BENEVITY_DONATIONS"]);
+    expect(missingRoles({ source: "benevity", expected: disbursement() }, { BENEVITY_BANK })).toEqual(["BENEVITY_FEES"]);
+  });
+
+  it("sends finance a deposit stored before its lines named accounts, rather than booking it on a role", async () => {
+    await switchOn();
+    await expect1();
+    const row = await rowFor("D1");
+    const legacy = { ...disbursement(), lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_700 }] };
+    await db.payoutReconciliation.update({ where: { id: row!.id }, data: { expected: legacy } });
+    roleAccounts = { ...ROLES, BENEVITY_DONATIONS: "60" };
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, held: 1 } });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await rowFor("D1")).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: expect.stringMatching(/book it by hand or dismiss it/) });
   });
 });

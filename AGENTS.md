@@ -167,6 +167,10 @@ from `client/Dockerfile` on the flow stack, with a throwaway signing key and a
 fake `evdev` fed from a pipe. Run it with `npm run test:flow:kiosk`, a Docker-backed
 tier: ask first. CI runs it on arm64 for PRs touching `client/**` or kiosk routes.
 It does not cover the real scanner, Chromium or the host's systemd units.
+Its browser tier, `checkin-app/kiosk-flow/*.kiosk-e2e.ts`, drives Chromium on the
+kiosk's own page through the same harness (`npm run test:e2e:kiosk`, Docker-backed:
+ask first). It runs nightly on arm64 beside the browser e2e run. It does not cover
+Chromium on the Pi.
 
 To add a journey: drop a `flow-tests/<name>.flow.test.ts` using `loginAs`/`api`,
 keep it to real HTTP calls + response assertions. Prefer routes that don't need

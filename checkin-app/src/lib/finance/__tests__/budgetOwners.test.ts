@@ -11,7 +11,7 @@
  */
 import { createBudgetOwner, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
-import { linesAwaitingBoardSeat } from '@checkin/expense';
+import { holdBucketLines } from '@checkin/expense';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
 const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null }> = {
@@ -26,7 +26,7 @@ const tx = {
     $queryRaw: jest.fn(),
 };
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
-jest.mock('@checkin/expense', () => ({ linesAwaitingBoardSeat: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
@@ -152,13 +152,15 @@ describe('approvers and the org-level flag, changed at once', () => {
 });
 
 describe('updateBudgetOwner: org-level and restore', () => {
-    const awaiting = linesAwaitingBoardSeat as jest.Mock;
+    const held = holdBucketLines as jest.Mock;
+    const awaiting = jest.fn();
     const stored = (over: Record<string, unknown> = {}) => ({
         name: 'Shop', quickBooksClassId: '12', isOrgLevel: false, archivedAt: null, ownerId: null, _count: { treasurers: 0 }, ...over,
     });
 
     beforeEach(() => {
         awaiting.mockResolvedValue(0);
+        held.mockImplementation((_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => change(awaiting));
         tx.budgetOwner.update.mockResolvedValue({ id: 7 });
     });
 
@@ -188,7 +190,7 @@ describe('updateBudgetOwner: org-level and restore', () => {
                 newData: { isOrgLevel: true },
             }),
         });
-        expect(awaiting).not.toHaveBeenCalled();
+        expect(held).not.toHaveBeenCalled();
     });
 
     test('refuses to make an org-level bucket a program bucket while a Board seat is awaited, writing nothing', async () => {
@@ -198,7 +200,8 @@ describe('updateBudgetOwner: org-level and restore', () => {
             status: 409,
             message: 'Open expenses in this bucket still need a Board signature; have them signed or recorded first.',
         });
-        expect(awaiting).toHaveBeenCalledWith(8);
+        expect(held).toHaveBeenCalledWith(8, expect.any(Function));
+        expect(awaiting).toHaveBeenCalled();
         nothingWritten();
     });
 
@@ -212,6 +215,27 @@ describe('updateBudgetOwner: org-level and restore', () => {
                 newData: { isOrgLevel: false },
             }),
         });
+    });
+
+    test('takes the line hold before the bucket row lock and keeps it until the flag change commits', async () => {
+        const events: string[] = [];
+        held.mockImplementation(async (_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => {
+            events.push('hold');
+            const bucket = await change(awaiting);
+            events.push('release');
+            return bucket;
+        });
+        tx.$queryRaw.mockImplementation(async () => {
+            events.push('row lock');
+            return [{ isOrgLevel: true }];
+        });
+        tx.budgetOwner.update.mockImplementation(async () => {
+            events.push('flag written');
+            return { id: 8 };
+        });
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        await updateBudgetOwner(1, 8, { isOrgLevel: false });
+        expect(events).toEqual(['hold', 'row lock', 'flag written', 'release']);
     });
 
     test('an edit that keeps the flag checks neither approvers nor seats', async () => {

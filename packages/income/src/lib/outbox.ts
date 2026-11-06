@@ -7,7 +7,7 @@ import { getIncomeConfig, incomeRuntime, isoDay } from "../runtime";
 import { readIncomeSettings } from "../services/settingsService";
 import { bucketProblems, checkBuckets, type BucketProblem } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
-import { expectedOf, type ExpectedDeposit } from "./intake";
+import { expectedOf, FEE_LINE_ROLE, type ExpectedDeposit } from "./intake";
 import { toQbDeposit } from "./qb-deposits";
 import type { TxClient } from "./audit";
 import {
@@ -148,8 +148,13 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   return parts.length ? parts.join("; ") : null;
 }
 
-/** Why a Benevity deposit can't be built yet, naming its unusable buckets, or null when every line's bucket is usable. */
+/** What finance is told about a deposit handed over before its lines named their accounts. */
+export const NO_LINE_ACCOUNT =
+  "handed over before the giving-platform account rules named QuickBooks accounts, so the app can't tell which accounts it books to; book it by hand or dismiss it";
+
+/** Why a Benevity deposit can't be built yet: a line without its account, or its unusable buckets; null when it can. */
 export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): string | null {
+  if (expected.lines.some((l) => l.accountId === undefined && l.role !== FEE_LINE_ROLE)) return NO_LINE_ACCOUNT;
   const broken = new Map<number, string>();
   for (const l of expected.lines) {
     const issue = l.budgetOwnerId == null ? undefined : problem(l.budgetOwnerId);
@@ -162,7 +167,7 @@ export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): 
 export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
   const expected = isBenevity(row) ? expectedOf(row) : null;
   const roles = isBenevity(row)
-    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).map((l) => l.role)]
+    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).flatMap((l) => (l.accountId === undefined && l.role ? [l.role] : []))]
     : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
   return [...new Set(roles)].filter((r) => !accounts[r]);
 }
@@ -214,22 +219,27 @@ function holdForMapping(
 type DepositBasis = { payout: MirrorPayout; sales: PayoutSales } | { expected: ExpectedDeposit };
 
 /**
- * The deposit income would create for a row, its accounts and Classes resolved through the books
- * map. A payout's lines split by bucket; an expected deposit's lines are the lane's own. Both sum
- * to the row's net.
+ * The deposit income would create for a row. A payout's lines split by bucket; an expected deposit's
+ * lines are the lane's own, each on the account it names. Roles and Classes resolve through the books
+ * map. Both sum to the row's net.
  */
 async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
   const lines =
     "expected" in basis
-      ? basis.expected.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
-      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({ ...l, role: SHOPIFY_LINE_ROLES[l.account], description: undefined }));
+      ? basis.expected.lines.map((l) => ({ accountId: l.accountId, role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
+      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({
+          ...l,
+          accountId: undefined,
+          role: SHOPIFY_LINE_ROLES[l.account],
+          description: undefined,
+        }));
   const bankRole = "expected" in basis ? basis.expected.bankRole : BANK_ROLE.shopify;
 
   const bucketed = lines.some((l) => l.budgetOwnerId !== null);
   const [owners, classes] = bucketed ? await Promise.all([getIncomeConfig().owners?.list() ?? [], bucketClasses()]) : [[], new Map<number, string>()];
   const buckets = new Map(owners.map((o) => [o.id, o]));
-  const account = (role: string) => {
-    const id = accounts[role as keyof RoleAccounts];
+  const account = (role: string | undefined) => {
+    const id = role && accounts[role as keyof RoleAccounts];
     if (!id) throw new Error(`the books-map role ${role} has no QuickBooks account`);
     return id;
   };
@@ -240,7 +250,7 @@ async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: R
       depositToAccountId: account(bankRole),
       memo: "expected" in basis ? (basis.expected.memo ?? "Benevity disbursement") : "Shopify payout",
       lines: lines.map((l): WriteLine => {
-        const base = { amountCents: l.amountCents, accountId: account(l.role), ...(l.description ? { description: l.description } : {}) };
+        const base = { amountCents: l.amountCents, accountId: l.accountId ?? account(l.role), ...(l.description ? { description: l.description } : {}) };
         if (l.budgetOwnerId === null) return base;
         const bucket = buckets.get(l.budgetOwnerId);
         if (!bucket) throw new Error(`bucket ${l.budgetOwnerId} is not in the owner directory`);
@@ -276,17 +286,19 @@ const appKeysOf = (entry: { PrivateNote?: string }) => appKeyOf(entry)?.split(" 
 /**
  * Look for the deposit the app created for an attempted payout: every deposit QuickBooks
  * created since the first attempt, kept when its memo carries the payout's key. An entry
- * carrying more than one key is never taken as the payout's own. Throws when the read fails.
+ * carrying more than one key is never taken as the payout's own. A voided deposit keeps its
+ * memo at a zero total, so a $0 deposit is not the payout's own unless the payout nets to $0.
+ * Throws when the read fails.
  */
 export async function ownEntry(
   client: QuickBooksClient,
   orgId: string,
-  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid">,
+  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid" | "payoutNetCents">,
   since: Date,
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
   const key = rowKey(row);
-  const keyed = entries.filter((e) => appKeysOf(e).includes(key));
+  const keyed = entries.filter((e) => appKeysOf(e).includes(key) && (e.TotalAmt !== 0 || row.payoutNetCents === 0));
   if (full) return { kind: "unsure", note: "the app may already have booked this payout: QuickBooks returned a full page of new deposits" };
   const shared = keyed.find((e) => appKeysOf(e).length > 1);
   if (shared) return { kind: "unsure", note: `the app may already have booked this payout: deposit ${shared.Id} carries more than one app key` };

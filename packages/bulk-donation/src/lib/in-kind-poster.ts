@@ -148,7 +148,11 @@ async function heldIds(orgId: string, entity: Entry["entity"]): Promise<Set<stri
   return new Set(rows.flatMap((r) => (r.qbTxnId ? [r.qbTxnId] : [])));
 }
 
-/** The app's own JournalEntry for an attempted gift, found by key among those created since the attempt. */
+/**
+ * The app's own JournalEntry for an attempted gift, found by key among those created since the
+ * attempt. A voided entry keeps its memo at a zero total, and a gift with no value is never
+ * booked, so a $0 entry is never a gift's own.
+ */
 export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift: Pick<GiftToBook, "source" | "id">, since: Date): Promise<Settlement | null> {
   let read: { entries: QboJournalEntry[]; full: boolean };
   try {
@@ -158,7 +162,7 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
   }
   if (read.full) return needsFinance("The app may already have booked this gift: the read of JournalEntries created since its first attempt filled a page");
   const key = inKindKey(run.orgId, gift.source, gift.id);
-  const keyed = read.entries.filter((j) => appKeyOf(j)?.split(" ").includes(key));
+  const keyed = read.entries.filter((j) => j.TotalAmt !== 0 && appKeyOf(j)?.split(" ").includes(key));
   if (keyed.length === 0) return null;
   if (keyed.length > 1 || appKeyOf(keyed[0]) !== key) return needsFinance(`The app may already have booked this gift: JournalEntries ${keyed.map((j) => j.Id).join(", ")} carry its key`);
   const own = keyed[0];
@@ -429,6 +433,8 @@ export async function sweepInKindQbStrays(
   const byKey = new Map(attempted.map((p) => [inKindKey(orgId, p.source, p.giftId), p]));
   let flagged = 0;
   for (const entry of read.entries) {
+    // A voided entry keeps its memo at a zero total.
+    if (entry.TotalAmt === 0) continue;
     for (const key of appKeyOf(entry)?.split(" ") ?? []) {
       if (!key.startsWith(`${KEY_LANE}:`)) continue;
       const gift = byKey.get(key);

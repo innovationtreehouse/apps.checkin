@@ -40,17 +40,17 @@ describe("buildDepositLines", () => {
     expect(sum(lines)).toBe(8418);
   });
 
-  it("splits a charge smaller than its lines proportionally, rounding left at org level", () => {
+  it("splits a charge smaller than its lines proportionally, the leftover cent to a line", () => {
     const lines = buildDepositLines({
       payoutNetCents: 1000,
       txns: [txn("charge", "O1", 1000)],
       orderLines: [line("O1", "V-shirt", 1000), line("O1", "V-camp", 1000), line("O1", "V-mug", 1000)],
       categories,
     });
-    expect(find(lines, "income", 7)).toBe(333);
+    expect(find(lines, "income", 7)).toBe(334);
     expect(find(lines, "income", 9)).toBe(333);
     expect(find(lines, "income", null)).toBe(333);
-    expect(find(lines, "charge_remainder")).toBe(1);
+    expect(find(lines, "charge_remainder")).toBeUndefined();
     expect(sum(lines)).toBe(1000);
   });
 
@@ -154,7 +154,7 @@ describe("buildDepositLines", () => {
     expect(sum(lines)).toBe(-2000);
   });
 
-  it("leaves refund rounding at org level so the lines sum exactly to the refund", () => {
+  it("gives refund rounding to the lines so they sum exactly to the refund", () => {
     const lines = buildDepositLines({
       payoutNetCents: -1000,
       txns: [txn("refund", "O1", -1000)],
@@ -167,8 +167,8 @@ describe("buildDepositLines", () => {
     });
     expect(find(lines, "income", 7)).toBe(-333);
     expect(find(lines, "income", 9)).toBe(-333);
-    expect(find(lines, "income", null)).toBe(-333);
-    expect(find(lines, "charge_remainder")).toBe(-1);
+    expect(find(lines, "income", null)).toBe(-334);
+    expect(find(lines, "charge_remainder")).toBeUndefined();
     expect(sum(lines)).toBe(-1000);
   });
 

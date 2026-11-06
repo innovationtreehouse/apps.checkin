@@ -2,7 +2,7 @@
  * Upload guards that need no database: the CSV allowlist, the size cap enforced before the body
  * is buffered, and a unique-key collision answered as a 400 instead of a 500.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const transaction = vi.fn();
 vi.mock("../../db", async (importOriginal) => ({
@@ -15,6 +15,18 @@ vi.mock("../../runtime", async (importOriginal) => ({
   getPrincipal: async () => ({ id: 1, name: "Finance" }),
   getOwnerDirectory: () => ({ list: async () => [] }),
 }));
+
+const parseSpy = vi.hoisted(() => ({ fail: null as Error | null }));
+vi.mock("../../lib/csv-parser", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../lib/csv-parser")>();
+  return {
+    ...real,
+    parseBenevityCsv: (buffer: Buffer) => {
+      if (parseSpy.fail) throw parseSpy.fail;
+      return real.parseBenevityCsv(buffer);
+    },
+  };
+});
 
 import { upload } from "../../routes/uploads";
 import { uploadedFileService } from "../../services/uploadedFileService";
@@ -31,6 +43,15 @@ function formRequest(file: File): Request {
 
 function callUpload(req: Request) {
   return upload({ req, params: {} } as Parameters<typeof upload>[0]);
+}
+
+async function failure(p: Promise<unknown>): Promise<{ status?: number; message: string }> {
+  try {
+    await p;
+  } catch (err) {
+    return err as { status?: number; message: string };
+  }
+  throw new Error("expected the upload to fail");
 }
 
 async function status(p: Promise<unknown>): Promise<number | undefined> {
@@ -53,7 +74,7 @@ describe("upload allowlist", () => {
 
   it("accepts a .csv labelled the way Excel on Windows labels it", async () => {
     transaction.mockResolvedValueOnce({ id: 7 });
-    const res = await callUpload(formRequest(new File(["Transaction ID"], "gifts.csv", { type: "application/vnd.ms-excel" })));
+    const res = await callUpload(formRequest(new File(["Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee"], "gifts.csv", { type: "application/vnd.ms-excel" })));
     expect(res).toMatchObject({ UploadedFile: { id: 7, originalFilename: "gifts.csv" } });
   });
 });
@@ -119,5 +140,48 @@ describe("processUpload unique collisions", () => {
     transaction.mockRejectedValue(Object.assign(new Error("boom"), { code: "P1001" }));
     const p = uploadedFileService.processUpload("org-1", 1, "u", "f.csv", Buffer.from("x"), [row("T1")], null);
     await expect(p).rejects.toThrow("boom");
+  });
+});
+
+describe("upload parse failures", () => {
+  const csv = (text: string) => formRequest(new File([text], "gifts.csv", { type: "text/csv" }));
+
+  afterEach(() => {
+    parseSpy.fail = null;
+    vi.restoreAllMocks();
+  });
+
+  it("names the missing Transaction ID header", async () => {
+    const err = await failure(callUpload(csv("Txn Id,Donation Amount\nT1,5.00\n")));
+    expect(err.status).toBe(400);
+    expect(err.message).toContain('no header row with a "Transaction ID" column');
+  });
+
+  it("names the line and column of a malformed row without echoing the cell", async () => {
+    const err = await failure(callUpload(csv('Transaction ID,Donor First Name\nT1,x"Pat Example"\n')));
+    expect(err.status).toBe(400);
+    expect(err.message).toContain("line 2, column 2");
+    expect(err.message).not.toContain("Pat Example");
+  });
+
+  it("reports an unexpected parser exception as an app error with a reference, and logs it", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    parseSpy.fail = new TypeError("Cannot read properties of undefined (donor Pat Example)");
+    const req = new Request("http://x/api/donations/uploaded-files", {
+      method: "POST",
+      body: (() => {
+        const form = new FormData();
+        form.set("file", new File(["Transaction ID\nT1\n"], "gifts.csv", { type: "text/csv" }));
+        return form;
+      })(),
+      headers: { "x-correlation-id": "ref-123" },
+    });
+    const err = await failure(callUpload(req));
+    expect(err.status).toBe(500);
+    expect(err.message).toContain("ref-123");
+    expect(err.message).toMatch(/not a problem with the file/i);
+    expect(err.message).not.toContain("Pat Example");
+    expect(err.message).not.toContain("TypeError");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("ref-123"), parseSpy.fail);
   });
 });

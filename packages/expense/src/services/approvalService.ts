@@ -7,7 +7,7 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
-import { isConflicted, filledSeatsByLine, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
+import { isConflicted, filledSeatsByLine, lockBucketLines, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
 import { APPROVABLE_STATUSES, approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
@@ -258,6 +258,7 @@ export async function financeAssign(
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
+    await lockBucketLines(tx, ownerId);
     await transition(tx, approval, {
       ownerId,
       status: "finance_assigned",
@@ -312,6 +313,7 @@ export async function assignOwner(
   await db.$transaction(async (tx) => {
     // Sorted, so two assignments touching the same expenses lock them in the same order.
     for (const id of [...new Set([expenseId, ...siblings.map((s) => s.expenseId)])].sort()) await lockExpense(tx, id);
+    await lockBucketLines(tx, ownerId);
     await transition(tx, approval, assigned);
     await writeAudit(tx, actor, {
       expenseId,
@@ -356,6 +358,7 @@ export async function resolveUnknown(
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
+    await lockBucketLines(tx, ownerId);
     await transition(tx, approval, { ownerId, status: "pending", decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, {
       expenseId,

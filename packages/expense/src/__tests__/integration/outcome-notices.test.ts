@@ -114,6 +114,7 @@ describeDb("outcome notices: written by the final transitions only", () => {
         listSubcategories: async () => [{ id: 10, name: "Cables", number: 1, categoryId: 1 }],
         lookupItems: async () => [{ index: li, gtin13: "0000000000017", conversionVersion: 1 }],
         getItem: async (gtin13: string) => ({ gtin13, categoryId: 1, subcategoryId: 10 }),
+        getActiveItem: async () => null,
         getItemNames: async () => [],
       },
     });

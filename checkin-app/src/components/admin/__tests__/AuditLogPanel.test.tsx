@@ -44,7 +44,8 @@ describe("AuditLogPanel", () => {
   it("shows a failure message when the fetch fails", async () => {
     mockFetchJson({});
     renderWithProviders(<AuditLogPanel />);
-    expect(await screen.findByText("Failed to load audit log.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the audit log")).toBeInTheDocument();
+    expect(screen.queryByText("No audit entries match these filters.")).not.toBeInTheDocument();
   });
 
   it("refetches with the from-date filter and resets to page 1", async () => {

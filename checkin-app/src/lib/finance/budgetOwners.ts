@@ -106,7 +106,7 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
     }
     if (Object.keys(data).length === 0) throw badRequest("Nothing to change.");
 
-    return prisma.$transaction(async (tx) => {
+    const change = (awaitingBoardSeat: () => Promise<number>) => prisma.$transaction(async (tx) => {
         await lockBucket(tx, id);
         const stored = await tx.budgetOwner.findUnique({
             where: { id },
@@ -120,8 +120,7 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
         }
         if (data.isOrgLevel === false && before.isOrgLevel) {
             // A program bucket's lines take no Board seat, so the change would drop a seat still owed.
-            const { linesAwaitingBoardSeat } = await import("@checkin/expense");
-            if ((await linesAwaitingBoardSeat(id)) > 0) {
+            if ((await awaitingBoardSeat()) > 0) {
                 throw new ApiResponseError(409, "Open expenses in this bucket still need a Board signature; have them signed or recorded first.");
             }
         }
@@ -131,6 +130,10 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
         });
         return bucket;
     });
+    if (data.isOrgLevel !== false) return change(async () => 0);
+    // Lock order: the expense library's bucket line hold, then the BudgetOwner row. No line enters the bucket until this commits.
+    const { holdBucketLines } = await import("@checkin/expense");
+    return holdBucketLines(id, change);
 }
 
 // Archive is soft: library rows reference buckets by id, and updateBudgetOwner restores it.

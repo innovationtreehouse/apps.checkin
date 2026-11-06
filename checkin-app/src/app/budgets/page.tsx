@@ -5,8 +5,10 @@ import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { errorMessage } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { api } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Bucket {
@@ -35,55 +37,9 @@ interface PersonOption {
   name: string;
 }
 
-const UNREACHABLE = "Couldn't reach the server. Check your connection and try again.";
-
-/** Sends a write; returns null on success, else a message saying why it failed. */
-async function send(url: string, method: string, body?: unknown): Promise<string | null> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    return UNREACHABLE;
-  }
-  return res.ok ? null : failureMessage(res);
-}
-
-type Loaded<T> = { ok: true; data: T } | { ok: false; error: string };
-
-/** Reads a list, or sends a write whose reply is a list; never throws, so a failure can always be shown. */
-async function request<T>(url: string, method = "GET", body?: unknown): Promise<Loaded<T>> {
-  let res: Response;
-  try {
-    res = await fetch(url, method === "GET" ? undefined : {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    return { ok: false, error: UNREACHABLE };
-  }
-  if (!res.ok) return { ok: false, error: await failureMessage(res) };
-  try {
-    return { ok: true, data: (await res.json()) as T };
-  } catch {
-    return { ok: false, error: `The server sent an unreadable reply (${res.status}).` };
-  }
-}
-
-async function failureMessage(res: Response): Promise<string> {
-  const data: unknown = await res.json().catch(() => null);
-  if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
-    return `${data.error} (${res.status})`;
-  }
-  // No JSON error body: the reply came from in front of the app, not from its routes.
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    return `The server is unavailable (${res.status}). Try again in a minute.`;
-  }
-  return `The server returned an unexpected error (${res.status}).`;
+/** Sends a write with a JSON body; a failure throws, for `errorMessage` to word. */
+function write<T>(url: string, method: string, body?: unknown): Promise<T> {
+  return api<T>(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 }
 
 // One chip per action, keyed by its title: a new failure replaces it and a success clears it.
@@ -120,13 +76,13 @@ export default function BudgetsPage() {
   const [approverBucket, setApproverBucket] = useState<Bucket | null>(null);
 
   // Archived buckets are always loaded: their Classes stay taken, so the picker must not offer them.
-  const load = useCallback(() => Promise.all([
-    request<Bucket[]>("/api/budget-owners?includeArchived=1"),
-    request<ClassOption[]>("/api/budget-owners/quickbooks-classes"),
+  const load = useCallback(() => Promise.allSettled([
+    api<Bucket[]>("/api/budget-owners?includeArchived=1"),
+    api<ClassOption[]>("/api/budget-owners/quickbooks-classes"),
   ]).then(([b, c]) => {
-    if (b.ok) { setAllBuckets(b.data); clearError("Buckets not loaded"); } else showError("Buckets not loaded", b.error);
-    setClassesFailed(!c.ok);
-    if (c.ok) { setClasses(c.data); clearError("QuickBooks Classes unavailable"); } else showError("QuickBooks Classes unavailable", c.error);
+    if (b.status === "fulfilled") { setAllBuckets(b.value); clearError("Buckets not loaded"); } else showError("Buckets not loaded", errorMessage(b.reason));
+    setClassesFailed(c.status === "rejected");
+    if (c.status === "fulfilled") { setClasses(c.value); clearError("QuickBooks Classes unavailable"); } else showError("QuickBooks Classes unavailable", errorMessage(c.reason));
     setLoading(false);
   }), []);
 
@@ -134,8 +90,12 @@ export default function BudgetsPage() {
 
   const run = async (url: string, method: string, body: unknown, done: string, failed: string) => {
     clearError(failed);
-    const error = await send(url, method, body);
-    if (error) { showError(failed, error); return false; }
+    try {
+      await write(url, method, body);
+    } catch (e) {
+      showError(failed, errorMessage(e));
+      return false;
+    }
     notifications.show({ message: done });
     setLoading(true);
     await load();
@@ -349,17 +309,15 @@ function ApproversModal({ bucket, canEdit, onClose }: {
 
   useEffect(() => {
     let live = true;
-    void request<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`).then((result) => {
-      if (!live) return;
-      if (result.ok) { applyApprovers(result.data); setLoadFailed(false); clearError("Approvers not loaded"); return; }
-      showError("Approvers not loaded", result.error);
-      setLoadFailed(true);
-    });
+    api<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`).then(
+      (data) => { if (live) { applyApprovers(data); setLoadFailed(false); clearError("Approvers not loaded"); } },
+      (e: unknown) => { if (live) { showError("Approvers not loaded", errorMessage(e)); setLoadFailed(true); } },
+    );
     if (canEdit) {
-      void request<PersonOption[]>("/api/budget-owners/approver-options").then((result) => {
-        if (!live) return;
-        if (result.ok) { setPeople(result.data); clearError("People not loaded"); } else showError("People not loaded", result.error);
-      });
+      api<PersonOption[]>("/api/budget-owners/approver-options").then(
+        (data) => { if (live) { setPeople(data); clearError("People not loaded"); } },
+        (e: unknown) => { if (live) showError("People not loaded", errorMessage(e)); },
+      );
     }
     return () => { live = false; };
   }, [bucket.id, canEdit, applyApprovers]);
@@ -367,9 +325,13 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   const change = async (url: string, method: string, body?: unknown) => {
     setChanging(true);
     clearError("Approvers not changed");
-    const result = await request<Approver[]>(url, method, body);
-    setChanging(false);
-    if (result.ok) applyApprovers(result.data); else showError("Approvers not changed", result.error);
+    try {
+      applyApprovers(await write<Approver[]>(url, method, body));
+    } catch (e) {
+      showError("Approvers not changed", errorMessage(e));
+    } finally {
+      setChanging(false);
+    }
   };
 
   const saveOwner = async () => {

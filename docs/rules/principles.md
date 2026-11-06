@@ -370,6 +370,14 @@ consistency follows risk*, and no double booking follows *apply once*.
   finance has booked; anything it cannot match goes to finance to book or skip.
   After that it books on its own, matching finance's entries first.
 
+- **A split amount is whole cents and sums exactly.** Whenever the app splits an
+  amount across parts, such as an expense's tax, shipping and discount across its
+  lines or a store charge across its order lines, each part is whole cents and
+  the parts sum to the amount exactly. Each part takes its share rounded down,
+  and the leftover cents go one each to the parts with the largest fractions; a
+  tie goes to the larger part, then the earlier one. Parts that are all zero
+  share the amount equally.
+
 - **Nothing is booked twice, and the app never guesses a match.** When the app
   cannot tell which entry something matches, finance decides.
 
