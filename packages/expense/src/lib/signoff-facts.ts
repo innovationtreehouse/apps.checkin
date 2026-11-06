@@ -262,6 +262,15 @@ export async function lockExpense(tx: Prisma.TransactionClient, expenseId: strin
   await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
 }
 
+/**
+ * Takes a bucket's line hold: shared by every path that puts a line in the bucket, after that
+ * path's expense locks; exclusive by the host while it makes the bucket a program bucket.
+ */
+export async function lockBucketLines(tx: Prisma.TransactionClient, bucketId: number, mode: "shared" | "exclusive" = "shared"): Promise<void> {
+  if (mode === "shared") await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock_shared(hashtext('expense.bucket'), ${bucketId}::int)`;
+  else await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext('expense.bucket'), ${bucketId}::int)`;
+}
+
 /** A step on a line, in the order of its signatures: the submitter seat, the approval, the Treasurer seat. */
 export type ClearedStep = "SUBMITTER" | "APPROVAL" | "TREASURER";
 
