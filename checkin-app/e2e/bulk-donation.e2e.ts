@@ -80,9 +80,10 @@ test.describe("donations in the browser", () => {
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Company (* for any)").fill(b.company);
     await dialog.getByLabel("Campaign (* for any)").fill("*");
-    await dialog.getByLabel("Donation account").fill("Contributions:Corporate Giving");
-    await dialog.getByLabel("Match account").fill("Contributions:Corporate Match");
-    await dialog.getByLabel("Fees account").fill("Fees:Merchant");
+    for (const picker of ["Donation account", "Match account"]) {
+      await dialog.getByLabel(picker).click();
+      await page.getByRole("option", { name: "Donations:Benevity", exact: true }).click();
+    }
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
     await expect(row(page, b.company)).toBeVisible();
 
