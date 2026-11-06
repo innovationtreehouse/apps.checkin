@@ -12,7 +12,7 @@ const deposit: ExpectedDeposit = {
   bankRole: "BENEVITY_BANK",
   lines: [
     { accountId: "60", budgetOwnerId: 7, amountCents: 1000 },
-    { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -100 },
+    { accountId: "61", budgetOwnerId: null, amountCents: -100 },
   ],
 };
 
@@ -28,7 +28,8 @@ describe("parseExpected", () => {
     [{ bankRole: "NOPE" }, /books-map role/],
     [{ lines: [] }, /at least one line/],
     [{ netCents: 901 }, /sum to 900/],
-    [{ lines: [{ role: "BENEVITY_FEES", budgetOwnerId: 0, amountCents: 900 }] }, /budgetOwnerId/],
+    [{ lines: [{ accountId: "60", budgetOwnerId: 0, amountCents: 900 }] }, /budgetOwnerId/],
+    [{ lines: [{ role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: 900 }] }, /QuickBooks account id/],
     [{ lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: null, amountCents: 900 }] }, /QuickBooks account id/],
     [{ lines: [{ budgetOwnerId: null, amountCents: 900 }] }, /QuickBooks account id/],
     [{ lines: [{ accountId: "60", role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: 900 }] }, /not both/],
@@ -40,6 +41,7 @@ describe("parseExpected", () => {
 
 describe("a deposit handed over before rules named accounts", () => {
   const legacy = { ...deposit, lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 1000 }, deposit.lines[1]] } as ExpectedDeposit;
+  const feeLine = { ...deposit, lines: [deposit.lines[0], { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -100 }] } as ExpectedDeposit;
 
   it("still reads from a stored row", () => {
     expect(expectedOf({ expected: legacy as never })?.lines[0]).toEqual({ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 1000 });
@@ -50,9 +52,13 @@ describe("a deposit handed over before rules named accounts", () => {
     expect(expectedGap(deposit, () => undefined)).toBeNull();
   });
 
-  it("needs no books-map role for a line that names its account", () => {
-    expect(missingRoles({ source: "benevity", expected: deposit as never }, { BENEVITY_BANK: "1", BENEVITY_FEES: "2" })).toEqual([]);
-    expect(missingRoles({ source: "benevity", expected: deposit as never }, { BENEVITY_BANK: "1" })).toEqual(["BENEVITY_FEES"]);
+  it("sends a stored fee line to finance rather than booking it on Benevity: fees", () => {
+    expect(expectedGap(feeLine, () => undefined)).toMatch(/book it by hand or dismiss it/);
+  });
+
+  it("needs only the bank role for a deposit whose lines name their accounts", () => {
+    expect(missingRoles({ source: "benevity", expected: deposit as never }, { BENEVITY_BANK: "1" })).toEqual([]);
+    expect(missingRoles({ source: "benevity", expected: deposit as never }, {})).toEqual(["BENEVITY_BANK"]);
   });
 });
 

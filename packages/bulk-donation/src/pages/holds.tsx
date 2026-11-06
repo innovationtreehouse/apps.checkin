@@ -18,6 +18,7 @@ const REASON: Record<string, string> = {
   NO_MATCH: "No rule matches",
   MULTIPLE_MATCHES: "Several rules match",
   NO_ACCOUNT: "Rule has no QuickBooks account for this gift's amount",
+  FEES_ONLY: "Row has fees but no donation or match to take them from",
 };
 
 /** /donations/holds — disbursements whose gifts match zero or several account rules, or a rule without the account a gift needs. */

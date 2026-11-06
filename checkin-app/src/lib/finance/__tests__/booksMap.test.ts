@@ -56,7 +56,7 @@ describe('listBooksMap', () => {
         accountRows.mockResolvedValue([{ role: 'SHOPIFY_BANK', quickBooksAccountId: '35' }]);
         bucketRows.mockResolvedValue([{ id: 2, name: 'Robotics', quickBooksClassId: '9003' }]);
         const map = await listBooksMap();
-        expect(map.BooksMapAccount.map((r) => r.role)).toEqual(BOOKS_MAP_ROLES.filter((r) => r !== 'BENEVITY_DONATIONS' && r !== 'BENEVITY_MATCHES'));
+        expect(map.BooksMapAccount.map((r) => r.role)).toEqual(BOOKS_MAP_ROLES.filter((r) => !['BENEVITY_DONATIONS', 'BENEVITY_MATCHES', 'BENEVITY_FEES'].includes(r)));
         expect(map.BooksMapAccount.find((r) => r.role === 'SHOPIFY_BANK')?.quickBooksAccountId).toBe('35');
         expect(map.BooksMapAccount.find((r) => r.role === 'BENEVITY_BANK')?.quickBooksAccountId).toBeNull();
         expect(map.BooksMapClass).toEqual([{ budgetOwnerId: 2, budgetOwnerName: 'Robotics', quickBooksClassId: '9003' }]);

@@ -48,14 +48,14 @@ function bind() {
   });
 }
 
-/** A completed disbursement: its gifts and its event. */
-async function completed(disbursementId: string, overrides: { date?: string | null; feeCents?: number } = {}) {
-  const { date = "2026-09-10", feeCents = 50 } = overrides;
+/** A completed disbursement: its gifts and its event, the gift net of its fee. */
+async function completed(disbursementId: string, overrides: { date?: string | null; netCents?: number; feeItem?: boolean } = {}) {
+  const { date = "2026-09-10", netCents = 950, feeItem = false } = overrides;
   const file = await makeFile(orgId);
   const tx = await makeTransaction(orgId, file.id, { disbursementId, disbursementDate: "2026-09-10", ownerId: 1 });
   const items = [
-    { type: "donation", account: "4000-Donations", accountId: "60", amountCents: 1000, transactionId: tx.transactionId },
-    { type: "fees", account: "6000-Fees", amountCents: feeCents, transactionId: tx.transactionId },
+    { type: "donation", account: "4000-Donations", accountId: "60", amountCents: netCents, transactionId: tx.transactionId },
+    ...(feeItem ? [{ type: "fees", account: "6000-Fees", amountCents: 50, transactionId: tx.transactionId }] : []),
   ];
   const payload = { version: 1, orgId, disbursementId, disbursementDate: date, disbursementFrom: "Benevity", items };
   return db.disbursementEvent.create({ data: { orgId, disbursementId, payload: JSON.stringify(payload) } });
@@ -144,11 +144,22 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
     expect(income.expected.size).toBe(0);
   });
 
+  it("raises a batch finished with a fee item, before fees reduced income, and hands over nothing", async () => {
+    await completed("TEST-FEE", { feeItem: true });
+
+    await runDonationDepositHandOver(orgId);
+
+    expect(income.raised).toEqual([
+      [{ disbursementId: "TEST-FEE", reason: "it was finished before fees came out of income, so its fees have no account to book to" }],
+    ]);
+    expect(income.expected.size).toBe(0);
+  });
+
   it.each([
-    ["zero", 1000],
-    ["less", 1500],
-  ])("raises a batch netting to %s, and hands over nothing", async (_net, feeCents) => {
-    await completed("TEST-NET", { feeCents });
+    ["zero", 0],
+    ["less", -500],
+  ])("raises a batch netting to %s, and hands over nothing", async (_net, netCents) => {
+    await completed("TEST-NET", { netCents });
 
     await runDonationDepositHandOver(orgId);
 

@@ -160,7 +160,9 @@ describeDb('successful processing', () => {
     expect(payload.disbursementDate).toBe('2025-06-01');
     expect(payload.disbursementFrom).toBe('Benevity');
     const accounts = Object.fromEntries(payload.items.map((i: { type: string; accountId?: string }) => [i.type, i.accountId ?? null]));
-    expect(accounts).toEqual({ donation: '60', match: '61', fees: null });
+    expect(accounts).toEqual({ donation: '60', match: '61' });
+    // The 8-cent fee splits 5/3 across the 100 and 50, netted in.
+    expect(payload.items.map((i: { amountCents: number }) => i.amountCents)).toEqual([95, 47]);
 
     const snap = await db.disbursementSnapshot.findFirst({
       where: { orgId, disbursementId },

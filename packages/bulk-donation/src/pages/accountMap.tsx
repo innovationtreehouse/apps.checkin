@@ -12,7 +12,6 @@ interface RuleRow {
   donationType: string | null;
   donationAccount: string;
   matchAccount: string;
-  feesAccount: string;
   donationAccountId: string | null;
   matchAccountId: string | null;
 }
@@ -44,9 +43,7 @@ function choices(options: AccountOption[] | null, saved: string | null) {
 
 /** What finance typed as account names before rules named QuickBooks accounts. */
 function earlierNames(r: RuleRow): string {
-  return [r.donationAccount, r.matchAccount, r.feesAccount].some(Boolean)
-    ? `${r.donationAccount || "—"} / ${r.matchAccount || "—"} / ${r.feesAccount || "—"}`
-    : "—";
+  return [r.donationAccount, r.matchAccount].some(Boolean) ? `${r.donationAccount || "—"} / ${r.matchAccount || "—"}` : "—";
 }
 
 /**
@@ -89,7 +86,7 @@ export default function AccountMapPage() {
           <Table.Tr>
             {MATCH_FIELDS.map(([k, label]) => <Table.Th key={k}>{label.replace(/ \(.*\)/, "")}</Table.Th>)}
             {ACCOUNT_FIELDS.map(([k, label]) => <Table.Th key={k}>{label}</Table.Th>)}
-            <Table.Th>Earlier names (donation / match / fees)</Table.Th>
+            <Table.Th>Earlier names (donation / match)</Table.Th>
             <Table.Th />
           </Table.Tr>
         </Table.Thead>

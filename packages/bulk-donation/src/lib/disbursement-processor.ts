@@ -1,8 +1,9 @@
 import type { DbOrTx } from "../db";
 import { determineAccountsFromMap, type AccountConflictReason } from "./account-map-lookup";
 import { ownerRequiredWhere } from "./domain-rules";
-import { sumCents } from "@checkin/money";
+import { allocateCents, sumCents } from "@checkin/money";
 import { DisbursementPayloadV1 } from "@checkin/donations";
+import type { AccountMap, Transaction } from "../generated/prisma/client";
 
 export type ConflictRecord = {
   txId: number;
@@ -13,6 +14,30 @@ export type ConflictRecord = {
 export type AccountDeterminationResult =
   | { type: "PROCESS_SUCCEEDED"; payload: DisbursementPayloadV1 }
   | { type: "ACCOUNT_UNRESOLVED"; conflicts: ConflictRecord[] };
+
+type GiftRow = Pick<Transaction, "transactionId" | "donationAmountCents" | "matchAmountCents" | "causeSupportFeeCents" | "merchantFeeCents" | "checkFeeCents">;
+
+const rowFeeCents = (tx: GiftRow) => sumCents(tx.causeSupportFeeCents ?? 0, tx.merchantFeeCents ?? 0, tx.checkFeeCents ?? 0);
+
+/**
+ * One row's items: its donation and match, each on its rule's account, with the row's fee split
+ * across them in proportion to their amounts and netted in. A zero amount takes no part and makes
+ * no item. The caller holds a row with fees and no amount before this runs.
+ */
+export function giftItems(
+  tx: GiftRow,
+  rule: Pick<AccountMap, "donationAccount" | "donationAccountId" | "matchAccount" | "matchAccountId">,
+): DisbursementPayloadV1["items"] {
+  const [donationFee, matchFee] = allocateCents(rowFeeCents(tx), [tx.donationAmountCents, tx.matchAmountCents]);
+  const items: DisbursementPayloadV1["items"] = [];
+  if (tx.donationAmountCents !== 0 && rule.donationAccountId) {
+    items.push({ type: "donation", account: rule.donationAccount, accountId: rule.donationAccountId, amountCents: tx.donationAmountCents - donationFee, transactionId: tx.transactionId });
+  }
+  if (tx.matchAmountCents !== 0 && rule.matchAccountId) {
+    items.push({ type: "match", account: rule.matchAccount, accountId: rule.matchAccountId, amountCents: tx.matchAmountCents - matchFee, transactionId: tx.transactionId });
+  }
+  return items;
+}
 
 /**
  * True when no transaction in the disbursement still requires an owner.
@@ -52,6 +77,7 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
       donationType: tx.donationType,
       donationAmountCents: tx.donationAmountCents,
       matchAmountCents: tx.matchAmountCents,
+      feeCents: rowFeeCents(tx),
     });
 
     if ("conflict" in lookup) {
@@ -69,19 +95,7 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
   const disbursementDate = firstTx?.disbursementDate ?? null;
   const disbursementFrom = firstTx?.disbursementFrom ?? null;
 
-  const items: DisbursementPayloadV1["items"] = [];
-  for (const { tx, rule } of resolved) {
-    if (tx.donationAmountCents !== 0 && rule.donationAccountId) {
-      items.push({ type: "donation", account: rule.donationAccount, accountId: rule.donationAccountId, amountCents: tx.donationAmountCents, transactionId: tx.transactionId });
-    }
-    if (tx.matchAmountCents !== 0 && rule.matchAccountId) {
-      items.push({ type: "match", account: rule.matchAccount, accountId: rule.matchAccountId, amountCents: tx.matchAmountCents, transactionId: tx.transactionId });
-    }
-    const fees = sumCents(tx.causeSupportFeeCents ?? 0, tx.merchantFeeCents ?? 0, tx.checkFeeCents ?? 0);
-    if (fees !== 0) {
-      items.push({ type: "fees", account: rule.feesAccount, amountCents: fees, transactionId: tx.transactionId });
-    }
-  }
+  const items = resolved.flatMap(({ tx, rule }) => giftItems(tx, rule));
 
   const payload = DisbursementPayloadV1.parse({
     version: 1 as const,
