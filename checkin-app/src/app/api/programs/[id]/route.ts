@@ -9,6 +9,7 @@ import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
+import { enrollmentClosedBy } from "@/lib/programs/saleState";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
 // guard attributes getProgram's edge-model reads to the nearest preceding
@@ -19,7 +20,8 @@ import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/
 // viewer-computed scalar that isn't a real Program column, and adding one
 // would mean a schema change this feature doesn't get. So viewerIsMember /
 // viewerMemberPricingEligible are computed AFTER the registry response comes
-// back and merged on top, session callers only — the registry envelope above
+// back and merged on top, session callers only, as is enrollmentClosedBy for
+// every caller — the registry envelope above
 // (association gate, per-tier stripping) runs completely untouched first.
 // startAt/endAt are 'public' tier, so they always ride in `body` regardless of
 // caller privilege; re-authenticating here is the same cheap session read
@@ -28,10 +30,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const res = await getProgram(req, ctx);
     if (res.status !== 200) return res;
 
-    const auth = await authenticateRequest(req);
-    if (auth.type !== 'session') return res;
+    const body = (await res.json()) as ProgramBody;
+    const closure = { enrollmentClosedBy: closedBy(body) };
 
-    const body = (await res.json()) as { startAt: string; endAt: string; appliesToYear: number };
+    const auth = await authenticateRequest(req);
+    if (auth.type !== 'session') return NextResponse.json({ ...body, ...closure });
+
     const coverageDate = await programCoverageDate({
         endAt: new Date(body.endAt),
         appliesToYear: body.appliesToYear,
@@ -43,7 +47,23 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         isActiveOrgMember(auth.user.id),
         isMembershipFeeSettledThrough(auth.user.id, coverageDate),
     ]);
-    return NextResponse.json({ ...body, viewerIsMember, viewerMemberPricingEligible });
+    return NextResponse.json({ ...body, ...closure, viewerIsMember, viewerMemberPricingEligible });
+}
+
+type ProgramBody = {
+    startAt: string; endAt: string; appliesToYear: number; offSaleAt: string | null;
+    enrollmentStatus: 'OPEN' | 'CLOSED'; maxParticipants: number | null; _count?: { participants?: number };
+};
+
+// saleEndedAt is internal-tier and absent here; the off-sale date alone decides, as the claim route does until the sweep runs.
+function closedBy(body: ProgramBody) {
+    return enrollmentClosedBy({
+        enrollmentStatus: body.enrollmentStatus,
+        startAt: new Date(body.startAt),
+        offSaleAt: body.offSaleAt ? new Date(body.offSaleAt) : null,
+        saleEndedAt: null,
+        maxParticipants: body.maxParticipants,
+    }, body._count?.participants);
 }
 
 const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ auth, params }) => {

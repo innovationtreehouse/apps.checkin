@@ -14,6 +14,7 @@ import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { resolveProgramYear } from "@/lib/programs/update";
+import { enrollmentClosedBy } from "@/lib/programs/saleState";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -162,13 +163,18 @@ export async function GET(req: Request) {
                 new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), 2_500); t.unref?.(); }),
             ]);
             const countById = new Map((counts ?? []).map((c) => [c.id, c._count]));
-            return NextResponse.json(staticRows.map((prg) => ({ ...prg, _count: countById.get(prg.id) })));
+            return NextResponse.json(staticRows.map((prg) => withClosedBy({ ...prg, _count: countById.get(prg.id) })));
         }
-        return NextResponse.json(await fetchPrograms());
+        return NextResponse.json((await fetchPrograms()).map(withClosedBy));
     } catch (error) {
         await logBackendError(error, "GET /api/programs");
         return apiError("Failed to fetch programs", 500);
     }
+}
+
+// saleEndedAt is internal-tier and not selected; the off-sale date alone decides, as the claim route does until the sweep runs.
+function withClosedBy<P extends Omit<Parameters<typeof enrollmentClosedBy>[0], 'saleEndedAt'> & { _count?: { participants: number } }>(prg: P) {
+    return { ...prg, enrollmentClosedBy: enrollmentClosedBy({ ...prg, saleEndedAt: null }, prg._count?.participants) };
 }
 
 // Creating a program names its lead, and only the Board assigns one.

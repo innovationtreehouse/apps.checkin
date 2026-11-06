@@ -225,7 +225,7 @@ describe('Programs API Integration Tests', () => {
 
              expect(publicActive).toBeDefined();
              expect(publicColumns).not.toHaveLength(0); // guard: a broken import would vacuously pass
-             expect(Object.keys(publicActive).sort()).toEqual([...publicColumns, '_count'].sort());
+             expect(Object.keys(publicActive).sort()).toEqual([...publicColumns, '_count', 'enrollmentClosedBy'].sort());
              expect(publicActive._count).toEqual({ participants: 0, volunteers: 0, events: 0 });
         });
     });
