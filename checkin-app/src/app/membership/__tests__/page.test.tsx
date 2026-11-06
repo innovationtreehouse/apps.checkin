@@ -4,7 +4,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setCheckinEnv, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
@@ -302,18 +302,65 @@ describe("membership page", () => {
     const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
     const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
 
-    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. */
-    function mockReads(reads: Array<[ok: boolean, body: unknown]>) {
+    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws. */
+    function mockReads(reads: Array<[ok: boolean, body: unknown, status?: number] | "offline">) {
       let n = 0;
       const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         void init;
-        const [ok, body] = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] : reads[Math.min(n++, reads.length - 1)];
-        return { ok, status: ok ? 200 : 403, ...jsonBody(body) } as Response;
+        const read = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] as const : reads[Math.min(n++, reads.length - 1)];
+        if (read === "offline") throw new TypeError("Failed to fetch");
+        const [ok, body, status = ok ? 200 : 403] = read;
+        return { ok, status, ...jsonBody(body) } as Response;
       });
       global.fetch = fetchMock as unknown as typeof fetch;
       return { fetchMock, reads: () => n };
     }
     const emName = () => screen.getByLabelText(/Emergency contact name/) as HTMLInputElement;
+    const intakeCalls = (mock: ReturnType<typeof mockReads>) => mock.fetchMock.mock.calls.filter(([url]) => String(url).includes("/intake"));
+    const reloadWarning = /Reload the page before saving again/;
+
+    afterEach(() => jest.useRealTimers());
+
+    it("retries a failed read, so a second save updates the saved people", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], "offline", [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+      jest.useFakeTimers();
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.reads()).toBe(2));
+      await act(() => jest.advanceTimersByTimeAsync(2000));
+      await waitFor(() => expect(mock.reads()).toBe(3));
+      await waitFor(() => expect(emName().value).toBe("From server"));
+      expect(screen.queryByText(reloadWarning)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(intakeCalls(mock)).toHaveLength(2));
+      expect(JSON.parse(String(intakeCalls(mock)[1][1]?.body)).secondaryParent).toMatchObject({ id: 7, name: "Sam Second" });
+    });
+
+    it("asks for a reload and keeps the input when every read fails", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [false, { error: "down" }, 503]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+      jest.useFakeTimers();
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.reads()).toBe(2));
+      await act(() => jest.advanceTimersByTimeAsync(2000));
+      await waitFor(() => expect(mock.reads()).toBe(3));
+      await act(() => jest.advanceTimersByTimeAsync(4000));
+      await waitFor(() => expect(mock.reads()).toBe(4));
+
+      expect(await screen.findByText(reloadWarning)).toBeInTheDocument();
+      expect(emName().value).toBe("Aunt Jo");
+      await act(() => jest.advanceTimersByTimeAsync(60000));
+      expect(mock.reads()).toBe(4);
+    });
 
     it("keeps unsaved input on a later reload when that read fails", async () => {
       setSession({ id: 1 });
