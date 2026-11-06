@@ -15,6 +15,7 @@ import {
     getPrisma as getWorkflowPrisma,
     lineItemService,
     receiptService,
+    receivingOutcomes,
 } from '@checkin/workflow-mapping';
 import type { CompletedReceipt } from '@checkin/receipt-types';
 import { getPrisma as getInventoryPrisma } from '@checkin/local-inventory';
@@ -223,5 +224,36 @@ describe('X4 InventorySink → local-inventory apply', () => {
             }),
         ).rejects.toThrow(/org/);
         expect(await li.receivedInventoryDelta.count({ where: { sourceKey: 'receipt:x4-foreign' } })).toBe(0);
+    });
+
+    it('reads a resolved receipt as received with its open backorders, until the last queued line is fulfilled', async () => {
+        const { id } = await seedReceipt('x4-backorder');
+        const cancelled = await seedReceipt('x4-backorder-cancel');
+        expense.fails = false;
+        for (const r of [id, cancelled.id]) {
+            await receiptService.proceed(r);
+            expect(await receiptService.apply(r)).toEqual({ state: 'resolved' });
+        }
+
+        expect(await receivingOutcomes(['x4-backorder'])).toEqual(new Map([['x4-backorder', { receiving: 'received', openBackorders: 1 }]]));
+        const listed = await receiptService.list(undefined, ['x4-backorder', 'x4-backorder-cancel']);
+        expect(listed.map((r) => [r.receiptId, r.openBackorders])).toEqual(
+            expect.arrayContaining([['x4-backorder', 1], ['x4-backorder-cancel', 1]]),
+        );
+        expect((await receiptService.detail(id)).parsedReceipt.openBackorders).toBe(1);
+
+        await li.receiveQueue.updateMany({ where: { orgId: ORG.id, receiptId: 'x4-backorder' }, data: { fulfilledAt: new Date() } });
+        await li.receiveQueue.updateMany({
+            where: { orgId: ORG.id, receiptId: 'x4-backorder-cancel' },
+            data: { cancelledAt: new Date(), cancelledBy: 1, cancelReason: 'Never shipped' },
+        });
+
+        expect(await receivingOutcomes(['x4-backorder', 'x4-backorder-cancel'])).toEqual(
+            new Map([
+                ['x4-backorder', { receiving: 'received', openBackorders: 0 }],
+                ['x4-backorder-cancel', { receiving: 'received', openBackorders: 0 }],
+            ]),
+        );
+        expect((await receiptService.detail(id)).parsedReceipt.openBackorders).toBe(0);
     });
 });

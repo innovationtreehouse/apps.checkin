@@ -93,10 +93,10 @@ describeDb("receivingOutcomes", () => {
     const ids = [waiting, applying, failed, received, foreign].map((r) => r.receiptId);
     expect(await receivingOutcomes([...ids, "never-received"])).toEqual(
       new Map([
-        [waiting.receiptId, "waiting"],
-        [applying.receiptId, "applying"],
-        [failed.receiptId, "stuck"],
-        [received.receiptId, "received"],
+        [waiting.receiptId, { receiving: "waiting", openBackorders: 0 }],
+        [applying.receiptId, { receiving: "applying", openBackorders: 0 }],
+        [failed.receiptId, { receiving: "stuck", openBackorders: 0 }],
+        [received.receiptId, { receiving: "received", openBackorders: 0 }],
       ]),
     );
   });

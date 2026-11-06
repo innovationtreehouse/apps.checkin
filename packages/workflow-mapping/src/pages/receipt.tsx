@@ -7,7 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { MIN_CATALOG_SEARCH_LENGTH, catalogItemLabel, catalogSearchTerm, useCatalogSearch, type CatalogItem } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
-import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
 import { type LineFormKind, lineFormBody } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
@@ -34,6 +34,7 @@ interface LineItem {
 }
 interface ParsedReceipt {
   receiptId?: string;
+  openBackorders: number;
   vendorName?: string | null;
   currency: string;
   receiptTotalCents?: number;
@@ -137,7 +138,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>
           <Text size="sm" c="dimmed">{parsed.receiptDate ?? "No date"}</Text>
         </Stack>
-        <Badge size="lg" variant="light" color={STATE_COLOR[receipt.state] ?? "gray"}>{STATE_LABEL[receipt.state] ?? receipt.state}</Badge>
+        <Badge size="lg" variant="light" color={stateColor(receipt.state, parsed.openBackorders)}>{stateLabel(receipt.state, parsed.openBackorders)}</Badge>
       </Group>
       <Group gap="xl" align="start" my="md">
         <Field label="Total" value={formatCents(parsed.receiptTotalCents, parsed.currency)} money />

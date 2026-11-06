@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
 import { isUnreadableReceiptNote } from "../lib/unreadable-receipt";
 
@@ -15,6 +15,7 @@ interface ReceiptRow {
   receiptTotalCents?: number | null;
   currency: string;
   lineItemCount: number;
+  openBackorders: number;
   validationNotes?: string | null;
   createdAt: string;
 }
@@ -148,7 +149,7 @@ export default function ReceivingPage() {
                   <Table.Td>{r.vendorName ?? "—"}</Table.Td>
                   <Table.Td>{formatCents(r.receiptTotalCents, r.currency)}</Table.Td>
                   <Table.Td>{r.lineItemCount}</Table.Td>
-                  <Table.Td><Badge variant="light">{STATE_LABEL[r.state] ?? r.state}</Badge></Table.Td>
+                  <Table.Td><Badge variant="light" color={stateColor(r.state, r.openBackorders)}>{stateLabel(r.state, r.openBackorders)}</Badge></Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{r.validationNotes ?? ""}</Text></Table.Td>
                   {canRetry && (
                     <Table.Td>

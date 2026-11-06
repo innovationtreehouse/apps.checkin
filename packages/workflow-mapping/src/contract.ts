@@ -95,6 +95,8 @@ export interface DonationSink {
 /** S3: load the receipt's goods. The callee applies at most once per source key `receipt:<receiptId>`. */
 export interface InventorySink {
   applyDelta(delta: ResolvedInventoryDelta): Promise<void>;
+  /** How many of each receipt's lines are still open on the receive queue; a receipt with none is left out. */
+  openBackorders(receiptIds: string[]): Promise<Map<string, number>>;
 }
 
 // ── S5: catalog org events ───────────────────────────────────────────────────
@@ -154,6 +156,7 @@ export const inertDonationSink: DonationSink = {
 
 export const inertInventorySink: InventorySink = {
   applyDelta: async () => notWired("InventorySink.applyDelta"),
+  openBackorders: async () => new Map(),
 };
 
 export const inertCatalogEventSource: CatalogEventSource = {

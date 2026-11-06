@@ -83,6 +83,8 @@ export interface ReimbursementStatus {
 /** Where a finalized receipt's purchase stands downstream, as its uploader and reimbursee may read it. */
 export const purchaseOutcomeSchema = z.object({
   receiving: z.enum(["waiting", "applying", "stuck", "received"]).nullable(),
+  /** The receipt's lines still open on receiving's receive queue; absent means none. */
+  openBackorders: z.number().int().nonnegative().optional(),
   money: z
     .object({
       status: z.enum(["awaiting_confirmation", "awaiting_approval", "exception", "with_finance", "line_rejected", "complete", "backfill"]),
