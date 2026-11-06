@@ -226,13 +226,15 @@ const TOTALLED = [
 ] as const satisfies readonly (keyof BenevityRow)[];
 
 /**
- * Amount columns both Benevity layouts always carry, zero or not. A file without one
- * would import every gift at $0 there, so it is refused. Check Fee is not here: the
- * Donations Report carries it as a footer row, not a column.
+ * Amount columns a Benevity file always carries, zero or not. A file without one
+ * would import every gift at $0 there, so it is refused. The Donations Report has no
+ * Check Fee column: it carries that fee as a footer row, so only the flat export
+ * must have one.
  */
 const REQUIRED_AMOUNTS = [
   "donationAmountCents", "matchAmountCents", "causeSupportFeeCents", "merchantFeeCents",
 ] as const satisfies readonly (keyof BenevityRow)[];
+const FLAT_REQUIRED_AMOUNTS = [...REQUIRED_AMOUNTS, "checkFeeCents"] as const;
 
 /** Where a field comes from in this file: a header column's index, else a preamble value. */
 type Binding = { label: string; index: number } | { label: string; value: string } | null;
@@ -265,7 +267,8 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
     if (key !== "" && !key.startsWith("#") && value !== "") preamble.set(key, value);
   }
   const bindings = new Map(FIELDS.map((f) => [f, bind(f, header, preamble)] as const));
-  const missing = REQUIRED_AMOUNTS.filter((f) => bindings.get(f) === null).map((f) => `"${SOURCES[f].columns[0]}"`);
+  const required = headerAt === 0 ? FLAT_REQUIRED_AMOUNTS : REQUIRED_AMOUNTS;
+  const missing = required.filter((f) => bindings.get(f) === null).map((f) => `"${SOURCES[f].columns[0]}"`);
   if (missing.length > 0) {
     const named = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} or ${missing[missing.length - 1]}`;
     throw new CsvValidationError([`no ${named} column; the header has: ${header.join(", ")}`]);
