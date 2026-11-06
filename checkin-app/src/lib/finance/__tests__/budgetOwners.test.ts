@@ -217,6 +217,27 @@ describe('updateBudgetOwner: org-level and restore', () => {
         });
     });
 
+    test('takes the line hold before the bucket row lock and keeps it until the flag change commits', async () => {
+        const events: string[] = [];
+        held.mockImplementation(async (_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => {
+            events.push('hold');
+            const bucket = await change(awaiting);
+            events.push('release');
+            return bucket;
+        });
+        tx.$queryRaw.mockImplementation(async () => {
+            events.push('row lock');
+            return [{ isOrgLevel: true }];
+        });
+        tx.budgetOwner.update.mockImplementation(async () => {
+            events.push('flag written');
+            return { id: 8 };
+        });
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        await updateBudgetOwner(1, 8, { isOrgLevel: false });
+        expect(events).toEqual(['hold', 'row lock', 'flag written', 'release']);
+    });
+
     test('an edit that keeps the flag checks neither approvers nor seats', async () => {
         tx.budgetOwner.findUnique.mockResolvedValue(stored({ ownerId: 2 }));
         await updateBudgetOwner(1, 9, { name: 'Renamed', isOrgLevel: false });
