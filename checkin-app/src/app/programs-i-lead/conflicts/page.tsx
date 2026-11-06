@@ -4,9 +4,9 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Badge, Button, Card, Group, Stack, Table, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
 import { IconTrash } from "@tabler/icons-react";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { useConflicts } from "@/hooks/useConflicts";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -26,21 +26,11 @@ export default function ConflictsPage() {
   async function resolve(visitId: number) {
     setDeleting(visitId);
     try {
-      const res = await fetch("/api/my-programs/conflicts/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Duplicate visit deleted." });
-        refresh();
-        notifyNavRefresh();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Failed to delete visit.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api("/api/my-programs/conflicts/resolve", { method: "POST", body: JSON.stringify({ visitId }) });
+      showSuccess("Duplicate visit deleted.");
+      notifyNavRefresh();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setDeleting(null);
     }

@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 jest.mock("@mantine/modals", () => ({
     modals: {
         openConfirmModal: jest.fn((opts: { onConfirm: () => void }) => opts.onConfirm()),
@@ -51,6 +51,7 @@ describe("RolesPage — holders-first roles editor", () => {
             ok: true,
             status: 200,
             json: async () => ({ message: "ok", user: { ...cara, isKeyholder: true } }),
+            text: async () => JSON.stringify({ message: "ok", user: { ...cara, isKeyholder: true } }),
         }));
         global.fetch = ((...args: Parameters<typeof fetch>) => {
             const init = args[1] as RequestInit | undefined;

@@ -2,7 +2,7 @@
 import { screen, waitFor, fireEvent, within } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import AdminParticipantsIndex from "../page";
@@ -297,7 +297,7 @@ describe("AdminParticipantsIndex", () => {
                 } as Response;
             }
             if (url.includes("/api/membership-ops/households/20")) {
-                return { ok: true, status: 200, json: async () => ({ household: { id: 20, name: "The B Family Updated" } }) } as Response;
+                return { ok: true, status: 200, text: async () => JSON.stringify({ household: { id: 20, name: "The B Family Updated" } }) } as Response;
             }
             return { ok: false, status: 404, json: async () => ({}) } as Response;
         });

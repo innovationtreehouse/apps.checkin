@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { LoadError } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import {
   Badge,
   Button,
@@ -32,12 +32,12 @@ export function LinkStatusPanel() {
   async function toggleResolved(e: IntegrationError) {
     setBusyId(e.id);
     try {
-      await fetch(`/api/system-status/links/${e.id}`, {
+      await api(`/api/system-status/links/${e.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resolved: !e.resolvedAt }),
       });
-      await reload();
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setBusyId(null);
     }
