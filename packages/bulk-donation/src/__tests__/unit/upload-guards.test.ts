@@ -74,7 +74,7 @@ describe("upload allowlist", () => {
 
   it("accepts a .csv labelled the way Excel on Windows labels it", async () => {
     transaction.mockResolvedValueOnce({ id: 7 });
-    const res = await callUpload(formRequest(new File(["Transaction ID"], "gifts.csv", { type: "application/vnd.ms-excel" })));
+    const res = await callUpload(formRequest(new File(["Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee"], "gifts.csv", { type: "application/vnd.ms-excel" })));
     expect(res).toMatchObject({ UploadedFile: { id: 7, originalFilename: "gifts.csv" } });
   });
 });
