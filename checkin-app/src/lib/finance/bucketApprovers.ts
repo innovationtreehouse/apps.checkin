@@ -4,9 +4,13 @@ import type { Prisma } from "@/generated/prisma/client";
 // Bucket-approver reads. This module imports no library package: the security
 // gate calls it on every expense-approver check, and every route loads the gate.
 
-/** A live person whose household is not DENIED: a denied household's roles grant nothing (assignParticipantClaims). Fresh per call, so no query shares it. */
+/**
+ * A live person whose household is neither DENIED nor archived: a denied household's roles grant
+ * nothing (assignParticipantClaims). The NOT alone would pass an archived household, because row
+ * security hides it from the inner match. Fresh per call, so no query shares it.
+ */
 export function eligibleSigner(): Prisma.PersonWhereInput {
-    return { NOT: { household: { orgMembership: { status: "DENIED" } } } };
+    return { household: { archivedAt: null }, NOT: { household: { orgMembership: { status: "DENIED" } } } };
 }
 
 /** The non-org-level buckets this person owns or is a treasurer of, archived ones included: a line already in an archived bucket still needs its approvers. */

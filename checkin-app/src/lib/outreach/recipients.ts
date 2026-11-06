@@ -3,6 +3,7 @@ import { membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
 import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 export type Audience = "a" | "b" | "c";
 export type OutreachVariant = "join" | "renew";
@@ -22,8 +23,9 @@ export interface RecipientSnapshot {
     leadsWithoutEmail: number;
 }
 
-// A DENIED household gets no outreach of any kind.
-const NOT_DENIED: Prisma.PersonWhereInput = { NOT: { household: { orgMembership: { status: "DENIED" } } } };
+// A DENIED or archived household gets no outreach of any kind. The NOT alone
+// would pass an archived household: row security hides it, so the inner match fails.
+const NOT_DENIED: Prisma.PersonWhereInput = { ...IN_LIVE_HOUSEHOLD, NOT: { household: { orgMembership: { status: "DENIED" } } } };
 
 const IN_FLIGHT_STATUSES = new Set<OrgMembershipProcessStatus>([...IN_FLIGHT_RENEWAL, ...IN_FLIGHT_INITIAL]);
 

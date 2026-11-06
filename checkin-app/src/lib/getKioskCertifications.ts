@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { invalidatableCache } from "@/lib/invalidatableCache";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 /**
  * Tool-cert grid payload for GET /api/kioskdisplay/certifications.
@@ -62,6 +63,7 @@ async function computeKioskCertifications(limitToPresent: boolean): Promise<Cert
         participantsData = activeVisits.map(v => v.person);
     } else {
         participantsData = await prisma.person.findMany({
+            where: IN_LIVE_HOUSEHOLD,
             select: personSelect,
         });
     }

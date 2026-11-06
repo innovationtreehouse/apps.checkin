@@ -52,7 +52,8 @@ export const signoff: SignoffDirectory = {
     if (!bucket) return { orgLevel: false, approvers: [], owner: null };
     if (bucket.isOrgLevel) return { orgLevel: true, approvers: [], owner: null };
     const owner = bucket.owner;
-    const ownerEligible = owner && owner.mergedIntoId === null && !orgMembershipStatusBlocksLogin(owner.household?.orgMembership?.status);
+    // Row security returns an archived owner's household as null; an archived owner approves nothing.
+    const ownerEligible = owner && owner.mergedIntoId === null && owner.household !== null && !orgMembershipStatusBlocksLogin(owner.household.orgMembership?.status);
     const approvers = [...(ownerEligible ? [owner.id] : []), ...bucket.treasurers.map((t) => t.personId)];
     return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner ? (owner.mergedIntoId ?? owner.id) : null };
   },

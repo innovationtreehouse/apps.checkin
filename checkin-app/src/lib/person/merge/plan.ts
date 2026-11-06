@@ -197,6 +197,10 @@ export function carriedComplianceDate(keepVal: Date | null, mergeVal: Date | nul
 
 /** The household-lead, membership and role refusals, in that order, or null. */
 export function subjectRefusal(keep: KeepSubject, merge: MergeSubject, actor: AuthenticatedUser | null): MergeRefusal | null {
+    // Row security returns an archived household as null, which would read as no membership and no lead.
+    if (!keep.household || !merge.household) {
+        return { status: 400, error: "Cannot merge: a participant's household is archived. Unarchive it first." };
+    }
     const householdOthersCount = merge.household?.householdMembers.filter(p => p.id !== merge.id).length || 0;
 
     if (merge.isHouseholdLead && householdOthersCount > 0) {

@@ -7,6 +7,7 @@ import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -184,9 +185,9 @@ export async function listBucketApprovers(budgetOwnerId: number) {
     ];
 }
 
-/** Every live person, by name, for the Board's owner and treasurer pickers. */
+/** Every person outside an archived household, by name, for the Board's owner and treasurer pickers. */
 export async function listApproverOptions() {
-    return prisma.person.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } });
+    return prisma.person.findMany({ where: IN_LIVE_HOUSEHOLD, select: { id: true, name: true }, orderBy: { name: "asc" } });
 }
 
 /** Refuses a missing or org-level bucket, a missing person, and the actor or their household. */

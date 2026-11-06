@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 export const GET = handler("GET /api/safety/trusted-adults", async () => {
     const links = await prisma.trustedAdult.findMany({
         where: {
+            household: { archivedAt: null },
             reviews: { some: { status: { in: ["PENDING_BOARD_REVIEW", "PENDING_SUBJECT_ACTION", "EXPIRED"] } } },
         },
         orderBy: { createdAt: "desc" },

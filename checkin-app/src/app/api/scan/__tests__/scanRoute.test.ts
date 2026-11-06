@@ -22,6 +22,9 @@ jest.mock('@/lib/prisma', () => {
         personMerge: {
             findUnique: jest.fn().mockResolvedValue(null),
         },
+        household: {
+            count: jest.fn().mockResolvedValue(1),
+        },
         facilityClose: {
             findFirst: jest.fn().mockResolvedValue(null),
         },
@@ -311,6 +314,17 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq(1));
             expect(res.status).toBe(404);
             expect((await res.json()).error).toContain('not found');
+        });
+
+        it('404s a member of an archived household exactly as an unknown badge', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, householdId: 3 });
+            (prisma.household.count as jest.Mock).mockResolvedValueOnce(0);
+
+            const res = await POST(scanReq(1));
+            expect(res.status).toBe(404);
+            expect((await res.json()).error).toBe('Participant 1 not found.');
+            expect(prisma.household.count).toHaveBeenCalledWith({ where: { id: 3, archivedAt: null } });
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
         });
 
         // A merge pointer that leads nowhere is a different fault from an unknown

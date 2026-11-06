@@ -17,6 +17,7 @@ import {
 import { personActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isYouth } from "@/lib/time";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 const PERSON_SELECT = {
     id: true,
@@ -35,6 +36,8 @@ export const GET = withAuth(
     async () => {
         try {
             const rows = await prisma.person.findMany({
+                // A member of an archived household stays listed while they hold a role, so it can be removed.
+                where: { OR: [IN_LIVE_HOUSEHOLD, { roles: { some: {} } }] },
                 select: {
                     id: true,
                     email: true,
