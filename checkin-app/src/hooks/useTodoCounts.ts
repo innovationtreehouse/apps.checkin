@@ -5,22 +5,20 @@ import { useViewer } from "@checkin/component-ui";
 import { NAV_COUNTS_EVENT } from "@/lib/nav-refresh";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
-type ViewerId = number | null;
-
 // One shared snapshot for every consumer (nav badge, sub-nav tabs, todo card), so
 // they cannot show different numbers from fetches at slightly different times.
 // It is tagged with the viewer it was read for: another tab can change the session
 // without a page load, and one person's counts must never show to the next.
-let counts: { viewerId: ViewerId; value: TodoCounts } | null = null;
+let counts: { viewerId: number; value: TodoCounts } | null = null;
 let inFlight = false;
-let queued: { viewerId: ViewerId } | null = null;
+let queued: { viewerId: number } | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
     for (const listener of listeners) listener();
 }
 
-function fetchCounts(viewerId: ViewerId) {
+function fetchCounts(viewerId: number) {
     // Dedupe concurrent fetches; if a refresh event arrives mid-flight, run one
     // more pass afterward so the latest mutation is reflected.
     if (inFlight) {
@@ -51,7 +49,7 @@ function fetchCounts(viewerId: ViewerId) {
  * Read nav todo-count badges, kept live and consistent across all consumers.
  * Refetches on mount, when the viewer changes, and whenever a mutation site fires
  * NAV_COUNTS_EVENT (see src/lib/nav-refresh.ts). Returns null until the first
- * response for the current viewer and when disabled.
+ * response for the current viewer, when signed out, and when disabled.
  */
 export function useTodoCounts(enabled: boolean): TodoCounts | null {
     const viewerId = useViewer()?.id ?? null;
@@ -66,13 +64,12 @@ export function useTodoCounts(enabled: boolean): TodoCounts | null {
     );
 
     useEffect(() => {
-        if (!enabled) return;
+        if (!enabled || viewerId === null) return;
         fetchCounts(viewerId);
         const handler = () => fetchCounts(viewerId);
         window.addEventListener(NAV_COUNTS_EVENT, handler);
         return () => window.removeEventListener(NAV_COUNTS_EVENT, handler);
     }, [enabled, viewerId]);
 
-    // When disabled (e.g. signed out) report no counts rather than a stale value.
-    return enabled && snapshot?.viewerId === viewerId ? snapshot.value : null;
+    return enabled && viewerId !== null && snapshot?.viewerId === viewerId ? snapshot.value : null;
 }

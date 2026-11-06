@@ -97,9 +97,11 @@ describe("useTodoCounts", () => {
 
     let answerSecond: (res: unknown) => void = () => {};
     fetchMock.mockReturnValue(new Promise((resolve) => { answerSecond = resolve; }));
+    fetchMock.mockClear();
     mockSession = { user: { id: 2 } };
     rerender();
     expect(result.current).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const forSecond = makeCounts(6);
     await act(async () => answerSecond(okResponse(forSecond)));
@@ -119,5 +121,12 @@ describe("useTodoCounts", () => {
     await act(async () => answerLate(okResponse(makeCounts(7))));
     expect(result.current).not.toEqual(makeCounts(7));
     await waitFor(() => expect(result.current).toEqual(forThird));
+  });
+
+  it("returns null and fetches nothing when signed out, even if enabled", () => {
+    mockSession = null;
+    const { result } = renderHook(() => useTodoCounts(true));
+    expect(result.current).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
