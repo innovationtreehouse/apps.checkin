@@ -264,7 +264,7 @@ describeDb('hold resubmit lifecycle', () => {
     expect(holds.filter(h => h.status === 'RESOLVED').length).toBeGreaterThan(0);
   });
 
-  it('aggregates fees correctly after resubmit', async () => {
+  it('nets the row\'s fees into its donation after resubmit', async () => {
     const disbursementId = 'disb-fees-resubmit';
     await makeTransaction(orgId, fileId, {
       disbursementId, ownerId: 1, companyName: 'Unknown Corp',
@@ -279,8 +279,8 @@ describeDb('hold resubmit lifecycle', () => {
     const [event] = await db.disbursementEvent.findMany({
       where: { orgId, disbursementId },
     });
-    const feesItem = JSON.parse(event.payload).items.find((i: { type: string }) => i.type === 'fees');
-    expect(feesItem?.amountCents).toBe(6);
+    const items = JSON.parse(event.payload).items.map((i: { type: string; amountCents: number }) => [i.type, i.amountCents]);
+    expect(items).toEqual([['donation', 94]]);
   });
 });
 
