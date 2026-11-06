@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Alert, Button, Group, Modal, Select, Stack, Switch, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { useState, useMemo } from 'react';
+import { Alert, Button, Center, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconDeviceLaptop, IconLock, IconRobot, IconScan, IconSelector, IconUserCheck } from '@tabler/icons-react';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
-import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
+import { type AlertTone } from '@/components/admin/AlertBanner';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 import { notifications } from '@mantine/notifications';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -89,9 +91,6 @@ export default function AdminVisitsPage() {
   const { formatDateTime } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole(FACILITY_RECORD_ROLES);
 
-  const [loading, setLoading] = useState(true);
-  const [visits, setVisits] = useState<Visit[]>([]);
-  const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
 
   const [editingVisitId, setEditingVisitId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ arrivedAt: "", departedAt: "" });
@@ -103,12 +102,19 @@ export default function AdminVisitsPage() {
   // Insert-for-others: the walk-in path neither the kiosk (live only) nor the
   // event roster mark (program-scoped, event window) can record.
   const [addOpened, { open: openAdd, close: closeAdd }] = useDisclosure(false);
-  const [people, setPeople] = useState<{ id: number; name: string | null; email: string }[]>([]);
   const [addForm, setAddForm] = useState({ personId: '', arrivedAt: '', departedAt: '' });
   const [addError, setAddError] = useState('');
   const [adding, setAdding] = useState(false);
 
   const [closedOut, setClosedOut] = useState(false);
+  const { data, error, reload } = useLoad<{ visits: Visit[] }>(
+    ready ? (closedOut ? '/api/facility/visits?closedOut=true' : '/api/facility/visits') : null,
+  );
+  const visits = useMemo(() => data?.visits ?? [], [data]);
+  const { data: peopleAnswer, error: peopleError, reload: reloadPeople } = useLoad<{ people?: { id: number; name: string | null; email: string }[] }>(
+    addOpened ? '/api/people/search' : null,
+  );
+  const people = peopleAnswer?.people ?? [];
   const [sort, setSort] = useState<SortState>({ key: 'arrivedAt', dir: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [confirmEditOpened, { open: openConfirmEdit, close: closeConfirmEdit }] = useDisclosure(false);
@@ -138,39 +144,11 @@ export default function AdminVisitsPage() {
   const toggleSort = (key: SortKey) =>
     setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
 
-  const fetchVisits = useCallback(() => fetch(closedOut ? '/api/facility/visits?closedOut=true' : '/api/facility/visits')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setVisits(data.visits);
-      } else {
-        setMessage({ text: "Failed to load visits.", tone: "error" });
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading visits.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [closedOut]);
-
-  useEffect(() => {
-    if (ready) fetchVisits();
-  }, [ready, fetchVisits]);
-
   // The Select is searchable over the whole directory the search endpoint returns.
-  const openAddModal = async () => {
+  const openAddModal = () => {
     setAddError('');
     setAddForm({ personId: '', arrivedAt: '', departedAt: '' });
     openAdd();
-    if (people.length === 0) {
-      const res = await fetch('/api/people/search');
-      if (res.ok) {
-        const data = await res.json();
-        setPeople(data.people ?? []);
-      }
-    }
   };
 
   const handleAdd = async () => {
@@ -197,7 +175,7 @@ export default function AdminVisitsPage() {
       if (res.ok) {
         notifications.show({ message: 'Visit added.' });
         closeAdd();
-        fetchVisits();
+        reload();
       } else {
         const data = await res.json().catch(() => ({}));
         setAddError(data.error || 'Failed to add visit.');
@@ -253,7 +231,7 @@ export default function AdminVisitsPage() {
       if (res.ok) {
         notifications.show({ message: "Visit updated successfully." });
         setEditingVisitId(null);
-        fetchVisits();
+        reload();
       } else {
         const data = await res.json().catch(() => ({}));
         setRowNotice({ id, text: data.error || "Failed to update visit.", tone: "error" });
@@ -281,7 +259,7 @@ export default function AdminVisitsPage() {
       });
       if (res.ok) {
         notifications.show({ message: "Visit deleted." });
-        fetchVisits();
+        reload();
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: "red", message: data.error || "Failed to delete visit.", autoClose: false });
@@ -291,7 +269,7 @@ export default function AdminVisitsPage() {
     }
   };
 
-  if (authLoading || loading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
@@ -299,8 +277,6 @@ export default function AdminVisitsPage() {
 
   return (
     <Stack>
-      <AlertBanner message={message?.text} tone={message?.tone} />
-
       <Group justify="space-between">
         <TextInput
           placeholder="Filter by name, email, event, or ID..."
@@ -316,7 +292,10 @@ export default function AdminVisitsPage() {
         <Button size="xs" fz={15} onClick={openAddModal}>Add Visit</Button>
       </Group>
 
-      <Table.ScrollContainer minWidth={800}>
+      {error && <LoadError what="the visits" message={error} onRetry={reload} />}
+      {!data && !error && <Center py="xl"><Loader /></Center>}
+
+      {data && <Table.ScrollContainer minWidth={800}>
         <Table verticalSpacing="sm" highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -398,7 +377,7 @@ export default function AdminVisitsPage() {
             ))}
           </Table.Tbody>
         </Table>
-      </Table.ScrollContainer>
+      </Table.ScrollContainer>}
 
       <Modal
         opened={addOpened}
@@ -412,6 +391,7 @@ export default function AdminVisitsPage() {
             live presence comes from the kiosk. This is logged to the audit trail.
           </Text>
           {addError && <Alert color="red">{addError}</Alert>}
+          {peopleError && <LoadError what="the people list" message={peopleError} onRetry={reloadPeople} />}
           <Select
             label="Person"
             searchable

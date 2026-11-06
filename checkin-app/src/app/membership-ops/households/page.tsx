@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { Badge, Button, Group, List, Modal, Stack, Table, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatDateOnly } from '@/lib/time';
@@ -43,11 +44,10 @@ export default function AdminHouseholdsPage() {
   const isBoard = me?.isBoardMember === true;
   const router = useRouter();
 
-  const [households, setHouseholds] = useState<Household[]>([]);
+  const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[] }>(ready ? '/api/membership-ops/households' : null);
+  const households = data?.households ?? [];
   // The year in progress and, inside the renewal window, the coming year.
-  const [[yearInProgress, comingYear], setGrantYears] = useState<(GrantYear | undefined)[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [yearInProgress, comingYear] = data?.grantYears ?? [];
   const [editHouseholdId, setEditHouseholdId] = useState<number | null>(null);
   const [filter, setFilter] = useState("");
   const [confirmDenyOpened, { open: openConfirmDeny, close: closeConfirmDeny }] = useDisclosure(false);
@@ -58,28 +58,6 @@ export default function AdminHouseholdsPage() {
   // The year the reason modal confirms.
   const [pendingGrantYear, setPendingGrantYear] = useState<GrantYear | null>(null);
 
-  const fetchHouseholds = useCallback(() => fetch('/api/membership-ops/households')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHouseholds(data.households);
-        setGrantYears(data.grantYears ?? []);
-      } else {
-        setError("Failed to fetch households.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchHouseholds();
-  }, [ready, fetchHouseholds]);
-
   const revokeMembership = async (householdId: number) => {
     try {
       const res = await fetch('/api/membership-ops/households', {
@@ -89,7 +67,7 @@ export default function AdminHouseholdsPage() {
       });
 
       if (res.ok) {
-        fetchHouseholds();
+        reload();
         notifications.show({ message: 'Membership revoked.' });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -112,7 +90,7 @@ export default function AdminHouseholdsPage() {
 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        fetchHouseholds();
+        reload();
         notifications.show({ message: data.message || `Granted ${grantYear.label}.` });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -159,7 +137,7 @@ export default function AdminHouseholdsPage() {
       });
 
       if (res.ok) {
-        fetchHouseholds();
+        reload();
         notifications.show({ message: deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.' });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -178,12 +156,16 @@ export default function AdminHouseholdsPage() {
     await doSetDenied(householdId, true);
   };
 
-  if (authLoading || loading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
   if (!ready) {
     return null;
+  }
+
+  if (!data && !error) {
+    return <PageLoader />;
   }
 
   // An unnamed household is listed as "Household #id", so that is what its name
@@ -203,7 +185,7 @@ export default function AdminHouseholdsPage() {
         member of the household — a household containing a board member must have that role removed first.
       </Text>
 
-      <AlertBanner message={error} tone="error" />
+      {error && <LoadError what="the households" message={error} onRetry={reload} />}
 
       <TextInput
         placeholder="Filter by household or participant name, email, or ID"
@@ -212,7 +194,7 @@ export default function AdminHouseholdsPage() {
         maw={400}
       />
 
-      <Table.ScrollContainer minWidth={600}>
+      {data && <Table.ScrollContainer minWidth={600}>
         <Table verticalSpacing="sm" highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -404,13 +386,13 @@ export default function AdminHouseholdsPage() {
             )}
           </Table.Tbody>
         </Table>
-      </Table.ScrollContainer>
+      </Table.ScrollContainer>}
 
       <AdminEditHouseholdModal
         householdId={editHouseholdId}
         opened={editHouseholdId !== null}
         onClose={() => setEditHouseholdId(null)}
-        onSaved={() => fetchHouseholds()}
+        onSaved={() => reload()}
       />
 
       <Modal

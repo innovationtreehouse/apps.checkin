@@ -12,6 +12,15 @@ beforeEach(() => resetRtl());
 const programs = [{ id: 1, name: "Robotics Club" }];
 
 describe("NewEventPage", () => {
+  it("says the program list failed and keeps the form", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({}); // every fetch 404s
+    renderWithProviders(<NewEventPage />);
+
+    expect(await screen.findByText("Couldn't load the programs")).toBeInTheDocument();
+    expect(screen.getByLabelText("Event Name", { exact: false })).toBeInTheDocument();
+  });
+
   it("loads programs and creates a one-off event", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/programs": programs, "/api/events": { id: 99 } });
