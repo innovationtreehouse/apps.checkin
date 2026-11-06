@@ -7,6 +7,7 @@ import { createVendor, findOrCreate, findOrCreateInKindJournal, type FindOrCreat
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
+import * as accountTypes from "../accountTypes";
 
 const tokens: AccessTokenSource = { current: async () => "tok" };
 const sandbox = { env: "sandbox" as const, realmId: "123" };
@@ -188,7 +189,8 @@ describe("closed-enum writer", () => {
     expect(c.create).toBeUndefined();
     expect(Object.values(pkg)).not.toContain(CREATE);
     const pkgJson = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { exports: Record<string, unknown> };
-    expect(Object.keys(pkgJson.exports)).toEqual([".", "./oauth"]);
+    expect(Object.keys(pkgJson.exports)).toEqual([".", "./oauth", "./accountTypes"]);
+    expect(Object.values(accountTypes)).not.toContain(CREATE);
   });
 
   it("keys the writer with a registered symbol, so a second loaded copy of the module matches", () => {

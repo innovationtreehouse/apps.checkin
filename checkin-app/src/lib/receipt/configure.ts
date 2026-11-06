@@ -31,6 +31,7 @@ import { ingestReceipt, receivingOutcomes } from "@checkin/workflow-mapping";
 import { giftOutcomes, recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
 import { getOrg, sessionUser } from "@/lib/components/host";
 import { householdOf } from "@/lib/components/ports";
+import { householdWithMembership, IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
@@ -111,6 +112,8 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   const exact = matches.filter((p) => p.email?.toLowerCase() === address || p.mailAliases.length > 0);
   if (matches.length !== 1 || exact.length !== 1) return null;
   const [person] = exact;
+  // Row security returns an archived household as null; its DENIED status still applies.
+  person.household ??= await householdWithMembership(person.householdId);
   // The org-account claim follows the sign-in email, including for mail from an alias.
   const claims: JWT = { id: person.id, email: person.email, hd: person.email?.toLowerCase().split("@")[1], emailVerified: true };
   assignParticipantClaims(claims, person);
@@ -129,7 +132,7 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
     import("@/lib/programAge"),
   ]);
   const matches = await prisma.person.findMany({
-    where: { name: { contains: query, mode: "insensitive" } },
+    where: { name: { contains: query, mode: "insensitive" }, ...IN_LIVE_HOUSEHOLD },
     select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
   });

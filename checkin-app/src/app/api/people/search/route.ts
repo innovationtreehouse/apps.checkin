@@ -6,6 +6,7 @@ import { ACTIVE_ORG_MEMBER_PERSON_WHERE, personRecordIsActiveOrgMember } from "@
 import { apiError } from "@/lib/api-response";
 import { rolesToFlags } from "@/lib/roles";
 import { searchId } from "@/lib/searchId";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { leaderAgeCutoff } from "@/lib/programAge";
 import { membershipYearCycle, membershipYearCycleForLabel, MAX_DATE } from "@/lib/membership/renewal";
 
@@ -140,6 +141,7 @@ export const GET = withAuth(
                 // first, and Prisma's recursive WhereInput accepts that without a type
                 // error. `?q=x&filter=adults` must apply both.
                 where: {
+                    ...IN_LIVE_HOUSEHOLD,
                     AND: [
                         ...(q ? [{
                             OR: [

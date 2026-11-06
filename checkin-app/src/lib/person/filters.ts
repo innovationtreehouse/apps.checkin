@@ -84,6 +84,7 @@ export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
  */
 export function bgObligatedWhere(now: Date): Prisma.PersonWhereInput {
     return {
+        household: { archivedAt: null },
         OR: [programAttachedWhere(now), { isHouseholdLead: true, household: { orgMembership: { status: "ACTIVE" } } }],
     };
 }

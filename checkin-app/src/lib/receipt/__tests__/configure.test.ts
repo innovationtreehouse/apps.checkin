@@ -196,15 +196,15 @@ describe('receipt runtime: reimbursee bindings', () => {
     const adult = { id: 8, name: 'Sam Lee', dateOfBirth: ADULT_DOB, isDeclaredAdult: false };
     const minor = { id: 9, name: 'Sam Kid', dateOfBirth: new Date(), isDeclaredAdult: false };
     const unknownAge = { id: 10, name: 'Sam Who', dateOfBirth: null, isDeclaredAdult: false };
-    // No household or membership is read: someone without an account is named like any adult.
+    // No membership is read: someone without an account is named like any adult.
     const declaredNonMember = { id: 11, name: 'Sam Guest', dateOfBirth: null, isDeclaredAdult: true };
 
     it('searches live people by name and offers only known adults, members or not, as id and name', async () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([adult, minor, unknownAge, declaredNonMember]);
         expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }, { id: 11, name: 'Sam Guest' }]);
         const query = jest.mocked(prisma.person.findMany).mock.calls[0][0];
-        expect(query).toMatchObject({ where: { name: { contains: 'sam', mode: 'insensitive' } } });
-        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['name']);
+        expect(query).toMatchObject({ where: { name: { contains: 'sam', mode: 'insensitive' }, household: { archivedAt: null } } });
+        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['household', 'name']);
     });
 
     it('caps the search after dropping anyone not known to be an adult', async () => {

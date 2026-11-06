@@ -13,6 +13,7 @@ import { recordLedger } from "@/lib/dev/ledger";
 import { assignParticipantClaims } from "@/lib/authClaims";
 import { ROLE_FLAGS, setRoleFlag, trustStatus } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
+import { householdWithMembership } from "@/lib/household/archived";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { mintPersonId } from "@/lib/person/mintId";
@@ -461,6 +462,8 @@ export const authOptions: NextAuthOptions = {
                         dbParticipant.roles.push({ role: "SYSADMIN" });
                     }
 
+                    // Row security returns an archived household as null.
+                    dbParticipant.household ??= await householdWithMembership(dbParticipant.householdId);
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).
                     assignParticipantClaims(token, dbParticipant);
@@ -510,6 +513,7 @@ export const authOptions: NextAuthOptions = {
                 // Re-stamp claims on every request so a board "Deny Membership" takes effect
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.
+                dbParticipant.household ??= await householdWithMembership(dbParticipant.householdId);
                 assignParticipantClaims(token, dbParticipant);
             }
             return token;

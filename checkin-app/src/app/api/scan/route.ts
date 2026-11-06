@@ -11,6 +11,7 @@ import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_P
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
+import { isLiveHousehold } from "@/lib/household/archived";
 import { specTrace } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
@@ -231,9 +232,10 @@ export const POST = withKiosk(
 
         // 3. Lookup participant. A badge still encoding a merged-away id must not
         // reject its owner at the door: it resolves to the surviving record, and a
-        // broken chain asks the operator to reissue the badge.
+        // broken chain asks the operator to reissue the badge. A member of an
+        // archived household scans exactly as a badge that matches nobody.
         const resolved = await resolveMergedPerson(participantId);
-        if (resolved.kind !== "live") {
+        if (resolved.kind !== "live" || !(await isLiveHousehold(resolved.person.householdId))) {
             if (isDead || isReplay) return await parkUnresolvable();
             specTrace("ScanCommit", { slot, p: participantId, cid: clientEventId, kind: "rejected" });
             return resolved.kind === "broken"

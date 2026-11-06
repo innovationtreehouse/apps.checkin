@@ -5,6 +5,7 @@ import { handler, notFound, badRequest } from "@/security/handler";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { checkProgramAge } from "@/lib/programAge";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 // Admission + field stripping declared in src/security/registry.ts under
 // 'GET /api/programs/[id]/eligible-participants'. A staff directory SEARCH for
@@ -22,6 +23,7 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
     const q = new URL(req.url).searchParams.get("q") || "";
 
     const andClauses: Prisma.PersonWhereInput[] = [
+        IN_LIVE_HOUSEHOLD,
         {
             NOT: {
                 OR: [

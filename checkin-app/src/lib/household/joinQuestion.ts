@@ -41,7 +41,8 @@ export async function householdQuestion(personId: number): Promise<{ name: strin
         where: { id: personId },
         select: { householdJoinPending: true, household: { select: { name: true } } },
     });
-    return person?.householdJoinPending ? { name: person.household.name } : null;
+    // An archived household reads as null here; it asks nothing.
+    return person?.householdJoinPending && person.household ? { name: person.household.name } : null;
 }
 
 // The address's holder may not be whoever the household meant, so a no carries nothing over.

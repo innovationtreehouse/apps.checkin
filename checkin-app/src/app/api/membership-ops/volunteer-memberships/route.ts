@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, type ProcessStatus } from "@/lib/membership/lifecycle";
 import type { OrgMembershipStatus } from "@/generated/prisma/client";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +75,7 @@ const isRevoked = (status: OrgMembershipStatus | undefined) => status === "REVOK
 export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async () => {
     const [memberships, designations] = await Promise.all([
         prisma.orgMembership.findMany({
-            where: { isVolunteerFamily: true },
+            where: { isVolunteerFamily: true, household: { archivedAt: null } },
             select: {
                 status: true,
                 memberSince: true,
@@ -105,7 +106,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
     const wanted = new Set(designations.map((d) => canonicalizeEmail(d.email)));
     const leads = wanted.size
         ? await prisma.person.findMany({
-              where: { email: { not: null }, isHouseholdLead: true },
+              where: { email: { not: null }, isHouseholdLead: true, ...IN_LIVE_HOUSEHOLD },
               select: {
                   email: true,
                   household: {

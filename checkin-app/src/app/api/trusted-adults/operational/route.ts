@@ -19,7 +19,7 @@ export const GET = handler("GET /api/trusted-adults/operational", async ({ auth 
     const privileged = u.isSysadmin || u.isBoardMember || u.isKeyholder;
 
     const authorized = authorizedReview(new Date());
-    const where: Prisma.TrustedAdultWhereInput = { reviews: { some: authorized } };
+    const where: Prisma.TrustedAdultWhereInput = { household: { archivedAt: null }, reviews: { some: authorized } };
 
     if (!privileged) {
         // Program leads: households of children enrolled in programs they lead or core-vol.

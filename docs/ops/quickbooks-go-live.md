@@ -175,11 +175,28 @@ stops the lane from posting, but the switch-on date stays.
 | Benevity | Benevity disbursements: bank account; Benevity: fees | Both | QuickBooks posting: Benevity donations |
 | Gifts of goods | Gifts of goods: in-kind income, in-kind expense, fixed assets (donated equipment), clearing account (finance's past bookings) | All four, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
+Each role takes only the QuickBooks account types below. The picker lists only
+those, and a save of any other type, or while QuickBooks can't be read, is
+refused. A role already set to another type shows on the
+"QuickBooks books map: account types" status row; re-pick it.
+
+| Role | Account types |
+|---|---|
+| Both bank accounts | Bank |
+| Organisation card | Bank, Credit Card |
+| Shopify: custom items; Gifts of goods: in-kind income | Income, Other Income |
+| Shopify: card remainder, adjustments | Income, Other Income, Other Current Liability |
+| Shopify: fees; Benevity: fees | Expense, Other Expense |
+| Gifts of goods: in-kind expense | Expense, Other Expense, Cost of Goods Sold |
+| Gifts of goods: fixed assets | Fixed Asset |
+| Gifts of goods: clearing account | Bank, Other Current Asset, Other Current Liability |
+
 Then give each budget bucket its QuickBooks Class on the same screen. On the income
 items screen (`/income/items`), give each Shopify item a bucket (or general income)
-and then the QuickBooks account its sales book to; the picker reads QuickBooks live.
-An item is decided only once it has both. A payout with an undecided item, or a
-bucket that can't be used, holds for finance rather than posting.
+and then the QuickBooks account its sales book to; the picker reads QuickBooks live
+and lists only Income and Other Income accounts. An item is decided only once it
+has both. A payout with an undecided item, or a bucket that can't be used, holds
+for finance rather than posting.
 
 Benevity gifts and employer matches book to the accounts on their account rules,
 not to a role. On the account map (`/donations/account-map`), pick a donation
@@ -187,7 +204,8 @@ account and a match account for every rule; the picker reads QuickBooks live. A
 batch with a gift whose rule lacks the account it needs holds on the disbursement
 holds screen until finance picks one and resubmits.
 
-**Done when** the Expenses, Benevity and gifts-of-goods rows read "Bound.", and the
+**Done when** the account types row reads "Every account picked is of a type its
+role accepts.", the Expenses, Benevity and gifts-of-goods rows read "Bound.", and the
 Shopify income row lists only the switch as missing:
 "Unbound; missing: the switch INCOME_MIRROR_NEWEST_WINS=true."
 

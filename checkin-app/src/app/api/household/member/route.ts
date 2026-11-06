@@ -127,7 +127,7 @@ export const PATCH = withAuth(
                 + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
                 || Boolean(targetHouseholdMember.lastBackgroundCheck)
                 || targetHouseholdMember.canAccessStaging
-                || Boolean(targetHouseholdMember.household.orgMembership?.isVolunteerFamily)
+                || Boolean(targetHouseholdMember.household?.orgMembership?.isVolunteerFamily)
                 || (email !== undefined && (await trustStatus(prisma, participantId)).isTrusted);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
