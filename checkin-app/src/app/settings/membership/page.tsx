@@ -166,6 +166,7 @@ export default function MembershipSettingsPage() {
       const { variantId } = await api<{ variantId: string }>("/api/settings/membership/extract-variant", {
         method: "POST",
         body: JSON.stringify({ productUrl: url.trim() }),
+        invalidate: false,
       });
       fill(variantId);
       showSuccess(`Variant ${variantId} filled in — press Save settings to keep it.`);

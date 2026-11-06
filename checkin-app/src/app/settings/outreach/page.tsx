@@ -5,7 +5,7 @@ import {
   Alert, Badge, Button, Card, Center, Group, Loader, Modal, Progress, Radio, Stack, Text, Textarea, TextInput, Title,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, HttpError, invalidateLoads, showError, showSuccess } from "@checkin/component-ui";
 import { api } from "@/lib/api";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
@@ -277,6 +277,7 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
         const data = await api<{ remaining: number; processed: number }>("/api/outreach/process-batch", {
           method: "POST",
           body: JSON.stringify({ bulkSendId }),
+          invalidate: false,
         });
         await refreshStatus();
         if (data.remaining === 0 || data.processed === 0) break;
@@ -284,6 +285,7 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
     } catch (e) {
       showError(errorMessage(e));
     } finally {
+      invalidateLoads();
       setDraining(false);
     }
   };
