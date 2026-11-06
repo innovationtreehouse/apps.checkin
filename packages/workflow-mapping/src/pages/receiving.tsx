@@ -66,7 +66,11 @@ export default function ReceivingPage() {
   async function retry(id: number) {
     setRetrying(id);
     const result = await retryOne(id);
-    notifications.show(result.outcome === "failed" ? { message: result.message, color: "red", autoClose: false } : { message: "Applied", color: "green" });
+    notifications.show(
+      result.outcome === "failed" ? { message: result.message, color: "red", autoClose: false }
+        : result.outcome === "sending" ? { message: "Still sending: it stays In progress and the system retries it automatically.", color: "orange", autoClose: false }
+        : { message: "Applied", color: "green" },
+    );
     setRetrying(null);
     reloadAll();
   }
