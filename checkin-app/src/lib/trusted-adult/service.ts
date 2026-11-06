@@ -599,7 +599,8 @@ export async function runExpirySweep(now: Date) {
         ...new Set(
             (
                 await prisma.trustedAdultReview.findMany({
-                    where: { status: "APPROVED", reviewBy: { not: null, lte: warnThreshold, gt: now } },
+                    // An archived household gets no expiry warning.
+                    where: { status: "APPROVED", reviewBy: { not: null, lte: warnThreshold, gt: now }, trustedAdult: { household: { archivedAt: null } } },
                     select: { trustedAdultId: true },
                 })
             ).map((r) => r.trustedAdultId),
@@ -627,7 +628,7 @@ export async function runExpirySweep(now: Date) {
 
     const lapsed = await prisma.trustedAdultReview.findMany({
         where: { status: "APPROVED", reviewBy: { not: null, lte: now } },
-        select: { id: true, trustedAdultId: true, status: true, householdId: true, trustedAdult: { select: { trustedAdultName: true } } },
+        select: { id: true, trustedAdultId: true, status: true, householdId: true, trustedAdult: { select: { trustedAdultName: true, household: { select: { id: true } } } } },
     });
     let expired = 0;
     for (const r of lapsed) {
@@ -655,7 +656,8 @@ export async function runExpirySweep(now: Date) {
         // One lapsed review is not a lapsed adult: another approval may still authorize
         // them, or be lapsed too and flip later in this run. Only the flip that leaves the
         // adult with no approval at all earns the de-authorization notice, so it goes once.
-        if (approvalLeft) continue;
+        // Row security returns an archived household as null: it still lapses, but gets no email.
+        if (approvalLeft || !r.trustedAdult.household) continue;
         const name = r.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
         await notifyHouseholdFamily(
             r.householdId,
