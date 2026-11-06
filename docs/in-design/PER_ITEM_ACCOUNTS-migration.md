@@ -7,10 +7,11 @@ the last PR merges. Its last step is "extract the rules, delete both files".
 ## Where it stands
 
 - Designed. Settled: PIA-1 (proportional), PIA-2 (blank is zero; a fees-only
-  row goes to finance), PIA-4 (the three fee columns, summed) and PIA-5
-  (Shopify fees stay an expense). PIA-3 is half settled: whole cents through
-  the shared allocator, with its leftover-cent rule open. PIA-6 to PIA-9 are
-  open (design, "Waiting on the owner").
+  row goes to finance), PIA-4 (the three fee columns, summed), PIA-5 (Shopify
+  fees stay an expense) and PIA-7 (hide the Benevity fees settings, then remove
+  them). PIA-3 is half settled: whole cents through the shared allocator, with
+  its leftover-cent rule open. PIA-6, PIA-8 and PIA-9 are open (design,
+  "Waiting on the owner").
 - **Giving-platform gifts have lost their per-rule accounts.** PR 1 below
   restores them. The trace, on `main` at the time of writing:
   - `packages/bulk-donation/src/lib/disbursement-processor.ts`: when a batch
@@ -57,7 +58,7 @@ No stored row is rewritten, and no script moves data.
 | Finished batches not yet booked | Items carry names only | Book on the role. Finance can dismiss and book by hand any it wants on a rule's account. |
 | Income items | Bucket per variant | New nullable account id, empty. Every item books on the role until finance sets one. |
 | Expense account rules | Account id per rule | Unchanged. Gifts of goods start reading them (PR 5), so any rule matching a donated part moves that part's future journal lines. Finance should review rules with a `*` part before PR 5 ships. |
-| Fees role and rule fees column | In use | Stop being read once fees reduce income; values stay until a decommission the owner schedules (PIA-7). |
+| "Benevity: fees" role and the rule fees column | In use | Hidden and no longer read once fees reduce income (PR 3), then removed (PR 6, "Removing the fees settings" below). |
 
 Expand only: every schema change is an added nullable column, safe against the
 previous release still serving traffic.
@@ -72,14 +73,54 @@ lines it establishes into `docs/rules/` and updates the books-map table in
 |---|---|---|---|
 | 1 | Code | **Restore giving-platform accounts.** Nullable account-id columns on the account rules (annotated `@sensitivity` in the schema; the routes' registry entries are unchanged, so no boundary PR) and pickers for them on `/donations/account-map`. At batch finish each item also takes its rule's id. The hand-over carries it on each line, grouped by kind, account and bucket. Income's expected line gains an optional account id that it uses in place of the role; the role is the fallback. If PIA-3 and PIA-6 are answered before it opens, the per-row fee split (design §5.2) ships here too, since it touches the same two functions. | Nothing |
 | 2 | Code | Account types per role in `@checkin/quickbooks`. Books-map save refuses a wrong type; System Status and the lane checks flag a stored one; every override is checked against its role; pickers filter by type. | PIA-9 |
-| 3 | Code | Giving-platform fees reduce income, if not already in PR 1: per-row split at batch finish through the allocator moved from expense to `@checkin/money`, fee parts on each amount item, fees role and column no longer read. | 1, PIA-3, PIA-6, PIA-7 |
+| 3 | Code | Giving-platform fees reduce income, if not already in PR 1: per-row split at batch finish through the allocator moved from expense to `@checkin/money`, fee parts on each amount item. "Benevity: fees" and the rule fees column are no longer read, and the books map, the account-rule screen and System Status hide them. | 1, PIA-3, PIA-6 |
 | 4a | Boundary only | The account id on the synthetic `IncomeItemView` classification, and any new picker route's registry entry. | Nothing |
 | 4 | Code | Online-store sales per item: account on income items, `/income/items` picker, deposit lines grouped by account and bucket. Fees unchanged. | 4a |
 | 5 | Code | Gifts of goods per part: port from bulk-donation to expense's rule matcher, bound by the host; debit lines take the rule's account or fall to the role. | PIA-8 |
-| 6 | Decommission | Drop "Benevity: fees" and the rule fees column, if and when the owner schedules it. Boundary entries for removed fields only, under the decommission exception. | 3, owner |
+| 6 | Decommission | Remove "Benevity: fees" and the rule fees column, as below. | 3 deployed to production, and the precondition below |
 
 PR 2 can land in any order with the others; an override saved before it lands is
 checked from then on.
+
+## Removing the fees settings
+
+Two releases, so no running code ever reads something already gone.
+
+**Release with PR 3: hide.** Nothing reads the role or the column, nothing
+writes the column, and no screen shows either. Every new batch splits its fees,
+so new batches carry no fee items and new expected deposits carry no fee lines.
+
+**Precondition for PR 6,** checked in production by a read-only query in the
+service's one-off task before PR 6 opens:
+
+- No income row still waiting or open whose expected deposit has a
+  `BENEVITY_FEES` line. Such a row came from a batch handed over before PR 3,
+  and it can't book once the role is gone. Finance books or dismisses each one.
+- No finished batch whose items include a fee item and that income has not yet
+  taken. The re-send job hands these over; wait for it, or finance settles them.
+
+**PR 6: remove.** One PR, all green:
+
+- Remove `BENEVITY_FEES` from the books-map roles and their labels, and from the
+  Benevity lane's required roles.
+- A checkin migration deletes that role's row from the books-map table. Its
+  audit history stays.
+- A bulk-donation migration drops the rule fees column, with its schema
+  annotation, from the model and the regenerated classifications.
+- Income keeps reading `BENEVITY_FEES` in the expected deposits it already
+  stores, because posted rows keep their history. Intake refuses it on any new
+  deposit. A short list of retired roles, beside the live ones, is what both
+  checks read.
+- Old batch payloads keep their fee items. They are history and are never
+  handed over again.
+- Run the rule 2 sweep from `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
+  for the role name and column name: seed, scripts, tests, docs, the go-live
+  doc's books-map table.
+
+If the boundary check treats the column's removal from the classifications as a
+boundary change outside the decommission exception, that part ships first as
+its own boundary PR. Rule 3 still holds: the column is dropped only after PR 3's
+release has fully replaced the code that read it.
 
 ## Last step
 

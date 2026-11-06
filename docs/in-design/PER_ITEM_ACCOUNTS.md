@@ -76,11 +76,6 @@ Stable IDs; a settled question keeps its number and moves to §10.
   line on the column's account and Class, described as fees, so the gross gift
   stays readable in QuickBooks. The alternative nets the fee into the gift's
   line.
-- **PIA-7. Retiring the fees settings.** Once fees reduce income, "Benevity: fees"
-  and each rule's fees account choose nothing. Recommended: the role and the
-  column stop being read and the screens stop showing them; the stored values
-  stay until a later decommission the owner schedules. "Shopify: fees" stays in
-  use (PIA-5).
 - **PIA-8. Donated goods use the expense account rules.** Recommended: yes, one
   rule set, so a donated item and the same item bought book to the same account.
   The alternative is a second rule set of the same shape for gifts of goods only.
@@ -348,3 +343,7 @@ part lands:
 - **PIA-5. Online-store fees.** No: they are direct fees on direct revenue, so
   they are merchant-account fees, booked as an expense on "Shopify: fees", not
   a reduction of income. — owner, 2026-11-06
+- **PIA-7. Retiring the fees settings.** Yes: once fees reduce income,
+  "Benevity: fees" and each rule's fees account stop being read and the screens
+  hide them. Then they are removed, by the plan in the cutover file.
+  "Shopify: fees" stays in use (PIA-5). — owner, 2026-11-06
