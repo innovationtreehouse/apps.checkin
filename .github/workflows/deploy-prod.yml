@@ -383,44 +383,46 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # Runs only after a successful rollout, so kiosks never move ahead of the server.
-  # A failure here leaves the app live and kiosks on their current image; re-run
-  # this job to retry.
+  # Runs only after a successful rollout, so kiosks never move ahead of the server,
+  # and as its own job, so a kiosk failure leaves the app deploy green. Pushes by
+  # digest, tests that digest, and only then tags it; re-run this job to retry.
   publish-kiosk:
     name: Publish kiosk image
     needs: [deploy]
     runs-on: ubuntu-24.04-arm  # native ARM64 — evdev compiles during the build
+    timeout-minutes: 90
+    # kiosk-publish trusts only this and the kiosk-force environment.
+    environment: production
     permissions:
       contents: read
-      packages: write
-      id-token: write   # ECR Public login for the base image pull
+      id-token: write   # assume kiosk-publish via OIDC
     concurrency:
       group: kiosk-tags
       cancel-in-progress: false
     env:
-      KIOSK_IMAGE: ghcr.io/innovationtreehouse/kiosk
-      KIOSK_RELEASE_TAG: kiosk-release  # matches client/host/host.conf.example
+      KIOSK_IMAGE: public.ecr.aws/q2q3l9k2/kiosk  # matches client/host/host.conf.example
+      KIOSK_RELEASE_TAG: kiosk-release
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout released tag
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0   # the flow tier builds its old image from a pinned commit
+
+      # One login serves the push and the flow stack's public base-image pulls.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::639595353568:role/kiosk-publish
+          aws-region: us-east-1  # ECR Public's API exists only here
 
       - name: Log in to Amazon ECR Public
-        uses: ./.github/actions/ecr-public-login
+        uses: aws-actions/amazon-ecr-login@v2
         with:
-          role-to-assume: ${{ env.PULL_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
+          registry-type: public
 
-      - name: Log in to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
+      - name: Build and push image by digest
         id: build
         run: |
           set -euo pipefail
@@ -430,11 +432,8 @@ jobs:
           docker buildx build client/ \
             --platform linux/arm64 \
             --provenance=mode=min \
-            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --label "org.opencontainers.image.version=$TAG" \
-            --tag "$KIOSK_IMAGE:$TAG" \
-            --metadata-file "$RUNNER_TEMP/kiosk-build.json" \
-            --push
+            --output "type=image,name=$KIOSK_IMAGE,push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "$RUNNER_TEMP/kiosk-build.json"
           DIGEST=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/kiosk-build.json")
           if [[ ! $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::Build reported no image digest"
@@ -442,12 +441,23 @@ jobs:
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Move the release tag
+      - name: Kiosk flow tier on the pushed digest
+        env:
+          KIOSK_IMAGE_REF: ${{ env.KIOSK_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: deploy/kiosk-flow.sh
+
+      - name: Kiosk browser tier on the pushed digest
+        env:
+          KIOSK_IMAGE_REF: ${{ env.KIOSK_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: deploy/kiosk-flow.sh e2e
+
+      - name: Tag the image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          docker buildx imagetools create --tag "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" "$KIOSK_IMAGE@$DIGEST"
+          docker buildx imagetools create \
+            --tag "$KIOSK_IMAGE:$TAG" --tag "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" "$KIOSK_IMAGE@$DIGEST"
           MOVED=$(docker buildx imagetools inspect "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" --format '{{.Manifest.Digest}}')
           if [ "$MOVED" != "$DIGEST" ]; then
             echo "::error::$KIOSK_RELEASE_TAG is at $MOVED, expected $DIGEST"
@@ -457,5 +467,5 @@ jobs:
             echo "### Kiosk image published"
             echo "- \`$KIOSK_IMAGE:$TAG\`"
             echo "- Digest: \`$DIGEST\`"
-            echo "- \`$KIOSK_RELEASE_TAG\` moved; kiosks update overnight."
+            echo "- Flow and browser tiers passed on this digest; \`$KIOSK_RELEASE_TAG\` moved, so kiosks update overnight."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -13,15 +13,15 @@ on:
         type: string
 
 permissions:
-  contents: read
-  packages: write
+  actions: read     # read who approved this run
+  id-token: write   # assume kiosk-publish via OIDC
 
 concurrency:
   group: kiosk-tags
   cancel-in-progress: false
 
 env:
-  KIOSK_IMAGE: ghcr.io/innovationtreehouse/kiosk
+  KIOSK_IMAGE: public.ecr.aws/q2q3l9k2/kiosk
   # These match client/host/host.conf.example.
   KIOSK_RELEASE_TAG: kiosk-release
   KIOSK_URGENT_TAG: kiosk-urgent
@@ -29,20 +29,27 @@ env:
 jobs:
   force:
     name: Move the kiosk tags
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    # kiosk-publish trusts only this and the production environment.
     environment: kiosk-force
     steps:
-      - name: Log in to ghcr.io
-        uses: docker/login-action@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          role-to-assume: arn:aws:iam::639595353568:role/kiosk-publish
+          aws-region: us-east-1  # ECR Public's API exists only here
+
+      - name: Log in to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
 
       - name: Move the tags
         env:
           TARGET: ${{ inputs.target }}
           FORCED_BY: ${{ github.triggering_actor }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # The input can only complete a reference to KIOSK_IMAGE: neither form
@@ -89,9 +96,12 @@ jobs:
             exit 1
           fi
 
+          approved_by=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            --jq '[.[] | select(.state == "approved") | "@" + .user.login] | join(", ")' || echo "unknown")
           {
             echo "### Kiosk forced to \`$TARGET\`"
-            echo "- Forced by: @$FORCED_BY"
+            echo "- Started by: @$FORCED_BY"
+            echo "- Approved by: ${approved_by:-unknown}"
             echo "- Image: \`$source_digest\`"
             echo "- Published for this run as: \`$digest\`"
             echo "- \`$KIOSK_RELEASE_TAG\` was \`$old_release\`"
