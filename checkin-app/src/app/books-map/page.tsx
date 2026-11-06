@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import type { BooksMapRole } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
@@ -24,6 +25,10 @@ interface Option {
   id: string;
   name: string;
   active: boolean;
+}
+
+interface AccountOption extends Option {
+  accountType: string;
 }
 
 /** Reads JSON, or says why it could not; never throws. */
@@ -52,6 +57,16 @@ function choices(options: Option[] | null, saved: string | null) {
   return list;
 }
 
+/** A role's account options: only the types it accepts, plus the saved one marked when it is of another type. */
+function accountChoices(options: AccountOption[] | null, role: BooksMapRole, saved: string | null) {
+  const allowed = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
+  const fits = (options ?? []).filter((o) => allowed.includes(o.accountType) || o.id === saved);
+  return choices(fits, saved).map((c) => {
+    const type = fits.find((o) => o.id === c.value)?.accountType;
+    return type && !allowed.includes(type) ? { ...c, label: `${c.label} (wrong type: ${type})` } : c;
+  });
+}
+
 export default function BooksMapPage() {
   const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
@@ -59,12 +74,12 @@ export default function BooksMapPage() {
   const [classRows, setClassRows] = useState<ClassRow[]>([]);
   const [accountRows, setAccountRows] = useState<AccountRow[]>([]);
   const [classes, setClasses] = useState<Option[] | null>(null);
-  const [accounts, setAccounts] = useState<Option[] | null>(null);
+  const [accounts, setAccounts] = useState<AccountOption[] | null>(null);
 
   const load = useCallback(() => Promise.all([
     request<{ BooksMapClass: ClassRow[]; BooksMapAccount: AccountRow[] }>("/api/books-map"),
     request<Option[]>("/api/budget-owners/quickbooks-classes"),
-    request<Option[]>("/api/books-map/quickbooks-accounts"),
+    request<AccountOption[]>("/api/books-map/quickbooks-accounts"),
   ]).then(([map, c, a]) => {
     if (map.ok) { setClassRows(map.data.BooksMapClass); setAccountRows(map.data.BooksMapAccount); } else showError("Books map not loaded", map.error);
     if (c.ok) setClasses(c.data); else showError("QuickBooks Classes unavailable", c.error);
@@ -104,7 +119,7 @@ export default function BooksMapPage() {
               <Table.Td>
                 <Select
                   aria-label={BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}
-                  data={choices(accounts, r.quickBooksAccountId)}
+                  data={accountChoices(accounts, r.role, r.quickBooksAccountId)}
                   value={r.quickBooksAccountId}
                   placeholder="Not set"
                   searchable

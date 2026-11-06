@@ -5,7 +5,8 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
-import { BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLES, BOOKS_MAP_ROLE_ACCOUNT_TYPES, isBooksMapRole, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 // The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
 // stored on BudgetOwner, and named role -> QuickBooks account, stored in
@@ -44,11 +45,29 @@ export async function setBooksMapClass(actorId: number, budgetOwnerId: number, b
     return { budgetOwnerId: bucket.id, budgetOwnerName: bucket.name, quickBooksClassId: bucket.quickBooksClassId };
 }
 
-/** Sets or clears one role's account, audited with the old and new id. */
+const either = new Intl.ListFormat("en", { type: "disjunction" });
+
+/** "an Expense or Other Expense account": the types a role accepts, as finance reads them. */
+function acceptedTypes(role: BooksMapRole): string {
+    const types = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
+    return `${/^[AEIOU]/.test(types[0]) ? "an" : "a"} ${either.format(types)} account`;
+}
+
+/** Refuses an account QuickBooks doesn't list, or lists under a type the role does not accept. Reads QuickBooks live. */
+async function refuseWrongType(role: BooksMapRole, quickBooksAccountId: string) {
+    const account = (await listQuickBooksAccounts()).find((a) => a.id === quickBooksAccountId);
+    if (!account) throw badRequest(`QuickBooks has no account with id ${quickBooksAccountId}`);
+    if (!BOOKS_MAP_ROLE_ACCOUNT_TYPES[role].includes(account.accountType)) {
+        throw badRequest(`${BOOKS_MAP_ROLE_LABELS[role]} takes ${acceptedTypes(role)}; ${account.name} is ${account.accountType}`);
+    }
+}
+
+/** Sets or clears one role's account, audited with the old and new id. A new account must be of a type the role accepts. */
 export async function setBooksMapAccount(actorId: number, role: string, body: Record<string, unknown>) {
     if (!isBooksMapRole(role)) throw badRequest(`Unknown books-map role "${role}"`);
     if (body.quickBooksAccountId === undefined) throw badRequest("quickBooksAccountId is required");
     const quickBooksAccountId = readQuickBooksId(body.quickBooksAccountId, "quickBooksAccountId");
+    if (quickBooksAccountId !== null) await refuseWrongType(role, quickBooksAccountId);
     return prisma.$transaction(async (tx) => {
         const before = await tx.booksMapRoleAccount.findUnique({ where: { role }, select: { quickBooksAccountId: true } });
         const oldId = before?.quickBooksAccountId ?? null;
@@ -94,6 +113,25 @@ export async function listQuickBooksAccounts() {
     return accounts
         .map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "", active: a.Active !== false }))
         .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Each set role whose account QuickBooks lists under a type the role does not
+ * accept, or no longer lists, in plain words for System Status. Stored values
+ * stay as they are; finance re-picks them.
+ */
+export async function misTypedRoleAccounts(qbAccounts: readonly Pick<QboAccount, "Id" | "FullyQualifiedName" | "AccountType">[]): Promise<string[]> {
+    const byId = new Map(qbAccounts.map((a) => [a.Id, a]));
+    const set = await booksMap.accounts();
+    return BOOKS_MAP_ROLES.flatMap((role) => {
+        const id = set[role];
+        if (!id) return [];
+        const account = byId.get(id);
+        const allowed = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
+        if (account?.AccountType && allowed.includes(account.AccountType)) return [];
+        const is = account ? `${account.FullyQualifiedName} is ${account.AccountType ?? "of no type"}` : `id ${id} is not in QuickBooks`;
+        return [`${BOOKS_MAP_ROLE_LABELS[role]} (${is}; takes ${either.format(allowed)})`];
+    });
 }
 
 /** The host's books-map port: what the income, gifts-of-goods and expense lanes read. */
