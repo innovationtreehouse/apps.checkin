@@ -5,9 +5,9 @@ Design for making the finance view record (the finance-view rule in
 showed: who looked, on which page, which records, and which sensitive fields
 of them. No code changes with this doc.
 
-**Status: one question is open, Q17.** Under the marks alone, nine routes
-logged today would stop being logged, so "B11 is not narrowed" does not hold
-yet. Nothing is being built.
+**Status: one question is open, Q17's second half.** Five routes logged today
+show no money or person, so "B11 is not narrowed" needs a way to keep them
+logged. Nothing is being built.
 
 ## The problem
 
@@ -397,6 +397,12 @@ as today but with exact records and fields.
   every screen, from a fixed list of outside names, two today.  [Decision — owner]
 - **A reload writes a new entry (Q16).** Each page load is its own page view;
   identical loads are not collapsed.  [Decision — owner]
+- **Stored payloads and change values carry the mark (Q17).** Their text holds
+  amounts and names that no other field mark sees, as a stored file does:
+  `ReceivedExpensePayload.payloadJson`, `DisbursementEvent.payload`,
+  `ReceiptAuditLog.valueBefore` and `valueAfter`, and `WorkflowAuditLog.details`.
+  So received expense payloads, disbursement events and both change histories
+  stay logged.  [Decision — owner]
 - **Log rows written before the change stay as they are.**  [Decision — owner]
 - **Any marked field logs the view, an amount on its own included (Q15).** One
   mark, with no pairing of a person with money. So the payouts list, gifts of
@@ -406,7 +412,7 @@ as today but with exact records and fields.
 - **B11 is not narrowed (Q12, reversed by Q15).** The finance-view rule keeps
   the scope the Board ruled: every view of finance records other than a
   person's own. There is nothing for the Board to confirm.  [Decision — owner]
-  Q17 decides how the nine routes above keep to that.
+  Q17 decides how the five routes with no money or person keep to that.
 
   The register line in `docs/rules/revenue.md` changes in wording only, to say
   what the record now holds. Draft for review; `revenue.md` is unchanged until
@@ -422,16 +428,8 @@ as today but with exact records and fields.
 
 Q1 to Q16 are settled or retired; their numbers stay retired.
 
-- **Q17. The nine routes the marks alone would stop logging.** "B11 is not
-  narrowed" needs each of them logged some other way, or the narrowing stated.
-  Options per group, with a recommendation:
-  - **Stored payloads and change values** (received expense payloads,
-    disbursement events, both audit logs). Their text holds amounts and names
-    that no field mark sees, as a stored file does. Recommended: mark the field
-    itself, as with files: `ReceivedExpensePayload.payloadJson`,
-    `DisbursementEvent.payload`, `ReceiptAuditLog.valueBefore` and `valueAfter`,
-    and `WorkflowAuditLog.details`. The routes then stay logged under the marks,
-    and the Q4 entries for the first two stand.
+- **Q17. The routes the marks alone would stop logging.** The four with stored
+  payloads and change values are decided (see Decided). Left:
   - **Rows with no money or person** (both QuickBooks exclusion lists, ignored
     files, signoffs, line-item approvals). Two options:
     - (a) a per-route flag, `alwaysLogged`, on these five registry entries. A
@@ -448,7 +446,7 @@ Q1 to Q16 are settled or retired; their numbers stay retired.
     Recommended: (a), because it keeps your decision that B11 is not narrowed,
     with nothing for the Board.
 
-  Mark the stored payloads and change values? And (a) or (b) for the five?
+  (a) or (b) for the five?
 
 ## Follow-ups outside this design
 
