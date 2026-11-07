@@ -109,6 +109,15 @@ describeDb("S1 — recognition and push", () => {
     });
     const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
     expect(res.state).toBe("pending_review");
+    const created = await db.workflowAuditLog.findFirstOrThrow({ where: { receivedReceiptId: res.id, eventType: "receipt_created" } });
+    expect(created.details).toBeNull();
+  });
+
+  it("an unbound catalog leaves every line unrecognized and records that it is not connected", async () => {
+    const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
+    expect(res.state).toBe("pending_review");
+    const created = await db.workflowAuditLog.findFirstOrThrow({ where: { receivedReceiptId: res.id, eventType: "receipt_created" } });
+    expect(created.details).toBe("catalog not connected");
   });
 
   it("all lines recognized with inert sinks: recorded and held in apply_failed", async () => {
