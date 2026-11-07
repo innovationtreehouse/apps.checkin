@@ -572,6 +572,9 @@ model ReceivedExpensePayload {
   failureReason String?  @map("failure_reason")
   /// @sensitivity:internal
   receivedAt    DateTime @default(now()) @map("received_at")
+  // Replays run so far; at the cap the payload is given up for a developer.
+  /// @sensitivity:internal
+  replayAttempts Int?    @map("replay_attempts")
 
   @@map("received_expense_payloads")
 }

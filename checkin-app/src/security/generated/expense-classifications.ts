@@ -223,6 +223,7 @@ export const classifications = {
         status: 'internal',
         failureReason: 'personal',
         receivedAt: 'internal',
+        replayAttempts: 'internal',
     },
     ExpenseReceivedOrgEvent: {
         id: 'internal',
