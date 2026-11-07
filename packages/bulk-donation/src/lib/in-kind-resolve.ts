@@ -4,12 +4,12 @@
 // Set-account names a held line's account by hand, which the next book uses over every rule.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { appKeyOf, liveRoleAccountIds, readCloseDate } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, accountTypeRefusal, appKeyOf, liveRoleAccountIds, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { readDonationSettings } from "../services/settingsService";
 import { recordEvent } from "../repositories/audit";
-import { getInKindQbPosting } from "../runtime";
+import { getInKindCapital, getInKindQbPosting, getQuickBooksAccounts } from "../runtime";
 import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSource } from "../services/inKindAcceptService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import {
@@ -241,9 +241,18 @@ async function clearNote(orgId: string, source: InKindSource, id: number, reason
   });
 }
 
+/** Refuses (400) an account of a type the line can't book to: Fixed Asset for donated equipment, else an expense type. */
+async function refuseWrongType(orgId: string, source: InKindSource, id: number, lineId: number, quickBooksAccountId: string): Promise<void> {
+  const capital = (await getInKindCapital().assetLineIds(orgId, { giftSource: source, giftId: id })).includes(lineId);
+  const allowed = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
+  const refusal = accountTypeRefusal(await getQuickBooksAccounts()(), quickBooksAccountId, allowed, capital ? "Donated equipment" : "A donated item");
+  if (refusal) throw new ServiceError(400, refusal);
+}
+
 /** Finance names a held line's account; finance's next "book it" uses it over every rule. */
 async function setLineAccount(orgId: string, source: InKindSource, id: number, lineId: number, quickBooksAccountId: string, actor: Actor): Promise<void> {
   const ref = await giftRef(orgId, source, id);
+  await refuseWrongType(orgId, source, id, lineId, quickBooksAccountId);
   await db.$transaction(async (tx) => {
     const posting = await lockPosting(tx, orgId, source, id);
     if (!posting || !IN_KIND_HELD_STATES.includes(posting.matchState)) throw new ServiceError(409, "Only a gift the QuickBooks drain handed to finance can have a line's account set");

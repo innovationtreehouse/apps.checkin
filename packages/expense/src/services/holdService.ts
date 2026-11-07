@@ -7,6 +7,7 @@ import { getOrgId } from "../runtime";
 import { checkAndProcessExpense, retryQbPost } from "../lib/expense-qb-processor";
 import { POSTING, bookExpenseToQb, type PostOutcome } from "../lib/expense-qb-poster";
 import { lockExpense } from "../lib/signoff-facts";
+import { bookableTypes, refuseWrongType } from "../lib/account-types";
 import { writeAudit } from "../lib/audit";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "./approvalService";
@@ -24,9 +25,10 @@ export async function setHeldLineAccount(
   requireFinance(principal);
   const li = await db.expenseLineItem.findFirst({
     where: { id: lineItemId, expenseId, expense: { orgId: await getOrgId() } },
-    select: { id: true, manualQbAccount: true },
+    select: { id: true, manualQbAccount: true, isCapital: true },
   });
   if (!li) throw new ServiceError(404, "Line item not found");
+  await refuseWrongType(qbAccount, bookableTypes(li.isCapital), li.isCapital ? "A capital line's account" : "A line's account");
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const { qbMatchState } = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { qbMatchState: true } });

@@ -10,6 +10,7 @@ const ORG = "00000000-0000-0000-0000-000000000001";
 const ACCOUNTS = [
   { id: "8006", name: "Shop supplies", accountType: "Expense", active: true },
   { id: "8001", name: "Checking", accountType: "Bank", active: true },
+  { id: "8009", name: "Equipment", accountType: "Fixed Asset", active: true },
 ];
 const finance = { id: 3, name: "finance", isFinance: true, isBoard: false };
 
@@ -27,10 +28,15 @@ describe("expense QuickBooks account save", () => {
     expect(db.$transaction).toHaveBeenCalled();
   });
 
+  it("adds a Fixed Asset account, for capital rules", async () => {
+    await createQbAccount({ req: body("8009"), params: {}, principal: finance });
+    expect(db.$transaction).toHaveBeenCalled();
+  });
+
   it("refuses an account of another type, naming it", async () => {
     await expect(createQbAccount({ req: body("8001"), params: {}, principal: finance })).rejects.toMatchObject({
       status: 400,
-      message: "An expense account takes an Expense, Other Expense, or Cost of Goods Sold account; Checking is Bank",
+      message: "An expense account takes an Expense, Other Expense, Cost of Goods Sold, or Fixed Asset account; Checking is Bank",
     });
     expect(db.$transaction).not.toHaveBeenCalled();
   });

@@ -625,6 +625,13 @@ the parts specific to expenses.
   in QuickBooks waits for finance.
   [Decision — owner]
 
+- An expense account rule takes a fixed-asset account only when it is marked
+  capital, and then only a fixed-asset account; any other rule takes an expense
+  or cost of goods sold account. A held line's account follows the same rule by
+  whether the line is capital. Expense's QuickBooks account list admits all of
+  these types. A rule already stored with another type is kept.
+  [Decision]
+
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]

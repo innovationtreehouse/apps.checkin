@@ -20,7 +20,8 @@ interface LiveAccount {
   active: boolean;
 }
 
-const EXPENSE_TYPES: readonly string[] = LINE_ACCOUNT_TYPES.donatedGoods;
+/** Every type a rule or held line may book to: the expense types, and Fixed Asset for capital. */
+const LISTED_TYPES: readonly string[] = [...LINE_ACCOUNT_TYPES.donatedGoods, ...LINE_ACCOUNT_TYPES.donatedCapital];
 
 /** /expense/qb-accounts — the QuickBooks accounts that account-mapping rules and holds may name. */
 export default function QbAccountsPage() {
@@ -30,7 +31,7 @@ export default function QbAccountsPage() {
   const [picked, setPicked] = useState<string | null>(null);
 
   const liveById = new Map((live.data ?? []).map((a) => [a.id, a]));
-  const options = (live.data ?? []).filter((a) => a.active && EXPENSE_TYPES.includes(a.accountType)).map((a) => ({ value: a.id, label: a.name }));
+  const options = (live.data ?? []).filter((a) => a.active && LISTED_TYPES.includes(a.accountType)).map((a) => ({ value: a.id, label: a.name }));
   const pickedAccount = picked ? liveById.get(picked) : undefined;
 
   return (

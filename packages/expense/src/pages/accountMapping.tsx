@@ -5,6 +5,7 @@ import { ActionIcon, Badge, Button, Group, Select, Table, Text, TextInput, Title
 import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
 import { CatalogPicker, LoadError, Pager } from "@checkin/component-ui";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface Mapping {
   id: number;
@@ -19,6 +20,11 @@ interface QbAccount {
   id: number;
   name: string;
   qbAccount: string;
+}
+/** One account from QuickBooks' live list, as the host's books-map route returns it. */
+interface LiveAccount {
+  id: string;
+  accountType: string;
 }
 
 const TRI = [{ value: "any", label: "Any" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }];
@@ -45,7 +51,11 @@ export default function AccountMappingPage() {
   const [page, setPage] = useState(1);
   const mappings = useLoad<Mapping[]>(paged("/account-mapping", page), { keepPrevious: true });
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
+  const live = useLoad<LiveAccount[]>("/api/books-map/quickbooks-accounts");
   const [form, setForm] = useState(EMPTY);
+  const typeOf = new Map((live.data ?? []).map((a) => [a.id, a.accountType]));
+  const allowed: readonly string[] = form.isCapital === "yes" ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
+  const options = (accounts.data ?? []).filter((a) => allowed.includes(typeOf.get(a.qbAccount) ?? "")).map((a) => ({ value: a.qbAccount, label: a.name }));
 
   async function add() {
     const body = { ...form, isDelayed: triOf(form.isDelayed), isCapital: triOf(form.isCapital) };
@@ -96,10 +106,10 @@ export default function AccountMappingPage() {
             w={280}
           />
           <Select label="Delayed" data={TRI} value={form.isDelayed} onChange={(v) => setForm({ ...form, isDelayed: v ?? "any" })} w={90} />
-          <Select label="Capital" data={TRI} value={form.isCapital} onChange={(v) => setForm({ ...form, isCapital: v ?? "any" })} w={90} />
+          <Select label="Capital" data={TRI} value={form.isCapital} onChange={(v) => setForm({ ...form, isCapital: v ?? "any", qbAccount: "" })} w={90} />
           <Select
             label="QuickBooks account"
-            data={(accounts.data ?? []).map((a) => ({ value: a.qbAccount, label: a.name }))}
+            data={options}
             value={form.qbAccount || null}
             onChange={(v) => setForm({ ...form, qbAccount: v ?? "" })}
             w={200}
