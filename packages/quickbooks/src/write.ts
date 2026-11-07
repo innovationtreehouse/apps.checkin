@@ -18,13 +18,28 @@ export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "clai
   mayCreate: boolean;
 }
 
+/** A failed call as a lane records it: the error's text and kind, plus the fault codes and request id of a QuickBooks refusal. */
+export type PostFailure = {
+  error: string;
+  failure: FailureKind;
+  codes?: readonly string[];
+  requestId?: string | null;
+  /** QuickBooks answered an earlier read in the same call, so it was up when this step failed. */
+  answered?: boolean;
+};
+
+export function postFailure(e: unknown): PostFailure {
+  const base = { error: e instanceof Error ? e.message : String(e), failure: kindOf(e) };
+  return e instanceof QboRequestError ? { ...base, codes: e.codes, requestId: e.requestId } : base;
+}
+
 export type FindOrCreateResult =
   /** `txnDate` is the matched entry's date, from the read that matched it. */
   | { kind: "found"; id: string; via: "key" | "amount"; txnDate: string }
   | { kind: "ambiguous"; ids: string[] }
   | { kind: "created"; id: string }
   /** `onCreate`: the create itself failed, after every read answered. */
-  | { kind: "failed"; error: string; failure: FailureKind; onCreate?: true }
+  | ({ kind: "failed"; onCreate?: true } & PostFailure)
   /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6210): never created. */
   | { kind: "closed" }
   /** Not found and the lane may not create it on its own: finance books it or skips it. */
@@ -102,22 +117,24 @@ function checkDates(date: string, req: { window: { from: string; to: string }; c
   }
 }
 
-const failed = (e: unknown): FindOrCreateResult => ({ kind: "failed", error: e instanceof Error ? e.message : String(e), failure: kindOf(e) });
+const failed = (e: unknown): FindOrCreateResult => ({ kind: "failed", ...postFailure(e) });
 
 /**
  * Match before create, stateless, through the shared gate. The created entry carries the key in
  * its PrivateNote and is dated inside the window, so a crash after QBO accepts it is found by key.
  */
 export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRequest): Promise<FindOrCreateResult> {
+  let answered = false;
   try {
     assertAppKey(req.key);
     const date = req.write.fields.txnDate;
     checkDates(date, req);
     const read = await candidates(client, req.write, req.window.from, req.window.to);
+    answered = true;
     const amountCents = sumCents(...req.write.fields.lines.map((l) => l.amountCents));
     return await matchThenCreate(client, { ...req, date, amountCents, ref: matchRef(req.write) }, read, () => client[CREATE](req.write, req.key));
   } catch (e) {
-    return failed(e);
+    return answered ? { kind: "failed", ...postFailure(e), answered } : failed(e);
   }
 }
 
