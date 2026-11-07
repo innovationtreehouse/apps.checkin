@@ -2,27 +2,24 @@
 
 import { usePathname } from "next/navigation";
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
-import { SectionTabs } from "@/components/ui/SectionTabs";
-import { CountBadge } from "@/components/ui/CountBadge";
+import { SectionTabs, activeTab } from "@/components/ui/SectionTabs";
+import { TabBadge } from "@/components/ui/CountBadge";
 import { PageContainer } from "@/components/ui/PageContainer";
-import type { DonationNavCounts } from "@checkin/bulk-donation";
-import { DONATION_NAV_LINKS } from "@checkin/bulk-donation/nav";
-import { hasAnyRole, visibleLinks } from "@/lib/nav/gates";
-import { DONATIONS, DONATION_SCREEN_ROLES, donationsRolesFor } from "@/lib/nav/sections/donations";
+import { sectionTabBadge } from "@/components/navBadges";
+import { visibleLinks } from "@/lib/nav/gates";
+import { DONATIONS, donationsRolesFor } from "@/lib/nav/sections/donations";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { useLoad } from "@/lib/api";
 
 /**
- * Donations chrome and gate. The donation screens admit FINANCE or BOARD; the
- * in-kind gift screen also admits OPERATIONS and INVENTORY_MANAGER.
+ * Donations chrome and gate: the Benevity and In-Kind tabs, and the open tab's
+ * screens as a pill row. The donation screens admit FINANCE or BOARD; the
+ * no-receipt in-kind gift screen also admits OPERATIONS and INVENTORY_MANAGER.
  */
 export default function DonationsLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, ready } = useRequireRole(donationsRolesFor(usePathname() ?? ""));
-  const todoCounts = useTodoCounts(ready);
-  const countsAllowed = ready && hasAnyRole(user, DONATION_SCREEN_ROLES);
-  // Badges are best-effort, so a failed load shows none.
-  const { data: counts } = useLoad<DonationNavCounts>(countsAllowed ? "/api/donations/nav-counts" : null);
+  const pathname = usePathname() ?? "";
+  const { user, loading, ready } = useRequireRole(donationsRolesFor(pathname));
+  const counts = useTodoCounts(ready);
 
   if (loading) {
     return (
@@ -37,19 +34,25 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
 
   if (!ready) return null;
 
-  const links = visibleLinks(DONATIONS, user, todoCounts);
+  const links = visibleLinks(DONATIONS, user, counts);
+  const subLinks = activeTab(links, pathname, true)?.subLinks;
   return (
     <PageContainer>
       <SectionTabs
         links={links}
         prefixMatch
-        mb="md"
-        badgeFor={(href) => {
-          const field = DONATION_NAV_LINKS.find((l) => l.href === href)?.badge;
-          const n = (field && counts?.[field]) || 0;
-          return n > 0 ? <CountBadge intent="action">{n}</CountBadge> : null;
-        }}
+        mb={subLinks ? "xs" : "md"}
+        badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />}
       />
+      {subLinks && (
+        <SectionTabs
+          links={subLinks}
+          prefixMatch
+          mb="md"
+          variant="pills"
+          badgeFor={(href) => <TabBadge badge={sectionTabBadge(subLinks, href, counts)} />}
+        />
+      )}
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

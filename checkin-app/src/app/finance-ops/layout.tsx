@@ -12,7 +12,7 @@ import { sectionTabBadge } from "@/components/navBadges";
 import { TabBadge } from "@/components/ui/CountBadge";
 
 /**
- * Revenue Ops chrome, shared by /finance-ops, /income and /donations. Admits
+ * Revenue Ops chrome, shared by /finance-ops and /income. Admits
  * FINANCE or BOARD; a FINANCE-only viewer sees the payment-plan and library tabs,
  * and each Board-only finance page enforces its own Board gate. A tab with sub-links
  * (Shopify) shows them as a second row while one of its pages is open.
