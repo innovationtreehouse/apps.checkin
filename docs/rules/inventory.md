@@ -190,10 +190,10 @@ How the pieces are built is described in
 
 - Only inventory managers, finance and the board may see receiving, because
   receipts show spending. Only inventory managers act on it, apart from the
-  retry and close-out below. `[Decision — *Principle: least privilege*]`
+  close-out below. `[Decision — *Principle: least privilege*]`
 
-- Inventory managers and the board may retry a receipt in Apply failed and
-  close it out as handled by hand. `[Decision — owner]`
+- Inventory managers retry a receipt in Apply failed and close it out as
+  handled by hand; the board may also close one out. `[Decision — owner]`
 
 - Board membership is enough to view receipt and inventory data, and to edit it
   wherever the app allows an edit. `[Decision — owner]`
