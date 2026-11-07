@@ -1,8 +1,7 @@
-/** Disbursements: holds, resubmit and fees-only release, completed events, nav counts. */
+/** Disbursements: holds, resubmit and fees-only release, completed events. */
 import { httpError, mapServiceErrors } from "@checkin/component-kit";
 import { z } from "zod";
 import { disbursementService } from "../services/disbursementService";
-import { getNavCounts } from "../services/navCountsService";
 import { getOrgId } from "../runtime";
 import type { DonationRouteHandler } from "../contract";
 import { auditContext, pageArgs, parseBodyCapped } from "./_shared";
@@ -38,8 +37,4 @@ export const releaseHold: DonationRouteHandler = async ({ req, params }) => {
 
 export const listEvents: DonationRouteHandler = async ({ req }) => ({
   DisbursementEvent: await disbursementService.listEvents(await getOrgId(), pageArgs(req)),
-});
-
-export const navCounts: DonationRouteHandler = async () => ({
-  DonationNavCounts: await getNavCounts(await getOrgId()),
 });
