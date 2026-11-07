@@ -13,6 +13,8 @@ export const QB_MATCH_STATE = {
   POSTING: "POSTING",
   /** Out of automatic retries, or over the per-run cap: finance's to resolve. */
   NEEDS_FINANCE: "NEEDS_FINANCE",
+  /** A gift of goods with a line no account rule or hand-set account books: each run tries again, and finance may set the account. */
+  NEEDS_ACCOUNT: "NEEDS_ACCOUNT",
   /** Outside prod, not a TEST- disbursement: never sent. Re-checked each run. */
   NOT_TEST_DATA: "NOT_TEST_DATA",
   /** In prod, a TEST- disbursement: never sent. Re-checked each run. */

@@ -113,9 +113,10 @@ export interface Run {
 
 export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "exhausted" | "failed" | "waiting";
 
-const POSTABLE: readonly string[] = [QB_MATCH_STATE.POST_FAILED];
+/** The states the drain posts again on its own: a failed post, and a gift whose lines now may have their accounts. */
+const POSTABLE: readonly string[] = [QB_MATCH_STATE.POST_FAILED, QB_MATCH_STATE.NEEDS_ACCOUNT];
 /** The states finance resolves: book it, skip it, or match it by id. */
-export const IN_KIND_HELD_STATES: readonly string[] = [QB_MATCH_STATE.UNBOOKED, QB_MATCH_STATE.NEEDS_FINANCE, QB_MATCH_STATE.POST_FAILED];
+export const IN_KIND_HELD_STATES: readonly string[] = [QB_MATCH_STATE.UNBOOKED, QB_MATCH_STATE.NEEDS_FINANCE, QB_MATCH_STATE.NEEDS_ACCOUNT, QB_MATCH_STATE.POST_FAILED];
 
 export async function lockPosting(tx: DbOrTx, orgId: string, source: string, giftId: number) {
   await tx.$queryRaw`SELECT id FROM in_kind_postings WHERE org_id = ${orgId} AND source = ${source} AND gift_id = ${giftId} FOR UPDATE`;
@@ -224,19 +225,19 @@ function inWindow(date: string, around: string, days: number): boolean {
 /**
  * The gift's one journal entry: its total credited to in-kind income, each line debited to finance's
  * hand-set account or its part's expense account rule, an asset line through a rule marked capital.
- * Any line without a usable account holds the gift for finance.
+ * Any line without a usable account holds the gift as NEEDS_ACCOUNT, which each run tries again.
  */
-async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLine[] | string> {
+async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLine[] | Settlement> {
   const classId = run.classes.get(gift.budgetOwnerId);
-  if (!classId) return "The gift's bucket has no QuickBooks Class in the books map";
+  if (!classId) return needsFinance("The gift's bucket has no QuickBooks Class in the books map");
   const income = run.accounts.INKIND_INCOME;
-  if (!income) return "The books map has no in-kind income account";
+  if (!income) return needsFinance("The books map has no in-kind income account");
   const lines = gift.lines.filter((l) => l.valueCents > 0);
   const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
   const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
   const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.client.accounts()]);
   const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb);
-  if (typeof accounts === "string") return accounts;
+  if (typeof accounts === "string") return { state: QB_MATCH_STATE.NEEDS_ACCOUNT, note: accounts, entries: [] };
   const debits = lines.flatMap((l): InKindJournalLine[] => {
     const accountId = accounts.get(l.id);
     return accountId ? [{ postingType: "Debit", accountId, amountCents: l.valueCents, classId, description: l.description.slice(0, 4000) }] : [];
@@ -277,7 +278,7 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
     const pair = await matchClearingPair(run, gift, txnDate);
     if (pair) return pair;
     const lines = await journalLines(run, gift);
-    if (typeof lines === "string") return needsFinance(lines);
+    if (!Array.isArray(lines)) return lines;
     const result = await findOrCreateInKindJournal(run.client, {
       txnDate,
       lines,

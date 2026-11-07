@@ -181,7 +181,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
 }
 
 /** The QuickBooks states the drain hands to finance to book, skip or match. */
-const QB_HELD = ["UNBOOKED", "NEEDS_FINANCE", "POST_FAILED"];
+const QB_HELD = ["UNBOOKED", "NEEDS_FINANCE", "NEEDS_ACCOUNT", "POST_FAILED"];
 
 const isHeld = (q: QueueItem) => q.qbState !== null && QB_HELD.includes(q.qbState);
 const isDrifted = (q: QueueItem) => q.qbState === "DRIFT";

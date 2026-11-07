@@ -827,7 +827,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 1 });
     expect(qbo.posts).toHaveLength(0);
-    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: expect.stringMatching(/Lathe: No account rule covers this part/) });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_ACCOUNT", qbNote: expect.stringMatching(/Lathe: No account rule covers this part/) });
 
     const row = await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "610" });
     expect(row.lines).toEqual([expect.objectContaining({ id: paper, quickBooksAccountId: null }), expect.objectContaining({ id: lathe, quickBooksAccountId: "610" })]);
@@ -839,6 +839,33 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
       ["Debit", "600", 11],
       ["Debit", "610", 22],
     ]);
+  });
+
+  it("books a gift held for a line's account on the drain's next run once a rule covers the line, with no action from finance", async () => {
+    await switchOn();
+    unruled.add(LATHE_GTIN);
+    const id = await acceptedGift();
+    await runInKindQbPosting(orgId);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 1 });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_ACCOUNT" });
+
+    unruled.clear();
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbNote: null });
+    expect(qbo.posts[0].body.Line.map((l) => l.JournalEntryLineDetail.AccountRef.value)).toEqual(["400", "600", "600"]);
+  });
+
+  it("never retries a gift held for anything other than a line's account", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    await db.inKindPosting.upsert({
+      where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } },
+      create: { orgId, source: "receipt", giftId: id, matchState: "NEEDS_FINANCE", qbNote: "Finance's to decide" },
+      update: { matchState: "NEEDS_FINANCE", qbNote: "Finance's to decide" },
+    });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, waiting: 1 });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: "Finance's to decide" });
+    expect(qbo.posts).toHaveLength(0);
   });
 
   it("holds donated equipment set by hand to an account that is not a fixed asset", async () => {

@@ -45,5 +45,5 @@ export function lineAccounts(
     if (why || !accountId) held.push(`${l.description}: ${why}`);
     else accounts.set(l.id, accountId);
   }
-  return held.length === 0 ? accounts : `Set an account on each held line, then book the gift. ${held.join("; ")}`;
+  return held.length === 0 ? accounts : `Set an account on each held line, or an account rule for its part; the next run books the gift. ${held.join("; ")}`;
 }
