@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INVALID_GRANT_MARKER, REFRESH_MARGIN_MS, SAVE_RETRY_DELAYS_MS, run, type CredentialStore, type StoredCredentials } from "./refresher";
+import { INVALID_GRANT_MARKER, REFRESH_MARGIN_MS, ReconsentRequired, SAVE_RETRY_DELAYS_MS, run, type CredentialStore, type StoredCredentials } from "./refresher";
 
 const NOW = 1_800_000_000_000;
 const DEV_ID = "dev-client-id";
@@ -75,17 +75,27 @@ describe("run current", () => {
     expect(out.expiresAt).toBe(fresh.obtainedAt + 3600_000);
   });
 
-  it("logs the invalid_grant marker once and does not retry or write", async () => {
+  it("answers ReconsentRequired on invalid_grant, logs the marker once, and does not retry or write", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { store, saved } = memoryStore(creds({ obtainedAt: NOW - 3600_000 }));
 
-    await expect(run({ action: "current" }, store, SANDBOX, NOW)).rejects.toThrow(/invalid_grant/);
+    await expect(run({ action: "current" }, store, SANDBOX, NOW)).rejects.toMatchObject({ name: "ReconsentRequired" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(saved).toHaveLength(0);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(String(errorSpy.mock.calls[0][0])).toContain(INVALID_GRANT_MARKER);
+  });
+
+  it("keeps any other Intuit failure an ordinary error", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "server_error" }), { status: 500 }));
+    const { store } = memoryStore(creds({ obtainedAt: NOW - 3600_000 }));
+
+    const err = await run({ action: "current" }, store, SANDBOX, NOW).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ReconsentRequired);
+    expect((err as Error).name).toBe("Error");
   });
 
   it("rejects an unknown action", async () => {
@@ -125,7 +135,7 @@ describe("saving the rotated pair", () => {
     const { store, save } = flakyStore(creds(), Infinity);
 
     const pending = run({ action: "keepalive" }, store, SANDBOX, NOW);
-    const assertion = expect(pending).rejects.toThrow(/secrets manager unavailable/);
+    const assertion = expect(pending).rejects.toMatchObject({ name: "ReconsentRequired" });
     await vi.runAllTimersAsync();
     await assertion;
 

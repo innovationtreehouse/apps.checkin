@@ -156,8 +156,8 @@ arrived before the stamp goes to finance rather than booking itself.
   secret, so this run is the only proof of it.
 
 "Off:" on the connection row names the cause, such as a missing setting or a failed
-refresher. The refresher failing with an invalid grant means step 3 has to be
-repeated.
+refresher. "QuickBooks needs reconnecting" means the login was revoked: finance
+repeats step 3 with the infra operator.
 
 ## 5. Fill in the books map
 
@@ -313,5 +313,5 @@ stops every lane. None of these clears a switch-on date, and entries already in
 QuickBooks stay; voiding one is finance's job.
 
 **If the refresh token dies** (an alarm on `QBO_INVALID_GRANT`, or the connection
-row reporting the refresher failed), repeat step 3 and reseed the secret. The other
+row saying QuickBooks needs reconnecting), finance repeats step 3 with the infra operator and reseeds the secret. The other
 settings stay as they are.
