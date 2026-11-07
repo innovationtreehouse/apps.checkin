@@ -235,8 +235,10 @@ missed a row stored at a different time of day.
   Donations' capital review is the exception that does nothing when unbound, since
   no line then goes to review. An unbound read port falls back to an inert adapter
   that returns an empty result, or throws where it has no answer to give: expense's
-  QuickBooks reader throws `QuickBooksNotConnectedError`, and workflow-mapping's
-  `checkReferences` and `getActiveItem` throw a plain `Error`. A callee that takes an `orgId` from its caller checks it with
+  QuickBooks reader throws `QuickBooksNotConnectedError`, expense's catalog reader
+  and workflow-mapping's catalog match throw `NotWiredError`, so an unbound catalog
+  never reads as "no match", and workflow-mapping's `checkReferences` and
+  `getActiveItem` throw a plain `Error`. A callee that takes an `orgId` from its caller checks it with
   `assertOrg` first.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race

@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getOrgId } from "../runtime";
+import { assertOrg, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeOrgAudit } from "../lib/audit";
 import { classifyCapital } from "../lib/expense-rules";
@@ -51,6 +51,7 @@ export function unitCosts(costCents: number, units: number): number[] {
 
 /** Keeps the lines at or over the org's capital thresholds for review. A resend does nothing. */
 export async function submitDonatedLines(orgId: string, lines: DonatedLine[]): Promise<void> {
+  await assertOrg(orgId);
   const settings = await db.expenseOrgSettings.findFirst({ where: { orgId } });
   const candidates = lines.filter((l) =>
     classifyCapital(l.costCents, [{ unitPriceCents: unitCosts(l.costCents, unitsOf(l.quantity))[0] }], settings),
