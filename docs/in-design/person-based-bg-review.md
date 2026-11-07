@@ -586,33 +586,17 @@ One additive schema PR (3a); no data migration and no destructive change.
 
 ## 8. Owner questions
 
-IDs are stable. A decided question keeps its number.
-
-### Open
-
-**PBR-13. Between a rejection and the Board's denial, does the system hold the
-household's application?** The owner's intent for PBR-1 is that a rejected adult
-leads to the Board denying the family, a human act. The question is what the app
-does in the meantime. Options:
-- **(a) Hold and raise.** The household's open application can't clear or
-  activate while an adult is disputed (clause 2 of §3.2). The Board gets the
-  queue item and the email, and decides whether to deny. Nothing is taken from a
-  membership already active.
-- **(b) Raise only.** Clause 2 goes. The application can still clear on another
-  lead's check, so a renewal can complete before the Board acts, and the Board
-  denies afterwards.
-
-*Recommendation: (a).* Holding a request that hasn't become standing is what the
-principles allow automation to do ("a held operation is late, not lost"); only
-removing standing is a person's act. Option (b) leaves today's Art. IX gap open
-until someone clicks. The cost is the same either way: (a) is the clause 2 already
-in §3.2, and both options use the existing Board queue item.
+IDs are stable. Every question is decided.
 
 ### Decided (owner, 2026-11-07)
 
 - **PBR-1.** (a): a rejection of any adult in the household counts against the
   household. The intended outcome is that the Board denies the family; the app
   raises the case and doesn't decide it (PBR-13).
+- **PBR-13.** (a): hold and raise. While an adult in the household is disputed,
+  its open application can't clear or activate. The Board gets the queue item and
+  the email and decides whether to deny. Nothing is taken from a membership that
+  is already active.
 - **PBR-2.** A rejection mid-year in an ACTIVE household triggers nothing
   automatic. It goes to the Board's queue with an email.
 - **PBR-3.** One cleared lead is the household's gate. Other adults stay warn-only
