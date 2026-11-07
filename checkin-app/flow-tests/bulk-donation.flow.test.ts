@@ -199,8 +199,18 @@ describe("bulk donation — finance journey", () => {
     const ours = held.json.filter((h) => h.disbursementId === disbursement);
     expect(ours.length).toBeGreaterThan(0);
     expect(ours[0].transaction?.companyName).toBe(company);
-    const counts = await api<TodoCounts>(f, "/api/nav/todo-counts");
-    expect(counts.json.libraries?.["bulk-donation"]?.disbursementHolds).toBeGreaterThan(0);
+    // A fresh seed releases no library, and the count reaches a non-board viewer only once bulk-donation is released.
+    const board = await loginAs(BOARD);
+    const releaseBulkDonation = (released: boolean) =>
+      send(board, "PUT", "/api/settings/membership", { perYearVariantClient: true, releaseLibrary: { library: "bulk-donation", released } });
+    const wasReleased = (await api<TodoCounts>(f, "/api/nav/todo-counts")).json.releasedLibraries?.includes("bulk-donation") ?? false;
+    expect((await releaseBulkDonation(true)).status).toBe(200);
+    try {
+      const counts = await api<TodoCounts>(f, "/api/nav/todo-counts");
+      expect(counts.json.libraries?.["bulk-donation"]?.disbursementHolds).toBeGreaterThan(0);
+    } finally {
+      if (!wasReleased) await releaseBulkDonation(false);
+    }
 
     // Add the rule, resubmit: the hold clears and a booking batch appears.
     const rule = await send(f, "POST", "/api/donations/account-map", {
