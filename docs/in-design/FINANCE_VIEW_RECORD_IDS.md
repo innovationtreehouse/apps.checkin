@@ -40,11 +40,16 @@ audited calls, so one look at one expense can write up to five rows.
 
 ### 1. What makes a view a finance view: marked fields
 
-Fields that link a person to money carry a mark (Q9, decided; the field list is
-under Decided). A view is logged when the response, **after the stripper has
-run**, carries a marked field on a record that is not the viewer's own. The
-`auditedRead` flag on each route is no longer what decides logging: a new route
-that sends a marked field is logged with nothing to remember.
+Sensitive finance fields carry a mark: every amount, and the people and
+companies tied to money (Q9 and Q15, decided; the field list is under Decided).
+A view is logged when the response, **after the stripper has run**, carries a
+marked field on a record that is not the viewer's own. The `auditedRead` flag
+on each route is no longer what decides logging: a new route that sends a
+marked field is logged with nothing to remember.
+
+A route that shows finance records but sends no marked field is not logged.
+So that this cannot quietly narrow B11, the boundary PR lists every route
+audited today that would stop being logged under the marks, for review.
 
 - **Where the mark lives.** A schema annotation beside `@sensitivity` on each
   field, for example `/// @moneyLink` (the name is settled in the boundary
@@ -312,7 +317,7 @@ as today but with exact records and fields.
 - **Marked field names, never values (Q13).** Each record lists the marked
   fields sent. Example: "Pat Lee viewed `Expense:e_123` (`submitterId`,
   `receiptTotalCents`) on `/expense/expenses/e_123`".  [Decision — owner]
-- **Fields that link a person to money carry a mark (Q9),** and a view is logged
+- **Sensitive finance fields carry a mark (Q9),** and a view is logged
   when the response sent carries a marked field on a record that is not the
   viewer's own.  [Decision — owner] The marked fields:
   - every `…Cents` amount, which logs a view on its own (Q15);
