@@ -400,7 +400,7 @@ describe("findOrCreate", () => {
       .mockResolvedValueOnce(rows("Deposit", []))
       .mockResolvedValueOnce(prefs("2025-02-28"))
       .mockResolvedValueOnce(new Response("down", { status: 503 }));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", failure: "system", answered: true });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", failure: "system", answered: true, onCreate: true });
   });
 
   it("failed: a match read that fails does not say QuickBooks answered", async () => {
@@ -408,6 +408,7 @@ describe("findOrCreate", () => {
     const result = await findOrCreate(client(), req());
     expect(result).toMatchObject({ kind: "failed", failure: "system" });
     expect(result).not.toHaveProperty("answered");
+    expect(result).not.toHaveProperty("onCreate");
   });
 
   it("failed: a closing-date read that fails never falls through to a create", async () => {

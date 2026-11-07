@@ -956,6 +956,18 @@ describeDb("QB-2 posting — drain failure streak", () => {
     expect((await Promise.all(ids.slice(1).map(expenseRow))).map((r) => r.qbMatchState)).toEqual(["UNMATCHED", "UNMATCHED"]);
   });
 
+  it("a match read QuickBooks refuses is the app's bug, not the expense's: each is charged, none held at once, and the run stops", async () => {
+    const ids = [];
+    for (let d = 10; d < 10 + MAX_CONSECUTIVE_FAILURES + 1; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      new URL(String(input)).searchParams.get("query")?.includes("TxnDate >=") ? new Response("{}", { status: 400 }) : qbo.handle(input, init),
+    );
+
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: MAX_CONSECUTIVE_FAILURES, refused: 0, needs_finance: 0, stoppedAfterFailures: true });
+    const rows = await Promise.all(ids.slice(0, MAX_CONSECUTIVE_FAILURES).map(expenseRow));
+    expect(rows.every((r) => r.qbMatchState === "POST_FAILED" && r.qbPostAttempts === 1 && r.qbFailureKind === "bug")).toBe(true);
+  });
+
   it("a refusal resets the streak: the run goes on past it", async () => {
     await outboxed("2026-09-10");
     const { id: refused } = await outboxed("2026-09-11");
@@ -1364,12 +1376,12 @@ describeDb("QB closed books — a create that may have landed", () => {
     return id;
   }
 
-  it("an attempted expense whose created-since read QuickBooks refuses creates nothing and goes to finance", async () => {
+  it("an attempted expense whose created-since read QuickBooks refuses creates nothing and goes to finance as a bug", async () => {
     const id = await attemptedWithLookup(400);
 
     expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
     expect(qbo.posts).toHaveLength(1);
-    expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFailureKind: "bug" });
   });
 
   it("an attempted expense whose created-since read meets an outage creates nothing and waits, uncharged", async () => {

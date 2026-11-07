@@ -132,6 +132,9 @@ function refusalNote(f: PostFailure): string {
   return `QuickBooks refused: ${codes} (request ${f.requestId ?? "unknown"})`;
 }
 
+/** A read QuickBooks refuses is the app's own request at fault, not this expense: only a refused create is data. */
+const asRead = (f: PostFailure): PostFailure => (f.failure === "data" ? { ...f, failure: "bug" } : f);
+
 const UNCHARGED = { system: "outage", connection: "disconnected", settings: "waiting_on_settings" } as const;
 
 /**
@@ -235,10 +238,10 @@ async function buildWrite(client: Db, orgId: string, expense: Expense, posting: 
   return getExpenseRuntime().outbound("quickbooks.create", rows, async (stripped) => composeWrite(stripped, posting));
 }
 
-type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null };
+type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null; qbFailureKind?: string };
 
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
-  await tx.expense.update({ where: { id: before.id }, data: { ...data, qbFailureKind: null, qbClaimedAt: null } });
+  await tx.expense.update({ where: { id: before.id }, data: { qbFailureKind: null, ...data, qbClaimedAt: null } });
   if (data.qbTxnId) await checkOffHeldOnPost(tx, before.id);
   if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
   await writeAudit(tx, SYSTEM_ACTOR, {
@@ -450,7 +453,11 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
         case "lookup":
           if (result.own.kind === "own") return linkCreated(tx, result.own.entry.Id, "the app had already booked this expense");
           // A lookup QuickBooks could not answer created nothing, so the next run simply looks again.
-          if (result.own.kind === "failed" && result.own.failure.failure in UNCHARGED) return recordFailure(tx, before, result.own.failure, runAnswered);
+          if (result.own.kind === "failed") {
+            const failure = asRead(result.own.failure);
+            if (failure.failure in UNCHARGED) return recordFailure(tx, before, failure, runAnswered);
+            return settle(tx, before, "needs_finance", { qbMatchState: "NEEDS_FINANCE", qbFailureKind: failure.failure }, result.own.note);
+          }
           return settle(tx, before, "needs_finance", { qbMatchState: "NEEDS_FINANCE" }, result.own.note);
         case "created":
           return linkCreated(tx, result.id);
@@ -473,7 +480,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
           return settle(tx, before, "queued", { qbMatchState: "UNBOOKED" });
         case "failed":
           // A lookup that ran and found nothing is a read QuickBooks answered in this post.
-          return recordFailure(tx, before, { ...result, answered: result.answered || attemptedAt !== null }, runAnswered);
+          return recordFailure(tx, before, { ...(result.onCreate ? result : asRead(result)), answered: result.answered || attemptedAt !== null }, runAnswered);
       }
     },
     result.kind === "created" ? { entity, id: result.id } : undefined,

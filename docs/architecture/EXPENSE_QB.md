@@ -243,7 +243,7 @@ A failed post is recorded by its kind (`kindOf`), stored in `qbFailureKind`.
 | System | QuickBooks 5xx, a timeout, a rate limit after its retry, the database down | No, unless QuickBooks answered an earlier expense in the run or an earlier read in the same post: then charged as a bug | `POST_FAILED`, retried next run | Counts toward the stop |
 | Connection | QuickBooks 401 or 403 | No | `POST_FAILED` | Stops at once |
 | Settings | A port not wired | No | Stays where it was, re-checked each run | Leaves the stop count alone |
-| Data | Any other QuickBooks 4xx | Once | `NEEDS_FINANCE` at once, "QuickBooks refused: code N (request R)" | Resets the stop count |
+| Data | Any other QuickBooks 4xx on the create; a 4xx on a read is the app's own request at fault, so it is a bug | Once | `NEEDS_FINANCE` at once, "QuickBooks refused: code N (request R)" | Resets the stop count |
 | Bug | Anything unrecognised | Yes | `POST_FAILED`, `NEEDS_FINANCE` at five | Counts toward the stop |
 
 ### Limits

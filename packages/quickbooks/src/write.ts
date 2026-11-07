@@ -103,7 +103,7 @@ async function matchThenCreate(
     return { kind: "created", id: (await create()).Id };
   } catch (e) {
     if (e instanceof QboRequestError && e.codes.includes(CLOSED_PERIOD_FAULT)) return { kind: "closed" };
-    return { kind: "failed", error: e instanceof Error ? e.message : String(e), failure: kindOf(e), onCreate: true };
+    return { kind: "failed", ...postFailure(e), answered: true, onCreate: true };
   }
 }
 
