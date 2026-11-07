@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
+import { Button, Group, Modal, Paper, Stack, Table, Text, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
 import { LoadError, Pager } from "@checkin/component-ui";
 
@@ -25,6 +25,7 @@ const REASON: Record<string, string> = {
 export default function HoldsPage() {
   const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
+  const [releasing, setReleasing] = useState<HoldRow | null>(null);
   const holds = useLoad<HoldRow[]>(paged("/disbursement-holds", page), { keepPrevious: true });
   const groups = new Map<string, HoldRow[]>();
   for (const h of holds.data ?? []) groups.set(h.disbursementId, [...(groups.get(h.disbursementId) ?? []), h]);
@@ -49,12 +50,12 @@ export default function HoldsPage() {
             </Group>
             {rows.some((h) => h.reason === "FEES_ONLY") && (
               <Text size="sm" c="dimmed" mb="sm">
-                A row with fees and no donation or match can&apos;t be cleared here: no account map change finishes this disbursement. Book it by hand in QuickBooks.
+                Book the fee by hand in QuickBooks, then release the row: its fee drops out of the automated booking and the rest of the disbursement posts.
               </Text>
             )}
             <Table>
               <Table.Thead>
-                <Table.Tr><Table.Th>Reason</Table.Th><Table.Th>Company</Table.Th><Table.Th>Campaign</Table.Th><Table.Th>Method / type</Table.Th><Table.Th>Matched rules</Table.Th></Table.Tr>
+                <Table.Tr><Table.Th>Reason</Table.Th><Table.Th>Company</Table.Th><Table.Th>Campaign</Table.Th><Table.Th>Method / type</Table.Th><Table.Th>Matched rules</Table.Th>{canWrite && <Table.Th />}</Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {rows.map((h) => (
@@ -64,6 +65,13 @@ export default function HoldsPage() {
                     <Table.Td>{h.transaction?.corporatePeerCampaign ?? "—"}</Table.Td>
                     <Table.Td>{[h.transaction?.donationMethod, h.transaction?.donationType].filter(Boolean).join(" / ") || "—"}</Table.Td>
                     <Table.Td>{h.matchedRows.map((r) => `#${r.id} ${r.companyName} / ${r.corporatePeerCampaign}`).join("; ") || "none"}</Table.Td>
+                    {canWrite && (
+                      <Table.Td>
+                        {h.reason === "FEES_ONLY" && (
+                          <Button size="xs" variant="light" onClick={() => setReleasing(h)}>Release: fee booked by hand in QuickBooks</Button>
+                        )}
+                      </Table.Td>
+                    )}
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -72,6 +80,22 @@ export default function HoldsPage() {
         ))}
       </Stack>
       <Pager page={page} onChange={setPage} rows={holds.data} />
+      <Modal opened={releasing !== null} onClose={() => setReleasing(null)} title="Release this fees-only row?">
+        <Text size="sm" mb="md">
+          Only release it once the fee is booked by hand in QuickBooks. The app keeps the fee amount and records who released it, but books nothing for it. The release can&apos;t be undone.
+        </Text>
+        <Group justify="flex-end">
+          <Button variant="default" onClick={() => setReleasing(null)}>Cancel</Button>
+          <Button color="red" onClick={() => {
+            const hold = releasing;
+            setReleasing(null);
+            if (hold) void act(
+              () => api(`/disbursement-holds/${encodeURIComponent(hold.disbursementId)}/release`, { method: "POST", body: JSON.stringify({ holdId: hold.id }) }),
+              "Released", holds.reload,
+            );
+          }}>Release</Button>
+        </Group>
+      </Modal>
     </>
   );
 }

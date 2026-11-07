@@ -363,6 +363,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   row with fees but no amount goes to finance. Rows are never pooled, and the parts
   sum to the row's fee exactly.  [Decision — owner]
 
+- Finance may release a row with fees but no amount once its fee is booked by hand
+  in QuickBooks. The release records who and when, keeps the fee amount, and
+  removes the fee from the automated booking. It is final.  [Decision — owner]
+
 - Every finished giving-platform batch must match one deposit in the books.
   Finance settles any the app can't match and records why. [Decision]
 
