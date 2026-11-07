@@ -217,6 +217,7 @@ export const classifications = {
         claimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
         qbPostAttempts: 'internal',
+        qbFailureKind: 'internal',
         qbNote: 'internal',
         bookedTotalCents: 'internal',
         bookedTxnDate: 'internal',

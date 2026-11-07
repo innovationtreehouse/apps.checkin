@@ -1,6 +1,7 @@
 // The in-kind drain (docs/rules/revenue.md, Donations): each accepted gift books as one QuickBooks JournalEntry,
 // unless finance already booked it by hand as a Deposit into and a Purchase out of the in-kind
 // clearing account, which the drain matches instead. Claim, call, settle, as the other lanes.
+import { kindOf, type FailureKind } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
 import {
   MAX_CONSECUTIVE_FAILURES,
@@ -27,7 +28,7 @@ import {
 } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type DbOrTx } from "../db";
 import { getInKindAccounts, getInKindCapital, getInKindQbPosting } from "../runtime";
-import type { InKindQbPosting } from "../contract";
+import type { InKindQbPosting, InKindStopKind } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import { readDonationSettings, type DonationSettings } from "../services/settingsService";
 import type { AuditContext } from "../workflows/disbursement.actor";
@@ -92,6 +93,10 @@ export interface Settlement {
   createdNow?: boolean;
   /** The post failed at MAX_POST_ATTEMPTS, so the gift went to finance. */
   exhausted?: boolean;
+  /** The kind of the QuickBooks or app failure behind this settlement, saved on the posting. */
+  failure?: FailureKind;
+  /** Held for finance without calling QuickBooks, so it says nothing about whether QuickBooks is up. */
+  noCall?: boolean;
 }
 
 /** Everything one run reads once. */
@@ -113,6 +118,8 @@ export interface Run {
   settings: DonationSettings;
   /** QuickBooks' chart of accounts, read at most once per run. */
   qbAccounts: () => Promise<QboAccount[]>;
+  /** QuickBooks answered an earlier gift this run, so a system failure now is about the gift. */
+  qbAnswered?: boolean;
 }
 
 /** The run's one read of QuickBooks' chart of accounts, on first use. */
@@ -121,7 +128,11 @@ export function chartOfAccounts(client: QuickBooksClient): () => Promise<QboAcco
   return () => (read ??= client.accounts());
 }
 
-export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "exhausted" | "failed" | "waiting";
+/**
+ * `failed` is a system or bug failure, which counts toward the stop; `connection` ends the run;
+ * `settings` waits outside the stop count; `held` went to finance without a QuickBooks call.
+ */
+export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "held" | "exhausted" | "failed" | "connection" | "settings" | "waiting";
 
 /** The states the drain posts again on its own: a failed post, and a gift whose lines now may have their accounts. */
 const POSTABLE: readonly string[] = [QB_MATCH_STATE.POST_FAILED, QB_MATCH_STATE.NEEDS_ACCOUNT];
@@ -170,7 +181,12 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
   try {
     read = await run.client.createdSince("JournalEntry", since);
   } catch (err) {
-    return needsFinance(`The app may already have booked this gift: the QuickBooks read failed (${message(err).slice(0, 200)})`);
+    const failure = kindOf(err);
+    // Nothing is created while the read fails, so an outage or a lost connection can wait for the next run's read.
+    if (failure === "system" || failure === "connection") {
+      return { state: QB_MATCH_STATE.POST_FAILED, note: `The QuickBooks read for this gift's earlier entry failed; the next run reads again (${message(err).slice(0, 200)})`, entries: [], failure };
+    }
+    return { ...needsFinance(`The app may already have booked this gift: the QuickBooks read failed (${message(err).slice(0, 200)})`), failure };
   }
   if (read.full) return needsFinance("The app may already have booked this gift: the read of JournalEntries created since its first attempt filled a page");
   const key = inKindKey(run.orgId, gift.source, gift.id);
@@ -183,6 +199,7 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
 }
 
 const needsFinance = (note: string): Settlement => ({ state: QB_MATCH_STATE.NEEDS_FINANCE, note, entries: [] });
+const heldNoCall = (note: string): Settlement => ({ ...needsFinance(note), noCall: true });
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
@@ -239,9 +256,9 @@ function inWindow(date: string, around: string, days: number): boolean {
  */
 async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLine[] | Settlement> {
   const classId = run.classes.get(gift.budgetOwnerId);
-  if (!classId) return needsFinance("The gift's bucket has no QuickBooks Class in the books map");
+  if (!classId) return heldNoCall("The gift's bucket has no QuickBooks Class in the books map");
   const income = run.accounts.INKIND_INCOME;
-  if (!income) return needsFinance("The books map has no in-kind income account");
+  if (!income) return heldNoCall("The books map has no in-kind income account");
   const lines = gift.lines.filter((l) => l.valueCents > 0);
   const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
   const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
@@ -253,6 +270,12 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
     return accountId ? [{ postingType: "Debit", accountId, amountCents: l.valueCents, classId, description: l.description.slice(0, 4000) }] : [];
   });
   return [{ postingType: "Credit", accountId: income, amountCents: gift.totalCents, classId, description: "In-kind contribution" }, ...debits];
+}
+
+/** A failed post by its kind: QuickBooks refusing the gift holds it for finance at once; any other kind is tried again. */
+function failedPost(failure: FailureKind, error: string): Settlement {
+  if (failure === "data") return { ...needsFinance(`QuickBooks refused this gift: ${error}`.slice(0, 500)), failure };
+  return { state: QB_MATCH_STATE.POST_FAILED, note: error.slice(0, 500), entries: [], failure };
 }
 
 function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): Settlement {
@@ -269,17 +292,17 @@ function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): 
     case "needs-finance":
       return { state: QB_MATCH_STATE.UNBOOKED, note: null, entries: [] };
     case "failed":
-      return { state: QB_MATCH_STATE.POST_FAILED, note: r.error.slice(0, 500), entries: [] };
+      return failedPost(r.failure, r.error);
   }
 }
 
 /** The QuickBooks half of a post, outside any transaction: look first by key, then finance's hand booking, then the gate. */
 async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedThrough: string; mayCreate: boolean }, attemptedBefore: Date | null): Promise<Settlement> {
   try {
-    if (gift.totalCents <= 0) return needsFinance("This gift has no value to book; skip it");
+    if (gift.totalCents <= 0) return heldNoCall("This gift has no value to book; skip it");
     // A receipt's free line is real; a gift without one was valued line by line by finance.
     if (gift.source === "manual" && gift.lines.some((l) => l.valueCents <= 0)) {
-      return needsFinance("A line of this gift has no value; the app will not book it, so finance books it by hand or skips it");
+      return heldNoCall("A line of this gift has no value; the app will not book it, so finance books it by hand or skips it");
     }
     if (attemptedBefore) {
       const own = await lookupOwnJournal(run, gift, attemptedBefore);
@@ -301,21 +324,33 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
       accounts: run.accounts,
     });
     if (result.kind === "needs-finance" && !run.close.ok) {
-      return { state: QB_MATCH_STATE.POST_FAILED, note: "The books closing date could not be read; the next run tries again", entries: [] };
+      return { state: QB_MATCH_STATE.POST_FAILED, note: "The books closing date could not be read; the next run tries again", entries: [], failure: "system" };
     }
-    return fromJournal(result, gift, txnDate);
+    const s = fromJournal(result, gift, txnDate);
+    // QuickBooks answered this post's reads, so a system failure on the create is about the gift.
+    return s.failure === "system" ? { ...s, failure: "bug" } : s;
   } catch (err) {
-    return { state: QB_MATCH_STATE.POST_FAILED, note: message(err).slice(0, 500), entries: [] };
+    return failedPost(kindOf(err), message(err));
   }
 }
 
 /**
- * Counts a failed post on the gift, and hands the gift to finance at the limit. A run that could not
- * read the closing date creates nothing, so its failures say nothing about the gift and do not count.
- * Nor does finance's "book it": the limit stops the drain retrying alone, and finance may always ask again.
+ * Counts a failed post on the gift, and hands the gift to finance at the limit. Only a bug is the
+ * gift's own, or a system failure once QuickBooks answered an earlier gift this run or an earlier
+ * read in this post, which is then charged as a bug; QuickBooks refusing the gift holds it after this one try. A run that could not
+ * read the closing date creates nothing, so its failures do not count. Nor does finance's "book it":
+ * the limit stops the drain retrying alone, and finance may always ask again.
  */
 async function countFailure(tx: DbOrTx, run: Run, postingId: number, attemptsBefore: number, s: Settlement): Promise<Settlement> {
-  if (s.state !== QB_MATCH_STATE.POST_FAILED || !run.close.ok || run.book) return s;
+  if (!run.close.ok || run.book) return s;
+  if (s.failure === "data") {
+    await tx.inKindPosting.update({ where: { id: postingId }, data: { qbPostAttempts: attemptsBefore + 1 } });
+    return s;
+  }
+  if (s.state !== QB_MATCH_STATE.POST_FAILED) return s;
+  const failure = s.failure ?? "bug";
+  if (failure === "system" && run.qbAnswered) s = { ...s, failure: "bug" };
+  else if (failure !== "bug") return s;
   const attempts = attemptsBefore + 1;
   await tx.inKindPosting.update({ where: { id: postingId }, data: { qbPostAttempts: attempts } });
   if (attempts < MAX_POST_ATTEMPTS) return s;
@@ -355,7 +390,7 @@ export async function writeSettlement(
   }
   await tx.inKindPosting.update({
     where: { id: postingId },
-    data: { matchState: s.state, claimedAt: null, qbNote: s.note, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null },
+    data: { matchState: s.state, claimedAt: null, qbNote: s.note, qbFailureKind: s.failure ?? null, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null },
   });
   await recordEvent(tx, {
     orgId,
@@ -363,7 +398,7 @@ export async function writeSettlement(
     entityId: gift.entityId,
     eventType: "IN_KIND_QB_SETTLED",
     ...actor,
-    payload: { ...payload, to: s.state, entries: s.entries, note: s.note },
+    payload: { ...payload, to: s.state, entries: s.entries, note: s.note, ...(s.failure ? { failure: s.failure } : {}) },
   });
 }
 
@@ -372,6 +407,12 @@ export async function writeSettlement(
  * never to a second claim. `not_ready` and `busy` (another post holds it) are the drain's "waiting".
  */
 export async function postGift(run: Run, source: GiftToBook["source"], id: number, now = new Date()): Promise<InKindPostOutcome | "not_ready" | "busy"> {
+  const posted = await postGiftSettled(run, source, id, now);
+  return typeof posted === "string" ? posted : posted.outcome;
+}
+
+/** postGift, with the kind of the failure it saved, if any. */
+async function postGiftSettled(run: Run, source: GiftToBook["source"], id: number, now: Date): Promise<{ outcome: InKindPostOutcome; failure?: FailureKind } | "not_ready" | "busy"> {
   const claimed = await claim(run, source, id, now);
   if (typeof claimed === "string") return claimed;
   const s = await call(run, claimed.gift, claimed.txnDate, claimed.gate, claimed.attemptedBefore);
@@ -384,8 +425,18 @@ export async function postGift(run: Run, source: GiftToBook["source"], id: numbe
     const voidIt = s.state === QB_MATCH_STATE.CREATED ? "; the app's entry needs voiding" : "";
     saved = await settle(run, claimed.gift, now, needsFinance(`QuickBooks ${ids} is already held by another gift${voidIt}`));
   }
-  if (!saved) return "waiting";
+  if (!saved) return { outcome: "waiting" };
+  const outcome = outcomeOf(saved);
+  if (ANSWERED.includes(outcome) && (saved.failure === undefined || saved.failure === "data")) run.qbAnswered = true;
+  return { outcome, failure: saved.failure };
+}
+
+/** Outcomes reached only after QuickBooks answered, unless a failure says otherwise. */
+const ANSWERED: readonly InKindPostOutcome[] = ["posted", "matched", "unbooked", "needs_finance"];
+
+function outcomeOf(saved: Settlement): InKindPostOutcome {
   if (saved.exhausted) return "exhausted";
+  if (saved.noCall) return "held";
   switch (saved.state) {
     case QB_MATCH_STATE.CREATED:
       return "posted";
@@ -394,7 +445,7 @@ export async function postGift(run: Run, source: GiftToBook["source"], id: numbe
     case QB_MATCH_STATE.UNBOOKED:
       return "unbooked";
     case QB_MATCH_STATE.POST_FAILED:
-      return "failed";
+      return saved.failure === "connection" || saved.failure === "settings" ? saved.failure : "failed";
     default:
       return "needs_finance";
   }
@@ -488,11 +539,16 @@ export interface InKindDrainCounts {
   matched: number;
   unbooked: number;
   needs_finance: number;
+  held: number;
   exhausted: number;
   failed: number;
+  connection: number;
+  settings: number;
   waiting: number;
   capped: boolean;
+  /** The run stopped on its failure streak or a lost connection; `stopKind` says which. */
   stoppedAfterFailures: boolean;
+  stopKind: InKindStopKind | null;
   closeDateRead: boolean;
   sweep: InKindSweepCounts;
   drift: InKindDriftCounts;
@@ -529,30 +585,42 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open, settings, qbAccounts: chartOfAccounts(client) };
 
   const counts: InKindDrainCounts = {
-    posted: 0, matched: 0, unbooked: 0, needs_finance: 0, exhausted: 0, failed: 0, waiting: 0,
-    capped: false, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 },
+    posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, exhausted: 0, failed: 0, connection: 0, settings: 0, waiting: 0,
+    capped: false, stoppedAfterFailures: false, stopKind: null, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 },
   };
+  /** The kinds of the failures in the current streak, so a stop can name its cause. */
+  let streak: FailureKind[] = [];
   const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
     counts,
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
     // A gift's last failure is still a failure: an outage that exhausts gifts must not clear the streak.
     failures: ["failed", "exhausted"],
+    noCall: ["held", "settings"],
+    stopNow: ["connection"],
     post: async (gift) => {
+      let outcome: InKindPostOutcome;
+      let failure: FailureKind | undefined;
       try {
-        const result = await postGift(run, gift.source, gift.id, new Date());
-        return result === "not_ready" || result === "busy" ? "waiting" : result;
+        const result = await postGiftSettled(run, gift.source, gift.id, new Date());
+        ({ outcome, failure } = typeof result === "string" ? { outcome: "waiting" as const, failure: undefined } : result);
       } catch (err) {
         // The entry may already be in QuickBooks, so the gift keeps its claim: a post taking over the stale claim looks for the entry by key first.
         console.warn(`[bulk-donation] in-kind post failed for ${gift.source} gift ${gift.id}`, err);
-        return "failed";
+        outcome = "failed";
+        failure = kindOf(err);
       }
+      if (outcome === "failed" || outcome === "exhausted") streak.push(failure ?? "bug");
+      else if (outcome !== "held" && outcome !== "settings") streak = [];
+      return outcome;
     },
   });
   counts.capped = stop?.by === "count";
-  counts.stoppedAfterFailures = stop?.by === "failures";
-  if (stop?.by === "failures") {
+  const stopKind: InKindStopKind | null = stop?.by === "stopNow" ? "connection" : stop?.by === "failures" ? (streak.every((k) => k === "system") ? "system" : "bug") : null;
+  counts.stoppedAfterFailures = stopKind !== null;
+  counts.stopKind = stopKind;
+  if (stop && stopKind) {
     try {
-      await posting.drainStopped({ orgId, failures: MAX_CONSECUTIVE_FAILURES, remaining: stop.remaining });
+      await posting.drainStopped({ orgId, failures: stopKind === "connection" ? 1 : MAX_CONSECUTIVE_FAILURES, remaining: stop.remaining, cause: stopKind });
     } catch (err) {
       console.warn("[bulk-donation] in-kind drain stopped on its failure streak, and the finance alert failed", err);
     }

@@ -71,6 +71,9 @@ export function inventorySourceKey(inKindDonationId: number): string {
   return `donation:${inKindDonationId}`;
 }
 
+/** Why an in-kind run stopped early: QuickBooks down, its connection lost, or gifts failing on the app's own fault. */
+export type InKindStopKind = "system" | "connection" | "bug";
+
 /**
  * What the in-kind drain books with: checkin's one guarded client (null while the guard keeps
  * QuickBooks off) and the books map, which names every account an in-kind journal entry uses.
@@ -80,8 +83,8 @@ export interface InKindQbPosting {
   booksMap: BooksMap;
   /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
-  /** Tells finance a run stopped on its failure streak, leaving `remaining` gifts unposted. */
-  drainStopped(event: { orgId: string; failures: number; remaining: number }): Promise<void>;
+  /** Tells finance a run stopped on its failure streak or a lost connection, leaving `remaining` gifts unposted; `cause` is the stop's kind. */
+  drainStopped(event: { orgId: string; failures: number; remaining: number; cause: InKindStopKind }): Promise<void>;
 }
 
 /** One deposit line: a gift or match line on its rule's QuickBooks account, net of its fees, and the gift's bucket (null at organization level). */

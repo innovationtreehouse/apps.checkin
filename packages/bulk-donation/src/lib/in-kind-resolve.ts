@@ -109,6 +109,7 @@ async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, act
   if (!client) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnJournal({ orgId, client }, gift, read.qbCreateAttemptedAt);
   if (!own) return false;
+  if (own.state === QB_MATCH_STATE.POST_FAILED) throw new ServiceError(503, "QuickBooks did not answer the check for the app's own entry; try again shortly");
   if (own.state !== QB_MATCH_STATE.CREATED) throw new ServiceError(409, own.note ?? "The app may already have booked this gift");
   await settleByFinance(orgId, gift, read, own, actor, { note: "the app had already booked this gift" });
   return true;
