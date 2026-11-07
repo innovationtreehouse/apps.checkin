@@ -14,7 +14,15 @@ import type {
 } from "./contract";
 
 const INERT_OWNERS: OwnerDirectory = { list: async () => [] };
-const INERT_CATALOG: CatalogLookup = { search: async () => [], getItem: async () => null };
+/** An unbound catalog says so rather than answer "no item". */
+const INERT_CATALOG: CatalogLookup = {
+  search: async () => {
+    throw new NotWiredError("CatalogLookup.search");
+  },
+  getItem: async () => {
+    throw new NotWiredError("CatalogLookup.getItem");
+  },
+};
 const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");

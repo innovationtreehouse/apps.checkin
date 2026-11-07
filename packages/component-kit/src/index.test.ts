@@ -310,6 +310,20 @@ describe("sweepOrgEvents", () => {
     expect(res).toMatchObject({ unreadable: true, needsAlert: true });
     expect(res.counts.failed).toBe(1);
   });
+
+  it("an unbound event source is not connected: not unreadable, and no alert", async () => {
+    const res = await sweepOrgEvents<number>({
+      limit: 10,
+      failed: [],
+      readPage: async () => { throw new NotWiredError("CatalogEventSource.eventsSince"); },
+      idOf: (id) => id,
+      receivedIds: async () => [],
+      consume: async () => "processed",
+      onUnrecorded: () => {},
+      onUnreadable: () => {},
+    });
+    expect(res).toMatchObject({ notConnected: true, unreadable: false, needsAlert: false });
+  });
 });
 
 describe("kindOf", () => {

@@ -319,6 +319,8 @@ export interface OrgEventSweepResult {
   newlyFailed: number;
   unprocessed: number;
   unreadable: boolean;
+  /** No event source is bound: a settings problem the run records, not a catalog outage to alert on. */
+  notConnected: boolean;
   /** An event newly failed, an unreadable catalog, or a capped run that processed nothing. */
   needsAlert: boolean;
 }
@@ -352,6 +354,7 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
 
   let unprocessed = 0;
   let unreadable = false;
+  let notConnected = false;
   let budget = sweep.limit - firstRetries.length;
   let newlyFailed = 0;
   try {
@@ -376,7 +379,8 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
       after = ids[ids.length - 1];
     }
   } catch (err) {
-    unreadable = true;
+    if (kindOf(err) === "settings") notConnected = true;
+    else unreadable = true;
     sweep.onUnreadable(err);
   }
 
@@ -385,5 +389,5 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
   unprocessed += sweep.failed.length - firstRetries.length - laterRetries.length;
 
   const needsAlert = newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0);
-  return { counts, newlyFailed, unprocessed, unreadable, needsAlert };
+  return { counts, newlyFailed, unprocessed, unreadable, notConnected, needsAlert };
 }

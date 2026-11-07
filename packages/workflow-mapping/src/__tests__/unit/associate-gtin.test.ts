@@ -1,5 +1,5 @@
 /** Associate's GTIN gate: only a well-formed GTIN-13 naming an approved, non-archived catalog item reaches the line. */
-import { ServiceError } from "@checkin/component-kit";
+import { NotWiredError, ServiceError } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogReader, CatalogSubmissions } from "../../contract";
 import { configure } from "../helpers/setup";
@@ -73,14 +73,20 @@ describe("associateGtin GTIN check", () => {
     expect(updateEditableLine).not.toHaveBeenCalled();
   });
 
+  it("503 \"No catalog is connected\" when the catalog is unbound, never treating it as not found", async () => {
+    getActiveItem.mockRejectedValue(new NotWiredError("CatalogReader.getActiveItem"));
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
   it("502 when the catalog read fails, never treating it as not found", async () => {
-    getActiveItem.mockRejectedValue(new Error("CatalogReader.getActiveItem not wired"));
+    getActiveItem.mockRejectedValue(new Error("catalog down"));
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({
       status: 502,
       message: "The catalog couldn't be reached; try again",
     });
-    expect(logged).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: "CatalogReader.getActiveItem not wired" }));
+    expect(logged).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: "catalog down" }));
     logged.mockRestore();
     expect(updateEditableLine).not.toHaveBeenCalled();
   });

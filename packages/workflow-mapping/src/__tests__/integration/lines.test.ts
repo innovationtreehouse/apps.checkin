@@ -73,10 +73,10 @@ describeDb("associate (CI3, optimistic)", () => {
     ]);
   });
 
-  it("502 and the line unchanged when the catalog is not wired", async () => {
+  it("503 \"No catalog is connected\" and the line unchanged when the catalog is not wired", async () => {
     configure(sinks);
     const { r, lines } = await pendingWithLines();
-    await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017" })).rejects.toMatchObject({ status: 502 });
+    await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017" })).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).recognitionStatus).toBe("unrecognized");
   });
 

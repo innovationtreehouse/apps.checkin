@@ -28,7 +28,6 @@ describe("callerId", () => {
 describe("runtime", () => {
   it("binds inert adapters for every unbound port", async () => {
     const rt = getExpenseRuntime();
-    expect(await rt.catalogEvents.eventsSince("org", 0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
     const notConnected = await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31").catch((err: unknown) => err);
@@ -47,6 +46,7 @@ describe("runtime", () => {
       catalog.getActiveItem("0000000000017"),
       catalog.getItemNames(["0000000000017"]),
       catalog.lookupItems("Acme", [{ index: 1, partNumber: "P1" }]),
+      getExpenseRuntime().catalogEvents.eventsSince("org", 0),
     ];
     for (const call of calls) expect(kindOf(await call.catch((err: unknown) => err))).toBe("settings");
   });

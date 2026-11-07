@@ -57,6 +57,12 @@ describeDb("GTIN writes", () => {
     expect(await db.partOwnerMap.count()).toBe(0);
   });
 
+  it("answers 503 \"No catalog is connected\" and maps nothing when no catalog is bound", async () => {
+    bindPorts({});
+    await expect(own(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(await db.partOwnerMap.count()).toBe(0);
+  });
+
   it("still moves a part already mapped to another bucket, whatever its GTIN", async () => {
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: "0012345678905", ownerId: 101 } });
 

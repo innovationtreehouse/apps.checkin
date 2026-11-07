@@ -230,16 +230,18 @@ missed a row stored at a different time of day.
   `getOrgEventConsumers` return nothing instead, for reads that must not throw,
   such as one after a commit. A missing principal, or one without an integer id,
   is a 401. An unbound push or write port throws rather than report success,
-  usually `NotWiredError`. Expense's outbound gateway, workflow-mapping's push
-  ports and the add-person port in expense and receipt throw a plain `Error`.
+  usually `NotWiredError`. Expense's outbound gateway and the add-person port in
+  expense and receipt throw a plain `Error`.
   Donations' capital review is the exception that does nothing when unbound, since
   no line then goes to review. An unbound read port falls back to an inert adapter
   that returns an empty result, or throws where it has no answer to give: expense's
-  QuickBooks reader throws `QuickBooksNotConnectedError`, expense's catalog reader
-  and workflow-mapping's catalog match throw `NotWiredError`, so an unbound catalog
-  never reads as "no match", and workflow-mapping's `checkReferences` and
-  `getActiveItem` throw a plain `Error`. A callee that takes an `orgId` from its caller checks it with
-  `assertOrg` first.
+  QuickBooks reader throws `QuickBooksNotConnectedError`, and every library's
+  catalog reader and catalog event source throw `NotWiredError`, so an unbound
+  catalog never reads as "no match" or "no events". A route that checks a part
+  against an unbound catalog answers 503 "No catalog is connected"; an outage stays
+  502. The catch-up sweep records an unbound event source as `notConnected`, not
+  as an unreadable catalog, and raises no alert. A callee that takes an `orgId`
+  from its caller checks it with `assertOrg` first.
 
 - **At a crossing, a callee's 4xx means refused for good.** When one library
   calls another, a `ServiceError` or http error in the 4xx range, or a

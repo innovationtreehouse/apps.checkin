@@ -160,7 +160,12 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<unknown[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
+/** An unbound event source says so rather than answer "no events". */
+export const inertCatalogEventSource: CatalogEventSource = {
+  eventsSince: async () => {
+    throw new NotWiredError("CatalogEventSource.eventsSince");
+  },
+};
 
 /** Alerts the host binds to reach a person. */
 export interface ExpenseAlerts {

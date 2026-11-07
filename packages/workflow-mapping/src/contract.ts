@@ -127,18 +127,15 @@ export interface WorkflowAlerts {
 }
 
 // ── Inert adapters ───────────────────────────────────────────────────────────
-// A push target that is not wired throws, so the receipt waits in apply_failed;
-// it never reports success with nothing booked or counted.
+// A port that is not wired throws NotWiredError: a push leaves the receipt waiting in apply_failed,
+// and a catalog read says "not connected" rather than "no match". None reports success or an empty answer.
 
 function notWired(port: string): never {
-  throw new Error(`${port} not wired`);
+  throw new NotWiredError(port);
 }
 
-// An unbound catalog says so rather than answer "no match".
 export const inertCatalogReader: CatalogReader = {
-  lookupItems: async () => {
-    throw new NotWiredError("CatalogReader.lookupItems");
-  },
+  lookupItems: async () => notWired("CatalogReader.lookupItems"),
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
   getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
 };
@@ -164,7 +161,7 @@ export const inertInventorySink: InventorySink = {
 };
 
 export const inertCatalogEventSource: CatalogEventSource = {
-  eventsSince: async () => [],
+  eventsSince: async () => notWired("CatalogEventSource.eventsSince"),
 };
 
 export interface WorkflowRuntimeConfig {
