@@ -60,6 +60,10 @@ const RETRY_REFUSALS: Record<Exclude<PostOutcome, "posted" | "matched"> | "unbou
   needs_finance: [409, "Not posted: the expense still needs finance; see its QuickBooks reasons"],
   no_class: [409, "Not posted: a line's budget has no QuickBooks Class; it is retried once one is set"],
   unpostable: [409, "Not posted: the expense's own data can't make a QuickBooks entry; see its QuickBooks reasons"],
+  outage: [503, "QuickBooks did not answer; the expense waits as POST_FAILED and is retried automatically, with no try used up"],
+  disconnected: [503, "The QuickBooks connection needs to be renewed; the expense waits as POST_FAILED and is retried once it is"],
+  waiting_on_settings: [409, "Not posted: it waits on a QuickBooks setting; it is retried on each run once the setting is fixed"],
+  refused: [409, "Not posted: QuickBooks refused the entry; see its QuickBooks reasons"],
 };
 
 /** The refusal for a retry's outcome, or null when the expense reached the books. */

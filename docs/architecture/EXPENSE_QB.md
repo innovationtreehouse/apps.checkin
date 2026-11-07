@@ -181,8 +181,8 @@ skips the record as for a void.
 | `MATCHED` | A hand-booked entry is linked, with a baseline for drift | Terminal |
 | `AMBIGUOUS` | Several candidates, or no Vendor | Finance |
 | `UNBOOKED` | Not in QuickBooks, and the app may not create it | Finance |
-| `POST_FAILED` | A post failed | The drain, up to five attempts |
-| `NEEDS_FINANCE` | Posts kept failing, the expense's own data cannot make an entry, or the app may already have booked it and cannot tell | Finance |
+| `POST_FAILED` | A post failed; `qbFailureKind` says how | The drain: a bug up to five attempts, an outage or a broken connection uncharged |
+| `NEEDS_FINANCE` | A bug failed five times, QuickBooks refused the entry, the expense's own data cannot make an entry, or the app may already have booked it and cannot tell | Finance |
 | `SKIPPED` | Finance skipped it, with a reason | Terminal |
 | `NOT_TEST_DATA`, `TEST_DATA_REFUSED` | Stopped by the test-data gate | Re-checked each run |
 
@@ -234,14 +234,27 @@ each also failing on its own:
 Expense's non-QuickBooks catch-up, `runExpenseCatchUp` (intake replay and catalog
 events), runs from `/api/cron/reconcile-shopify` instead.
 
+### Failures by kind
+
+A failed post is recorded by its kind (`kindOf`), stored in `qbFailureKind`.
+
+| Kind | Example | Charged a try | Expense | The run |
+|---|---|---|---|---|
+| System | QuickBooks 5xx, a timeout, a rate limit after its retry, the database down | No, unless QuickBooks answered an earlier expense in the run or an earlier read in the same post: then charged as a bug | `POST_FAILED`, retried next run | Counts toward the stop |
+| Connection | QuickBooks 401 or 403 | No | `POST_FAILED` | Stops at once |
+| Settings | A port not wired | No | Stays where it was, re-checked each run | Leaves the stop count alone |
+| Data | Any other QuickBooks 4xx on the create; a 4xx on a read is the app's own request at fault, so it is a bug | Once | `NEEDS_FINANCE` at once, "QuickBooks refused: code N (request R)" | Resets the stop count |
+| Bug | Anything unrecognised | Yes | `POST_FAILED`, `NEEDS_FINANCE` at five | Counts toward the stop |
+
 ### Limits
 
 | Limit | Value | What happens |
 |---|---|---|
 | Entries created per drain | `qbMaxCreatesPerRun`, 25 by default | The run stops and logs; the rest wait |
 | Entries created per UTC day | `qbMaxCreatesPerDay`, 50 by default, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
-| Failures in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
-| Failed attempts on one expense | 5 | `NEEDS_FINANCE` |
+| Bugs or outages in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
+| Broken QuickBooks connections in one drain | 1 | The run stops |
+| Failed attempts on one expense | 5 bugs, or 1 refusal | `NEEDS_FINANCE` |
 | Drift reads per run | 25 | The slice moves each UTC day, so every entry is checked in turn |
 
 The two create limits and the match window are org settings, read once per drain run;
