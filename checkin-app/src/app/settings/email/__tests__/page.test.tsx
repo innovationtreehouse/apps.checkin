@@ -32,6 +32,8 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: "Org <no-reply@org.test>",
       emailReplyToAddress: "board@org.test",
       scholarshipNotifyEmail: null,
+      alertEmailAddress: null,
+      boardEmailAddress: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: null,
@@ -68,6 +70,8 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: "info@org.test, ops@org.test",
       scholarshipNotifyEmail: null,
+      alertEmailAddress: null,
+      boardEmailAddress: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: null,
@@ -107,6 +111,8 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: null,
       scholarshipNotifyEmail: "board@org.test, ops@org.test",
+      alertEmailAddress: null,
+      boardEmailAddress: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: null,
@@ -142,6 +148,8 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: null,
       scholarshipNotifyEmail: null,
+      alertEmailAddress: null,
+      boardEmailAddress: null,
       scholarshipAckSubject: "Custom subject",
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: "Thanks for applying to {{programName}}!",
@@ -159,6 +167,24 @@ describe("EmailSettingsPage", () => {
 
     expect(await screen.findByText(/Enter one or more comma-separated addresses/i)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
+  });
+
+  it("Alert address: saves one address, and a malformed one shows an inline error and blocks save", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, alertEmailAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    const alert = await screen.findByLabelText(/^Alert address/i);
+    fireEvent.change(alert, { target: { value: "a@org.test, b@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByText("Enter one email address.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
+
+    fireEvent.change(alert, { target: { value: " finance@org.test " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toMatchObject({ alertEmailAddress: "finance@org.test", boardEmailAddress: null });
   });
 
   it("redirects a user without board/sysadmin and never renders the form", async () => {

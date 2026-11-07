@@ -42,11 +42,11 @@ const incomeDeposits: IncomeDeposits = {
     return (await import("@checkin/income")).depositStatus(orgId, "benevity", disbursementIds);
   },
   async handOverFailing(failures) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.donationDepositHandOver", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.donationDepositHandOver", {
       batches: failures.map((f) => `${f.disbursementId}: ${f.reason}`).join("; "),
       actionLink: `${config.baseUrl()}/donations/events`,
-    }, "Donation hand-over alert failed:");
+    });
   },
 };
 
@@ -68,19 +68,19 @@ function inKindQbPosting(): InKindQbPosting | undefined {
     client: quickBooks,
     booksMap,
     async sweepIncomplete({ since }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert("finance.inKindSweepIncomplete", {
+      const { emailAlert } = await import("@/lib/emailRecipients");
+      await emailAlert("finance.inKindSweepIncomplete", {
         since: since.toISOString().slice(0, 10),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
-      }, "In-kind sweep alert failed:");
+      });
     },
     async drainStopped({ failures, remaining }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert("finance.inKindDrainStopped", {
+      const { emailAlert } = await import("@/lib/emailRecipients");
+      await emailAlert("finance.inKindDrainStopped", {
         failures: String(failures),
         remaining: String(remaining),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
-      }, "In-kind drain alert failed:");
+      });
     },
   };
 }

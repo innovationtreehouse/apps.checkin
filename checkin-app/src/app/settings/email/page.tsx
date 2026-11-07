@@ -10,19 +10,25 @@ import { useSeedForm } from "@/hooks/useSeedForm";
 import { api, useLoad } from "@/lib/api";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
+import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
 
 interface Settings {
   emailFromAddress: string | null;
   emailReplyToAddress: string | null;
   scholarshipNotifyEmail: string | null;
+  alertEmailAddress: string | null;
+  boardEmailAddress: string | null;
   scholarshipAckSubject: string | null;
   scholarshipAckMembershipBody: string | null;
   scholarshipAckProgramBody: string | null;
 }
 
 const HEADER_ERROR = 'Enter an email address or "Name <addr@domain>".';
+const ADDRESS_ERROR = "Enter one email address.";
 const REPLY_TO_ERROR = 'Enter one or more comma-separated addresses, each an email address or "Name <addr@domain>".';
+
+type FieldErrors = { from?: string; replyTo?: string; scholarshipNotify?: string; alertAddress?: string; boardAddress?: string };
 
 export default function EmailSettingsPage() {
   // The sender identity is editable by board + sysadmin (same as the /settings layout
@@ -33,6 +39,8 @@ export default function EmailSettingsPage() {
   const [emailFrom, setEmailFrom] = useState("");
   const [emailReplyTo, setEmailReplyTo] = useState("");
   const [scholarshipNotify, setScholarshipNotify] = useState("");
+  const [alertAddress, setAlertAddress] = useState("");
+  const [boardAddress, setBoardAddress] = useState("");
   const [ackSubject, setAckSubject] = useState("");
   const [ackMembershipBody, setAckMembershipBody] = useState("");
   const [ackProgramBody, setAckProgramBody] = useState("");
@@ -43,7 +51,7 @@ export default function EmailSettingsPage() {
 
   const [initial, setInitial] = useState<Record<string, string> | null>(null);
   const [saving, setSaving] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ from?: string; replyTo?: string; scholarshipNotify?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const { data, error, reload } = useLoad<{ settings: Settings }>(ready ? "/api/settings/email" : null);
 
@@ -59,11 +67,15 @@ export default function EmailSettingsPage() {
     const from = emailFrom.trim();
     const replyTo = emailReplyTo.trim();
     const notify = scholarshipNotify.trim();
-    const fe: { from?: string; replyTo?: string; scholarshipNotify?: string } = {};
+    const alert = alertAddress.trim();
+    const board = boardAddress.trim();
+    const fe: FieldErrors = {};
     if (from && !isValidEmailHeader(from)) fe.from = HEADER_ERROR;
     if (replyTo && !parseEmailHeaderList(replyTo)) fe.replyTo = REPLY_TO_ERROR;
     if (notify && !parseEmailHeaderList(notify)) fe.scholarshipNotify = REPLY_TO_ERROR;
-    if (fe.from || fe.replyTo || fe.scholarshipNotify) { setFieldErrors(fe); return; }
+    if (alert && !isValidEmail(alert)) fe.alertAddress = ADDRESS_ERROR;
+    if (board && !isValidEmail(board)) fe.boardAddress = ADDRESS_ERROR;
+    if (Object.keys(fe).length > 0) { setFieldErrors(fe); return; }
     setFieldErrors({});
     setSaving(true);
     try {
@@ -73,6 +85,8 @@ export default function EmailSettingsPage() {
           emailFromAddress: emailFrom.trim() || null,
           emailReplyToAddress: emailReplyTo.trim() || null,
           scholarshipNotifyEmail: notify || null,
+          alertEmailAddress: alert || null,
+          boardEmailAddress: board || null,
           scholarshipAckSubject: ackSubject.trim() || null,
           scholarshipAckMembershipBody: ackMembershipBody.trim() || null,
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
@@ -85,7 +99,7 @@ export default function EmailSettingsPage() {
     finally { setSaving(false); }
   };
 
-  const current = { emailFrom, emailReplyTo, scholarshipNotify, ackSubject, ackMembershipBody, ackProgramBody };
+  const current = { emailFrom, emailReplyTo, scholarshipNotify, alertAddress, boardAddress, ackSubject, ackMembershipBody, ackProgramBody };
   const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
   useSeedForm(data, isDirty, ({ settings }) => {
@@ -93,6 +107,8 @@ export default function EmailSettingsPage() {
       emailFrom: settings.emailFromAddress ?? "",
       emailReplyTo: settings.emailReplyToAddress ?? "",
       scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
+      alertAddress: settings.alertEmailAddress ?? "",
+      boardAddress: settings.boardEmailAddress ?? "",
       ackSubject: settings.scholarshipAckSubject ?? "",
       ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
       ackProgramBody: settings.scholarshipAckProgramBody ?? "",
@@ -100,6 +116,8 @@ export default function EmailSettingsPage() {
     setEmailFrom(snap.emailFrom);
     setEmailReplyTo(snap.emailReplyTo);
     setScholarshipNotify(snap.scholarshipNotify);
+    setAlertAddress(snap.alertAddress);
+    setBoardAddress(snap.boardAddress);
     setAckSubject(snap.ackSubject);
     setAckMembershipBody(snap.ackMembershipBody);
     setAckProgramBody(snap.ackProgramBody);
@@ -179,6 +197,26 @@ export default function EmailSettingsPage() {
               value={scholarshipNotify}
               error={fieldErrors.scholarshipNotify}
               onChange={(e) => { setScholarshipNotify(e.currentTarget.value); setFieldErrors((f) => ({ ...f, scholarshipNotify: undefined })); }}
+              disabled={locked}
+            />
+            <TextInput
+              label="Alert address"
+              description="A group address. Every system and QuickBooks alert goes here. Blank = alerts are not sent."
+              placeholder="finance@innovationtreehouse.org"
+              w={440}
+              value={alertAddress}
+              error={fieldErrors.alertAddress}
+              onChange={(e) => { setAlertAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, alertAddress: undefined })); }}
+              disabled={locked}
+            />
+            <TextInput
+              label="Board address"
+              description="The Board's group address."
+              placeholder="board@innovationtreehouse.org"
+              w={440}
+              value={boardAddress}
+              error={fieldErrors.boardAddress}
+              onChange={(e) => { setBoardAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, boardAddress: undefined })); }}
               disabled={locked}
             />
             <TextInput

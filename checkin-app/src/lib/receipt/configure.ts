@@ -198,26 +198,26 @@ function receiptMailbox(): MailboxReader | undefined {
 
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailCeiling", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.receiptMailCeiling", {
       unresolved: String(unresolved),
       refused: String(refused),
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ceiling alert failed:");
+    });
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailAgeing", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.receiptMailAgeing", {
       messages: String(messages),
       since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ageing alert failed:");
+    });
   },
   async mailListingFailed() {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailboxUnreadable", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.receiptMailboxUnreadable", {
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mailbox listing alert failed:");
+    });
   },
 };
 

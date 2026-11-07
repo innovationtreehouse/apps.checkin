@@ -765,6 +765,12 @@ model BoardSettings {
   /// this is configured).
   /// @sensitivity:internal
   scholarshipNotifyEmail     String?
+  /// Group address every system and QuickBooks alert goes to (lib/emailAlert.ts).
+  /// NULL = alerts are not sent and System Status shows the gap; there is no fallback.
+  /// @sensitivity:internal
+  alertEmailAddress          String?
+  /// The Board's group address. @sensitivity:internal
+  boardEmailAddress          String?
   /// Subject line for the scholarship / payment-plan request ACK — the applicant's
   /// only automatic email (scholarshipEmails.ts). NULL or blank = the default copy
   /// in lib/scholarshipEmails.ts. Set on Settings → Email, same section as

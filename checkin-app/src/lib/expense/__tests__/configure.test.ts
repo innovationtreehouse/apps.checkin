@@ -30,8 +30,8 @@ const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
 const booksMapAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ booksMap: { accounts: booksMapAccounts } }));
-const notifyFinanceAlert = jest.fn();
-jest.mock("@/lib/emailRecipients", () => ({ notifyFinanceAlert }));
+const emailAlert = jest.fn();
+jest.mock("@/lib/emailRecipients", () => ({ emailAlert }));
 const sendPurchaseOutcome = jest.fn();
 jest.mock("@/lib/purchaseOutcomeMail", () => ({ sendPurchaseOutcome }));
 
@@ -297,7 +297,7 @@ describe("expense posting binding", () => {
     const { posting } = await ports();
     await expect(posting()).resolves.toBeNull();
     await expect(posting()).resolves.toBeNull();
-    expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
+    expect(emailAlert).toHaveBeenCalledTimes(1);
   });
 
   it("names what posting lacks for the status page, without emailing finance", async () => {
@@ -310,15 +310,15 @@ describe("expense posting binding", () => {
     await expect(expensePostingMissing()).resolves.toEqual(["a QuickBooks connection"]);
     booksMapAccounts.mockResolvedValue({});
     await expect(expensePostingMissing()).resolves.toEqual(["no account picked for: Organisation card"]);
-    expect(notifyFinanceAlert).not.toHaveBeenCalled();
+    expect(emailAlert).not.toHaveBeenCalled();
   });
 
   it("emails finance when the daily sweep reads a full page", async () => {
     getQuickBooks.mockResolvedValue(clientWith("sandbox", "Bank"));
     const bound = await (await ports()).posting();
     await bound!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") });
-    expect(notifyFinanceAlert).toHaveBeenCalledTimes(1);
-    expect(notifyFinanceAlert.mock.calls[0][1].since).toBe("2026-10-01");
+    expect(emailAlert).toHaveBeenCalledTimes(1);
+    expect(emailAlert.mock.calls[0][1].since).toBe("2026-10-01");
   });
 
   it("matches Purchases against the same books-map account", async () => {

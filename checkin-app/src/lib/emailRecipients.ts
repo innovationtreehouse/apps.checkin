@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { sendEmail, runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
-import { logger } from "@/lib/logger";
+import { logBackendError, logger } from "@/lib/logger";
 
 /**
  * Email fan-out helpers. Kept dependency-light (prisma + email + templates + logger only) so
@@ -112,19 +112,22 @@ export async function emailBoardMembersHtml(subject: string, html: string, error
 }
 
 /**
- * Email every FINANCE holder with an address on file, or the board when no one
- * holds FINANCE, so a finance control flag always reaches a person. Resolve +
- * fan-out; all errors logged and swallowed.
+ * Send one alert to the alert address (BoardSettings.alertEmailAddress), a group
+ * address, so personal opt-outs don't apply. Unset address: nothing is sent, no
+ * fallback; the gap is logged and shows on System Status. Resolves to whether the
+ * provider accepted the send; never rejects.
  */
-export async function notifyFinanceAlert<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
+export async function emailAlert<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>): Promise<boolean> {
     try {
-        const finance = await prisma.person.findMany({
-            where: { roles: { some: { role: "FINANCE" } }, email: { not: null } },
-            select: { email: true },
-        });
-        const emails = finance.map((f) => f.email).filter((e): e is string => !!e);
-        await (emails.length === 0 ? emailBoardMembers(key, ctx, errorLabel) : fanOutEmails(emails, key, ctx));
+        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } });
+        const to = settings?.alertEmailAddress;
+        if (!to) {
+            await logBackendError(new Error("Alert not sent: the alert address is not set"), "emailAlert", { key });
+            return false;
+        }
+        return await sendTemplated(key, to, ctx);
     } catch (e) {
-        logger.error(errorLabel, e);
+        logger.error(`emailAlert ${key} failed:`, e);
+        return false;
     }
 }
