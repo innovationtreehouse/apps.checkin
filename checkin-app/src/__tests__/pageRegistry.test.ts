@@ -116,7 +116,8 @@ describe('Shop Ops directory agrees with the section gates', () => {
 });
 
 describe('Inventory directory agrees with the catalog-viewer gate', () => {
-  const inventoryEntries = PAGES.filter((p) => p.section === 'Inventory' && /^\/(catalog|inventory\/org-items)/.test(p.href));
+  const MANAGER_ONLY = ['/catalog/learned-references', '/catalog/reference-conflicts'];
+  const inventoryEntries = PAGES.filter((p) => p.section === 'Inventory' && /^\/(catalog|inventory\/org-items)/.test(p.href) && !MANAGER_ONLY.includes(p.href));
   const counts = {
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building: 0,
@@ -134,6 +135,16 @@ describe('Inventory directory agrees with the catalog-viewer gate', () => {
   it('lists the Inventory entries to an active youth program volunteer', () => {
     const youthVolunteer = { ageBand: 'youth' as const, isProgramVolunteer: true, isActiveOrgMember: true };
     for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, counts)).toBe(true);
+  });
+
+  it('lists Learned References and Reference Conflicts to an inventory manager alone', () => {
+    const managerEntries = PAGES.filter((p) => MANAGER_ONLY.includes(p.href));
+    expect(managerEntries).toHaveLength(MANAGER_ONLY.length);
+    for (const entry of managerEntries) {
+      expect(entry.visible({ isInventoryManager: true }, counts)).toBe(true);
+      expect(entry.visible({ ageBand: 'youth', isProgramVolunteer: true, isActiveOrgMember: true }, counts)).toBe(false);
+      expect(entry.visible({ isBoardMember: true }, counts)).toBe(false);
+    }
   });
 });
 

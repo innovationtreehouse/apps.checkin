@@ -10,3 +10,14 @@ describe('retired Applied Deltas page', () => {
     });
   });
 });
+
+describe('split Proposals page', () => {
+  it('redirects /catalog/proposals to Item Reference Proposals', async () => {
+    const redirects = (await nextConfig.redirects?.()) ?? [];
+    expect(redirects).toContainEqual({
+      source: '/catalog/proposals',
+      destination: '/catalog/item-reference-proposals',
+      permanent: true,
+    });
+  });
+});
