@@ -1,9 +1,10 @@
 /** Finance curation: comment rules (read + delete) and the GL account map. */
-import { mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
+import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
+import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
 import { z } from "zod";
 import { accountMapService } from "../services/accountMapService";
 import { commentRuleService } from "../services/commentRuleService";
-import { getOrgId } from "../runtime";
+import { getOrgId, getQuickBooksAccounts } from "../runtime";
 import type { DonationRouteHandler } from "../contract";
 import { auditContext, pageArgs } from "./_shared";
 
@@ -25,6 +26,19 @@ const accountMapSchema = z.object({
   matchAccountId: qbAccountId,
 });
 
+type AccountMapBody = z.infer<typeof accountMapSchema>;
+
+/** Refuses a rule account QuickBooks doesn't list, or lists under a type a gift can't book to. Reads QuickBooks live. */
+async function refuseWrongTypes(data: AccountMapBody): Promise<void> {
+  const picked = ([["donation", data.donationAccountId], ["match", data.matchAccountId]] as const).flatMap(([kind, id]) => (id === null ? [] : [{ kind, id }]));
+  if (picked.length === 0) return;
+  const accounts = await mapServiceErrors(getQuickBooksAccounts());
+  for (const { kind, id } of picked) {
+    const refusal = accountTypeRefusal(accounts, id, LINE_ACCOUNT_TYPES.givingGift, `A rule's ${kind} account`);
+    if (refusal) throw httpError(400, refusal);
+  }
+}
+
 export const listCommentRules: DonationRouteHandler = async ({ req }) => {
   return { TransactionCommentRule: await commentRuleService.listCommentRules(await getOrgId(), pageArgs(req)) };
 };
@@ -43,6 +57,7 @@ export const listAccountMap: DonationRouteHandler = async ({ req }) => ({
 
 export const createAccountMap: DonationRouteHandler = async ({ req }) => {
   const data = await parseBody(req, accountMapSchema);
+  await refuseWrongTypes(data);
   const audit = await actor(req);
   return { AccountMap: await accountMapService.createAccountMap(await getOrgId(), data, audit) };
 };
@@ -50,6 +65,7 @@ export const createAccountMap: DonationRouteHandler = async ({ req }) => {
 export const updateAccountMap: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, accountMapSchema);
+  await refuseWrongTypes(data);
   const orgId = await getOrgId();
   const audit = await actor(req);
   return { AccountMap: await mapServiceErrors(() => accountMapService.updateAccountMap(orgId, id, data, audit)) };

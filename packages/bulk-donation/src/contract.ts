@@ -1,7 +1,7 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { BooksMap, BooksMapRole, QuickBooksClient } from "@checkin/quickbooks";
+import type { BooksMap, BooksMapRole, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
@@ -177,6 +177,8 @@ export interface BulkDonationConfig {
   deposits?: IncomeDeposits;
   inKind?: InKindDirectory;
   capital?: InKindCapital;
+  /** QuickBooks' live account list, read when an account rule saves an account. */
+  quickBooksAccounts?: QboAccountList;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */

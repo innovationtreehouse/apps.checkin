@@ -5,6 +5,7 @@ import {
   inertOutbound,
   inertOwnerDirectory,
   inertPeopleDirectory,
+  inertQbAccounts,
   inertQbReader,
   inertQbRefs,
   inertQbVendors,
@@ -23,11 +24,14 @@ import {
   type ExpensePosting,
   type SignoffDirectory,
 } from "./contract";
+import type { QboAccountList } from "@checkin/quickbooks";
 
 export interface QuickBooksPorts {
   reader: QbReader;
   refs: QbRefs;
   vendors: QbVendors;
+  /** QuickBooks' live account list, read when finance adds or changes an expense account. */
+  accounts: QboAccountList;
   /** Resolved per run; null while the host has no client or payment account: nothing is posted. */
   posting: () => Promise<ExpensePosting | null>;
 }
@@ -79,6 +83,7 @@ export function configureExpense(config: ExpenseConfig): void {
       reader: config.quickbooks?.reader ?? inertQbReader,
       refs: config.quickbooks?.refs ?? inertQbRefs,
       vendors: config.quickbooks?.vendors ?? inertQbVendors,
+      accounts: config.quickbooks?.accounts ?? inertQbAccounts,
       posting: config.quickbooks?.posting ?? (async () => null),
     },
     outbound: config.outbound ?? inertOutbound,

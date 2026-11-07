@@ -1,7 +1,7 @@
 /**
  * Which QuickBooks account types each books-map role and each per-item line
- * accepts (docs/rules/revenue.md). The books map's save, every account picker
- * and System Status read these lists; values are QuickBooks' AccountType names.
+ * accepts (docs/rules/revenue.md). Every account save and picker, and System
+ * Status, read these lists; values are QuickBooks' AccountType names.
  */
 import type { BooksMapRole } from "./booksMap";
 
@@ -36,3 +36,28 @@ export const BOOKS_MAP_ROLE_ACCOUNT_TYPES: Record<BooksMapRole, readonly string[
   FIXED_ASSETS: LINE_ACCOUNT_TYPES.donatedCapital,
   INKIND_CLEARING: ["Bank", "Other Current Asset", "Other Current Liability"],
 };
+
+/** One QuickBooks account as an account-type check reads it. */
+export interface QboAccountSummary {
+  id: string;
+  name: string;
+  accountType: string;
+}
+
+/** The host's live read of QuickBooks' accounts; throws a 503 while QuickBooks can't be read. */
+export type QboAccountList = () => Promise<readonly QboAccountSummary[]>;
+
+const either = new Intl.ListFormat("en", { type: "disjunction" });
+
+/** "an Expense or Other Expense account": the types a line or role accepts, as finance reads them. */
+export function acceptedAccountTypes(types: readonly string[]): string {
+  return `${/^[AEIOU]/.test(types[0]) ? "an" : "a"} ${either.format(types)} account`;
+}
+
+/** Why `what` can't take account `id`, in finance's words; null when QuickBooks lists it under an allowed type. */
+export function accountTypeRefusal(accounts: readonly QboAccountSummary[], id: string, allowed: readonly string[], what: string): string | null {
+  const account = accounts.find((a) => a.id === id);
+  if (!account) return `QuickBooks has no account with id ${id}`;
+  if (allowed.includes(account.accountType)) return null;
+  return `${what} takes ${acceptedAccountTypes(allowed)}; ${account.name} is ${account.accountType}`;
+}

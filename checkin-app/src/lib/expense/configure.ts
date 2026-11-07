@@ -18,7 +18,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg } from "@/lib/components/host";
 import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
-import { budgetOwners, householdIds, householdOf, householdsOf } from "@/lib/components/ports";
+import { budgetOwners, householdIds, householdOf, householdsOf, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
@@ -263,7 +263,7 @@ export function configureRuntime(): void {
     catalogEvents: { eventsSince: catalogEventsSince },
     alerts: orgEventAlerts("board.expenseEventsStuck", "Expense catalog event alert failed:"),
     people,
-    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },
+    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting, accounts: quickBooksAccounts },
     outbound: outboundCall,
     outcomeMail,
   });

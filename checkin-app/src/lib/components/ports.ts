@@ -2,7 +2,7 @@
  * Host port adapters more than one component binds. Each loads its dependency on first use,
  * so binding at boot stays DB-free.
  */
-import type { BooksMap } from "@checkin/quickbooks";
+import type { BooksMap, QboAccountList } from "@checkin/quickbooks";
 
 export const budgetOwners = {
   async list() {
@@ -45,6 +45,9 @@ export async function householdIds(personId: number): Promise<number[]> {
 export async function quickBooks() {
   return (await import("@/lib/quickbooks/client")).getQuickBooks();
 }
+
+/** QuickBooks' live account list, as the books map reads it; a 503 while QuickBooks can't be read. */
+export const quickBooksAccounts: QboAccountList = async () => (await import("@/lib/finance/booksMap")).listQuickBooksAccounts();
 
 export const booksMap: BooksMap = {
   async accounts() {

@@ -4,6 +4,7 @@ import { ActionIcon, Badge, Button, Group, Select, Table, Text, Title } from "@m
 import { IconTrash } from "@tabler/icons-react";
 import { send, useLoad, useRoles } from "../components/api";
 import { LoadError } from "@checkin/component-ui";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface QbAccount {
   id: number;
@@ -19,8 +20,7 @@ interface LiveAccount {
   active: boolean;
 }
 
-// QuickBooks' AccountType values under its Expense classification.
-const EXPENSE_TYPES = new Set(["Expense", "Other Expense", "Cost of Goods Sold"]);
+const EXPENSE_TYPES: readonly string[] = LINE_ACCOUNT_TYPES.donatedGoods;
 
 /** /expense/qb-accounts — the QuickBooks accounts that account-mapping rules and holds may name. */
 export default function QbAccountsPage() {
@@ -30,7 +30,7 @@ export default function QbAccountsPage() {
   const [picked, setPicked] = useState<string | null>(null);
 
   const liveById = new Map((live.data ?? []).map((a) => [a.id, a]));
-  const options = (live.data ?? []).filter((a) => a.active && EXPENSE_TYPES.has(a.accountType)).map((a) => ({ value: a.id, label: a.name }));
+  const options = (live.data ?? []).filter((a) => a.active && EXPENSE_TYPES.includes(a.accountType)).map((a) => ({ value: a.id, label: a.name }));
   const pickedAccount = picked ? liveById.get(picked) : undefined;
 
   return (

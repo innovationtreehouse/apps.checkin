@@ -88,8 +88,9 @@ Things the app takes as true because they are handled outside it.
   every area.  [Decision — *Principle: least privilege*]
 
 - Every account the app books to must be of a QuickBooks type listed for its
-  line or role. The books map refuses any other type on save, reading the type
-  from QuickBooks, and refuses the save while QuickBooks can't be read. A stored
+  line or role. The books map, the giving-platform account rules and expense's
+  QuickBooks accounts refuse any other type on save, reading the type from
+  QuickBooks, and refuse the save while QuickBooks can't be read. A stored
   account that later reads as another type is flagged on System Status for
   finance to re-pick; the app never rewrites it. Online-store fees take only an
   Expense or Other Expense account.  [Decision — owner]

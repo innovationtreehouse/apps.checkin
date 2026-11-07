@@ -1,4 +1,5 @@
-import { defineRuntime, NotWiredError } from "@checkin/component-kit";
+import { defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
+import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
@@ -76,4 +77,13 @@ export function getInKindQbPosting(): InKindQbPosting | undefined {
 /** Income's deposit ports; undefined until the host binds them, and nothing is handed over. */
 export function getIncomeDeposits(): IncomeDeposits | undefined {
   return requireRuntime().deposits;
+}
+
+const NO_QUICKBOOKS: QboAccountList = async () => {
+  throw new ServiceError(503, "QuickBooks is not connected.");
+};
+
+/** QuickBooks' live account list; unbound, every read answers 503. */
+export function getQuickBooksAccounts(): QboAccountList {
+  return requireRuntime().quickBooksAccounts ?? NO_QUICKBOOKS;
 }

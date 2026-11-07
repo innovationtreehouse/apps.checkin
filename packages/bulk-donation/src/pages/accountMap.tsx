@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Button, Group, Modal, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
 import { LoadError, Pager } from "@checkin/component-ui";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface RuleRow {
   id: number;
@@ -17,7 +18,9 @@ interface RuleRow {
 }
 
 /** A QuickBooks account as the books map lists it, live from QuickBooks. */
-interface AccountOption { id: string; name: string; active: boolean }
+interface AccountOption { id: string; name: string; accountType: string; active: boolean }
+
+const GIFT_TYPES: readonly string[] = LINE_ACCOUNT_TYPES.givingGift;
 
 type MatchField = "companyName" | "corporatePeerCampaign" | "donationMethod" | "donationType";
 type Form = Record<MatchField, string> & { donationAccountId: string | null; matchAccountId: string | null };
@@ -34,9 +37,9 @@ const ACCOUNT_FIELDS: Array<["donationAccountId" | "matchAccountId", string]> = 
   ["matchAccountId", "Match account"],
 ];
 
-/** Picker choices: active accounts, plus the saved one even when inactive or gone from QuickBooks. */
+/** Picker choices: active accounts of a type a gift books to, plus the saved one even when inactive, mistyped or gone from QuickBooks. */
 function choices(options: AccountOption[] | null, saved: string | null) {
-  const list = (options ?? []).filter((o) => o.active || o.id === saved).map((o) => ({ value: o.id, label: o.active ? o.name : `${o.name} (inactive)` }));
+  const list = (options ?? []).filter((o) => (o.active && GIFT_TYPES.includes(o.accountType)) || o.id === saved).map((o) => ({ value: o.id, label: o.active ? o.name : `${o.name} (inactive)` }));
   if (saved && !list.some((o) => o.value === saved)) list.push({ value: saved, label: `QuickBooks id ${saved}` });
   return list;
 }

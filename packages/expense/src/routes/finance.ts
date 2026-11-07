@@ -5,7 +5,7 @@
  */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
-import { isQuickBooksId } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, accountTypeRefusal, isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
@@ -77,6 +77,13 @@ function checkRulePart(partNumber: string): void {
 }
 const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: qbAccountId });
 
+/** Refuses an account QuickBooks doesn't list, or lists under a type expense lines can't book to. Reads QuickBooks live. */
+async function refuseWrongType(qbAccount: string): Promise<void> {
+  const accounts = await mapServiceErrors(getExpenseRuntime().quickbooks.accounts);
+  const refusal = accountTypeRefusal(accounts, qbAccount, LINE_ACCOUNT_TYPES.donatedGoods, "An expense account");
+  if (refusal) throw httpError(400, refusal);
+}
+
 export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
   AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),
 });
@@ -143,6 +150,7 @@ export const qbAccounts: ExpenseRouteHandler = async () => ({
 export const createQbAccount: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
+  await refuseWrongType(data.qbAccount);
   const orgId = await getOrgId();
   return {
     ExpenseQbAccount: await db.$transaction(async (tx) => {
@@ -157,6 +165,7 @@ export const updateQbAccount: ExpenseRouteHandler = async ({ req, params, princi
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
+  await refuseWrongType(data.qbAccount);
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
   return {
