@@ -5,6 +5,7 @@ import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApp
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
+import { dropHandSetAccount } from "./account-types";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
 import { liveIds } from "./livePeople";
@@ -305,6 +306,7 @@ async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor:
       valueBefore: `${l.isCapital ? "capital" : "non_capital"}/owner:${l.capitalOwnerId ?? "none"}/${l.depreciationYears ?? "none"}y`,
       notes: reason,
     });
+    if (l.isCapital) await dropHandSetAccount(tx, actor, expenseId, l, reason);
   }
 
   const assets = await tx.capitalAsset.findMany({ where: { sourceExpenseId: expenseId, seeded: false }, orderBy: { id: "asc" } });
