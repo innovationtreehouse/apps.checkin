@@ -25,6 +25,7 @@ export const BOOKS_MAP_ROLE_ACCOUNT_TYPES: Record<BooksMapRole, readonly string[
   SHOPIFY_CHARGE_REMAINDER: [...INCOME, "Other Current Liability"],
   SHOPIFY_FEES: EXPENSE,
   SHOPIFY_ADJUSTMENTS: [...INCOME, "Other Current Liability"],
+  SHOPIFY_CUSTOM_ITEMS: LINE_ACCOUNT_TYPES.customItem,
   BENEVITY_BANK: ["Bank"],
   BENEVITY_DONATIONS: LINE_ACCOUNT_TYPES.givingGift,
   BENEVITY_MATCHES: LINE_ACCOUNT_TYPES.givingGift,

@@ -11,9 +11,8 @@ export type DepositSourceName = (typeof DEPOSIT_SOURCE)[keyof typeof DEPOSIT_SOU
 
 export const isBenevity = (row: Pick<PayoutReconciliation, "source">) => row.source === DEPOSIT_SOURCE.BENEVITY;
 
-/** The books-map role each Shopify deposit line books to. */
-export const SHOPIFY_LINE_ROLES: Record<DepositAccount, BooksMapRole> = {
-  income: "SHOPIFY_SALES",
+/** The books-map role each Shopify deposit line books to; a sale line books to its item's own account. */
+export const SHOPIFY_LINE_ROLES: Record<Exclude<DepositAccount, "income">, BooksMapRole> = {
   charge_remainder: "SHOPIFY_CHARGE_REMAINDER",
   fees: "SHOPIFY_FEES",
   adjustments: "SHOPIFY_ADJUSTMENTS",
