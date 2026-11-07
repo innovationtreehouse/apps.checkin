@@ -68,8 +68,8 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'ARCHIVED', edge: ['ARCHIVED', 'PENDING_PAYMENT'], mode: 'spread' }, // unarchive: one representative target
     // close: CAS on the status it read (one representative closable step)
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ARCHIVED'], mode: 'read' },
-    { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'], mode: 'spread' },
-    { file: 'lib/membership/refund.ts', machine: 'membership', from: 'BLOCKED', mode: 'spread' }, // refund on a paid BLOCKED row: flag-only, stays BLOCKED
+    // refund: CAS on the status it read; its one status edge (every other step stays put)
+    { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'], mode: 'read' },
     { file: 'app/api/finance-ops/membership-payment-plans/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' },
     { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' }, // activate, check cleared
     { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'PENDING_BG_CLEARANCE'], mode: 'spread' }, // activate, check pending
