@@ -70,7 +70,7 @@ export async function claim(email: string, programId: number, youthIds: number[]
   }
 }
 
-/** Pays the family's claims through the dev Shopify mock, which gives every payment for a program the same order id: one household per program. */
+/** Pays the family's claims through the dev Shopify mock, one order per checkout, and checks every place came out active. */
 export async function pay(email: string, programId: number, youthIds: number[]): Promise<void> {
   const paid = await send(await loginAs(email), "POST", "/api/dev/shopify/orders-paid", { programId, participantIds: youthIds });
   if (paid.status !== 200) throw new Error(`pay places: ${paid.status}`);
@@ -78,12 +78,11 @@ export async function pay(email: string, programId: number, youthIds: number[]):
   if (participants.some((p) => p.status !== "ACTIVE")) throw new Error(`payment left places ${participants.map((p) => p.status)}`);
 }
 
-/** A new family whose youths, `count` of them, hold paid places in the program. */
-export async function paidYouths(programId: number, count = 1): Promise<{ email: string; youths: Named[] }> {
+/** A new family whose youth holds a paid place in the program. */
+export async function paidYouth(programId: number): Promise<{ email: string; youth: Named }> {
   const email = await settledFamily();
-  const youths: Named[] = [];
-  for (let i = 0; i < count; i++) youths.push(await addYouth(email));
-  await claim(email, programId, youths.map((y) => y.id));
-  await pay(email, programId, youths.map((y) => y.id));
-  return { email, youths };
+  const youth = await addYouth(email);
+  await claim(email, programId, [youth.id]);
+  await pay(email, programId, [youth.id]);
+  return { email, youth };
 }
