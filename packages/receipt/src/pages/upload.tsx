@@ -58,6 +58,7 @@ function useReimburseeSearch(q: string): Person[] {
 }
 
 const SELF = "self";
+const SELF_LABEL = "Me";
 
 /**
  * /receipts/upload — a photo, PDF or text file, with the details typed or read automatically.
@@ -84,7 +85,9 @@ export default function UploadPage() {
   const [needsReimbursement, setNeedsReimbursement] = useState(false);
   const [reimbursee, setReimbursee] = useState<Person | null>(null);
   const [reimburseeSearch, setReimburseeSearch] = useState("");
-  const found = useReimburseeSearch(reimburseeSearch);
+  // Mantine fills the search box with the picked option's label; only other text is a typed query.
+  const pickedLabel = reimbursee ? reimbursee.name : SELF_LABEL;
+  const found = useReimburseeSearch(reimburseeSearch === pickedLabel ? "" : reimburseeSearch);
   const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
   const [isInKind, setIsInKind] = useState(false);
   const [selfDonor, setSelfDonor] = useState(true);
@@ -218,7 +221,7 @@ export default function UploadPage() {
               searchValue={reimburseeSearch}
               onSearchChange={setReimburseeSearch}
               data={[
-                { value: SELF, label: "Me" },
+                { value: SELF, label: SELF_LABEL },
                 ...[reimbursee, ...found]
                   .filter((p): p is Person => p !== null && p.id !== user?.id)
                   .filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i)
