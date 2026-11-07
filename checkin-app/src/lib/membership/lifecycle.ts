@@ -207,33 +207,35 @@ export const grantableApplicationWhere: Where = {
     status: "PENDING_PAYMENT",
 };
 
+/** A filter on the recorded year. `appliesToYear: null` would match every row with no year. */
+const recordedYear = (year: number | null) => year ?? { in: [] as number[] };
+
 /**
  * "Settled for the live membership year" — the MONEY question: a process whose
  * membership fee is paid: terminal ACTIVE, or paid and only waiting on background
- * clearance ({@link membershipFeeSettledAwaitingBg}) — stamped on or after the live
- * cycle's `settledSince` (membershipYearCycle), INITIAL and RENEWAL alike,
- * because a family that joins during the window buys the coming year exactly as
- * a renewer does (docs/rules/membership.md). ARCHIVED (a closed application) is
- * deliberately absent: only unpaid applications can be closed, so it must not
- * extend a horizon. Read by the households valid-until,
- * membershipValidThrough and the outreach audiences.
- * KNOWN LIMIT: settlement time is stageEnteredAt (stage completion), so a
- * pre-window payment whose review clears in-window reads as coming-year.
+ * clearance ({@link membershipFeeSettledAwaitingBg}) — that records the live year,
+ * INITIAL and RENEWAL alike (docs/rules/membership.md). ARCHIVED (a closed
+ * application) is deliberately absent: only unpaid applications can be closed, so
+ * it must not extend a horizon. Read by the households valid-until,
+ * membershipValidThrough and the outreach audiences. No live year matches nothing.
  */
-export const settledThisCycleWhere = (settledSince: Date): Where => ({
+export const settledThisCycleWhere = (liveYear: number | null): Where => ({
     OR: [{ status: "ACTIVE" }, membershipFeeSettledAwaitingBg.where],
-    stageEnteredAt: { gte: settledSince },
+    appliesToYear: recordedYear(liveYear),
 });
 
 /**
- * "Nothing more to open this cycle" — the SWEEP question: settled as above, OR
- * ARCHIVED in-window — the board already closed this cycle's application, and
- * opening another would pester a family it just closed out. Only
- * runRenewalSweep's skip-test reads this wider set; money horizons never do.
+ * "Nothing more to open this cycle" — the SWEEP question: ACTIVE for the live year,
+ * OR ARCHIVED in-window — the board already closed this cycle's application, and
+ * opening another would pester a family it just closed out. An archive buys nothing
+ * and has no year, so that arm keeps its date. Only runRenewalSweep's skip-test
+ * reads this wider set; money horizons never do.
  */
-export const handledThisCycleWhere = (windowStart: Date): Where => ({
-    status: { in: ["ACTIVE", "ARCHIVED"] },
-    stageEnteredAt: { gte: windowStart },
+export const handledThisCycleWhere = (liveYear: number | null, windowStart: Date): Where => ({
+    OR: [
+        { status: "ACTIVE", appliesToYear: recordedYear(liveYear) },
+        { status: "ARCHIVED", stageEnteredAt: { gte: windowStart } },
+    ],
 });
 
 // ── fromWhere — the CAS from-state clause ──────────────────────────────────────

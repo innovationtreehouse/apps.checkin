@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { LoadError } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { Button, Card, Center, Group, Loader, Modal, Stack, Table, Text, Title } from "@mantine/core";
 import { relTime } from "@/lib/time";
 import { useOrgTime } from "@/components/TimezoneProvider";
@@ -54,18 +54,15 @@ const reasonCopy = (reason: string) => {
 export function UnsyncedScansPanel() {
   const { data, error, reload } = useLoad<{ scans: UnsyncedScan[] }>("/api/system-status/unsynced-scans");
   const scans = data ? data.scans ?? [] : null;
-  const [actionError, setActionError] = useState<string | null>(null);
   const [dismissing, setDismissing] = useState<Set<number>>(new Set());
   const [recording, setRecording] = useState<UnsyncedScan | null>(null);
   const [departedAt, setDepartedAt] = useState("");
   const [recordBusy, setRecordBusy] = useState(false);
-  const [recordError, setRecordError] = useState<string | null>(null);
   const { formatTime } = useOrgTime();
 
   function openRecord(scan: UnsyncedScan) {
     setRecording(scan);
     setDepartedAt("");
-    setRecordError(null);
   }
 
   // The Visit is written at the scan's own time and closed at a departure the
@@ -73,24 +70,17 @@ export function UnsyncedScansPanel() {
   async function record() {
     if (!recording) return;
     setRecordBusy(true);
-    setRecordError(null);
     try {
-      const res = await fetch(`/api/system-status/unsynced-scans/${recording.id}`, {
+      await api(`/api/system-status/unsynced-scans/${recording.id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "record",
           departedAt: new Date(departedAt).toISOString(),
         }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
-      await reload();
       setRecording(null);
     } catch (e) {
-      setRecordError(e instanceof Error ? e.message : "Could not record that visit.");
+      showError(errorMessage(e));
     } finally {
       setRecordBusy(false);
     }
@@ -98,13 +88,10 @@ export function UnsyncedScansPanel() {
 
   async function dismiss(id: number) {
     setDismissing((prev) => new Set(prev).add(id));
-    setActionError(null);
     try {
-      const res = await fetch(`/api/system-status/unsynced-scans/${id}`, { method: "POST" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await reload();
-    } catch {
-      setActionError("Could not dismiss that scan. Reload and try again.");
+      await api(`/api/system-status/unsynced-scans/${id}`, { method: "POST" });
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setDismissing((prev) => {
         const next = new Set(prev);
@@ -144,7 +131,6 @@ export function UnsyncedScansPanel() {
         applied without rewriting the person&apos;s later record. Fix a visit in the manual visits
         tool or record one here, then dismiss the row. Up to 100 shown, newest first.
       </Text>
-      {actionError && <Text c="red" size="sm" mb="sm">{actionError}</Text>}
       <Table.ScrollContainer minWidth={600}>
         <Table striped verticalSpacing="sm">
           <Table.Thead>
@@ -219,7 +205,6 @@ export function UnsyncedScansPanel() {
                 onChange={(e) => setDepartedAt(e.currentTarget.value)}
               />
             </label>
-            {recordError && <Text c="red" size="sm">{recordError}</Text>}
             <Group justify="flex-end" gap="xs">
               <Button variant="subtle" onClick={() => setRecording(null)}>Cancel</Button>
               <Button

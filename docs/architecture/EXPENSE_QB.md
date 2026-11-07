@@ -148,6 +148,29 @@ those ids are unique per entity only. A claim covers expenses and lines alike, s
 two records never hold one entry. `ExpenseQbMatchExclusion` is unique on org and id
 with no entity, so an exclusion drops that id for both Purchases and Bills.
 
+### Voided entries
+
+QuickBooks keeps a voided entry's memo, and so the app's key, at a $0 total. Every
+lookup for a record's own entry therefore skips a keyed entry that totals $0:
+
+| Lane | Lookup | Skips a $0 keyed entry |
+|---|---|---|
+| Expense | `lookupOwnEntry`, and `findMatch` on its key hits | Unless the expense itself totals $0 |
+| Income | `ownEntry`, which finance's match and dismiss also call | Unless the payout nets to $0 |
+| In-kind | `lookupOwnJournal` | Always, since a gift worth $0 or less never posts |
+
+The orphan sweeps in all three lanes skip every $0 entry. So when finance voids an
+entry the app created and never linked, the record's next post books a replacement
+with no further step: the next drain for expense and in-kind, finance's retry for
+income. If finance voided it because the record should never be booked, finance skips
+or dismisses the record before that post. An entry a record is already linked to goes
+through the drift check instead, where a void shows as an amount change.
+
+The app tells a void only by its $0 total. A keyed entry that finance sets to $0 by
+hand, without voiding it, is treated the same way: the record gets a replacement
+booking. This is accepted behaviour; finance that zeroes an entry to cancel a booking
+skips the record as for a void.
+
 ### Match states
 
 | `qbMatchState` | Means | What moves it |

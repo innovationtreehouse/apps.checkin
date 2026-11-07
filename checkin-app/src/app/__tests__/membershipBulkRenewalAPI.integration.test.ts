@@ -12,6 +12,7 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
@@ -78,7 +79,7 @@ describe('Bulk renewal migration', () => {
         mB = await makeActive('B');
         // Already renewed for the coming year inside this window: must not be billed again.
         mHandled = await makeActive('Handled');
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: mHandled, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date() } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: mHandled, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(), appliesToYear: liveMembershipYear(new Date(Date.now() + 30 * 86_400_000), new Date()) } });
         await setBoundaryDaysAhead(30);
     });
 

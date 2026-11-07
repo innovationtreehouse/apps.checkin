@@ -36,11 +36,11 @@ const RECEIVING_VIEW: readonly OrderedViewEntry[] = [
 
 // Stock reads — inventory-viewer admission, tiered view.
 defineRoute({ endpoint: 'GET /api/inventory/locations', authorize: 'catalog-viewer', envelope: null, returns: ['Location'], orderedView: INVENTORY_VIEW });
-defineRoute({ endpoint: 'GET /api/inventory/org-items', authorize: 'catalog-viewer', envelope: null, returns: ['OrgItem', 'Location'], orderedView: INVENTORY_VIEW });
-defineRoute({ endpoint: 'GET /api/inventory/org-items/[gtin13]', authorize: 'catalog-viewer', envelope: null, returns: ['OrgItem', 'Location'], orderedView: INVENTORY_VIEW });
+defineRoute({ endpoint: 'GET /api/inventory/org-items', authorize: 'catalog-viewer', envelope: null, returns: ['OrgItem', 'Location', 'InventoryProvisionalItem'], orderedView: INVENTORY_VIEW });
+defineRoute({ endpoint: 'GET /api/inventory/org-items/[gtin13]', authorize: 'catalog-viewer', envelope: null, returns: ['OrgItem', 'Location', 'InventoryProvisionalItem'], orderedView: INVENTORY_VIEW });
 
 // Receiving reads — INVENTORY_MANAGER, FINANCE or BOARD.
-defineRoute({ endpoint: 'GET /api/inventory/receive-queue', authorize: RECEIVING_READ, envelope: null, returns: ['ReceiveQueue'], orderedView: RECEIVING_VIEW });
+defineRoute({ endpoint: 'GET /api/inventory/receive-queue', authorize: RECEIVING_READ, envelope: null, returns: ['ReceiveQueue', 'InventoryProvisionalItem'], orderedView: RECEIVING_VIEW });
 defineRoute({ endpoint: 'GET /api/inventory/inventory-log', authorize: RECEIVING_READ, envelope: null, returns: ['InventoryLog'], orderedView: RECEIVING_VIEW });
 defineRoute({ endpoint: 'GET /api/inventory/received-inventory-deltas', authorize: RECEIVING_READ, envelope: null, returns: ['ReceivedInventoryDelta'], orderedView: RECEIVING_VIEW });
 

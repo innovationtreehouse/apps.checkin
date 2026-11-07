@@ -17,6 +17,15 @@ const visits = [
 ];
 
 describe("facility-ops/visits page", () => {
+  it("says the list failed and keeps the controls", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({}); // every fetch 404s
+    renderWithProviders(<AdminVisitsPage />);
+
+    expect(await screen.findByText("Couldn't load the visits")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Closed out by a close" })).toBeInTheDocument();
+  });
+
   it("the closed-out filter asks the server for it and shows which close", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({

@@ -1648,19 +1648,18 @@ describeDb("income settings", () => {
 
 describeDb("a second source: Benevity deposits handed over through expectDeposit", () => {
   const BENEVITY_BANK = "36";
-  const ROLES: Partial<Record<BooksMapRole, string>> = { ...SHOPIFY_ROLES, BENEVITY_BANK, BENEVITY_FEES: "62" };
+  const ROLES: Partial<Record<BooksMapRole, string>> = { ...SHOPIFY_ROLES, BENEVITY_BANK };
   let roleAccounts: Partial<Record<BooksMapRole, string>>;
   const booksMap: BooksMap = { accounts: async () => roleAccounts, classes: async () => new Map([[7, "700"]]) };
 
-  /** A disbursement of a $100 gift to bucket 7 and a $50 match at organization level, less a $3 fee. */
+  /** A disbursement of a $100 gift to bucket 7 and a $50 match at organization level, each net of its part of a $3 fee. */
   const disbursement = (txnDate = "2026-06-28", over: Partial<ExpectedDeposit> = {}): ExpectedDeposit => ({
     txnDate,
     netCents: 14_700,
     bankRole: "BENEVITY_BANK",
     lines: [
-      { accountId: "60", budgetOwnerId: 7, amountCents: 10_000, description: "Benevity donations" },
-      { accountId: "61", budgetOwnerId: null, amountCents: 5_000 },
-      { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -300 },
+      { accountId: "60", budgetOwnerId: 7, amountCents: 9_800, description: "Benevity donations" },
+      { accountId: "61", budgetOwnerId: null, amountCents: 4_900 },
     ],
     memo: "Benevity disbursement D1",
     ...over,
@@ -1769,16 +1768,15 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(key).toBe(qbKey("income", "benevity:D1"));
     expect(body).toMatchObject({ TxnDate: "2026-06-28", DepositToAccountRef: { value: BENEVITY_BANK } });
     expect(body.Line.map((l) => [l.Amount, l.DepositLineDetail.AccountRef.value, l.DepositLineDetail.ClassRef?.value])).toEqual([
-      [100, "60", "700"],
-      [50, "61", undefined],
-      [-3, "62", undefined],
+      [98, "60", "700"],
+      [49, "61", undefined],
     ]);
     expect(await status()).toMatchObject({ state: "booked", totalCents: 14_700 });
   });
 
   it("skips a deposit whose role finance has not mapped, without failing it", async () => {
     await switchOn();
-    delete roleAccounts.BENEVITY_FEES;
+    delete roleAccounts.BENEVITY_BANK;
     await expect1();
     expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, waiting: 1 } });
     expect(qbo.posts).toHaveLength(0);
@@ -1858,10 +1856,10 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await settings()).toMatchObject({ qbPostingOnAt: ON_AT, benevityQbPostingOnAt: null });
   });
 
-  it("a Benevity source with no deposit yet needs only its bank; a fee line needs its role", () => {
+  it("a Benevity source needs only its bank, its lines naming their accounts", () => {
     expect(missingRoles({ source: "benevity", expected: null }, {})).toEqual(["BENEVITY_BANK"]);
     expect(missingRoles({ source: "benevity", expected: null }, { BENEVITY_BANK })).toEqual([]);
-    expect(missingRoles({ source: "benevity", expected: disbursement() }, { BENEVITY_BANK })).toEqual(["BENEVITY_FEES"]);
+    expect(missingRoles({ source: "benevity", expected: disbursement() }, { BENEVITY_BANK })).toEqual([]);
   });
 
   it("sends finance a deposit stored before its lines named accounts, rather than booking it on a role", async () => {

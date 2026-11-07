@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { Badge, Button, Group, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { LoadError, errorMessage } from "@checkin/component-ui";
+import { LoadError, errorMessage, showError } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
@@ -24,7 +23,7 @@ async function send(url: string, init?: RequestInit): Promise<boolean> {
     await api(url, init);
     return true;
   } catch (e) {
-    notifications.show({ color: "red", title: "Mail aliases", message: errorMessage(e), autoClose: false });
+    showError(errorMessage(e), { title: "Mail aliases" });
     return false;
   }
 }

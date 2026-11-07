@@ -84,11 +84,9 @@ export interface InKindQbPosting {
   drainStopped(event: { orgId: string; failures: number; remaining: number }): Promise<void>;
 }
 
-/** One line of a disbursement's deposit: kind's account role, the gift's bucket (null at organization level), signed cents. */
-/** One deposit line: a gift or match line on its rule's QuickBooks account, or a fee line on the fees role. */
+/** One deposit line: a gift or match line on its rule's QuickBooks account, net of its fees, and the gift's bucket (null at organization level). */
 export type DonationDepositLine = {
-  accountId?: string;
-  role?: BooksMapRole;
+  accountId: string;
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;

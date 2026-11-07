@@ -5,14 +5,13 @@ import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { PageContainer } from "@/components/ui/PageContainer";
+import type { DonationNavCounts } from "@checkin/bulk-donation";
 import { DONATION_NAV_LINKS } from "@checkin/bulk-donation/nav";
 import { hasAnyRole, visibleLinks } from "@/lib/nav/gates";
 import { DONATIONS, DONATION_SCREEN_ROLES, donationsRolesFor } from "@/lib/nav/sections/donations";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { useLoad } from "@/lib/api";
-
-type NavCounts = { unassignedQueue: number; disbursementHolds: number };
 
 /**
  * Donations chrome and gate. The donation screens admit FINANCE or BOARD; the
@@ -23,7 +22,7 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
   const todoCounts = useTodoCounts(ready);
   const countsAllowed = ready && hasAnyRole(user, DONATION_SCREEN_ROLES);
   // Badges are best-effort, so a failed load shows none.
-  const { data: counts } = useLoad<NavCounts>(countsAllowed ? "/api/donations/nav-counts" : null);
+  const { data: counts } = useLoad<DonationNavCounts>(countsAllowed ? "/api/donations/nav-counts" : null);
 
   if (loading) {
     return (
@@ -47,7 +46,7 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
         mb="md"
         badgeFor={(href) => {
           const field = DONATION_NAV_LINKS.find((l) => l.href === href)?.badge;
-          const n = field && counts ? counts[field] : 0;
+          const n = (field && counts?.[field]) || 0;
           return n > 0 ? <CountBadge intent="action">{n}</CountBadge> : null;
         }}
       />

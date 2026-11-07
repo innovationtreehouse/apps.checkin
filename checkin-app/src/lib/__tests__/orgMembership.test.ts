@@ -83,9 +83,9 @@ describe('membershipValidThrough', () => {
 
         const now = new Date(Date.UTC(2027, 0, 10));
         expect(await membershipValidThrough(1, now)).toEqual(new Date(Date.UTC(2027, 11, 25)));
-        // The probe asks since the live year's window opened (Oct 25 2026), not "never".
+        // The probe asks for the live year, the one the Dec 25 2026 boundary opened.
         const where = prisma.orgMembershipProcess.findFirst.mock.calls[0][0].where;
-        expect(where.stageEnteredAt).toEqual({ gte: new Date(Date.UTC(2026, 9, 25)) });
+        expect(where.appliesToYear).toBe(2026);
     });
 
     it('a membership with no fee-paid process is not settled, however recently it began (bare manual grant)', async () => {

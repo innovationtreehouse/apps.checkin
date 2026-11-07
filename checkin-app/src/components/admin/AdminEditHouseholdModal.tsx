@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Divider, Group, Loader, Modal, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { modals } from "@mantine/modals";
 import { pickAddress, type StructuredAddress } from "@/lib/address";
 import { isValidPhone, PHONE_ERROR } from "@/lib/phone";
@@ -75,9 +77,6 @@ export function AdminEditHouseholdModal({
   const [promotingLead, setPromotingLead] = useState<number | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ memberSince?: string }>({});
   const [hasMembership, setHasMembership] = useState(false);
-  // Modal-local notice for save-error / lead-remove results, so feedback lands
-  // next to the form instead of a global corner toast behind the modal.
-  const [notice, setNotice] = useState<{ color: string; message: string } | null>(null);
 
   const loadHousehold = useCallback((signal?: { cancelled: boolean }) => {
     if (householdId == null) return Promise.resolve();
@@ -129,23 +128,13 @@ export function AdminEditHouseholdModal({
 
   const handleRemoveLead = async (participantId: number) => {
     if (leadIds.length <= 1) return; // last-lead guard also enforced server-side
-    setNotice(null);
     setRemovingLead(participantId);
     try {
-      const res = await fetch(`/api/household/lead`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participantId }),
-      });
-      if (res.ok) {
-        notifications.show({ message: "Lead removed." });
-        await loadHousehold();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setNotice({ color: "red", message: data.error || "Failed to remove lead." });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api(`/api/household/lead`, { method: "DELETE", body: JSON.stringify({ participantId }) });
+      showSuccess("Lead removed.");
+      await loadHousehold();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setRemovingLead(null);
     }
@@ -153,23 +142,13 @@ export function AdminEditHouseholdModal({
 
   const handleMakeLead = async (participantId: number) => {
     if (leadIds.length >= MAX_HOUSEHOLD_LEADS) return; // cap also enforced server-side
-    setNotice(null);
     setPromotingLead(participantId);
     try {
-      const res = await fetch(`/api/household/lead`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participantId }),
-      });
-      if (res.ok) {
-        notifications.show({ message: "Lead added." });
-        await loadHousehold();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setNotice({ color: "red", message: data.error || "Failed to add lead." });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api(`/api/household/lead`, { method: "POST", body: JSON.stringify({ participantId }) });
+      showSuccess("Lead added.");
+      await loadHousehold();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setPromotingLead(null);
     }
@@ -199,7 +178,6 @@ export function AdminEditHouseholdModal({
 
   const handleSave = async () => {
     if (householdId == null || phoneInvalid) return;
-    setNotice(null);
     setFieldErrors({});
     // Client-side date checks so a bad member-since highlights the field before
     // the server round-trip (server still re-checks as defense-in-depth).
@@ -217,24 +195,17 @@ export function AdminEditHouseholdModal({
     }
     setSaving(true);
     try {
-      const res = await fetch(`/api/membership-ops/households/${householdId}`, {
+      const data = await api<{ household: AdminHousehold }>(`/api/membership-ops/households/${householdId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         // Membership fields are hidden without a membership; don't submit them
         // either, or the server rejects the whole edit as membership-less.
         body: JSON.stringify(hasMembership ? form : { ...form, memberSince: undefined, isVolunteerFamily: undefined }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        notifications.show({ message: "Household updated." });
-        onSaved?.(data.household);
-        onClose();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setNotice({ color: "red", message: data.error || "Failed to update household." });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      showSuccess("Household updated.");
+      onSaved?.(data.household);
+      onClose();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -257,11 +228,6 @@ export function AdminEditHouseholdModal({
             <Text size="sm" c="dimmed">
               Admin view — edits apply to the whole household and are recorded in the audit log.
             </Text>
-            {notice && (
-              <Alert color={notice.color} withCloseButton onClose={() => setNotice(null)}>
-                {notice.message}
-              </Alert>
-            )}
             <TextInput
               label="Household Name"
               value={form.name}

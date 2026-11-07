@@ -26,6 +26,20 @@ import prisma from '@/lib/prisma';
 
 const TAG = 'intake-concurrency-test';
 
+/** Waits until another backend in this database is waiting on a lock. */
+async function waitForBlockedBackend(tx: Pick<typeof prisma, '$queryRaw'>) {
+    for (let i = 0; i < 100; i++) {
+        // Postgres caches pg_stat_activity for the transaction unless the snapshot is cleared.
+        await tx.$queryRaw`SELECT pg_stat_clear_snapshot()::text`;
+        const [{ blocked }] = await tx.$queryRaw<{ blocked: number }[]>`
+            SELECT count(*)::int AS blocked FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+        if (blocked > 0) return;
+        await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('The loser never blocked on the winner\'s uncommitted row.');
+}
+
 async function wipe() {
     const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
     const ids = hhs.map((h) => h.id);
@@ -73,25 +87,21 @@ describe('intake start concurrency', () => {
 
     it('a transaction that loses the race to create the membership row reads the winner and stays usable', async () => {
         const hh = await prisma.household.create({ data: { name: `Race ${TAG}` } });
-        let release = () => {};
-        const held = new Promise<void>((resolve) => { release = resolve; });
         let inserted = () => {};
         const winnerInserted = new Promise<void>((resolve) => { inserted = resolve; });
 
+        // The winner commits only once the loser's insert is waiting on its uncommitted row.
         const winner = prisma.$transaction(async (tx) => {
             const row = await ensureHouseholdMembership(tx, hh.id);
             inserted();
-            await held;
+            await waitForBlockedBackend(tx);
             return row;
-        });
+        }, { timeout: 15_000 });
         await winnerInserted;
         const loser = prisma.$transaction(async (tx) => {
             const row = await ensureHouseholdMembership(tx, hh.id);
             return { row, stillUsable: await tx.orgMembership.count({ where: { householdId: hh.id } }) };
         });
-        // Long enough for the loser's insert to reach the winner's uncommitted row.
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        release();
 
         const [won, lost] = await Promise.all([winner, loser]);
         expect(lost.row.id).toBe(won.id);

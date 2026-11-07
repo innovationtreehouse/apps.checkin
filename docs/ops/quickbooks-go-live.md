@@ -172,7 +172,7 @@ stops the lane from posting, but the switch-on date stays.
 |---|---|---|---|
 | Expenses | Organisation card | Must be a Bank or Credit Card account; any other type is refused and finance is alerted | QuickBooks posting: expenses |
 | Shopify income | Shopify payouts: bank account; Shopify: card remainder, fees, adjustments, custom items | The first four; a payout with a custom item holds until custom items has an account | QuickBooks posting: Shopify income |
-| Benevity | Benevity disbursements: bank account; Benevity: fees | Both | QuickBooks posting: Benevity donations |
+| Benevity | Benevity disbursements: bank account | It | QuickBooks posting: Benevity donations |
 | Gifts of goods | Gifts of goods: in-kind income, in-kind expense, fixed assets (donated equipment), clearing account (finance's past bookings) | All four, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
 Each role takes only the QuickBooks account types below. The picker lists only
@@ -186,7 +186,7 @@ refused. A role already set to another type shows on the
 | Organisation card | Bank, Credit Card |
 | Shopify: custom items; Gifts of goods: in-kind income | Income, Other Income |
 | Shopify: card remainder, adjustments | Income, Other Income, Other Current Liability |
-| Shopify: fees; Benevity: fees | Expense, Other Expense |
+| Shopify: fees | Expense, Other Expense |
 | Gifts of goods: in-kind expense | Expense, Other Expense, Cost of Goods Sold |
 | Gifts of goods: fixed assets | Fixed Asset |
 | Gifts of goods: clearing account | Bank, Other Current Asset, Other Current Liability |
@@ -203,6 +203,10 @@ not to a role. On the account map (`/donations/account-map`), pick a donation
 account and a match account for every rule; the picker reads QuickBooks live. A
 batch with a gift whose rule lacks the account it needs holds on the disbursement
 holds screen until finance picks one and resubmits.
+
+Benevity's fees need no account: each row's fees come out of its gift and match,
+so the deposit shows net income and no fee line. A row with fees but no gift or
+match holds its batch on the same holds screen for finance.
 
 **Done when** the account types row reads "Every account picked is of a type its
 role accepts.", the Expenses, Benevity and gifts-of-goods rows read "Bound.", and the

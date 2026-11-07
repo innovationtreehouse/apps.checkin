@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import { Alert, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useSeedForm } from "@/hooks/useSeedForm";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
@@ -44,7 +43,6 @@ export default function EmailSettingsPage() {
 
   const [initial, setInitial] = useState<Record<string, string> | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ from?: string; replyTo?: string; scholarshipNotify?: string }>({});
 
   const { data, error, reload } = useLoad<{ settings: Settings }>(ready ? "/api/settings/email" : null);
@@ -53,10 +51,9 @@ export default function EmailSettingsPage() {
   const locked = wasSet && !unlocked;
 
   const save = async () => {
-    setSaveNotice(null);
     // Belt-and-suspenders: the page is role-gated and the route re-checks, but never fire
     // a mutation the user isn't allowed to make.
-    if (!authorized) { setSaveNotice({ text: "You do not have permission to change these settings.", err: true }); return; }
+    if (!authorized) { showError("You do not have permission to change these settings."); return; }
     // Validate client-side with the same rule the route enforces (imported, not
     // duplicated) so a typo is caught inline instead of surfacing as a raw API error.
     const from = emailFrom.trim();
@@ -70,9 +67,8 @@ export default function EmailSettingsPage() {
     setFieldErrors({});
     setSaving(true);
     try {
-      const res = await fetch("/api/settings/email", {
+      await api("/api/settings/email", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           emailFromAddress: emailFrom.trim() || null,
           emailReplyToAddress: emailReplyTo.trim() || null,
@@ -82,9 +78,10 @@ export default function EmailSettingsPage() {
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
         }),
       });
-      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); setInitial(current); reload(); }
-      else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      showSuccess("Email settings saved.");
+      setUnlocked(false);
+      setInitial(current);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
@@ -214,12 +211,6 @@ export default function EmailSettingsPage() {
               disabled={locked}
             />
           </Stack>
-
-          {saveNotice && (
-            <Alert mt="lg" color={saveNotice.err ? "red" : "treehouseGreen"} variant="light">
-              {saveNotice.text}
-            </Alert>
-          )}
 
           <Button mt="lg" disabled={saving || locked} loading={saving} onClick={save} style={{ alignSelf: "flex-start" }}>
             Save settings

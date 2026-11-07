@@ -685,6 +685,13 @@ jobs:
         if: needs.changes.outputs.packages == 'true'
         run: npm run typecheck:functions
 
+      # Package source, tests and test helpers. checkin-app's tsc sees only the
+      # package files it imports. Each package's client comes from its
+      # postinstall `prisma generate` during npm ci.
+      - name: Typecheck packages
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run typecheck:packages
+
       # Packages share checkin-app's root eslint.config.mjs (one rule set).
       - name: Lint packages
         if: needs.changes.outputs.packages == 'true'

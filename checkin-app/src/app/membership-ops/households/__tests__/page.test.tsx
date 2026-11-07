@@ -31,6 +31,15 @@ const households = {
 describe("membership-ops/households page", () => {
   pinTimezone();
 
+  it("says the list failed instead of showing no households", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({}); // every fetch 404s
+    renderWithProviders(<AdminHouseholdsPage />);
+
+    expect(await screen.findByText("Couldn't load the households")).toBeInTheDocument();
+    expect(screen.queryByText("No households found.")).not.toBeInTheDocument();
+  });
+
   it("renders a UTC-midnight memberSince as its own calendar day, not the day before", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({

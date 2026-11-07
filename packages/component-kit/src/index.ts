@@ -75,9 +75,10 @@ export function zodMessage(error: { issues: readonly ZodIssueLike[] }, fallback 
 }
 
 /**
- * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named: a
- * deeper segment can be a submitted `z.record` key, so a schema whose top level is a
- * `z.record` must not reach this with request input.
+ * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named, since
+ * a deeper segment can be a submitted key. A schema whose top level is a `z.record`, a
+ * `z.map` or an object with `.catchall()` puts a submitted key in `path[0]` too, so it must
+ * not reach this with request input.
  */
 export function zodHttpError(error: { issues: readonly ZodIssueLike[] }, fallback?: string): ComponentHttpError {
   const names = error.issues.map((issue) => issue.path[0]).filter((name): name is string => typeof name === "string");
@@ -102,6 +103,21 @@ export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
   } catch (err) {
     throw toHttpError(err) ?? err;
   }
+}
+
+/** Runs each named count; a failed one is logged and left out, so one failing count never blanks the others. */
+export async function settleCounts<T extends Record<string, unknown>>(
+  label: string,
+  counts: { [K in keyof T]: () => Promise<T[K]> },
+): Promise<Partial<T>> {
+  const keys = Object.keys(counts) as (keyof T & string)[];
+  const results = await Promise.allSettled(keys.map(async (k) => counts[k]()));
+  const settled: Partial<T> = {};
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") settled[keys[i]] = r.value;
+    else console.error(`nav counts: ${label} ${keys[i]} failed`, r.reason);
+  });
+  return settled;
 }
 
 /** A positive integer path or query id: decimal digits only, so `0x1f`, `1e2` and ` 42` are a 400. */

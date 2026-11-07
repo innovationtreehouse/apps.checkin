@@ -3,12 +3,10 @@
 import { useState } from "react";
 import { Button, Card, Center, Group, Loader, Select, Stack, Text, Title } from "@mantine/core";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
-import { AlertBanner } from "@/components/admin/AlertBanner";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useSeedForm } from "@/hooks/useSeedForm";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { LOCALIZATION_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 
@@ -49,24 +47,16 @@ export default function LocalizationSettingsPage() {
   const [initial, setInitial] = useState<Record<string, string> | null>(null);
 
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-
-  const flash = (m: string) => setMessage(m);
 
   const { data, error, reload } = useLoad<{ settings: Settings }>(ready ? "/api/admin/settings/localization" : null);
 
   const saveSettings = async () => {
     setSaving(true);
-    flash("");
     try {
-      const res = await fetch("/api/admin/settings/localization", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timezone, locale }),
-      });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setInitial({ timezone, locale }); reload(); }
-      else { const d = await res.json().catch(() => ({})); flash(d.error || "Save failed."); }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      await api("/api/admin/settings/localization", { method: "PUT", body: JSON.stringify({ timezone, locale }) });
+      showSuccess("Settings saved.");
+      setInitial({ timezone, locale });
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
@@ -84,8 +74,6 @@ export default function LocalizationSettingsPage() {
   return (
     <Stack>
       <SettingsTabs active="localization" />
-
-      <AlertBanner message={message} tone="error" />
 
       {error && <LoadError what="the localization settings" message={error} onRetry={reload} />}
 

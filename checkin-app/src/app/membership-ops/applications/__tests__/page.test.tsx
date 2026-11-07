@@ -33,7 +33,7 @@ const renderPage = () => renderWithProviders(<ModalsProvider><AdminMembershipPag
 // reconciling, losing the page's already-fetched rows state.
 const rewrapped = () => (
     <MantineProvider>
-        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false }}>
+        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false, devMocks: { shopify: false, bgConsent: false } }}>
             <ModalsProvider>
                 <AdminMembershipPage />
             </ModalsProvider>

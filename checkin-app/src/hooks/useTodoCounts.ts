@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useViewer } from "@checkin/component-ui";
 import { NAV_COUNTS_EVENT } from "@/lib/nav-refresh";
-import type { TodoCounts } from "@/lib/nav/todoCounts";
+import type { TodoCounts, TodoCountsResponse } from "@/lib/nav/todoCounts";
 
 // One shared snapshot for every consumer (nav badge, sub-nav tabs, todo card), so
 // they cannot show different numbers from fetches at slightly different times.
 // It is tagged with the viewer it was read for: another tab can change the session
-// without a page load, and one person's counts must never show to the next.
+// without a page load, and one person's counts must never show to the next. The
+// server answers for whoever holds the cookie, so a read is kept only when the
+// person it answered for is the viewer it was asked for.
 let counts: { viewerId: number; value: TodoCounts } | null = null;
 let inFlight = false;
 let queued: { viewerId: number } | null = null;
@@ -28,11 +30,12 @@ function fetchCounts(viewerId: number) {
     inFlight = true;
     fetch("/api/nav/todo-counts")
         .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-            if (data) {
-                counts = { viewerId, value: data as TodoCounts };
-                emit();
-            }
+        .then((data: TodoCountsResponse | null) => {
+            if (!data) return;
+            const { personId, ...value } = data;
+            if (personId !== viewerId) return;
+            counts = { viewerId, value };
+            emit();
         })
         .catch(() => {
             // Badges are best-effort; a failed fetch just leaves the last value.

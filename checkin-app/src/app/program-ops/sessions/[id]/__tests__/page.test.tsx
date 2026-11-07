@@ -83,11 +83,11 @@ describe("EventAdminPage", () => {
         expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it("shows a not-found card when the event fetch fails", async () => {
+    it("shows the load failure with a way back when the event fetch fails", async () => {
         setSession({ id: 1, isSysadmin: true });
         mockFetchJson({});
         renderPage(params);
-        expect(await screen.findByText("Failed to load event.")).toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load the event")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "Go Back" }));
         expect(router.back).toHaveBeenCalled();
     });
