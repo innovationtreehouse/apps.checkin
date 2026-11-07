@@ -346,7 +346,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) },
     });
 
-    // The alert address local and dev send alerts to, unless one is set. Prod's is set by a person.
+    // A placeholder alert address for local and dev, unless one is set. Prod's is set by a person.
     await prisma.boardSettings.updateMany({
         where: { id: 1, alertEmailAddress: null },
         data: { alertEmailAddress: "alerts@example.com" },

@@ -25,10 +25,10 @@
  *   finance saves an item's account so a wrong account type is refused.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
- * - alerts: each goes to the alert address (emailAlert). A drain that stops at
- *   a cap alerts, so the payouts it left waiting reach a person. A bucket that
- *   becomes unusable alerts once, so the payouts it holds reach a person. An
- *   orphan sweep that cannot read every new deposit alerts.
+ * - alerts: a drain that stops at a cap emails finance (the board when no one
+ *   holds FINANCE), so the payouts it left waiting reach a person. A bucket
+ *   that becomes unusable emails finance once, so the payouts it holds reach a
+ *   person. An orphan sweep that cannot read every new deposit emails finance.
  */
 import {
   BANK_ROLE,
@@ -95,29 +95,29 @@ const payoutMirror: PayoutMirror = {
 
 const alerts: IncomeAlerts = {
   async postCapReached({ cap, created, remaining }) {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.incomePostCap", {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.incomePostCap", {
       created: String(created),
       limit: cap === "count" ? "number of deposits" : "dollar total",
       remaining: String(remaining),
       actionLink: `${config.baseUrl()}/income/reconciliation`,
-    });
+    }, "Income cap alert failed:");
   },
   async bucketUnusable({ budgetOwnerId, bucketName, issue, itemCount }) {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.incomeBucketUnusable", {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.incomeBucketUnusable", {
       bucketName: bucketName ?? `#${budgetOwnerId}`,
       issue,
       itemCount: String(itemCount),
       actionLink: `${config.baseUrl()}/income/items`,
-    });
+    }, "Income bucket alert failed:");
   },
   async sweepIncomplete({ since }) {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.incomeSweepIncomplete", {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.incomeSweepIncomplete", {
       since: since.toISOString().slice(0, 10),
       actionLink: `${config.baseUrl()}/income/reconciliation`,
-    });
+    }, "Income sweep alert failed:");
   },
 };
 

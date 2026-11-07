@@ -157,6 +157,7 @@ export const classifications = {
         scholarshipNotifyEmail: 'internal',
         alertEmailAddress: 'internal',
         boardEmailAddress: 'internal',
+        financeContactEmail: 'public',
         scholarshipAckSubject: 'internal',
         scholarshipAckMembershipBody: 'internal',
         scholarshipAckProgramBody: 'internal',

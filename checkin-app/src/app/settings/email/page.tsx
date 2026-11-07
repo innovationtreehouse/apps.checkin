@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Alert, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Badge, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
@@ -19,6 +19,7 @@ interface Settings {
   scholarshipNotifyEmail: string | null;
   alertEmailAddress: string | null;
   boardEmailAddress: string | null;
+  financeContactEmail: string | null;
   scholarshipAckSubject: string | null;
   scholarshipAckMembershipBody: string | null;
   scholarshipAckProgramBody: string | null;
@@ -28,7 +29,17 @@ const HEADER_ERROR = 'Enter an email address or "Name <addr@domain>".';
 const ADDRESS_ERROR = "Enter one email address.";
 const REPLY_TO_ERROR = 'Enter one or more comma-separated addresses, each an email address or "Name <addr@domain>".';
 
-type FieldErrors = { from?: string; replyTo?: string; scholarshipNotify?: string; alertAddress?: string; boardAddress?: string };
+type FieldErrors = { from?: string; replyTo?: string; scholarshipNotify?: string; alertAddress?: string; boardAddress?: string; financeContact?: string };
+
+/** A label with a "Not set" pill while the saved value is empty. */
+function labelWithPill(text: string, saved: string | undefined) {
+  return (
+    <>
+      {text}
+      {!saved && <Badge ml="xs" size="sm" color="red" variant="light">Not set</Badge>}
+    </>
+  );
+}
 
 export default function EmailSettingsPage() {
   // The sender identity is editable by board + sysadmin (same as the /settings layout
@@ -41,6 +52,7 @@ export default function EmailSettingsPage() {
   const [scholarshipNotify, setScholarshipNotify] = useState("");
   const [alertAddress, setAlertAddress] = useState("");
   const [boardAddress, setBoardAddress] = useState("");
+  const [financeContact, setFinanceContact] = useState("");
   const [ackSubject, setAckSubject] = useState("");
   const [ackMembershipBody, setAckMembershipBody] = useState("");
   const [ackProgramBody, setAckProgramBody] = useState("");
@@ -69,12 +81,14 @@ export default function EmailSettingsPage() {
     const notify = scholarshipNotify.trim();
     const alert = alertAddress.trim();
     const board = boardAddress.trim();
+    const contact = financeContact.trim();
     const fe: FieldErrors = {};
     if (from && !isValidEmailHeader(from)) fe.from = HEADER_ERROR;
     if (replyTo && !parseEmailHeaderList(replyTo)) fe.replyTo = REPLY_TO_ERROR;
     if (notify && !parseEmailHeaderList(notify)) fe.scholarshipNotify = REPLY_TO_ERROR;
     if (alert && !isValidEmail(alert)) fe.alertAddress = ADDRESS_ERROR;
     if (board && !isValidEmail(board)) fe.boardAddress = ADDRESS_ERROR;
+    if (contact && !isValidEmail(contact)) fe.financeContact = ADDRESS_ERROR;
     if (Object.keys(fe).length > 0) { setFieldErrors(fe); return; }
     setFieldErrors({});
     setSaving(true);
@@ -87,6 +101,7 @@ export default function EmailSettingsPage() {
           scholarshipNotifyEmail: notify || null,
           alertEmailAddress: alert || null,
           boardEmailAddress: board || null,
+          financeContactEmail: contact || null,
           scholarshipAckSubject: ackSubject.trim() || null,
           scholarshipAckMembershipBody: ackMembershipBody.trim() || null,
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
@@ -99,7 +114,7 @@ export default function EmailSettingsPage() {
     finally { setSaving(false); }
   };
 
-  const current = { emailFrom, emailReplyTo, scholarshipNotify, alertAddress, boardAddress, ackSubject, ackMembershipBody, ackProgramBody };
+  const current = { emailFrom, emailReplyTo, scholarshipNotify, alertAddress, boardAddress, financeContact, ackSubject, ackMembershipBody, ackProgramBody };
   const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
   useSeedForm(data, isDirty, ({ settings }) => {
@@ -109,6 +124,7 @@ export default function EmailSettingsPage() {
       scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
       alertAddress: settings.alertEmailAddress ?? "",
       boardAddress: settings.boardEmailAddress ?? "",
+      financeContact: settings.financeContactEmail ?? "",
       ackSubject: settings.scholarshipAckSubject ?? "",
       ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
       ackProgramBody: settings.scholarshipAckProgramBody ?? "",
@@ -118,6 +134,7 @@ export default function EmailSettingsPage() {
     setScholarshipNotify(snap.scholarshipNotify);
     setAlertAddress(snap.alertAddress);
     setBoardAddress(snap.boardAddress);
+    setFinanceContact(snap.financeContact);
     setAckSubject(snap.ackSubject);
     setAckMembershipBody(snap.ackMembershipBody);
     setAckProgramBody(snap.ackProgramBody);
@@ -172,7 +189,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="From address"
               description={'Bare address or "Name <addr@domain>". Blank = the environment sender.'}
-              placeholder="Innovation Treehouse <noreply@updates.innovationtreehouse.org>"
+              placeholder="Example Org <noreply@updates.example.com>"
               w={440}
               value={emailFrom}
               error={fieldErrors.from}
@@ -182,7 +199,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="Reply-To address"
               description="Where replies go. Comma-separated for multiple addresses. Blank = replies go to the From address."
-              placeholder="info@innovationtreehouse.org, ops@innovationtreehouse.org"
+              placeholder="info@example.com, ops@example.com"
               w={440}
               value={emailReplyTo}
               error={fieldErrors.replyTo}
@@ -192,7 +209,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="Scholarship review notifications"
               description="Comma-separated for multiple addresses. Blank = the whole board is notified of new scholarship / payment-plan requests."
-              placeholder="finance@innovationtreehouse.org"
+              placeholder="scholarships@example.com"
               w={440}
               value={scholarshipNotify}
               error={fieldErrors.scholarshipNotify}
@@ -200,8 +217,8 @@ export default function EmailSettingsPage() {
               disabled={locked}
             />
             <TextInput
-              label="Alert address"
-              description="A group address. Finance and QuickBooks alerts go here. Blank = those alerts are not sent."
+              label={labelWithPill("Alert address", initial?.alertAddress)}
+              description="A group address for finance and QuickBooks alerts."
               placeholder="alerts@example.com"
               w={440}
               value={alertAddress}
@@ -210,13 +227,23 @@ export default function EmailSettingsPage() {
               disabled={locked}
             />
             <TextInput
-              label="Board address"
+              label={labelWithPill("Board address", initial?.boardAddress)}
               description="The Board's group address."
               placeholder="board@example.com"
               w={440}
               value={boardAddress}
               error={fieldErrors.boardAddress}
               onChange={(e) => { setBoardAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, boardAddress: undefined })); }}
+              disabled={locked}
+            />
+            <TextInput
+              label={labelWithPill("Finance contact address", initial?.financeContact)}
+              description="The address members see for finance questions."
+              placeholder="finance@example.com"
+              w={440}
+              value={financeContact}
+              error={fieldErrors.financeContact}
+              onChange={(e) => { setFinanceContact(e.currentTarget.value); setFieldErrors((f) => ({ ...f, financeContact: undefined })); }}
               disabled={locked}
             />
             <TextInput

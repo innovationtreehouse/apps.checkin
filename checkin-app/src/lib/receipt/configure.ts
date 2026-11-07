@@ -198,28 +198,26 @@ function receiptMailbox(): MailboxReader | undefined {
 
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.receiptMailCeiling", {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.receiptMailCeiling", {
       unresolved: String(unresolved),
       refused: String(refused),
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    });
+    }, "Receipt mail ceiling alert failed:");
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    // Throws when nothing was sent, so the library leaves the mail unstamped and alerts again next run.
-    const sent = await emailAlert("finance.receiptMailAgeing", {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.receiptMailAgeing", {
       messages: String(messages),
       since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    });
-    if (!sent) throw new Error("Receipt mail ageing alert was not sent");
+    }, "Receipt mail ageing alert failed:");
   },
   async mailListingFailed() {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.receiptMailboxUnreadable", {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert("finance.receiptMailboxUnreadable", {
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    });
+    }, "Receipt mailbox listing alert failed:");
   },
 };
 

@@ -1,6 +1,7 @@
 BEGIN;
 
 ALTER TABLE "BoardSettings" ADD COLUMN "alertEmailAddress" TEXT,
-ADD COLUMN "boardEmailAddress" TEXT;
+ADD COLUMN "boardEmailAddress" TEXT,
+ADD COLUMN "financeContactEmail" TEXT;
 
 COMMIT;

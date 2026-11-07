@@ -139,7 +139,7 @@ function receiptMailboxCheck(): ConfigCheck {
     };
 }
 
-/** The alert address row: alerts have no fallback, so an unset address means none are sent. */
+/** The alert address row: unset until a person enters it on Settings → Email. */
 export function alertAddressCheck(address: string | null | undefined): ConfigCheck {
     return {
         id: "alert-address",
@@ -147,7 +147,7 @@ export function alertAddressCheck(address: string | null | undefined): ConfigChe
         ok: !!address,
         detail: address
             ? "Set."
-            : "NOT set — set the alert address on Settings → Email (system and QuickBooks alerts are not sent).",
+            : "NOT set — set the alert address on Settings → Email.",
     };
 }
 

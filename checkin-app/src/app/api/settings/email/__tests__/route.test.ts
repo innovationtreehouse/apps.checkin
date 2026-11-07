@@ -25,8 +25,8 @@ beforeEach(() => {
     prisma.auditLog.create = audit;
 });
 
-describe('PUT /api/settings/email — alert and Board addresses', () => {
-    it.each(['alertEmailAddress', 'boardEmailAddress'])('saves a valid %s and records the edit', async (field) => {
+describe('PUT /api/settings/email — alert, Board and finance contact addresses', () => {
+    it.each(['alertEmailAddress', 'boardEmailAddress', 'financeContactEmail'])('saves a valid %s and records the edit', async (field) => {
         const res = await put({ [field]: ' finance@example.org ' });
         expect(res.status).toBe(200);
         expect(upsert.mock.calls[0][0].update).toEqual({ [field]: 'finance@example.org' });
@@ -40,6 +40,7 @@ describe('PUT /api/settings/email — alert and Board addresses', () => {
         ['alertEmailAddress', 'a@example.org, b@example.org'],
         ['alertEmailAddress', 'Finance <finance@example.org>'],
         ['boardEmailAddress', 'board'],
+        ['financeContactEmail', 'finance at example.org'],
     ])('refuses %s %p and writes nothing', async (field, value) => {
         const res = await put({ [field]: value });
         expect(res.status).toBe(400);

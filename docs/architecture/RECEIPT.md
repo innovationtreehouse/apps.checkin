@@ -33,7 +33,7 @@ so work waits for a retry and nothing pretends to have been delivered.
 | `ocr` | `fixtureOcr` under `CHECKIN_ENV=local`, else `createAnthropicOcr` | every reading fails with "OCR is not configured" |
 | `mailbox` | a Gmail reader, on the conditions under [Mail](#mail) | mail intake reports `unbound` and does nothing |
 | `replies` | checkin's outgoing mail | acknowledgements wait unsent |
-| `alerts` | checkin's alert address | logged only |
+| `alerts` | checkin's finance alert | logged only |
 | `fileStore`, `storeNewFilesInBucket` | see [File storage](#file-storage) | any access to a stored object throws |
 
 ## Intake paths

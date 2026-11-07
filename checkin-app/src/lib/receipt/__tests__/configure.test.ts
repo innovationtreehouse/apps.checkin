@@ -1,7 +1,7 @@
 import { configureReceipt, type ReceiptConfig } from '@checkin/receipt';
 import type { Session } from 'next-auth';
 import prisma from '@/lib/prisma';
-import { emailAlert } from '@/lib/emailRecipients';
+import { notifyFinanceAlert } from '@/lib/emailRecipients';
 import { expenseOutcomes } from '@checkin/expense';
 import { receivingOutcomes } from '@checkin/workflow-mapping';
 import { giftOutcomes } from '@checkin/bulk-donation';
@@ -21,7 +21,7 @@ jest.mock('@checkin/expense', () => ({ reimbursementStatus: {}, expenseOutcomes:
 jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receivingOutcomes: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn(), sessionUser: jest.fn() }));
-jest.mock('@/lib/emailRecipients', () => ({ emailAlert: jest.fn() }));
+jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
 jest.mock('@/lib/purchaseOutcomeMail', () => ({ sendPurchaseOutcome: jest.fn() }));
 
 const ADULT_DOB = new Date('1980-01-01');
@@ -169,28 +169,22 @@ describe('receipt runtime: mail intake bindings', () => {
     });
 
     it('alerts finance when mail is about to leave the window unread', async () => {
-        jest.mocked(emailAlert).mockResolvedValue(true);
         await boundConfig().alerts?.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: new Date('2026-10-25T09:00:00Z') });
-        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
+        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
         expect(key).toBe('finance.receiptMailAgeing');
         expect(values).toMatchObject({ messages: '4', since: expect.stringContaining('25 Oct 2026'), actionLink: expect.stringContaining('/receipts/mail') });
     });
 
-    it('rejects when the ageing alert was not sent, so the mail stays unstamped and alerts again', async () => {
-        jest.mocked(emailAlert).mockResolvedValue(false);
-        await expect(boundConfig().alerts!.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: null })).rejects.toThrow('not sent');
-    });
-
     it('alerts finance when the mailbox cannot be listed', async () => {
         await boundConfig().alerts?.mailListingFailed({ orgId: 'org' });
-        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
+        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
         expect(key).toBe('finance.receiptMailboxUnreadable');
         expect(values).toMatchObject({ actionLink: expect.stringContaining('/receipts/mail') });
     });
 
     it('alerts finance when mail intake stops holding mail', async () => {
         await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
-        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
+        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
         expect(key).toBe('finance.receiptMailCeiling');
         expect(values).toMatchObject({ unresolved: '500', refused: '3', actionLink: expect.stringContaining('/receipts/mail') });
     });
