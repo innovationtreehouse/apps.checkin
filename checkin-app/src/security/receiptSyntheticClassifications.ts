@@ -69,7 +69,7 @@
  * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
  * state, or a rejection with its reason) and, for a member rejected as a copy,
  * the id of the receipt kept in its place (`copyOfId`). Members may be other
- * submitters' receipts, so the ids are `pii`, as `duplicateSuspectReceiptId` is;
+ * submitters' receipts, so the ids are `pii`, as `copyOfId` is on ReceiptView;
  * the label carries a rejection reason, `personal` like `validationNotes`; the
  * uploader's name (`uploaderName`) is `pii`, for finance and the Board only.
  *
@@ -116,8 +116,6 @@ export const classifications = {
     state: "internal",
     ocrStartedAt: "internal",
     duplicateFlaggedAt: "internal",
-    duplicateFlagClearedAt: "internal",
-    duplicateSuspectReceiptId: "pii",
     duplicateSuspectIsRejected: "pii",
     validationNotes: "personal",
     approvedAt: "internal",

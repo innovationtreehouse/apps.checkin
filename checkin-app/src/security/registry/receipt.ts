@@ -75,8 +75,7 @@ defineRoute({ endpoint: 'GET /api/receipts/duplicate-queue', authorize: 'finance
 // FINANCE actions.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/approve', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/reject', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
-defineRoute({ endpoint: 'POST /api/receipts/[id]/clear-duplicate', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
-// Duplicate-group decisions (2516_RECEIPT_DUPLICATES.md §6): one pair, with its undo, or the whole group.
+// Duplicate-group decisions: one pair, with its undo, or the whole group.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/not-this-one', authorize: 'finance', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'DELETE /api/receipts/[id]/not-this-one/[otherId]', authorize: 'finance', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/different-purchases', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });

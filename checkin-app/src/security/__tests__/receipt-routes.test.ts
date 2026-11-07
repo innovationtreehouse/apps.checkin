@@ -451,14 +451,13 @@ describe('the submitter view', () => {
         expect(out).toEqual({ lineItems: [{}] });
     });
 
-    it('strips the suspected-duplicate receipt id and rejection status from the uploader on every receipt route', () => {
-        const flagged = { ...row, duplicateSuspectReceiptId: 'r-other', duplicateSuspectIsRejected: true, duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
+    it('strips the suspected-duplicate rejection status from the uploader on every receipt route', () => {
+        const flagged = { ...row, duplicateSuspectIsRejected: true, duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
         for (const endpoint of jsonRoutes) {
             const views = new Map(getRoute(endpoint)!.orderedView);
             const submitter = views.get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
             const out = stripValue('ReceiptView', flagged, submitter, ctx) as Record<string, unknown>;
-            expect({ endpoint, leaked: 'duplicateSuspectReceiptId' in out }).toEqual({ endpoint, leaked: false });
             expect({ endpoint, leaked: 'duplicateSuspectIsRejected' in out }).toEqual({ endpoint, leaked: false });
             expect(out.duplicateFlaggedAt).toBe(flagged.duplicateFlaggedAt);
         }
@@ -475,10 +474,9 @@ describe('the submitter view', () => {
         }
     });
 
-    it('returns the suspected-duplicate receipt id and rejection status to FINANCE', () => {
+    it('returns the suspected-duplicate rejection status to FINANCE', () => {
         const finance = new Map(getRoute('GET /api/receipts/[id]')!.orderedView).get('isFinance')!;
-        const out = stripValue('ReceiptView', { ...row, duplicateSuspectReceiptId: 'r-other', duplicateSuspectIsRejected: true }, finance, { selfId: 5 } as CallerContext) as Record<string, unknown>;
-        expect(out.duplicateSuspectReceiptId).toBe('r-other');
+        const out = stripValue('ReceiptView', { ...row, duplicateSuspectIsRejected: true }, finance, { selfId: 5 } as CallerContext) as Record<string, unknown>;
         expect(out.duplicateSuspectIsRejected).toBe(true);
     });
 
