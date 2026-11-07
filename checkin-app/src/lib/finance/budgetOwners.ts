@@ -166,22 +166,21 @@ async function lockProgramBucket(tx: Prisma.TransactionClient, budgetOwnerId: nu
 
 export type ApproverRole = "OWNER" | "TREASURER";
 
-/** A bucket's live owner, then its live treasurers by name. */
+/** A bucket's owner, then its treasurers by name. */
 export async function listBucketApprovers(budgetOwnerId: number) {
     const bucket = await prisma.budgetOwner.findUnique({
         where: { id: budgetOwnerId },
         select: {
-            owner: { select: { id: true, name: true, mergedIntoId: true } },
-            treasurers: { select: { person: { select: { id: true, name: true, mergedIntoId: true } } }, orderBy: { person: { name: "asc" } } },
+            owner: { select: { id: true, name: true } },
+            treasurers: { select: { person: { select: { id: true, name: true } } }, orderBy: { person: { name: "asc" } } },
         },
     });
     if (!bucket) throw notFound("Bucket not found");
-    type Person = { id: number; name: string; mergedIntoId: number | null };
+    type Person = { id: number; name: string };
     const row = (person: Person, role: ApproverRole) => ({ budgetOwnerId, personId: person.id, name: person.name, role });
-    const live = (person: Person | null): person is Person => person !== null && person.mergedIntoId === null;
     return [
-        ...(live(bucket.owner) ? [row(bucket.owner, "OWNER")] : []),
-        ...bucket.treasurers.map((t) => t.person).filter(live).map((p) => row(p, "TREASURER")),
+        ...(bucket.owner ? [row(bucket.owner, "OWNER")] : []),
+        ...bucket.treasurers.map((t) => row(t.person, "TREASURER")),
     ];
 }
 

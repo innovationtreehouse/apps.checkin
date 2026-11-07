@@ -10,9 +10,8 @@ import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
-/** The person was merged away between the pre-check and the write. */
-class MergedPersonError extends Error {}
-const MERGED_PERSON_MESSAGE = "This person has been merged into another record and cannot be moved.";
+/** The person's row was deleted, by a merge or otherwise, between the pre-check and the write. */
+class PersonGoneError extends Error {}
 
 /** The person changed household between the pre-check and the write. */
 class StaleSourceHouseholdError extends Error {}
@@ -48,9 +47,6 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         const participant = await prisma.person.findUnique({ where: { id: participantId } });
         if (!participant) {
             return apiError("Participant not found", 404);
-        }
-        if (participant.mergedIntoId != null) {
-            return apiError(MERGED_PERSON_MESSAGE, 409);
         }
 
         // Validate the destination before the write transaction below.
@@ -111,8 +107,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 },
             });
             if (count !== 1) {
-                const now = await tx.person.findUnique({ where: { id: participantId }, select: { mergedIntoId: true } });
-                throw now?.mergedIntoId != null ? new MergedPersonError() : new StaleSourceHouseholdError();
+                const now = await tx.person.findUnique({ where: { id: participantId }, select: { id: true } });
+                throw now === null ? new PersonGoneError() : new StaleSourceHouseholdError();
             }
             const updated = await tx.person.findUniqueOrThrow({ where: { id: participantId }, include: { household: true } });
 
@@ -146,8 +142,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             participant: { ...updatedParticipant, household: updatedParticipant.household && withIntakeNotesFor(updatedParticipant.household, auth.user) },
         });
     } catch (error) {
-        if (error instanceof MergedPersonError) {
-            return apiError(MERGED_PERSON_MESSAGE, 409);
+        if (error instanceof PersonGoneError) {
+            return apiError("This person's record no longer exists; they may have been merged into another. Reload and try again.", 404);
         }
         if (error instanceof StaleSourceHouseholdError) {
             return apiError("This person was moved to another household while you were working. Reload and try again.", 409);

@@ -1,7 +1,6 @@
 // Household and surname reads for in-kind gifts. Loaded at boot by the bulk-donation wiring, so it
 // imports nothing beyond the person model: no handler, auth or session code.
 import type { DbClient } from "@/lib/db-client";
-import { MAX_MERGE_HOPS } from "@/lib/person/filters";
 
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
 
@@ -16,28 +15,18 @@ interface Member {
   name: string;
 }
 
-/**
- * Each id's surviving person: follows mergedIntoId, or the merge archive when the tombstone row
- * is gone. An id that resolves nowhere maps to itself.
- */
+/** Each id's surviving person: itself, or the merge archive's survivor when its row is gone. */
 async function survivorsOf(db: DbClient, ids: number[]): Promise<Map<number, number>> {
-  const current = new Map(ids.map((id) => [id, id]));
-  for (let hop = 0; hop <= MAX_MERGE_HOPS; hop++) {
-    const pending = [...new Set(current.values())];
-    const rows = await db.person.findMany({ where: { id: { in: pending } }, select: { id: true, mergedIntoId: true } });
-    const missing = pending.filter((id) => !rows.some((r) => r.id === id));
-    const archived = missing.length === 0 ? [] : await db.personMerge.findMany({ where: { fromId: { in: missing } }, select: { fromId: true, toId: true } });
-    const next = new Map([...rows.flatMap((r) => (r.mergedIntoId === null ? [] : [[r.id, r.mergedIntoId] as const])), ...archived.map((a) => [a.fromId, a.toId] as const)]);
-    if (next.size === 0) break;
-    for (const [id, at] of current) current.set(id, next.get(at) ?? at);
-  }
-  return current;
+  const rows = await db.person.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  const missing = ids.filter((id) => !rows.some((r) => r.id === id));
+  const archived = missing.length === 0 ? [] : await db.personMerge.findMany({ where: { fromId: { in: missing } }, select: { fromId: true, toId: true } });
+  const next = new Map(archived.map((a) => [a.fromId, a.toId] as const));
+  return new Map(ids.map((id) => [id, next.get(id) ?? id]));
 }
 
 /**
- * Each person's household as live members, the person and their survivor included. A merged
- * person keeps their own household and gains their survivor's: both count. A person with no
- * household is a household of one.
+ * Each person's household as live members, the person included. A merged-away id reads as its
+ * survivor's household. A person with no household is a household of one.
  */
 async function householdsByPerson(db: DbClient, personIds: number[]): Promise<Map<number, Member[]>> {
   const ids = [...new Set(personIds)];

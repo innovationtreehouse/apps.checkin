@@ -36,7 +36,8 @@ type AuditRow = {
   newData: { type?: string; significance?: { score: number; flagged: boolean }; overlapsVisitIds?: number[] };
 };
 
-type PersonRef = { id: number; name: string | null; mergedIntoId: number | null };
+/** `mergedIntoId` is present only on a person the merge archive names: their survivor's id. */
+type PersonRef = { id: number; name: string | null; mergedIntoId?: number };
 
 type Payload = { AuditLog: AuditRow[]; Person: PersonRef[]; Visit: VisitPick[][] };
 
@@ -86,7 +87,7 @@ function nameFor(id: number | null, people: Map<number, PersonRef>): string {
   if (id == null) return "—";
   const p = people.get(id);
   if (!p) return `Person #${id}`;
-  return p.mergedIntoId ? `${p.name ?? `Person #${id}`} (merged)` : p.name ?? `Person #${id}`;
+  return p.mergedIntoId !== undefined ? `${p.name ?? `Person #${id}`} (merged)` : p.name ?? `Person #${id}`;
 }
 
 // A key ABSENT from the pick (vs. present-but-null) means the writer never

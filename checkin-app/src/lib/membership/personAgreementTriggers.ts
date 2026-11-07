@@ -109,9 +109,9 @@ export async function openPersonAgreement(
         await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${personId} FOR UPDATE`;
         const person = await tx.person.findUnique({
             where: { id: personId },
-            select: { dateOfBirth: true, isDeclaredAdult: true, isHouseholdLead: true, mergedIntoId: true },
+            select: { dateOfBirth: true, isDeclaredAdult: true, isHouseholdLead: true },
         });
-        if (!person || person.mergedIntoId) return null;
+        if (!person) return null;
         if (person.isHouseholdLead) return null;
         if (!(manual ? hasKnownAdultAge(person, now) : inAgreementAgeBand(person, now))) return null;
 

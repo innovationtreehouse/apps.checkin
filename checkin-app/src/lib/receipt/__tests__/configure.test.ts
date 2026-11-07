@@ -314,7 +314,7 @@ describe('receipt runtime: person ids', () => {
 
     it('names a live id itself, a merged-away id its survivor, and an unknown id nobody', async () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 2 }]);
-        prisma.person.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { id: number } }) => (where.id === 2 ? { id: 2, mergedIntoId: null } : null));
+        prisma.person.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { id: number } }) => (where.id === 2 ? { id: 2 } : null));
         prisma.personMerge.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { fromId: number } }) => (where.fromId === 1 ? { toId: 2 } : null));
         const live = await boundConfig().personIds?.liveIds([1, 2, 4]);
         expect(live).toEqual(new Map([[2, 2], [1, 2], [4, null]]));

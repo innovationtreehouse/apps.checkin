@@ -45,7 +45,7 @@ export const signoff: SignoffDirectory = {
       where: { id: bucketId },
       select: {
         isOrgLevel: true,
-        owner: { select: { id: true, mergedIntoId: true, household: { select: { orgMembership: { select: { status: true } } } } } },
+        owner: { select: { id: true, household: { select: { orgMembership: { select: { status: true } } } } } },
         treasurers: { where: { person: await eligibleSigner() }, select: { personId: true } },
       },
     });
@@ -53,9 +53,9 @@ export const signoff: SignoffDirectory = {
     if (bucket.isOrgLevel) return { orgLevel: true, approvers: [], owner: null };
     const owner = bucket.owner;
     // Row security returns an archived owner's household as null; an archived owner approves nothing.
-    const ownerEligible = owner && owner.mergedIntoId === null && owner.household !== null && !orgMembershipStatusBlocksLogin(owner.household.orgMembership?.status);
+    const ownerEligible = owner && owner.household !== null && !orgMembershipStatusBlocksLogin(owner.household.orgMembership?.status);
     const approvers = [...(ownerEligible ? [owner.id] : []), ...bucket.treasurers.map((t) => t.personId)];
-    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner ? (owner.mergedIntoId ?? owner.id) : null };
+    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner?.id ?? null };
   },
 
   async bucketsApprovedBy(personId) {

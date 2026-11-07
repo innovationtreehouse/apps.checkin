@@ -426,7 +426,7 @@ export const authOptions: NextAuthOptions = {
                 // Google's casing is otherwise passed through verbatim.
                 const email = normalizeEmail(user.email);
                 const dbParticipant = await withAuroraResumeRetry(() => prisma.person.findUnique({
-                    where: { email, mergedIntoId: null },
+                    where: { email },
                     include: {
                         toolStatuses: {
                             select: {
@@ -475,11 +475,7 @@ export const authOptions: NextAuthOptions = {
                 // a revoked isSysadmin/isKeyholder keep their privileges (including the
                 // /api/roles endpoint) until the JWT aged out — up to 30 days.
                 const dbParticipant = await withAuroraResumeRetry(() => prisma.person.findUnique({
-                    // A merge tombstone keeps its row and its roles, so `mergedIntoId: null`
-                    // (LIVE_PERSON) is what makes this lookup miss and collapses the token
-                    // below — otherwise the re-sync re-grants authority from a record every
-                    // other surface refuses to show.
-                    where: { id: token.id as number, mergedIntoId: null },
+                    where: { id: token.id as number },
                     include: {
                         toolStatuses: {
                             select: {
