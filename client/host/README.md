@@ -7,7 +7,7 @@ itself, so each change here costs an SSH session. Plan: `docs/in-design/KIOSK_CO
 | --- | --- |
 | `kiosk-client.service` | Runs the container at the recorded digest; always restarts |
 | `kiosk-update.timer` | Hourly, 23:00 to 05:00: `kioskctl check-release` |
-| `kiosk-urgent.timer` | Every five minutes: `kioskctl check-urgent`, GHCR only |
+| `kiosk-urgent.timer` | Every five minutes: `kioskctl check-urgent`, registry only |
 | `kiosk-reboot.timer` | 03:30: `kioskctl reboot`, which waits for a running swap to finish |
 | `kiosk-browser` | Openbox autostart loop; relaunches Chromium on exit or on the restart marker |
 | `kioskctl` | `status`, `deploy sha256:<digest>`, `back`, `reboot`, and the two timer checks |
@@ -42,6 +42,29 @@ skips a failed digest.
   does not return to it until the release tag moves on.
 
 State lives in `/var/lib/kiosk-host`, which the container cannot reach.
+
+## Forcing or withdrawing a release
+
+Each prod release publishes the image to Amazon ECR Public, tests that exact image
+on the flow and browser tiers, and only then moves `kiosk-release`, so kiosks
+update overnight. A failed test leaves the tag where it was. To move them sooner, or to withdraw a bad release, run **Force
+kiosk update** in GitHub Actions.
+
+1. Enter a release tag (`v1.2.3`) or a digest from an earlier run's summary. To
+   withdraw a release, enter the last good one.
+2. Another person approves the run in the `kiosk-force` environment. A force
+   skips the tests: it is for a door that is already wrong.
+3. Kiosks apply it within five minutes, or when they reconnect. Badges during the
+   restart are missed and a live close prompt is lost; the scan queue is safe.
+
+The run summary records who started and who approved it, what was forced, and
+where both tags were before.
+
+- Each run publishes the image under a digest of its own, so forcing the same image
+  twice swaps both times. Re-running a run does not force again, and a forced image
+  that failed is retried only by a new run.
+- The next release moves `kiosk-release` forward as usual. Re-running a withdrawn
+  release's deploy publishes it again.
 
 ## Limits
 
