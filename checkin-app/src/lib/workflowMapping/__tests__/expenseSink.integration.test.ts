@@ -207,8 +207,10 @@ describe('X5 ExpenseSink → expense intake', () => {
     it('stamps the expense leg once expense has stored the payload, even when building the expense fails', async () => {
         const { id } = await seedReceipt('x5-build-fails');
         jest.spyOn(ex, '$transaction').mockRejectedValueOnce(new Error('lost the expense database mid-build'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         expect(await proceedAndApply(id)).toEqual({ state: 'resolved' });
+        expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"intake_build_failed","receiptId":"x5-build-fails"'));
 
         expect((await legs(id)).expenseAppliedAt).not.toBeNull();
         expect(await expenses('x5-build-fails')).toHaveLength(0);
