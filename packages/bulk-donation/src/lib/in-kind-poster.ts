@@ -9,6 +9,7 @@ import {
   SWEEP_DAYS,
   appKeyOf,
   findOrCreateInKindJournal,
+  liveRoleAccountIds,
   qbGate,
   qbKey,
   readCloseDate,
@@ -18,6 +19,7 @@ import {
   type CloseRead,
   type FindOrCreateResult,
   type InKindJournalLine,
+  type QboAccount,
   type QboDeposit,
   type QboJournalEntry,
   type QboPurchase,
@@ -109,6 +111,14 @@ export interface Run {
   /** Every gift still to book, so a hand booking two gifts could own goes to finance. */
   open: GiftToBook[];
   settings: DonationSettings;
+  /** QuickBooks' chart of accounts, read at most once per run. */
+  qbAccounts: () => Promise<QboAccount[]>;
+}
+
+/** The run's one read of QuickBooks' chart of accounts, on first use. */
+export function chartOfAccounts(client: QuickBooksClient): () => Promise<QboAccount[]> {
+  let read: Promise<QboAccount[]> | undefined;
+  return () => (read ??= client.accounts());
 }
 
 export type InKindPostOutcome = "posted" | "matched" | "unbooked" | "needs_finance" | "exhausted" | "failed" | "waiting";
@@ -235,8 +245,8 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
   const lines = gift.lines.filter((l) => l.valueCents > 0);
   const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
   const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
-  const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.client.accounts()]);
-  const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb);
+  const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.qbAccounts()]);
+  const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb, liveRoleAccountIds(run.accounts));
   if (typeof accounts === "string") return { state: QB_MATCH_STATE.NEEDS_ACCOUNT, note: accounts, entries: [] };
   const debits = lines.flatMap((l): InKindJournalLine[] => {
     const accountId = accounts.get(l.id);
@@ -516,7 +526,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   const ctx = await inKindReadiness.readReadiness(orgId);
   const { ready, open } = await inKindReadiness.giftsToBook(orgId, ctx);
   const settings = await readDonationSettings(db, orgId);
-  const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open, settings };
+  const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open, settings, qbAccounts: chartOfAccounts(client) };
 
   const counts: InKindDrainCounts = {
     posted: 0, matched: 0, unbooked: 0, needs_finance: 0, exhausted: 0, failed: 0, waiting: 0,

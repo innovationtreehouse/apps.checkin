@@ -14,10 +14,11 @@ export interface LineToBook {
 export type RuledAccount = { accountId: string } | { reason: string };
 
 /** Why the account can't take this line, or null when it can. */
-function unusable(accountId: string, capital: boolean, qb: readonly Pick<QboAccount, "Id" | "FullyQualifiedName" | "AccountType" | "Active">[]): string | null {
+function unusable(accountId: string, capital: boolean, qb: readonly Pick<QboAccount, "Id" | "FullyQualifiedName" | "AccountType" | "Active">[], roleAccounts: ReadonlySet<string>): string | null {
   const account = qb.find((a) => a.Id === accountId);
   if (!account) return `account ${accountId} is not in QuickBooks`;
   if (account.Active === false) return `${account.FullyQualifiedName} is inactive`;
+  if (roleAccounts.has(accountId)) return `${account.FullyQualifiedName} is a books-map role's account`;
   const allowed: readonly string[] = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
   if (account.AccountType && allowed.includes(account.AccountType)) return null;
   return `${account.FullyQualifiedName} is ${account.AccountType ?? "of no type"}; ${capital ? "donated equipment" : "a donated item"} takes ${allowed.join(", ")}`;
@@ -29,6 +30,7 @@ export function lineAccounts(
   capital: ReadonlySet<number>,
   ruled: ReadonlyMap<number, RuledAccount>,
   qb: readonly Pick<QboAccount, "Id" | "FullyQualifiedName" | "AccountType" | "Active">[],
+  roleAccounts: ReadonlySet<string>,
 ): Map<number, string> | string {
   const accounts = new Map<number, string>();
   const held: string[] = [];
@@ -36,7 +38,7 @@ export function lineAccounts(
     const rule = ruled.get(l.id);
     const accountId = l.quickBooksAccountId ?? (rule && "accountId" in rule ? rule.accountId : null);
     const why = accountId
-      ? unusable(accountId, capital.has(l.id), qb)
+      ? unusable(accountId, capital.has(l.id), qb, roleAccounts)
       : !l.gtin13
         ? "it has no GTIN-13"
         : rule && "reason" in rule

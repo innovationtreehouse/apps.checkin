@@ -28,6 +28,7 @@ const QB_ACCOUNTS: QboAccount[] = [
   { Id: "600", Name: "Supplies", FullyQualifiedName: "Supplies", AccountType: "Expense", Active: true },
   { Id: "610", Name: "Materials", FullyQualifiedName: "Materials", AccountType: "Cost of Goods Sold", Active: true },
   { Id: "150", Name: "Equipment", FullyQualifiedName: "Equipment", AccountType: "Fixed Asset", Active: true },
+  { Id: "290", Name: "In-kind clearing", FullyQualifiedName: "In-kind clearing", AccountType: "Other Current Liability", Active: true },
 ];
 const PAPER_GTIN = "0012345678905";
 const LATHE_GTIN = "0011111111116";
@@ -866,6 +867,36 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, waiting: 1 });
     expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: "Finance's to decide" });
     expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("books donated equipment to the account a retired fixed-assets role still holds", async () => {
+    accounts = { ...ACCOUNTS, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" };
+    await switchOn();
+    const id = await acceptedGift();
+    const [, lathe] = await lineIds(id);
+    assets = [lathe];
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    expect(qbo.posts[0].body.Line.map((l) => l.JournalEntryLineDetail.AccountRef.value)).toEqual(["400", "600", "150"]);
+  });
+
+  it("matches a hand journal entry debiting an account a retired role still holds", async () => {
+    accounts = { ...ACCOUNTS, FIXED_ASSETS: "150" };
+    const id = await unbookedGift();
+    qbo.journals.push(handJournal("82", [["Credit", "400", 33], ["Debit", "600", 11], ["Debit", "150", 22]]));
+    await expect(resolve(id, { action: "match", journalEntryId: "82" })).resolves.toMatchObject({ qbState: "MATCHED" });
+  });
+
+  it("holds a line whose account a live books-map role books to, without trying the write", async () => {
+    await switchOn();
+    unruled.add(LATHE_GTIN);
+    const id = await acceptedGift();
+    const [, lathe] = await lineIds(id);
+    await runInKindQbPosting(orgId);
+    await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "290" });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, failed: 0 });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_ACCOUNT", qbPostAttempts: 0, qbNote: expect.stringMatching(/Lathe: .*books-map role's account/) });
   });
 
   it("holds donated equipment set by hand to an account that is not a fixed asset", async () => {

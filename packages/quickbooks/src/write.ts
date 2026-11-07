@@ -3,7 +3,7 @@ import { sumCents } from "@checkin/money";
 import { QboRequestError, appKeyOf, assertAppKey, qboDate, type JournalEntryFields, type JournalLine, type QuickBooksClient, type TxnWrite } from "./client";
 import { billCandidate, depositCandidate, findMatch, journalCandidate, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
 import { CREATE, CREATE_JOURNAL } from "./internal";
-import type { BooksMapRole } from "./booksMap";
+import { LIVE_BOOKS_MAP_ROLES, type BooksMapRole } from "./booksMap";
 import { TEST_PREFIX } from "./guard";
 
 /** One lane record to find in QuickBooks, or create when the closed-books gate allows it. */
@@ -120,6 +120,11 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
   }
 }
 
+/** The accounts the books map's live roles book to; a retired role's stored account is free for per-item lines. */
+export function liveRoleAccountIds(accounts: Partial<Record<BooksMapRole, string>>): Set<string> {
+  return new Set(LIVE_BOOKS_MAP_ROLES.flatMap((r) => (accounts[r] ? [accounts[r]] : [])));
+}
+
 /** One line of an in-kind gift's journal entry, on the QuickBooks account it books to. */
 export interface InKindJournalLine {
   postingType: "Debit" | "Credit";
@@ -170,7 +175,7 @@ function inKindLine(l: InKindJournalLine, accounts: InKindJournalRequest["accoun
   const income = accounts.INKIND_INCOME;
   if (!income) throw new KindedError("settings", "The books map has no account for INKIND_INCOME");
   if (l.postingType === "Credit" && l.accountId !== income) throw new Error("An in-kind journal entry may credit only in-kind income");
-  if (l.postingType === "Debit" && Object.values(accounts).includes(l.accountId)) throw new Error(`An in-kind journal entry may not debit account ${l.accountId}, a books-map role's`);
+  if (l.postingType === "Debit" && liveRoleAccountIds(accounts).has(l.accountId)) throw new Error(`An in-kind journal entry may not debit account ${l.accountId}, a books-map role's`);
   if (l.postingType !== "Credit" && l.postingType !== "Debit") throw new Error(`An in-kind journal line must be a Debit or a Credit`);
   return { postingType: l.postingType, amountCents: l.amountCents, accountId: l.accountId, classId: l.classId, description: l.description };
 }

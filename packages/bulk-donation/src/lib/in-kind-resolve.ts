@@ -4,7 +4,7 @@
 // Set-account names a held line's account by hand, which the next book uses over every rule.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { appKeyOf, readCloseDate } from "@checkin/quickbooks";
+import { appKeyOf, liveRoleAccountIds, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { readDonationSettings } from "../services/settingsService";
@@ -14,7 +14,7 @@ import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSourc
 import type { AuditContext } from "../workflows/disbursement.actor";
 import {
   IN_KIND_HELD_STATES, IN_KIND_NOTE_CLEARED, answeredEntryRef, claimedDepositIds, inKindAccountsReady, inKindKey, inKindPostingOnAt,
-  lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
+  chartOfAccounts, lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
 
@@ -65,7 +65,7 @@ async function openRun(orgId: string, actor: Actor): Promise<Run> {
   if (!inKindAccountsReady(accounts)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
   const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness(orgId)]);
   const { open } = await inKindReadiness.giftsToBook(orgId, ctx);
-  return { orgId, book: true, actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId) };
+  return { orgId, book: true, actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId), qbAccounts: chartOfAccounts(client) };
 }
 
 /** The gift as its booking would carry it, refused unless booking is all it waits on. */
@@ -121,7 +121,7 @@ async function readMatch(run: Run, gift: GiftToBook, input: Extract<InKindQbReso
     const [je] = await run.client.journalEntriesByIds([input.journalEntryId]);
     if (!je) throw new ServiceError(422, `QuickBooks has no JournalEntry ${input.journalEntryId}`);
     if (dollarsToCents(je.TotalAmt) !== gift.totalCents) throw new ServiceError(422, `JournalEntry ${je.Id} is not for the gift's value`);
-    const roleAccounts = new Set(Object.values(run.accounts));
+    const roleAccounts = liveRoleAccountIds(run.accounts);
     const fits = (l: NonNullable<typeof je.Line>[number]) => {
       const detail = l.JournalEntryLineDetail;
       const account = detail?.AccountRef?.value;
@@ -253,8 +253,8 @@ async function setLineAccount(orgId: string, source: InKindSource, id: number, l
       : await tx.manualInKindDonationLine.findFirst({ where, select: { quickBooksAccountId: true } });
     if (!line) throw new ServiceError(404, "This gift has no such line");
     const data = { quickBooksAccountId };
-    if (source === "receipt") await tx.inKindDonationLine.update({ where: { id: lineId }, data });
-    else await tx.manualInKindDonationLine.update({ where: { id: lineId }, data });
+    if (source === "receipt") await tx.inKindDonationLine.updateMany({ where, data });
+    else await tx.manualInKindDonationLine.updateMany({ where, data });
     await recordEvent(tx, {
       orgId,
       entityType: ref.entityType,
