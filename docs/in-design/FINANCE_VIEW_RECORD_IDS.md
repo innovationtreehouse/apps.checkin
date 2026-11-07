@@ -6,8 +6,9 @@ came through. No code changes with this doc.
 
 **Status: under discussion, nothing is being built.** The log records one
 entry per page view (Q10 and Q11, decided). Which fields make a view a finance
-view is mostly decided (Q9); Q12, whether that narrows Board ruling B11, is open
-and may change the route-by-route design below.
+view is mostly decided (Q9). Narrowing Board ruling B11 to views that link
+people to money (Q12) is decided for now, pending the Board's confirmation at
+its next meeting; the boundary PR waits for that.
 
 ## The unit of logging: a page view (Q10 and Q11, decided)
 
@@ -333,6 +334,12 @@ B11's first PR (#2659) did. The order is:
 2. Boundary: the items in (1) above, with no migration.
 3. App code: the items in (2) above.
 
+**The register rewording lands with the boundary PR,** since the boundary PR is
+what narrows the log (Q12). The boundary PR **waits for the Board's
+confirmation** of that narrowing. If the Board says no, the field marks stay,
+and views of amounts with no person keep being logged: the mark then adds to
+the declared records, and does not replace them.
+
 ## Decided
 
 - **Payment plans record `programId:personId`.** One id per pending request
@@ -386,12 +393,32 @@ B11's first PR (#2659) did. The order is:
   - **Every image and stored receipt:** the file fields of a receipt and of a
     mail item carry the mark, so serving one to anyone other than its owner is
     always logged.
+- **B11 narrows to views that link people to money (Q12).** A view that shows
+  amounts with no person in it stops being logged. That covers:
+  - the payouts list (`GET /api/income/payouts`): amounts and dates, no people;
+  - gifts of goods shown to operations or inventory managers without the donor
+    (`GET /api/donations/in-kind/manual` under their no-donor view);
+  - a bucket approver's expense lines, without the submitter or reimbursee
+    (`GET /api/expense/expenses` under the approver view).
+
+  [Decision — owner, pending Board confirmation at its next meeting]
+
+  Draft wording for the `docs/rules/revenue.md` register line, for review only
+  (`revenue.md` is unchanged until the boundary PR):
+
+  > - Every view that links a person to money is recorded, other than a person's
+  >   view of their own: a donor, a buyer, a submitter, a person reimbursed, or
+  >   a person asking for a payment plan or a scholarship, seen beside a gift,
+  >   an amount or the request. The record holds who looked, which records, on
+  >   which page, and when, never what the records said. A view of amounts with
+  >   no person in it is not recorded, and neither is a count. Only the Board
+  >   reads the record.  [Decision — owner; Board ruling B11, narrowed]
 - **Log rows written before the change stay as they are.** Nothing converts
   them, and the search does not match their bare ids.  [Decision — owner]
 
 ## Open questions for @thpr
 
-Q2, Q3, Q5, Q6, Q7, Q8, Q10 and Q11 are settled or retired; their numbers stay retired.
+Q2, Q3, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
 
 - **Q1. The kind list.** Each kind is the noun on the Board's tab. For example,
   a row reads "Pat Lee (Finance) viewed 3 **expenses** on the finance queue" or
@@ -437,19 +464,6 @@ Q2, Q3, Q5, Q6, Q7, Q8, Q10 and Q11 are settled or retired; their numbers stay r
     `reviewedByUserId`, `boardAuthorizedByUserId`). These name who acted on a
     record, not who paid or was paid. Example: "Lee approved Sam's $42.10
     expense". Marked, or left off?
-
-- **Q12. Does this narrow Board ruling B11?** "Linking people to money" means a
-  view that shows amounts with no person is not logged. Today these are logged,
-  because the register line in `docs/rules/revenue.md` reads "every view of
-  finance records other than a person's own is recorded":
-  - the payouts list (`GET /api/income/payouts`): amounts and dates, no people;
-  - gifts of goods shown to operations and inventory managers without the donor
-    (`GET /api/donations/in-kind/manual` under their no-donor view);
-  - a bucket approver's expense lines, without the submitter or reimbursee
-    (`GET /api/expense/expenses` under the approver view).
-
-  Is that narrowing intended? If it is, the `revenue.md` line needs rewording,
-  and since B11 is a Board ruling, the change may need the Board's sign-off.
 
 ## Follow-ups outside this design
 
