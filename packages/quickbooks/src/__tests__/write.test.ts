@@ -2,8 +2,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
-import { createVendor, findOrCreate, findOrCreateInKindJournal, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
+import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
+import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
@@ -386,6 +386,28 @@ describe("findOrCreate", () => {
       await expect(findOrCreate(client(), req())).resolves.toEqual({ kind: "closed" });
       expect(posts()).toEqual([]);
     }
+  });
+
+  it("postFailure carries a refusal's fault codes and request id, and only a refusal's", () => {
+    expect(postFailure(new QboRequestError("QBO create failed 400 (intuit_tid=t1)", 400, "t1", ["2500"]))).toEqual({
+      error: "QBO create failed 400 (intuit_tid=t1): codes 2500", failure: "data", codes: ["2500"], requestId: "t1",
+    });
+    expect(postFailure(new Error("boom"))).toEqual({ error: "boom", failure: "bug" });
+  });
+
+  it("failed: a create that fails after the match read answered says QuickBooks answered", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("Deposit", []))
+      .mockResolvedValueOnce(prefs("2025-02-28"))
+      .mockResolvedValueOnce(new Response("down", { status: 503 }));
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", failure: "system", answered: true });
+  });
+
+  it("failed: a match read that fails does not say QuickBooks answered", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("down", { status: 503 }));
+    const result = await findOrCreate(client(), req());
+    expect(result).toMatchObject({ kind: "failed", failure: "system" });
+    expect(result).not.toHaveProperty("answered");
   });
 
   it("failed: a closing-date read that fails never falls through to a create", async () => {
