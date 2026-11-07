@@ -170,8 +170,10 @@ never which records were seen:
 
 - **Bound to the person.** An id merges only calls from the person who first
   used it.
-- **A short window.** Calls merge only within 30 seconds of the id's first call.
-  After that, a reused id starts a new row.
+- **A short window.** Calls merge only within 30 seconds of the row's first
+  call. After that, a call by the same person on the same path starts a new
+  page-view row with the same `pageViewId` and `pagePath`; it is not written
+  as an untagged call.  [Decision — owner]
 - **One path per id.** Calls merge only when they claim the same page path as
   the id's first call.
 - **A call that fails a limit is untagged (G3).** A tagged call from another
@@ -199,6 +201,17 @@ never which records were seen:
   there (`checkin-app/src/security/pageViewFolds.ts`). It covers the dynamic pages
   that the page registry (`checkin-app/src/components/pageRegistry.ts`) does not
   list.
+
+**A later load on the same page is a new page view (Decision — owner).** "Next
+page", or any other load the user triggers on a page they are already on, is a
+new page view, not raw API calls:
+
+- (a) A load more than 30 seconds after the row's first call starts a new
+  page-view row on the same id (the window above). PR 1 builds this.
+- (b) **Requirement for PR 3:** the browser wrapper mints a new page-view id on
+  every in-app navigation, a URL query change such as `?page=2` included.
+- **Open point for PR 3:** pagination that does not change the URL either
+  mints a new page-view id on that user action, or is left to (a). Not decided.
 
 A page's panels fold into its one entry. The receipt page's entry names r_9
 whether or not its change-history panel was opened. The expense page's entry
@@ -246,8 +259,12 @@ until then. The writer handles that in two steps:
   closed row is removed. The two showed the same records with the same field
   names on the same page, so no record or field is lost.
 
-A row whose person makes no later call keeps its `open:` key and is never
-collapsed. That costs a duplicate row, never a lost one. One person's calls
+"Never delete" means never delete a useful row. Removing an identical
+duplicate after its calls are unioned into the earlier row is allowed.
+[Decision — owner]
+
+A person's last page view is always written. It is checked against earlier
+duplicates at that person's next call. One person's calls
 are serialised by an advisory lock on the person, and a page-view id's first
 use by a second lock on the id.  [Decision — owner; approach as built in PR 1]
 

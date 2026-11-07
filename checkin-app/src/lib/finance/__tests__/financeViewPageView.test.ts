@@ -324,16 +324,29 @@ describe("recordFinanceViewCall", () => {
         expect(rows[1].calls).toEqual([expect.objectContaining({ endpoint: "GET /api/expense/expenses/[id]/reimbursee-vendor" })]);
     });
 
-    test("the window: a call past 30 s of the first starts a new row on the same id", async () => {
+    test("the window: a late call by the same person on the same path starts a new page-view row on the id", async () => {
         const { rows, client } = makeDb();
         await recordFinanceViewCall(expenseCall(), client);
         await recordFinanceViewCall(panelCall({ viewedAt: at(PAGE_VIEW_MERGE_MS + 1) }), client);
 
         expect(rows).toHaveLength(2);
-        expect(rows.map((r) => r.pageViewId)).toEqual(["pv-1", "pv-1"]);
+        expect(rows.map((r) => [r.pageViewId, r.pagePath])).toEqual([["pv-1", PAGE], ["pv-1", PAGE]]);
         expect(rows[0].viewKey).toBe(pageViewKey(PAGE, parseRecords(rows[0].records)));
         expect(String(rows[1].viewKey).startsWith(OPEN_VIEW_KEY_PREFIX)).toBe(true);
         expect(rows[1].viewedAt).toEqual(at(PAGE_VIEW_MERGE_MS + 1));
+    });
+
+    test("later calls past the window keep merging into the newest page-view row on the id", async () => {
+        const { rows, client } = makeDb();
+        await recordFinanceViewCall(expenseCall(), client);
+        await recordFinanceViewCall(panelCall({ viewedAt: at(PAGE_VIEW_MERGE_MS + 1) }), client);
+        await recordFinanceViewCall(expenseCall({
+            records: [{ ref: "Expense:e_124", fields: ["receiptTotalCents"] }],
+            viewedAt: at(PAGE_VIEW_MERGE_MS + 5000),
+        }), client);
+
+        expect(rows).toHaveLength(2);
+        expect(rows[1].recordIds).toEqual(["Expense:e_123", "Expense:e_124"]);
     });
 
     test("a reload is a new row while open, and collapses into the earlier one once both are finished", async () => {
