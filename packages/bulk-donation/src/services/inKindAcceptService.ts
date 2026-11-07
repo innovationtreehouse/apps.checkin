@@ -10,7 +10,7 @@ import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
 import type { CapitalReviewLine } from "../contract";
-import { ServiceError } from "@checkin/component-kit";
+import { ServiceError, kindOf, toHttpError } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { allocateCents } from "@checkin/money";
 
@@ -553,12 +553,20 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
  * Sends an accepted gift's lines once its decision has committed: the expense library has its own
  * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
  * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
+ * A send the callee refuses would be refused again, so finance sees why instead of being told to resend.
  */
 async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
   try {
     await getInKindCapital().submit(orgId, lines);
-  } catch {
-    throw new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+  } catch (err) {
+    if (kindOf(err) === "data") {
+      const refused = toHttpError(err);
+      throw new ServiceError(refused?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${refused?.message ?? (err instanceof Error ? err.message : String(err))}`, refused?.code);
+    }
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send failed`, err);
+    const failed = new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+    failed.cause = err;
+    throw failed;
   }
   const data = { capitalSubmittedAt: new Date() };
   if (source === "receipt") await db.inKindDonation.update({ where: { id }, data });

@@ -13,6 +13,7 @@ import { inKindService } from "../../services/inKindService";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import type { CapitalReviewLine, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
+import { ServiceError } from "@checkin/component-kit";
 
 const orgId = TEST_ORG_ID;
 const R1 = "22222222-2222-4222-8222-222222222222";
@@ -560,7 +561,11 @@ describeDb("capital review", () => {
     const id = await receiptGift();
     capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
     configure();
-    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 502 });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
+    expect(failed).toMatchObject({ status: 502, message: expect.stringMatching(/accept it again/), cause: expect.objectContaining({ message: "expense down" }) });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(`gift ${id}`), expect.objectContaining({ message: "expense down" }));
+    logged.mockRestore();
     const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
     expect(row).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
     expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
@@ -570,6 +575,16 @@ describeDb("capital review", () => {
     expect(sent).toHaveLength(1);
     expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).capitalSubmittedAt).not.toBeNull();
     expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "booking", waitingOn: ["booking"] });
+  });
+
+  it("a send capital review refuses keeps the accept and says why, not to accept again", async () => {
+    const id = await receiptGift();
+    capital = { submit: async () => { throw new ServiceError(404, "Organization not found"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
+    configure();
+    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
+    expect(failed).toMatchObject({ status: 404, message: expect.stringMatching(/refused.*Organization not found/) });
+    expect((failed as Error).message).not.toMatch(/accept it again/);
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
   });
 
   it("a gift with a line in capital review waits on it before booking", async () => {
