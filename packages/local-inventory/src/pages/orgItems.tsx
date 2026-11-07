@@ -7,7 +7,9 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
+import {
+  api, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
+} from "../components/api";
 import { CatalogPicker, LoadError } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
@@ -21,6 +23,7 @@ interface OrgItemRow {
   location: LocationRef | null;
   backstockLocation: LocationRef | null;
 }
+interface OrgItemsBag { OrgItem: OrgItemRow[]; InventoryProvisionalItem: ProvisionalName[] }
 
 const toId = (v: string | null) => (v ? Number(v) : null);
 
@@ -69,10 +72,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const [q] = useDebouncedValue(search.trim(), 300);
   const filter = new URLSearchParams({ ...(q ? { q } : {}), ...(unlocated ? { unlocated: "true" } : {}) });
   const order = new URLSearchParams({ sortBy, sortDir });
-  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const rows = useLoad<OrgItemsBag>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
   const count = useLoad<{ total: number }>(`/org-items/count?${filter}`, { keepPrevious: true });
   const locations = useLoad<LocationRef[]>("/locations");
-  const names = useCatalogNames((rows.data ?? []).map((r) => r.gtin13));
+  const items = rows.data?.OrgItem ?? null;
+  const names = withProvisionalNames(useCatalogNames((items ?? []).map((r) => r.gtin13)), rows.data?.InventoryProvisionalItem);
 
   const [form, setForm] = useState<ItemForm | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -137,7 +141,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   /** Show what moved on the server in the open form and check against it, keeping the manager's other edits. */
   async function reloadForm(gtin13: string) {
     reload();
-    const row = await api<OrgItemRow>(`/org-items/${gtin13}`).catch(() => null);
+    const row = await api<{ OrgItem: OrgItemRow }>(`/org-items/${gtin13}`).then((bag) => bag.OrgItem, () => null);
     if (!row) return;
     const fresh = editableValues(row);
     setForm((f) => {
@@ -201,11 +205,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {rows.data === null ? (
+          {items === null ? (
             <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">Loading…</Text></Table.Td></Table.Tr>
-          ) : rows.data.length === 0 ? (
+          ) : items.length === 0 ? (
             <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">No items found</Text></Table.Td></Table.Tr>
-          ) : rows.data.map((item) => (
+          ) : items.map((item) => (
             <Table.Tr key={item.id}>
               <Table.Td>{label(item.gtin13)}</Table.Td>
               <Table.Td ff="monospace">{formatGtinDisplay(item.gtin13)}</Table.Td>

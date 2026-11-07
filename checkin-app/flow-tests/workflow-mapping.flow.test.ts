@@ -48,8 +48,8 @@ const post = (s: Session, path: string, body?: unknown) =>
   api(s, path, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
 async function stock(s: Session): Promise<number> {
-  const res = await api<{ existingQuantity: number }>(s, `/api/inventory/org-items/${GTIN}`);
-  return res.status === 404 ? 0 : res.json.existingQuantity;
+  const res = await api<{ OrgItem: { existingQuantity: number } }>(s, `/api/inventory/org-items/${GTIN}`);
+  return res.status === 404 ? 0 : res.json.OrgItem.existingQuantity;
 }
 
 /** The expense booked from a receipt, read as FINANCE; the expense id is the receipt's receiptId. */

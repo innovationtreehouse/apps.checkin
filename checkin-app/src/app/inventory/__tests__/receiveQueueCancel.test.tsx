@@ -18,7 +18,7 @@ jest.mock("@checkin/local-inventory/components/api", () => ({
   useCanManage: () => true,
   useCatalogNames: () => new Map(),
   useLoad: (path: string) => ({
-    data: path.includes("includeFulfilled=true") ? [openRow, cancelledRow] : [openRow],
+    data: { ReceiveQueue: path.includes("includeFulfilled=true") ? [openRow, cancelledRow] : [openRow], InventoryProvisionalItem: [] },
     error: null,
     reload: jest.fn(),
   }),

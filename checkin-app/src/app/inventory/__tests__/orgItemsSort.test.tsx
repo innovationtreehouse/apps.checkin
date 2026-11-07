@@ -10,7 +10,7 @@ jest.mock("@checkin/local-inventory/components/api", () => ({
   useCatalogNames: () => new Map(),
   useLoad: (path: string | null) => {
     if (path) loaded.push(path);
-    return { data: path?.startsWith("/org-items/count") ? { total: 0 } : [], error: null, reload: jest.fn() };
+    return { data: path?.startsWith("/org-items/count") ? { total: 0 } : path?.startsWith("/org-items") ? { OrgItem: [], InventoryProvisionalItem: [] } : [], error: null, reload: jest.fn() };
   },
 }));
 
