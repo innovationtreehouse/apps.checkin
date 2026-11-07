@@ -1,171 +1,103 @@
 # Finance view log: record what was viewed, not a guess
 
 Design for making the finance view record (the finance-view rule in
-`docs/rules/revenue.md`) name the records each view showed and the screen it
-came through. No code changes with this doc.
+`docs/rules/revenue.md`) say exactly what each look at finance information
+showed: who looked, on which page, which records, and which sensitive fields
+of them. No code changes with this doc.
 
-**Status: under discussion, nothing is being built.** The log records one
-entry per page view (Q10 and Q11, decided). Which fields make a view a finance
-view is mostly decided (Q9). Narrowing Board ruling B11 to views that link
-people to money (Q12) is decided for now, pending the Board's confirmation at
-its next meeting; the boundary PR waits for that.
+**Status: under discussion, nothing is being built.** Decided except for:
 
-## The unit of logging: a page view (Q10 and Q11, decided)
-
-**The problem.** A page in the app loads its data from several API routes. The
-expense page for e_123 calls the expense detail route, then signoffs, line-item
-approvals, the reimbursee panel and the QuickBooks candidates. That is five
-calls. Each audited route writes its own log row, so one look at one expense
-can write up to five rows. The Board wants one entry: "Pat Lee viewed
-Expense:e_123 on /expense/expenses/e_123". The routes still decide what is sensitive, but the
-entry is the page view.
-
-**What the server can see.** The server sees only API calls. It does not know
-which page made a call, or that five calls came from one page load. The
-browser has no shared place where API calls go out: pages call `fetch()`
-directly, about 200 times across `checkin-app/src`.
-
-**Options.**
-
-- **(a) The browser tags each call with its page view; the server merges.**
-  Each page load mints a page-view id. Every API call from that page carries the
-  id and the page's path in a header. The server merges every audited call
-  carrying the same id into one log row: one page, every record seen on it. A
-  call with no tag (a script, a direct API call) still writes its own row, so
-  nothing goes unlogged and the fail-closed rule holds. The page path comes from
-  the browser, but the records named still come from what the server sent.
-  Cost: one global wrapper installed in the app shell that tags every
-  same-origin `/api` call, instead of editing 200 call sites.
-- **(b) Log per call, and group on the Board's tab.** The log stays as it is,
-  and the tab folds rows from the same person within a few seconds into one
-  entry. That is a guess again: two pages opened in two tabs fold into one.
-- **(c) The page reports its own view.** The page posts one "I showed these
-  records" event. A client can skip the post, so a view can go unlogged. This
-  breaks the rule that a view whose record cannot be written is refused, so it
-  cannot stand alone.
-
-**Decided: (a).** This follows from Q11: a per-page allowlist only makes sense
-when the browser tags each call with its page view.
-
-### Can it be fooled?
-
-The page-view id and the page path both come from the browser, so a client can
-lie about either. The design makes a lie cost **attribution only, never
-coverage**:
-
-- The records named always come from the stripped server responses, never
-  from the client.
-- Merging only ever adds record ids to the row. It never drops a call's
-  records and never skips a write.
-- The own-records exclusion (§5) is decided by the server from the records
-  themselves, never from the claimed path.
-- Leaving the header off produces more rows, not fewer.
-
-What a lie can still do:
-
-- **Reuse one id across pages.** Unrelated views fold into one row under one
-  page name, with coarser timing. Example: Pat opens expense e_123, then
-  receipt r_9, sending the same id both times; the log shows one entry, "on
-  the expense page", naming e_123 and r_9.
-- **Claim a different path.** Example: the expense page's calls arrive
-  labelled `/finance/review`, so the entry reads "viewed Expense:e_123 on
-  /finance/review". The record is right; the screen is wrong.
-
-Three server-side limits, proposed:
-
-- **Bound to the person.** A page-view id merges only calls from the person who
-  first used it. The same id from someone else starts their own row.
-- **A short window.** Calls merge only within 30 seconds of the id's first call.
-  After that, a reused id starts a new row.
-- **One path per id.** Calls merge only when they claim the same page path as
-  the id's first call. A call claiming another path starts a new row.
-
-With these, a lie can only merge one person's own calls, made within 30 seconds,
-under one page name. What it can still do is put the wrong page name on that
-entry. The Q11 allowlist closes that.
-
-**Q11. A per-page allowlist of routes.** @thpr suggested the server keep a map
-from each page to the API routes that page may fold into its entry. A call
-from a route not on its claimed page's list writes its own row. Example:
-
-| Page | Routes it may fold |
-|---|---|
-| `/expense/expenses/[id]` | expense detail, signoffs, line-item approvals, reimbursee-vendor, qb-candidates |
-| `/finance/review` | finance-queue |
-
-A call to `GET /api/donations/transactions` claiming `/expense/expenses/e_123`
-is not on that page's list, so it writes its own row and does not fold into
-the expense entry.
-
-- **What it buys over the three limits:** the words "on the X page" become
-  trustworthy. A client can no longer fold a donation view into an expense
-  entry, or label a finance-queue call as the expense page.
-- **What it costs:** every new panel or route a page calls has to be added to
-  the map. Until it is, that call logs as a separate row. That is safe (nothing
-  goes unlogged), just noisier, and the noise shows that the map is behind.
-- **Where it lives:** the page registry (`checkin-app/src/components/pageRegistry.ts`)
-  lists only named pages, not dynamic ones such as `/expense/expenses/[id]`
-  (it says so at its top and in `REGISTRY_EXCLUDED`). So the map needs a
-  declaration of its own beside the registry, or the registry has to grow
-  dynamic pages. The map decides what gets merged in the log, so it is a
-  boundary file either way.
-
-**Decided: keep the allowlist,** as a boundary declaration beside the page
-registry, together with the three limits.
-
-**Effect on the other questions.** Under (a), the panels on a record's page fold
-into that page's single entry:
-
-- Q3 (a receipt's change-history panel) is retired. The receipt page's entry
-  already names r_9.
-- Q6 (an empty reimbursee panel) is retired. The expense page's entry already
-  names e_123.
-
+- **Q12:** narrowing Board ruling B11 to views that link people to money is
+  decided for now, but waits for the Board's confirmation at its next meeting.
+  The boundary PR waits for it.
+- **Q14:** how to name the records that live outside the app (QuickBooks,
+  Benevity).
+- **Q15:** two decisions conflict. The field marks (Q9) cover every amount,
+  and Q12 says views of amounts with no person stop being logged.
 
 ## The problem
 
-The rule says the record holds "who looked, which records, through which screen,
-and when". Today the handler guesses two of those:
+The rule says the record holds "who looked, which records, through which
+screen, and when". Today the handler guesses two of those:
 
-- **Which records.** On an `auditedRead` route, `handler()` records
-  `row.id ?? row.payoutGid` for every top-level row of every key in the stripped
-  response (`checkin-app/src/security/handler.ts`). Nothing checks that the field
-  is the finance record's id, or that the row is a record at all.
-- **Which screen.** The row stores the registry key (`GET /api/expense/expenses/[id]`)
-  and the path params, never the query string. The Board's tab then guesses the
-  record kind from the path prefix (`checkin-app/src/lib/finance/financeViewKinds.ts`),
-  so everything under `/api/income` reads as "payout records".
+- **Which records.** On a route flagged `auditedRead: true`, `handler()` records
+  `row.id ?? row.payoutGid` for every top-level row of every key in the
+  stripped response (`checkin-app/src/security/handler.ts`). Nothing checks that
+  the field is the finance record's id, or that the row is a record at all.
+- **Which screen.** The row stores the API route's registry key
+  (`GET /api/expense/expenses/[id]`) and its path params, and no query string.
+  The Board's tab then guesses a noun from the path prefix
+  (`checkin-app/src/lib/finance/financeViewKinds.ts`), so everything under
+  `/api/income` reads as "payout records".
 
-An audit of every audited route (below) found the guess right on about half.
-The rest fail in five ways:
+An audit of every audited route found the guess right on about half. The rest
+fail in five ways:
 
-| Failure | Routes | Effect |
+| Failure | Example | Effect |
 |---|---|---|
-| No `id` on the row | finance-queue, signoffs, duplicate-group, payment-plans | No record named. |
-| The row's own bookkeeping id, not the record's | expense and income qb-exclusions, received-expense-payloads, disbursement-holds, disbursement-events, income reconciliation, both audit-log routes | The id names a bookkeeping row the Board cannot search for. |
-| Helper rows mixed in | expense detail (`ExpenseQueueReason`), line-item-approvals (buckets), expense-events (slim expenses), provisional-items, workflow detail, payout detail (balance transactions), payment-plans (`BoardSettings` as id `"1"`) | Wrong ids in the list, and `rowCount` inflated. |
-| Ids from two tables in one list | in-kind queue, in-kind by-bucket (`source` + `id`) | The same number names two different gifts. |
-| Nothing returned, so nothing logged | reimbursee-vendor and qb-candidates when empty | Opening an expense leaves no row, though the path names it. |
+| No `id` on the row | finance-queue rows carry `expenseId` | No record named. |
+| The row's own bookkeeping id | an income QuickBooks exclusion `id 7, qbTxnId "4412"` logs `7` | The id names a list entry nobody can search for. |
+| Helper rows mixed in | payment-plans sends `BoardSettings`, logged as record `"1"` | Wrong ids, inflated count. |
+| Ids from two tables in one list | the in-kind queue's `id: 5` is either `InKindDonation` 5 or `ManualInKindDonation` 5 | One number names two gifts. |
+| Nothing returned, nothing logged | an expense's empty reimbursee panel | The page was seen; no row. |
 
-Two more consequences:
-
-- **Repeats collapse wrongly.** The log keeps one row per person, view key and
-  fifteen-minute window, and the view key hashes the endpoint, path params and
-  record ids. A route that records no ids has the same key on every load, so
-  views of different finance-queue tabs within fifteen minutes collapse into
-  one row, and the later tabs are lost.
-- **Own records slip in.** Confirmations shows a Board member their own
-  reimbursements beside everyone else's, and logs all of them. The rule says a
-  person's own receipts are not recorded.
+It is also per API call, not per page: the expense page makes about five
+audited calls, so one look at one expense can write up to five rows.
 
 ## The design
 
-### 1. Each audited route declares what it shows
+### 1. What makes a view a finance view: marked fields
 
-`auditedRead: true` becomes a declaration of the records the route shows:
+Fields that link a person to money carry a mark (Q9, decided; the field list is
+under Decided). A view is logged when the response, **after the stripper has
+run**, carries a marked field on a record that is not the viewer's own. The
+`auditedRead` flag on each route is no longer what decides logging: a new route
+that sends a marked field is logged with nothing to remember.
+
+- **Where the mark lives.** A schema annotation beside `@sensitivity` on each
+  field, for example `/// @moneyLink` (the name is settled in the boundary
+  PR). It goes in each library's `schema.prisma`, and in the hand-authored
+  synthetic classification files for view models. The generator
+  (`checkin-app/scripts/security-generator.js`) carries the mark into the
+  generated classifications the handler reads. `packages/s-ingest-core` runs
+  the same generator, so `ShopOrder` is marked the same way.
+- **Stored files.** A receipt image, a mail item's file and a donation upload
+  file hold names and amounts inside their bytes, where no field can be seen.
+  Their file fields carry the mark, so serving one to anyone other than its
+  owner is always logged.
+- **Own records.** A record that belongs to the viewer is left out (the rule's
+  "other than a person's own"). The server decides this from the record's owner
+  field (`uploadedByUserId` on a receipt), never from anything the browser
+  says. A view that showed only the viewer's own records writes nothing. Today
+  this matters on the confirmations list, which shows a Board member their own
+  reimbursements beside everyone else's.
+- **Fail closed.** A view whose log row cannot be written is refused, as now.
+
+### 2. Which records a view names
+
+Each record is named `Model:id`: the schema model's name and the record's id.
+Examples: `Expense:e_123`, `Receipt:r_9`, `InKindDonation:5`,
+`ProgramParticipant:12:345`. There is no hand-kept list of nouns (Q1, decided).
+
+By default a record is the row that carries the marked field, named by its own
+model and `id`. A route declares its records only where that default is wrong:
+
+- **The row is a view model.** `FinanceQueueRow.expenseId` names an `Expense`.
+  A view model is not a stored model, so the declaration names the model the id
+  belongs to.
+- **The row points at another record (Q4, decided).** A QuickBooks exclusion
+  names QuickBooks transaction `qbTxnId`, not its own `id`.
+- **The id is several fields.** A payment plan is `programId` + `personId`.
+- **The row's table depends on a field.** An in-kind row is `InKindDonation` or
+  `ManualInKindDonation` by its `source`.
+- **The record is in the path or nested.** The duplicate review names each
+  member's `id` and `copyOfId`, each id in `dismissed`, and the receipt in the
+  path.
+
+The declaration sits on the route's registry entry:
 
 ```ts
-auditedRead: {
+financeView: {
   records: [
     { key: 'FinanceQueueRow', id: 'expenseId', model: 'Expense' },
     { key: 'FinanceQueueRow', id: 'receiptId', model: 'Receipt' },
@@ -174,315 +106,296 @@ auditedRead: {
 },
 ```
 
-- `key` is the bag key whose rows hold the records. A row of any other key is
-  never recorded or counted.
-- `id` is a field on the row, a nested path (`members[].id`), a list of fields
-  joined into one id (`['programId', 'personId']`), or a path param
-  (`{ param: 'id' }`). A row whose field is null contributes nothing.
-- `model` is the schema model the id belongs to (§3). It is left out when the
-  id is the row's own `id` on a stored model, since the row's model is then the
-  record's. It is needed only when the id points at another model, as
-  `FinanceQueueRow.expenseId` points at an `Expense`. It must name a model in
-  the classifications.
-- `query` lists the query parameters that pick the screen (§2).
-
-Ids are still read from the **stripped** response, so the log names only what
-left the server.
+- `key` is the bag key whose rows hold the records.
+- `id` is a field, a nested path (`members[].id`), a list of fields joined into
+  one id (`['programId', 'personId']`), or a path param (`{ param: 'id' }`).
+- `model` names the model the id belongs to. It must be a model in the
+  classifications.
+- `query` lists the query parameters that pick the screen (§4).
 
 **Checked when the server starts.** Registration throws when:
 
-- an audited route has no `records`;
+- a route can send a marked field on rows with no `id` and has no declaration;
 - a declared field is not classified on its model;
-- a declared `model` is not a model in the classifications;
-- a declared field's tier is not visible to every role in the route's
-  `orderedView` that reaches others' rows. If it were not, that role's views
-  would log nothing, silently.
+- a declared `model` is not in the classifications;
+- a declared id is not visible to every role in the route's `orderedView` that
+  can see the marked field. If it were not, that role's views would name no
+  record, silently.
 
-The guard test that keeps the audited list complete stays as it is.
+Ids are read from the stripped response, so the log names only what left the
+server.
 
-### 2. Log the exact request
+Records with no model in the app, a QuickBooks transaction or a Benevity
+disbursement, are Q14.
 
-Each row stores:
+### 3. Which marked fields were sent
 
-- the registry key, as now, for grouping;
-- the **concrete path** (`GET /api/expense/expenses/e_123/signoffs`);
-- the **declared query parameters only**, for example `{ "tab": "holds" }`.
+Each record in an entry lists the names of the marked fields the viewer was
+sent, never their values (Q13, decided). Example: Finance opening expense
+e_123 is sent `submitterId`, `reimburseePersonId` and `receiptTotalCents`. A
+bucket approver opening the same expense is sent only `receiptTotalCents`. The
+entry tells the two apart without anyone working it out from the role. Values
+stay out: the rule says "never what the records said". The Board sees the data
+itself by following the record's link, under its own access.
 
-Undeclared query parameters stay out. The reason is in the original B11 design:
-a search box carries whatever the viewer typed, often a donor's or vendor's
-name, which is content. The audit found no audited route that reads free text
-today; the allowlist keeps it that way when one is added. The declared query
-parameters go into the view key, so two tabs are two views.
+### 4. One entry per page view
 
-### 3. Store model-qualified record ids
+The log records one entry per page view, not per API call (Q10 (a) and Q11,
+decided).
 
-`recordIds` holds `Model:id` strings: the schema model's own name and the
-record's id. Examples: `Expense:e_123`, `Receipt:r_9`, `InKindDonation:5`,
-`ProgramParticipant:12:345`. There is no hand-kept list of kinds or nouns
-(Q1, decided); the model name comes from the classification. That:
+- **The browser tags each call.** Each page load mints a page-view id. Every API
+  call from that page carries the id and the page's path in a header. A single
+  wrapper installed in the app shell tags every same-origin `/api` call, so
+  none of the roughly 200 `fetch()` call sites change.
+- **The server merges.** The audited calls carrying one page-view id merge into
+  one row: the page, and every record and marked field seen on it. Merging only
+  ever adds records and field names to the row. It never drops a call's
+  records, and it never skips a write.
+- **Untagged calls write their own rows.** A call with no header (a script, a
+  direct API call) writes its own row, naming the API path in place of a page.
+  Leaving the header off produces more rows, never fewer.
+- **The API calls are kept.** The row lists each merged call's registry key,
+  concrete path (`GET /api/expense/expenses/e_123/signoffs`) and declared query
+  parameters (`{ "tab": "holds" }`). Undeclared query parameters stay out: a
+  search box carries whatever the viewer typed, often a donor's or vendor's
+  name, which is content.
 
-- tells two tables' ids apart (`InKindDonation:5`, `ManualInKindDonation:5`);
-- keeps "who looked at this expense" one indexed `has` query on `Expense:e_123`;
-- needs nothing maintained when a model is added.
+**Limits on merging.** The page-view id and the page path come from the browser,
+so a client can lie about them. A lie may cost the page name or the timing,
+never which records were seen:
 
-`rowCount` becomes the number of distinct records named, not the number of
-top-level rows.
+- **Bound to the person.** An id merges only calls from the person who first
+  used it.
+- **A short window.** Calls merge only within 30 seconds of the id's first call.
+  After that, a reused id starts a new row.
+- **One path per id.** Calls merge only when they claim the same page path as
+  the id's first call.
+- **A per-page allowlist (Q11).** A map from each page to the API routes it may
+  fold into its entry:
 
-The tab shows each entry as the exact information: "Pat Lee viewed
-Expense:e_123, Receipt:r_9 on /expense/expenses/e_123". It links an id to its
-page where the app has a page for that model (`Expense` → `/expense/expenses/<id>`),
-and otherwise shows it plain. `financeViewKinds.ts` (app code) becomes that
-model-to-page link map, and drops its prefix table and its nouns. `core.ts`
-gains no kind list.
+  | Page | Routes it may fold |
+  |---|---|
+  | `/expense/expenses/[id]` | expense detail, signoffs, line-item approvals, reimbursee-vendor, qb-candidates |
+  | `/finance/review` | finance-queue |
 
-Some records live outside the app's schema. A QuickBooks transaction
-(`qbTxnId`) and a Benevity disbursement (`disbursementId`) have no model. Q14
-asks how those are named.
+  A call from a route not on its claimed page's list writes its own row. So
+  "on /expense/expenses/e_123" can be trusted: no client can fold a donation
+  view into an expense entry. The cost is that each new panel must be added to
+  the map, and until it is, the panel logs as a row of its own. That is noisy
+  but never unlogged.
 
-### 4. Response changes the declarations need
+  The map decides what the log merges, so it is a boundary file. The isolation
+  workflow treats `checkin-app/src/security/*` as the boundary, so the map lives
+  there (`checkin-app/src/security/pageViewFolds.ts`). It covers the dynamic pages
+  that the page registry (`checkin-app/src/components/pageRegistry.ts`) does not
+  list.
 
-- **finance-queue:** a row for a receipt with no expense yet carries neither
-  `expenseId` nor the receipt id (`rowsOf` in
-  `packages/expense/src/services/financeQueueService.ts`). It needs `receiptId`
-  added to `FinanceQueueRow`, with a classification entry.
-- **in-kind queue and by-bucket:** these lists mix gifts of goods from two
-  tables. A gift that came in on a receipt is row 5 of `InKindDonation`; a gift
-  entered by hand is row 5 of `ManualInKindDonation`. Both reach the list as
-  `id: 5`, told apart only by the row's `source` field (`receipt` or `manual`),
-  so today the log records `5` for either. The declaration reads `source` and
-  records `InKindDonation:5` or `ManualInKindDonation:5`. This is a
-  mechanism detail, not a question.
+A page's panels fold into its one entry. The receipt page's entry names r_9
+whether or not its change-history panel was opened. The expense page's entry
+names e_123 even when its reimbursee panel is empty.
 
-### 5. Own records
+### 5. The log row
 
-On a route that shows a person their own records beside others', the handler
-drops the caller's own records from the ids before writing. A view that showed
-only their own writes nothing. This needs each declared model to name its owner
-field where it has one (`uploadedByUserId` on a receipt). Today only
-confirmations needs it.
+| Column | Holds |
+|---|---|
+| `viewedAt`, `actorId`, `role` | as now |
+| `pagePath` | the claimed page path, such as `/expense/expenses/e_123`; null on an untagged row |
+| `pageViewId` | the browser's page-view id; null on an untagged row |
+| `calls` | each merged call's registry key, concrete path and declared query |
+| `records` | each record as `{ ref: "Expense:e_123", fields: ["submitterId", "receiptTotalCents"] }` |
+| `recordIds` | the `ref`s alone, as text, for the GIN index ("who looked at Expense:e_123") |
+| `recordCount` | the number of distinct records |
+| `window`, `viewKey` | the repeat collapse (below) |
 
-## What each route would declare
+**Repeats.** An untagged row collapses repeats as now: one row per person, view
+key and fifteen-minute window. Its view key hashes the calls, the record refs
+**and their field names**. So a view that later shows the submitter of a record
+first seen with only its amount is a new view, and is not swallowed by the
+earlier one. The cost is more rows when the same records are seen through
+different fields.
 
-Each line names the record's model, or for a record outside the app, the
-outside record (Q14).
+A page-view row is keyed by person and page-view id, and the merge adds to it.
+A reload is a new page load, with a new id, so it is a new row. Collapsing
+identical page loads within the window is not done, because a row is complete
+only after its 30 seconds have passed. *Proposed; say if reloads should
+collapse.*
 
-"Today" is what the current handler records: ✓ the right ids, ✗ wrong or none.
+Rows written before the change stay as they are (decided).
 
-| Route | Records shown → declared id | Today |
-|---|---|---|
-| `GET /api/expense/expenses` | `Expense` ← `id`; query `view`, `active` | ✓ |
-| `GET /api/expense/queue` | `Expense` ← `id`; query `view` | ✓ |
-| `GET /api/expense/expenses/[id]` | `Expense` ← param `id`, not its lines (decided) | ✓ expense; reasons inflate count |
-| `GET /api/expense/expenses/[id]/line-item-approvals` | `Expense` ← param `id` | ✗ approval and bucket ids |
-| `GET /api/expense/expenses/[id]/signoffs` | `Expense` ← param `id` (decided) | ✗ none |
-| `GET /api/expense/expenses/[id]/reimbursee-vendor` | `Expense` ← param `id` | ✗ link-row id; nothing when empty |
-| `GET /api/expense/expenses/[id]/qb-candidates` | `Expense` ← param `id`; QuickBooks transaction (Q14) ← `ExpenseQbCandidateView.id` | ✗ expense missing; nothing when empty |
-| `GET /api/expense/finance-queue` | `Expense` ← `expenseId`; `Receipt` ← `receiptId` (§4); query `tab` | ✗ none |
-| `GET /api/expense/expense-events` | `Expense` ← `ExpenseEvent.expenseId` | ✗ event and expense ids mixed |
-| `GET /api/expense/received-expense-payloads` | `Receipt` ← `receiptId` (decided) | ✗ payload ids |
-| `GET /api/expense/qb-exclusions` | QuickBooks transaction (Q14) ← `qbTxnId` (decided) | ✗ exclusion ids |
-| `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` | ✓ |
-| `GET /api/expense/provisional-items` | not logged: catalog, not finance (decided) | ✗ mixed |
-| `GET /api/receipts` | `Receipt` ← `id`; query `state`, `pushed` | ✓ |
-| `GET /api/receipts/needs-attention` | `Receipt` ← `id` | ✓ |
-| `GET /api/receipts/confirmations` | `Receipt` ← `id`, minus own (§5) | ✓ ids, but logs own |
-| `GET /api/receipts/[id]` | `Receipt` ← param `id` | ✓ |
-| `GET /api/receipts/[id]/file` (file) | `Receipt` ← param `id` | ✓ |
-| `GET /api/receipts/[id]/audit-logs` | `Receipt` ← param `id`; folds into the receipt page's entry | ✗ history-entry ids |
-| `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) | ✗ none |
-| `GET /api/receipts/duplicate-queue` | registered, but no route or handler exists | — |
-| `GET /api/receipts/mail-items` | `ReceiptMailItem` ← `id` | ✓ |
-| `GET /api/receipts/mail-items/[id]/file` (file) | `ReceiptMailItem` ← param `id` | ✓ |
-| `GET /api/receipts/ignored-files` | depends on Q9: an ignore-list entry (file hash and reason) | ✗ |
-| `GET /api/workflow-mapping/receipts` | `ReceivedReceipt` ← `id`; query `state`, `receiptId` | ✓ |
-| `GET /api/workflow-mapping/receipts/[id]` | `ReceivedReceipt` ← param `id` | ✓ id; helper and line rows inflate |
-| `GET /api/workflow-mapping/audit-log` | `ReceivedReceipt` ← `receivedReceiptId`; query `receiptId`; folds into its page's entry | ✗ history-entry ids |
-| `GET /api/donations/transactions` | `Transaction` ← `id`; query `assigned` | ✓ |
-| `GET /api/donations/transactions/unassigned` | `Transaction` ← `id` | ✓ |
-| `GET /api/donations/transactions/[id]` | `Transaction` ← param `id` | ✓ |
-| `GET /api/donations/uploaded-files` | `UploadedFile` ← `id` | ✓ |
-| `GET /api/donations/uploaded-files/[id]/blob` (file) | `UploadedFile` ← param `id` | ✓ |
-| `GET /api/donations/comment-rules` | depends on Q9: a matching rule that carries donor comment text | ✗ rule ids |
-| `GET /api/donations/disbursement-holds` | Benevity disbursement (Q14) ← `disbursementId`; `Transaction` ← `transactionId` (decided) | ✗ hold ids |
-| `GET /api/donations/disbursement-events` | Benevity disbursement (Q14) ← `disbursementId` (decided) | ✗ event ids |
-| `GET /api/donations/in-kind/manual` | `ManualInKindDonation` ← `id` | ✓ |
-| `GET /api/donations/in-kind/manual/[id]` | `ManualInKindDonation` ← param `id` | ✓ |
-| `GET /api/donations/in-kind/receipt/[id]` | `InKindDonation` ← param `id` | ✓ |
-| `GET /api/donations/in-kind/queue` | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` (§4) | ✗ ids collide |
-| `GET /api/donations/in-kind/by-bucket` | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` (§4) | ✗ ids collide |
-| `GET /api/income/payouts` | `ShopPayout` ← `payoutGid` | ✓ |
-| `GET /api/income/payouts/[gid]` | `ShopPayout` ← param `gid` | ✓ payout; reconciliation id and balance rows mixed in |
-| `GET /api/income/reconciliation` | `ShopPayout`, or a Benevity disbursement (Q14), by `source` ← `payoutGid` (decided) | ✗ reconciliation ids |
-| `GET /api/income/reconciliation/[id]/candidates` | QuickBooks transaction (Q14) ← `IncomeQbDepositView.id` | ✓ deposits; the payout only in the path |
-| `GET /api/income/qb-exclusions` | QuickBooks transaction (Q14) ← `qbTxnId` (decided) | ✗ exclusion ids |
-| `GET /api/income/items` | not audited (decided) | — |
-| `GET /api/finance-ops/payments` | `PaymentException` ← `id` | ✓ |
-| `GET /api/finance-ops/payment-plans` | `ProgramParticipant` ← `['programId','personId']` (decided) | ✗ none; `BoardSettings` as `"1"` |
-| `GET /api/finance-ops/membership-payment-plans` | `OrgMembershipProcess` ← `id` | ✓ |
+### 6. The Board's tab
+
+Each entry reads as the exact information:
+
+> Pat Lee (Finance) viewed Expense:e_123 (submitterId, reimburseePersonId,
+> receiptTotalCents), Receipt:r_9 (receiptTotalCents) on
+> /expense/expenses/e_123, 6 Nov 2026 14:05
+
+- Each `Model:id` links to that record's page where the app has one
+  (`Expense` → `/expense/expenses/<id>`), and is shown plain otherwise.
+  `financeViewKinds.ts` becomes this model-to-page link map, and drops its
+  prefix table and nouns.
+- The field names follow each record, in brackets, as plain text.
+- An untagged row shows the API path where a page would be, such as "via
+  GET /api/expense/finance-queue?tab=holds".
+- The record search matches `recordIds`, as now.
+
+## Records each route names
+
+Most routes name each row by its own model and `id`, and need no declaration.
+These are the ones that do. Whether a route is logged at all follows from the
+marked fields it sends.
+
+| Route | Records named |
+|---|---|
+| `GET /api/expense/finance-queue` | `Expense` ← `expenseId`; `Receipt` ← `receiptId`; query `tab` |
+| `GET /api/expense/expenses/[id]` and its panels | `Expense` ← param `id`, not its lines (decided) |
+| `GET /api/expense/expense-events` | `Expense` ← `ExpenseEvent.expenseId` |
+| `GET /api/expense/received-expense-payloads` | `Receipt` ← `receiptId` (Q4) |
+| `GET /api/expense/qb-exclusions`, `GET /api/income/qb-exclusions` | QuickBooks transaction ← `qbTxnId` (Q4, Q14) |
+| `GET /api/expense/expenses/[id]/qb-candidates`, `GET /api/income/reconciliation/[id]/candidates` | QuickBooks transaction ← the candidate's `id` (Q14) |
+| `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` (a view model) |
+| `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) |
+| `GET /api/receipts`, needs-attention, confirmations, `[id]` | `Receipt` ← `id` (view models of `Receipt`) |
+| `GET /api/workflow-mapping/receipts`, `[id]`, audit-log | `ReceivedReceipt` ← `id`, or ← `receivedReceiptId` on the audit log |
+| `GET /api/donations/disbursement-holds` | Benevity disbursement ← `disbursementId` (Q14); `Transaction` ← `transactionId` (Q4) |
+| `GET /api/donations/disbursement-events` | Benevity disbursement ← `disbursementId` (Q4, Q14) |
+| `GET /api/donations/in-kind/queue`, by-bucket | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` |
+| `GET /api/donations/in-kind/receipt/[id]`, `manual/[id]` | `InKindDonation` / `ManualInKindDonation` ← param `id` |
+| `GET /api/income/payouts`, `payouts/[gid]` | `ShopPayout` ← `payoutGid`, or ← param `gid` |
+| `GET /api/income/reconciliation` | `ShopPayout`, or a Benevity disbursement (Q14), by `source` ← `payoutGid` (Q4) |
+| `GET /api/finance-ops/payments` | `PaymentException` ← `id` (a view model) |
+| `GET /api/finance-ops/payment-plans` | `ProgramParticipant` ← `['programId','personId']` (decided) |
+| file routes (receipt file, mail-item file, donation upload) | the file's record ← param `id` |
+
+Not logged, by decision: `GET /api/income/items` (an item-to-bucket mapping)
+and `GET /api/expense/provisional-items` (catalog), whatever marks they carry.
+
+The finance-queue's intake rows need a response change. A row for a receipt
+with no expense yet carries neither `expenseId` nor the receipt id (`rowsOf` in
+`packages/expense/src/services/financeQueueService.ts`), so `receiptId` is added
+to `FinanceQueueRow`, with its classification.
 
 ## The PR split
 
-1. **Boundary:** the declaration grammar and the start-up checks in `core.ts`;
-   the handler and file handler reading declarations; the concrete path and
-   declared query on the log row; model-qualified ids; every audited registry
-   entry's declaration; `receiptId` in `FinanceQueueRow`'s classification;
-   dropping `auditedRead` from `GET /api/income/items`. No migration (see
-   below).
-2. **App code:** `receiptId` in the finance-queue rows; `financeViewKinds.ts`
-   becomes a model-to-page link map; the tab shows the page path, the
-   model-qualified ids and the query.
+1. **App code: the log table.** An additive migration for the new columns
+   (`pagePath`, `pageViewId`, `calls`, `records`, `recordCount`, and the index
+   on person and page-view id), and the writer that fills them and merges a
+   page view's calls. Nothing calls the new path yet. It ships first and on its
+   own: the boundary isolation workflow
+   (`.github/workflows/security-boundary-isolation.yml`) does not accept
+   `prisma/migrations/` beside a boundary change, as with B11's first PR
+   (#2659).
+2. **Boundary: what is logged.** The mark annotation in every library schema and
+   synthetic classification file, and in the generator. The handler and file
+   handler logging from marks, with own-record exclusion and record naming.
+   Every needed `financeView` declaration. The page-view header with its limits,
+   and the page allowlist map. `receiptId` in `FinanceQueueRow`'s
+   classification. Retiring the `auditedRead` flag and its guard test, which
+   the start-up checks replace. The reworded `docs/rules/revenue.md` register
+   line. **It waits for the Board's confirmation of Q12.** If the Board says
+   no, the marks stay, and views of amounts with no person keep being logged;
+   Q15 then needs answering again.
+3. **App code: the browser and the tab.** The app-shell wrapper that tags each
+   `/api` call; `receiptId` in the finance-queue rows; `financeViewKinds.ts` as
+   the model-to-page link map; the tab's new entry.
 
-Until (2) adds `receiptId`, the declared field is absent and an intake row
-records nothing, as today.
-
-**The migration ships first, on its own.** The boundary isolation workflow
-(`.github/workflows/security-boundary-isolation.yml`) does not accept
-`prisma/migrations/` as a companion of a boundary change; only a whole-entry
-decommission may carry one. So any new log columns land first in an app-code
-PR: an additive migration plus the writer changes that fill the columns, as
-B11's first PR (#2659) did. The order is:
-
-1. App code: the additive migration and the writer.
-2. Boundary: the items in (1) above, with no migration.
-3. App code: the items in (2) above.
-
-**The register rewording lands with the boundary PR,** since the boundary PR is
-what narrows the log (Q12). The boundary PR **waits for the Board's
-confirmation** of that narrowing. If the Board says no, the field marks stay,
-and views of amounts with no person keep being logged: the mark then adds to
-the declared records, and does not replace them.
+Until (3) ships, no call carries the header, so every call writes its own row,
+as today but with exact records and fields.
 
 ## Decided
 
-- **Payment plans record `programId:personId`.** One id per pending request
-  shown.  [Decision — owner]
-- **The duplicate review records everything it displays:** each member's `id`
-  and `copyOfId`, each id in `dismissed`, and the receipt in the path.
+- **The unit is the page view (Q10 (a)).** The browser tags each API call with a
+  page-view id and the page path; the server merges one person's calls carrying
+  that id into one row, within 30 seconds and under one path. Untagged calls
+  write their own rows.  [Decision — owner]
+- **A per-page allowlist of routes (Q11).** A boundary declaration lists the
+  routes each page may fold into its entry. A call from a route not on its
+  claimed page's list writes its own row.  [Decision — owner]
+- **No nouns (Q1).** An entry shows the exact page path and each record as
+  `Model:id`. Example: "Pat Lee viewed Expense:e_123, Receipt:r_9 on
+  /expense/expenses/e_123", not "viewed 3 expenses on the expense page".
   [Decision — owner]
-- **Signoffs record the expense in the path, not its lines.**  [Decision — owner]
-- **Expense detail records the expense, not its lines.** The lines always belong
-  to that expense, so naming the expense says what was seen.  [Decision — owner]
-- **`GET /api/income/items` is not logged.** It maps Shopify variants to
-  buckets; that mapping is not a finance record.  [Decision — owner]
-- **Catalog items and mappings are not logged.** They are inventory, not finance
-  information. This covers `GET /api/expense/provisional-items`.  [Decision — owner]
+- **Marked field names, never values (Q13).** Each record lists the marked
+  fields sent. Example: "Pat Lee viewed `Expense:e_123` (`submitterId`,
+  `receiptTotalCents`) on `/expense/expenses/e_123`".  [Decision — owner]
+- **Fields that link a person to money carry a mark (Q9),** and a view is logged
+  when the response sent carries a marked field on a record that is not the
+  viewer's own.  [Decision — owner] The marked fields:
+  - every `…Cents` amount (but see Q15);
+  - a donor's name and comment text (no schema stores a donor's email or
+    address);
+  - the person reimbursed and the vendor on an expense (but see Q15);
+  - **the submitter:** `Receipt.uploadedByUserId` and `Expense.submitterId`;
+  - **the cardholder:** no field names one today, and the submitter of a
+    card-charge expense covers it. Any cardholder field added later carries the
+    mark;
+  - **the Shopify buyer:** `ShopOrder.customerName` and `customerEmail`, and
+    `PaymentQueueRow.familyName` and `familyEmail` as the same buyer;
+  - **refunds, as purchases:** a refund links to a person through its order,
+    so a refund view that shows the buyer is logged the same way as the
+    purchase;
+  - **every payment plan,** membership plans included, though they carry no
+    amount: the request fields `isPaymentPlanRequested` and
+    `scholarshipRequestKind` on both `ProgramParticipant` and
+    `OrgMembershipProcess`;
+  - **scholarships and financial aid:** on `ProgramParticipant`, also
+    `inventoryHeldAt`, `paymentPlanDeniedAt` and `seatTakenWithoutSaleAt`, per
+    `docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md`;
+  - **matched gifts, employer included:** `Transaction.companyName` and
+    `matchAmountCents`;
+  - **company donors:** `InKindDonation.donorCompanyName` and
+    `Receipt.donorCompanyName`. Benevity's rules forbid the organisation from
+    saying publicly which company gave or matched;
+  - **every image and stored receipt, and the donation upload file:** the file
+    fields of a receipt, a mail item and an uploaded Benevity CSV (which holds
+    employers and donor names).
+- **Not marked:** QuickBooks account names, and the ids of approvers and
+  reviewers (`approvedByUserId`, `decidedByUserId`, `reviewedByUserId`,
+  `boardAuthorizedByUserId`). They name who acted on a record, not who paid or
+  was paid.  [Decision — owner]
+- **Rows that point at a finance record name that record (Q4),** not the row's
+  own id. Example: Income → QuickBooks exclusions lists `id 7, qbTxnId "4412"`,
+  and the log names transaction 4412, not 7. The six screens: income and
+  expense QuickBooks exclusions (`qbTxnId`), received expense payloads
+  (`receiptId`), disbursement holds (`disbursementId` and `transactionId`),
+  disbursement events (`disbursementId`), and income reconciliation
+  (`payoutGid`).  [Decision — owner]
+- **Payment plans name `programId:personId`;** the duplicate review names
+  everything it displays; signoffs and expense detail name the expense, not its
+  lines.  [Decision — owner]
+- **Not logged:** `GET /api/income/items` (variants mapped to buckets) and
+  catalog items and mappings such as `GET /api/expense/provisional-items`. They
+  are inventory, not finance information.  [Decision — owner]
 - **"Payout record" means a payout from Shopify, and nothing else.**
   [Decision — owner]
-- **QuickBooks account names are not on the list.** The sensitive part is
-  linking people to money; an account name is neither.  [Decision — owner]
-- **The starting list of fields that link a person to money stands:** every
-  `…Cents` amount; a donor's name, email, address and comment text; and the
-  person reimbursed and the vendor on an expense.  [Decision — owner]
-- **One log entry per page view (Q10 (a)).** The browser tags each API call
-  with a page-view id and the page path; the server merges one person's calls
-  carrying that id into one row, within 30 seconds and under one path.
-  Untagged calls write their own rows.  [Decision — owner]
-- **A per-page allowlist of routes (Q11).** A boundary declaration beside the
-  page registry lists the routes each page may fold into its entry. A call from
-  a route not on its claimed page's list writes its own row.  [Decision — owner]
-- **Fields that link a person to money carry a mark,** and a view is logged
-  when the response sent contains a marked field on a record that is not the
-  viewer's own (Q9). The marked fields beyond the starting list:  [Decision — owner]
-  - **The submitter:** `Receipt.uploadedByUserId` and `Expense.submitterId`.
-  - **The cardholder:** no field names one today; the submitter of a
-    card-charge expense covers it. Any cardholder field added later carries the
-    mark.
-  - **The Shopify buyer:** `ShopOrder.customerName` and `customerEmail`, and
-    `PaymentQueueRow.familyName` and `familyEmail` as the same buyer.
-  - **Refunds, as purchases:** a refund links to a person through its order,
-    so a refund view that shows the buyer is logged the same way as the
-    purchase.
-  - **Every payment plan,** including membership payment plans, which carry no
-    amount. On a plan or request record the request fields themselves carry the
-    mark: `isPaymentPlanRequested` and `scholarshipRequestKind` on both
-    `ProgramParticipant` and `OrgMembershipProcess`.
-  - **Scholarships and financial aid:** on `ProgramParticipant`, the
-    scholarship hold-ledger fields as well: `inventoryHeldAt` (a seat held for
-    a request), `paymentPlanDeniedAt` and `seatTakenWithoutSaleAt` (a seat
-    given without a sale), per `docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md`.
-  - **Matched gifts, employer names included:** `Transaction.companyName` and
-    `matchAmountCents`.
-  - **Every image and stored receipt:** the file fields of a receipt and of a
-    mail item carry the mark, so serving one to anyone other than its owner is
-    always logged.
-- **Rows that point at a finance record log that record (Q4),** not the row's
-  own id. Example: Income → QuickBooks exclusions lists `id 7, qbTxnId "4412"`;
-  the log names QuickBooks transaction 4412, not 7. The six screens:  [Decision — owner]
-
-  | Screen | Logs |
-  |---|---|
-  | Income QuickBooks exclusions | the QuickBooks transaction (`qbTxnId`) |
-  | Expense QuickBooks exclusions | the QuickBooks transaction (`qbTxnId`) |
-  | Received expense payloads | the receipt it came from (`receiptId`) |
-  | Disbursement holds | the disbursement (`disbursementId`) and the donation (`transactionId`) |
-  | Disbursement events | the disbursement (`disbursementId`) |
-  | Income reconciliation | the payout or disbursement (`payoutGid`) |
-- **B11 narrows to views that link people to money (Q12).** A view that shows
-  amounts with no person in it stops being logged. That covers:
-  - the payouts list (`GET /api/income/payouts`): amounts and dates, no people;
-  - gifts of goods shown to operations or inventory managers without the donor
-    (`GET /api/donations/in-kind/manual` under their no-donor view);
-  - a bucket approver's expense lines, without the submitter or reimbursee
-    (`GET /api/expense/expenses` under the approver view).
-
+- **Log rows written before the change stay as they are.**  [Decision — owner]
+- **B11 narrows to views that link people to money (Q12).** A view of amounts
+  with no person in it stops being logged: the payouts list, gifts of goods
+  shown to operations or inventory managers without the donor, and a bucket
+  approver's expense lines without the submitter or reimbursee.
   [Decision — owner, pending Board confirmation at its next meeting]
 
-  Draft wording for the `docs/rules/revenue.md` register line, for review only
-  (`revenue.md` is unchanged until the boundary PR):
+  Draft wording for the `docs/rules/revenue.md` register line, for review only.
+  `revenue.md` is unchanged until the boundary PR:
 
   > - Every view that links a person to money is recorded, other than a person's
   >   view of their own: a donor, a buyer, a submitter, a person reimbursed, or
   >   a person asking for a payment plan or a scholarship, seen beside a gift,
-  >   an amount or the request. The record holds who looked, which records, on
-  >   which page, and when, never what the records said. A view of amounts with
-  >   no person in it is not recorded, and neither is a count. Only the Board
-  >   reads the record.  [Decision — owner; Board ruling B11, narrowed]
-- **No list of kinds or nouns (Q1).** An entry shows the exact information: the
-  concrete page path, and each record as `Model:id`, the model taken from the
-  classification. Example: "Pat Lee viewed Expense:e_123, Receipt:r_9 on
-  /expense/expenses/e_123", not "viewed 3 expenses on the expense page".
-  [Decision — owner]
-- **The donation upload file carries the mark.** The stored Benevity CSV behind
-  `GET /api/donations/uploaded-files/[id]/blob` holds employers and donor names,
-  so serving it is always logged.  [Decision — owner]
-- **Company donors carry the mark:** `InKindDonation.donorCompanyName` and
-  `Receipt.donorCompanyName`, beside `Transaction.companyName` (the Benevity
-  employer, already marked). Benevity's rules forbid the organisation from
-  saying publicly which company gave or matched, so a view that shows it is
-  logged.  [Decision — owner]
-- **Log rows written before the change stay as they are.** Nothing converts
-  them, and the search does not match their bare ids.  [Decision — owner]
+  >   an amount or the request. The record holds who looked, which records and
+  >   which of their sensitive fields, on which page, and when, never what the
+  >   records said. A view of amounts with no person in it is not recorded, and
+  >   neither is a count. Only the Board reads the record.  [Decision — owner;
+  >   Board ruling B11, narrowed]
 
 ## Open questions for @thpr
 
-Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
-
-- **Q9. Which fields make a view a finance view: what is left.** The rule and
-  most of the list are decided (see Decided). One item is left to confirm:
-  - **Approvers and reviewers** (`approvedByUserId`, `decidedByUserId`,
-    `reviewedByUserId`, `boardAuthorizedByUserId`). These name who acted on a
-    record, not who paid or was paid. Example: "Lee approved Sam's $42.10
-    expense". Marked, or left off?
-
-- **Q13. Record which marked fields were sent?** An entry could also list the
-  marked fields the response carried: names only, never values. Example: Pat
-  opens expense e_123 as Finance and is sent `Expense.submitterId`,
-  `Expense.reimburseePersonId` and `Expense.receiptTotalCents`. A bucket
-  approver opening the same expense is sent only `Expense.receiptTotalCents`.
-  - **For:** the entry answers "did they see who was paid, or only the
-    amount?" without anyone working it out from the role and the route.
-  - **Against:** every row is larger, and the field names go into the view
-    key. The same records seen through a different set of fields count as a
-    separate view, and a route that adds a marked field changes its view key.
-
-  Record the field names?
+Q1 to Q13 are settled or retired; their numbers stay retired.
 
 - **Q14. Records with no model in the app.** Some ids name records that live
-  only in another system: a QuickBooks transaction (`qbTxnId` on both
-  QuickBooks exclusion lists, and the ids on the two QuickBooks candidate
-  lists), and a Benevity disbursement (`disbursementId` on disbursement holds
-  and events, and Benevity rows in income reconciliation). No schema model
-  names them. Options:
+  only in another system: a QuickBooks transaction (`qbTxnId` on both QuickBooks
+  exclusion lists, and the ids on the two QuickBooks candidate lists), and a
+  Benevity disbursement (`disbursementId` on disbursement holds and events, and
+  Benevity rows in income reconciliation). No schema model names them. Options:
   - (a) name them by the field they came from, for example
     `IncomeQbMatchExclusion.qbTxnId:4412`. It is exact and needs no list, but
     one QuickBooks transaction has a different name on each screen, so "who
@@ -494,12 +407,34 @@ Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their n
 
   Which?
 
+- **Q15. Amounts alone, and the vendor.** Two decisions conflict:
+  - Q9 marks every `…Cents` amount and the vendor, and logs a view that carries
+    **any** marked field.
+  - Q12 says a view of amounts with no person stops being logged.
+
+  Examples:
+  - The payouts list sends `IncomePayoutView.netCents`. That is an amount,
+    marked under Q9, so it would be logged, but Q12 says it is not.
+  - A bucket approver's expense list sends `Expense.receiptTotalCents` and
+    `Expense.vendorName`, both marked under Q9, so it would be logged, but Q12
+    lists it as not logged.
+
+  Proposed: two kinds of mark. A **who** mark (submitter, reimbursee, donor,
+  company donor, buyer, the person on a payment plan) and a **money** mark
+  (amounts, and the payment-plan and aid fields). A view is logged when one
+  record carries both. Stored files carry both. Under that:
+  - the payouts list (money only) is not logged;
+  - a payment-plan request (the person, and the request) is logged;
+  - an approver's expense list is logged only if the vendor is a **who**.
+
+  Is the two-mark rule right? And is the vendor a **who** (an approver's list is
+  then logged) or not (it is not)?
+
 ## Follow-ups outside this design
 
 - A candidate register line for `docs/rules/revenue.md`, for @thpr to word. The
   register has nothing on Benevity today: "Which company gave or matched
   through Benevity is not said publicly (Benevity's rules)." Not edited in
   this design PR.
-
-- `GET /api/receipts/duplicate-queue` is registered and audited but has no route
-  or handler. Removing the entry is a boundary decommission of its own.
+- `GET /api/receipts/duplicate-queue` is registered and audited, but no route or
+  handler serves it. Removing the entry is a boundary decommission of its own.
