@@ -365,7 +365,9 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - Finance may release a row with fees but no amount once its fee is booked by hand
   in QuickBooks. The release records who and when, keeps the fee amount, and
-  removes the fee from the automated booking. It is final.  [Decision — owner]
+  removes the fee from the automated booking. The batch's deposit then doesn't
+  match the bank deposit on its own, and finance settles that match by hand. It
+  is final.  [Decision — owner]
 
 - Every finished giving-platform batch must match one deposit in the books.
   Finance settles any the app can't match and records why. [Decision]

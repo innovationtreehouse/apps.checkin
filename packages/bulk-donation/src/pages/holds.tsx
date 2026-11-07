@@ -82,7 +82,7 @@ export default function HoldsPage() {
       <Pager page={page} onChange={setPage} rows={holds.data} />
       <Modal opened={releasing !== null} onClose={() => setReleasing(null)} title="Release this fees-only row?">
         <Text size="sm" mb="md">
-          Only release it once the fee is booked by hand in QuickBooks. The app keeps the fee amount and records who released it, but books nothing for it. The release can&apos;t be undone.
+          Only release it once the fee is booked by hand in QuickBooks. The app keeps the fee amount and records who released it, but books nothing for it. The batch&apos;s deposit then won&apos;t match the bank deposit on its own, so you settle that match by hand. The release can&apos;t be undone.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={() => setReleasing(null)}>Cancel</Button>
