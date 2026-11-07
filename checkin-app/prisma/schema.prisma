@@ -1732,8 +1732,55 @@ model CronRunLog {
   /// Drives "is this job still working", independently of `success`.
   /// @sensitivity:internal
   error      String?
+  /// Count of this run's failures per failure kind, e.g. {"connection": 2}. Null when not recorded.
+  /// @sensitivity:internal
+  failuresByKind Json?
 
   @@index([job, success, finishedAt])
+}
+
+/// One ongoing system or connection problem, so repeated failures raise one alert
+/// with reminders and a recovery notice.
+model OpsIncident {
+  /// @sensitivity:internal
+  id                 Int       @id @default(autoincrement())
+  /// Groups failures that are the same problem.
+  /// @sensitivity:internal
+  key                String
+  /// Equals `key` while the incident is open and is null once closed: the unique
+  /// index allows one open incident per key.
+  /// @sensitivity:internal
+  openKey            String?   @unique
+  /// @sensitivity:internal
+  cause              String
+  /// @sensitivity:internal
+  kind               String
+  /// @sensitivity:internal
+  lanes              String[]  @default([])
+  /// @sensitivity:internal
+  firstSeenAt        DateTime  @default(now())
+  /// @sensitivity:internal
+  lastSeenAt         DateTime  @default(now())
+  /// @sensitivity:internal
+  notifiedAt         DateTime?
+  /// @sensitivity:internal
+  lastRemindedAt     DateTime?
+  /// @sensitivity:internal
+  escalatedAt        DateTime?
+  /// @sensitivity:internal
+  closedAt           DateTime?
+  /// @sensitivity:internal
+  recoveryNotifiedAt DateTime?
+  /// @sensitivity:internal
+  runsSeen           Int       @default(1)
+  /// @sensitivity:internal
+  itemsAffected      Int       @default(0)
+  /// Error codes only; never personal or finance data.
+  /// @sensitivity:internal
+  detail             String?
+
+  @@index([key])
+  @@index([closedAt])
 }
 
 /// An off-diagram lifecycle row some digest has already reported. Deleted when the
