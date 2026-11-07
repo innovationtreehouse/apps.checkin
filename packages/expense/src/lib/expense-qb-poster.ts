@@ -449,6 +449,8 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
       switch (result.kind) {
         case "lookup":
           if (result.own.kind === "own") return linkCreated(tx, result.own.entry.Id, "the app had already booked this expense");
+          // A lookup QuickBooks could not answer created nothing, so the next run simply looks again.
+          if (result.own.kind === "failed" && result.own.failure.failure in UNCHARGED) return recordFailure(tx, before, result.own.failure, runAnswered);
           return settle(tx, before, "needs_finance", { qbMatchState: "NEEDS_FINANCE" }, result.own.note);
         case "created":
           return linkCreated(tx, result.id);

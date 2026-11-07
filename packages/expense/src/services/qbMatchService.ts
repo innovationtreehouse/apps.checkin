@@ -1,6 +1,6 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
-import { appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
+import { appKeyOf, postFailure, qbKey, shiftDate, type PostFailure, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import { readExpenseSettings } from "./settingsService";
 import type { ExpensePrincipal, QbTxn } from "../contract";
@@ -32,7 +32,7 @@ export type OwnEntry =
   | { kind: "own"; entry: QboPurchase }
   | { kind: "held"; note: string }
   | { kind: "unsure"; note: string }
-  | { kind: "failed"; note: string };
+  | { kind: "failed"; note: string; failure: PostFailure };
 
 /** Every app key a QuickBooks entry's memo carries. */
 export const appKeysOf = (entry: QboPurchase) => appKeyOf(entry)?.split(" ") ?? [];
@@ -57,8 +57,8 @@ export async function lookupOwnEntry(
   try {
     read = await client.createdSince(entity, since);
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    return { kind: "failed", note: `the app may already have booked this expense: the QuickBooks read failed (${error.slice(0, 200)})` };
+    const failure = postFailure(err);
+    return { kind: "failed", note: `the app may already have booked this expense: the QuickBooks read failed (${failure.error.slice(0, 200)})`, failure };
   }
   if (read.full) return { kind: "unsure", note: `the app may already have booked this expense: QuickBooks returned a full page of ${entity}s created since its first attempt` };
   const key = qbKey("expense", expenseId);
