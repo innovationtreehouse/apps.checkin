@@ -5,8 +5,7 @@ Design for making the finance view record (the finance-view rule in
 showed: who looked, on which page, which records, and which sensitive fields
 of them. No code changes with this doc.
 
-**Status: under discussion, nothing is being built.** Everything is decided
-except **Q16**: whether a reload may write a new entry.
+**Status: every question is decided. Nothing is being built yet.**
 
 ## The problem
 
@@ -214,7 +213,7 @@ different fields.
 A page-view row is keyed by person and page-view id, and the merge adds to it.
 A reload is a new page load, with a new id, so it is a new row. Collapsing
 identical page loads within the window is not done, because a row is complete
-only after its 30 seconds have passed. This is Q16, for @thpr to confirm.
+only after its 30 seconds have passed (Q16, decided).
 
 Rows written before the change stay as they are (decided).
 
@@ -366,6 +365,8 @@ as today but with exact records and fields.
 - **Records outside the app are named by system and type (Q14 (b)):**
   `QuickBooks.Transaction:4412`, `Benevity.Disbursement:BEN-889`. One name on
   every screen, from a fixed list of outside names, two today.  [Decision — owner]
+- **A reload writes a new entry (Q16).** Each page load is its own page view;
+  identical loads are not collapsed.  [Decision — owner]
 - **Log rows written before the change stay as they are.**  [Decision — owner]
 - **Any marked field logs the view, an amount on its own included (Q15).** One
   mark, with no pairing of a person with money. So the payouts list, gifts of
@@ -388,15 +389,7 @@ as today but with exact records and fields.
 
 ## Open questions for @thpr
 
-Q1 to Q15 are settled or retired; their numbers stay retired.
-
-- **Q16. Reloads.** A page-view row is keyed by person and page-view id. A
-  reload is a new page load with a new id, so it writes a new row: three
-  reloads of `/expense/expenses/e_123` within a minute are three entries.
-  Collapsing identical page loads within the fifteen-minute window is not
-  done, because a page-view row is complete only after its 30 seconds have
-  passed. Untagged rows still collapse as today. Is a new entry per reload
-  acceptable?
+None. Q1 to Q16 are settled or retired; their numbers stay retired.
 
 ## Follow-ups outside this design
 
