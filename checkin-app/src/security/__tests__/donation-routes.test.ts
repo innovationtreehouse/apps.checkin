@@ -83,9 +83,9 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 33 JSON routes (15 reads, 18 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(33);
-        expect(reads).toHaveLength(15);
+    it('registers 32 JSON routes (14 reads, 18 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(32);
+        expect(reads).toHaveLength(14);
         expect(writes).toHaveLength(18);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
