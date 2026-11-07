@@ -1,5 +1,5 @@
-import { defineRuntime } from "@checkin/component-kit";
-import type { BooksMap, QuickBooksClient } from "@checkin/quickbooks";
+import { defineRuntime, ServiceError } from "@checkin/component-kit";
+import type { BooksMap, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
   IncomePrincipal,
@@ -62,6 +62,8 @@ export interface IncomeConfig {
   classes?: QbClassSource;
   /** Finance's books map: role -> QuickBooks account, bucket -> Class. A source whose bank role it leaves unset is not matched. */
   booksMap?: BooksMap;
+  /** QuickBooks' live account list, read when an item's account is saved. */
+  quickBooksAccounts?: QboAccountList;
   posting?: IncomePosting;
   alerts?: IncomeAlerts;
   /** Days after a payout within which its deposit must be booked. */
@@ -79,6 +81,15 @@ export function configureIncome(next: IncomeConfig): void {
 }
 
 export const getIncomeConfig = incomeRuntime.require;
+
+const NO_QUICKBOOKS: QboAccountList = async () => {
+  throw new ServiceError(503, "QuickBooks is not connected.");
+};
+
+/** QuickBooks' live account list; unbound, every read answers 503. */
+export function getQuickBooksAccounts(): QboAccountList {
+  return getIncomeConfig().quickBooksAccounts ?? NO_QUICKBOOKS;
+}
 
 /** The acting host user. A 401 if absent: host admission has already run. */
 export const getPrincipal = incomeRuntime.getPrincipal;

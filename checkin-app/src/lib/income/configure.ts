@@ -21,6 +21,8 @@
  * - booksMap: finance's books map (role -> QuickBooks account, bucket -> Class),
  *   which income resolves every deposit's accounts and Classes through. A source
  *   whose bank role it leaves unset is not matched.
+ * - quickBooksAccounts: the books map's live QuickBooks account list, read when
+ *   finance saves an item's account so a wrong account type is refused.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
  * - alerts: a drain that stops at a cap emails finance (the board when no one
@@ -45,7 +47,7 @@ import {
   type QbDepositSource,
 } from "@checkin/income";
 import { getOrg, getPrincipal } from "@/lib/components/host";
-import { booksMap, budgetOwners } from "@/lib/components/ports";
+import { booksMap, budgetOwners, quickBooksAccounts } from "@/lib/components/ports";
 import {
   incomeItemsSeen,
   incomeOrderLines,
@@ -180,6 +182,7 @@ export function configureRuntime(): void {
     posting: posting(),
     owners: budgetOwners,
     booksMap,
+    quickBooksAccounts,
     classes: classSource(),
     alerts,
   });

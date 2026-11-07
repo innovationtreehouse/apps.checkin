@@ -119,11 +119,13 @@ describe("income — finance journey", () => {
     expect(mapped.status).toBe(200);
     expect(mapped.json).toMatchObject({ variantId: variant, budgetOwnerId: null });
     expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "Sales" })).status).toBe(400);
-    const withAccount = await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "4001" });
+    // The ids are LOCAL_QUICKBOOKS_ACCOUNTS': 8001 is Bank, which a store sale can't book to; 8002 is Income.
+    expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "8001" })).status).toBe(400);
+    const withAccount = await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "8002" });
     expect(withAccount.status).toBe(200);
-    expect(withAccount.json).toMatchObject({ quickBooksAccountId: "4001" });
+    expect(withAccount.json).toMatchObject({ quickBooksAccountId: "8002" });
     const items = await api<ItemRow[]>(f, "/api/income/items");
-    expect(items.json.find((i) => i.variantId === variant)).toMatchObject({ decision: "general", budgetOwnerId: null, budgetOwnerName: null, quickBooksAccountId: "4001" });
+    expect(items.json.find((i) => i.variantId === variant)).toMatchObject({ decision: "general", budgetOwnerId: null, budgetOwnerName: null, quickBooksAccountId: "8002" });
     expect((await send(f, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(200);
     expect((await send(f, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(404);
 
