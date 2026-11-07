@@ -7,7 +7,7 @@ import { InKindDonorSchema, inventorySourceKey } from "../contract";
 import { getCatalogLookup, getInventoryApply } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError, kindOf } from "@checkin/component-kit";
+import { kindOf, ServiceError } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
 
 export const MAX_IN_KIND_LINE_QUANTITY = 100_000;
@@ -76,7 +76,11 @@ export const manualInKindService = {
 
     const catalog = getCatalogLookup();
     for (const gtin13 of new Set(lines.map((l) => l.gtin13))) {
-      if (!(await catalog.getItem(gtin13))) throw new ServiceError(400, `Catalog item ${formatGtinDisplay(gtin13)} not found`);
+      const item = await catalog.getItem(gtin13).catch((err: unknown) => {
+        if (kindOf(err) === "system") throw new ServiceError(503, "The catalog is unavailable; try again");
+        throw err;
+      });
+      if (!item) throw new ServiceError(400, `Catalog item ${formatGtinDisplay(gtin13)} not found`);
     }
 
     const donation = await db.$transaction(async (tx) => {

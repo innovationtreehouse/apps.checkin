@@ -15,6 +15,7 @@ import { LISTED_TYPES, bookableTypes, refuseWrongType } from "../lib/account-typ
 import { writeOrgAudit } from "../lib/audit";
 import { getActiveItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
+import { logError } from "../lib/logger";
 import { withLiveParties, withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
@@ -137,10 +138,13 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, princi
   return {};
 };
 
-/** Catalog category and subcategory names, through the CatalogReader port (empty until bound). */
+/** Catalog category and subcategory names, through the CatalogReader port (empty until bound); 503 while the catalog is down. */
 export const mappingCatalog: ExpenseRouteHandler = async () => {
   const catalog = getExpenseRuntime().catalog;
-  const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]);
+  const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]).catch((err: unknown) => {
+    if (kindOf(err) === "system") throw httpError(503, "Catalog categories are unavailable; try again");
+    throw err;
+  });
   return { Category: categories, Subcategory: subcategories };
 };
 
@@ -200,10 +204,13 @@ export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView
 
 export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
-  // An unbound catalog shows the map without names.
+  // An unbound or unreachable catalog shows the map without names.
   const names = await getItemNames(rows.map((r) => r.gtin13)).catch((err: unknown) => {
-    if (kindOf(err) === "settings") return [];
-    throw err;
+    const kind = kindOf(err);
+    if (kind === "settings") return [];
+    if (kind !== "system") throw err;
+    logError("catalog_names_unavailable", { route: "ownership-map" }, err);
+    return [];
   });
   return { PartOwnerMap: rows, Item: names, ExpenseBucketView: await buckets() };
 };

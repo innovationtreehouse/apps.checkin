@@ -56,7 +56,7 @@ describeDb("manual upload", () => {
     expect(ports.calls.pushes[0]).toMatchObject({ receiptId: r.id, currency: "USD" });
   });
 
-  it.each(["$", "US$", "XX"])("a finalized receipt with a stored currency of %j stays unpushed, audited", async (code) => {
+  it.each(["$", "US$", "XX"])("a finalized receipt with a stored currency of %j stays unpushed, audited as refused", async (code) => {
     ports.fail.push = true;
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     await db.receiptDetail.update({ where: { id: r.id }, data: { currency: code } });
@@ -64,7 +64,7 @@ describeDb("manual upload", () => {
     ports.calls.pushes.length = 0;
     expect(await pushReceipt(r.id, null)).toBe(false);
     expect(ports.calls.pushes).toHaveLength(0);
-    expect(await actions(r.id)).toContain("push_failed");
+    expect(await actions(r.id)).toContain("push_refused");
   });
 
   it("with no sink bound, the inert port leaves the receipt unpushed", async () => {

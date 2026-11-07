@@ -1,3 +1,4 @@
+import { kindOf } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
@@ -129,7 +130,9 @@ function submitterConfirmation(row: ReceiptRow) {
 
 /**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
- * null with an audit row, for the catch-up step or the manual button to resend. A receipt whose
+ * null with an audit row, for the catch-up step or the manual button to resend. A refusal (the
+ * receipt's own check or mapping's 4xx) is `push_refused`; any other failure is `push_failed`
+ * with its kind in `valueBefore`. A receipt whose
  * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
  * any older call still in flight) before the money side reaches it. A receipt that is not
  * finalized is refused before anything is sent or written.
@@ -199,17 +202,24 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
         isDelayed: li.isDelayed,
       })),
     });
-    const result = ingestResultSchema.parse(await ports().receiptSink.ingestReceipt(payload));
+    const answer = ingestResultSchema.safeParse(await ports().receiptSink.ingestReceipt(payload));
+    // An answer we can't read is our bug, not mapping refusing the receipt.
+    if (!answer.success) throw new Error(`workflow-mapping answer unreadable: ${answer.error.message}`);
+    const result = answer.data;
     await db.$transaction(async (tx) => {
       await tx.receipt.update({ where: { id: receiptId }, data: { pushedAt: new Date() } });
       await audit(tx, receiptId, actor, { action: "pushed", valueAfter: result.created ? "created" : "replayed" });
     });
     return true;
   } catch (err) {
-    await audit(db, receiptId, actor, {
-      action: "push_failed",
-      valueAfter: err instanceof Error ? err.message : String(err),
-    }).catch(() => undefined);
+    const kind = kindOf(err);
+    const valueAfter = err instanceof Error ? err.message : String(err);
+    await audit(
+      db,
+      receiptId,
+      actor,
+      kind === "data" ? { action: "push_refused", valueAfter } : { action: "push_failed", valueBefore: kind, valueAfter },
+    ).catch(() => undefined);
     return false;
   }
 }

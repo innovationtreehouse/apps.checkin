@@ -306,7 +306,8 @@ export interface ExpensePosting {
 
 /** S2 callee: the orchestrator hands a completed receipt's money side to expense. */
 export interface ExpenseIntake {
-  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
+  /** "accepted": stored, but the expense is not built yet; expense owns it from here. */
+  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }>;
 }
 
 /** Who is reimbursed: a Person on file, or a non-member adult added by name. */

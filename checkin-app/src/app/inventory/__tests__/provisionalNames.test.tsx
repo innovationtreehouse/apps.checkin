@@ -89,3 +89,41 @@ describe.each([
     expect(screen.getByText(BANNER)).toBeInTheDocument();
   });
 });
+
+describe("the catalog names banner across pages", () => {
+  const FAILS = "4006381333931";
+  const LOADS = "4006381333948";
+  const page = () => <MantineProvider><OrgItemsPage /></MantineProvider>;
+
+  beforeEach(() => {
+    jest.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const g = String(input).split("/").pop();
+      return g === FAILS
+        ? new Response(JSON.stringify({ error: "down" }), { status: 500 })
+        : new Response(JSON.stringify({ gtin13: g, name: `Part ${g}` }), { status: 200 });
+    });
+  });
+
+  it("drops the banner once every name on the next page has loaded", async () => {
+    gtin13 = FAILS;
+    const view = render(page());
+    expect(await screen.findByText(BANNER)).toBeInTheDocument();
+    gtin13 = LOADS;
+    view.rerender(page());
+    expect(await screen.findByText(`Part ${LOADS}`)).toBeInTheDocument();
+    expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("still names a part from an earlier page", async () => {
+    gtin13 = LOADS;
+    const view = render(page());
+    expect(await screen.findByText(`Part ${LOADS}`)).toBeInTheDocument();
+    gtin13 = FAILS;
+    view.rerender(page());
+    expect(await screen.findByText(BANNER)).toBeInTheDocument();
+    gtin13 = LOADS;
+    view.rerender(page());
+    await waitFor(() => expect(screen.queryByText(BANNER)).not.toBeInTheDocument());
+    expect(screen.getByText(`Part ${LOADS}`)).toBeInTheDocument();
+  });
+});

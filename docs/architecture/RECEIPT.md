@@ -218,10 +218,13 @@ sends a `CompletedReceipt` from `@checkin/receipt-types` to `ingestReceipt`.
 - `submitterId` is the uploader's `Person.id`. `backfill` is true when the receipt
   has a QuickBooks link, which tells downstream not to post it again. `financeReview`
   is present only for an approved review.
-- A push never throws to its caller. A failure leaves `pushedAt` null with a
-  `push_failed` audit row, for the catch-up step or the manual `push-to-inventory`
-  route. Catch-up skips a receipt after five of its own failures in a row, until a
-  manual push of it or any delivery in the org.
+- A push never throws to its caller. A failure leaves `pushedAt` null with an audit
+  row, for the catch-up step or the manual `push-to-inventory` route. A refusal (the
+  receipt's own payload check, or a 4xx from workflow-mapping) is `push_refused`, and
+  catch-up skips the receipt at once. Any other failure is `push_failed`, its kind in
+  `valueBefore`. Catch-up skips a receipt after five of its own failures in a row. A
+  manual push of it clears the skip; so does any delivery in the org, for outages but
+  not for bugs.
 - A receipt whose `donorSync` is still `pending` is held back with a `push_deferred`
   audit row, so donations has the final in-kind state before the money side arrives.
 

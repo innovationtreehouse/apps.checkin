@@ -1,3 +1,4 @@
+import { ServiceError } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
 import { CATCH_UP_CAP, MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
@@ -63,6 +64,81 @@ describeDb("catch-up steps", () => {
     expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 1 });
     expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
     expect((await db.receipt.findUniqueOrThrow({ where: { id: stuck.id } })).pushedAt).not.toBeNull();
+  });
+
+  it("gives up on a refused receipt at once, with a push_refused row and the refusal as its last failure", async () => {
+    ports.fail.push = new ServiceError(400, "lineItems: required");
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect(await actions(r.id)).toContain("push_refused");
+    expect(await actions(r.id)).not.toContain("push_failed");
+
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+    expect(ports.calls.pushes).toHaveLength(1);
+    actAs(FINANCE);
+    expect(await receiptService.list({ state: "receipt_finalized", pushed: false })).toEqual([
+      expect.objectContaining({ id: r.id, pushGivenUp: true, lastPushFailure: "lineItems: required", lastPushFailedAt: expect.any(Date) }),
+    ]);
+  });
+
+  it("does not revive a refused receipt when another receipt is delivered", async () => {
+    ports.fail.push = new ServiceError(409, "differs from the stored receipt");
+    const refused = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    ports.fail.push = false;
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: refused.id } })).pushedAt).toBeNull();
+  });
+
+  it("a refusal neither counts toward nor resets the outage run", async () => {
+    ports.fail.push = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    for (let i = 1; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+    ports.fail.push = new ServiceError(422, "refused elsewhere");
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+
+    ports.fail.push = true;
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 1 });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 2 });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).toBeNull();
+  });
+
+  it("charges a bug to its receipt up to the limit, and another receipt's delivery does not reset it", async () => {
+    ports.fail.push = new Error("unexpected");
+    const stuck = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) {
+      expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 0 });
+    }
+    ports.fail.push = false;
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: stuck.id } })).pushedAt).toBeNull();
+  });
+
+  it("a manual push clears a refused receipt, and delivers it once the receiver takes it", async () => {
+    ports.fail.push = new ServiceError(400, "lineItems: required");
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect(await repushUnpushed()).toMatchObject({ skipped: 1 });
+
+    ports.fail.push = false;
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: true });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).not.toBeNull();
+  });
+
+  it("a manual push the receiver refuses again leaves the receipt given up", async () => {
+    ports.fail.push = new ServiceError(400, "lineItems: required");
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+  });
+
+  it("an answer the receipt cannot read is a bug, not a refusal", async () => {
+    configure({ receiptSink: { ingestReceipt: async () => ({ id: 1.5, state: "pending_review", created: true }) } });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect(await actions(r.id)).toContain("push_failed");
+    expect(await actions(r.id)).not.toContain("push_refused");
   });
 
   it("lists an undelivered receipt with its latest failure, marked once catch-up gives up", async () => {

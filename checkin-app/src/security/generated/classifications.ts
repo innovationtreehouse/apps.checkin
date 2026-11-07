@@ -458,6 +458,25 @@ export const classifications = {
         finishedAt: 'internal',
         success: 'internal',
         error: 'internal',
+        failuresByKind: 'internal',
+    },
+    OpsIncident: {
+        id: 'internal',
+        key: 'internal',
+        openKey: 'internal',
+        cause: 'internal',
+        kind: 'internal',
+        lanes: 'internal',
+        firstSeenAt: 'internal',
+        lastSeenAt: 'internal',
+        notifiedAt: 'internal',
+        lastRemindedAt: 'internal',
+        escalatedAt: 'internal',
+        closedAt: 'internal',
+        recoveryNotifiedAt: 'internal',
+        runsSeen: 'internal',
+        itemsAffected: 'internal',
+        detail: 'internal',
     },
     LifecycleDriftReport: {
         id: 'internal',
@@ -718,6 +737,8 @@ export const relations = {
     IntegrationErrorLog: {
     },
     CronRunLog: {
+    },
+    OpsIncident: {
     },
     LifecycleDriftReport: {
     },
