@@ -5,7 +5,9 @@ Design for making the finance view record (the finance-view rule in
 showed: who looked, on which page, which records, and which sensitive fields
 of them. No code changes with this doc.
 
-**Status: every question is decided. Nothing is being built yet.**
+**Status: one question is open, Q17.** Under the marks alone, nine routes
+logged today would stop being logged, so "B11 is not narrowed" does not hold
+yet. Nothing is being built.
 
 ## The problem
 
@@ -48,8 +50,8 @@ on each route is no longer what decides logging: a new route that sends a
 marked field is logged with nothing to remember.
 
 A route that shows finance records but sends no marked field is not logged.
-So that this cannot quietly narrow B11, the boundary PR lists every route
-audited today that would stop being logged under the marks, for review.
+Nine routes audited today are in that position; see "Routes the marks alone
+would stop logging" and Q17.
 
 - **Where the mark lives.** A schema annotation beside `@sensitivity` on each
   field, for example `/// @moneyLink` (the name is settled in the boundary
@@ -275,6 +277,29 @@ with no expense yet carries neither `expenseId` nor the receipt id (`rowsOf` in
 `packages/expense/src/services/financeQueueService.ts`), so `receiptId` is added
 to `FinanceQueueRow`, with its classification.
 
+## Routes the marks alone would stop logging
+
+Checked against the generated and synthetic classifications: these routes are
+audited today, and no model they return carries a marked field. Two more,
+`GET /api/income/items` and `GET /api/expense/provisional-items`, stop by
+decision and are not listed.
+
+| Route | What a row holds | Where money or a person can appear |
+|---|---|---|
+| `GET /api/expense/received-expense-payloads` | `ReceivedExpensePayload`: `receiptId`, `payloadJson`, `status` | `payloadJson` is the stored expense payload, with its amounts and the submitter |
+| `GET /api/donations/disbursement-events` | `DisbursementEvent`: `disbursementId`, `payload` | `payload` is the stored Benevity disbursement |
+| `GET /api/receipts/[id]/audit-logs` | `ReceiptAuditLog`: `fieldChanged`, `valueBefore`, `valueAfter` | the before and after values, e.g. `totalCents` 4210 → 4120 |
+| `GET /api/workflow-mapping/audit-log` | `WorkflowAuditLog`: `eventType`, `fromState`, `toState`, `details` | `details`, free text on the event |
+| `GET /api/expense/qb-exclusions` | `ExpenseQbMatchExclusion`: `qbTxnId`, `reason`, who excluded it | none: no amount, no payer or payee |
+| `GET /api/income/qb-exclusions` | `IncomeQbMatchExclusion`: `qbTxnId`, `reason` | none |
+| `GET /api/receipts/ignored-files` | `ReceiptIgnoredFileView`: `fileHash`, `reason` | none: mailbox configuration |
+| `GET /api/expense/expenses/[id]/signoffs` | `ExpenseLineSignoffStatus`: per-line seat status | none; a panel of the expense page |
+| `GET /api/expense/expenses/[id]/line-item-approvals` | `LineItemOwnerApproval`: bucket, status, who decided | none; a panel of the expense page |
+
+`GET /api/donations/comment-rules` stays logged: `TransactionCommentRule.comment`
+is a donor's comment text, which is marked (decided), so that field carries the
+mark.
+
 ## The PR split
 
 1. **App code: the log table.** An additive migration for the new columns
@@ -381,6 +406,7 @@ as today but with exact records and fields.
 - **B11 is not narrowed (Q12, reversed by Q15).** The finance-view rule keeps
   the scope the Board ruled: every view of finance records other than a
   person's own. There is nothing for the Board to confirm.  [Decision — owner]
+  Q17 decides how the nine routes above keep to that.
 
   The register line in `docs/rules/revenue.md` changes in wording only, to say
   what the record now holds. Draft for review; `revenue.md` is unchanged until
@@ -394,7 +420,35 @@ as today but with exact records and fields.
 
 ## Open questions for @thpr
 
-None. Q1 to Q16 are settled or retired; their numbers stay retired.
+Q1 to Q16 are settled or retired; their numbers stay retired.
+
+- **Q17. The nine routes the marks alone would stop logging.** "B11 is not
+  narrowed" needs each of them logged some other way, or the narrowing stated.
+  Options per group, with a recommendation:
+  - **Stored payloads and change values** (received expense payloads,
+    disbursement events, both audit logs). Their text holds amounts and names
+    that no field mark sees, as a stored file does. Recommended: mark the field
+    itself, as with files: `ReceivedExpensePayload.payloadJson`,
+    `DisbursementEvent.payload`, `ReceiptAuditLog.valueBefore` and `valueAfter`,
+    and `WorkflowAuditLog.details`. The routes then stay logged under the marks,
+    and the Q4 entries for the first two stand.
+  - **Rows with no money or person** (both QuickBooks exclusion lists, ignored
+    files, signoffs, line-item approvals). Two options:
+    - (a) a per-route flag, `alwaysLogged`, on these five registry entries. A
+      flagged route is logged whatever it sends, and names records as declared.
+      B11 stays unnarrowed, and the Q4 entries for the exclusion lists stand.
+      The cost is one small exception to "marks decide".
+    - (b) let them stop being logged, and say so: the `revenue.md` line then
+      narrows to views that show money or a person, and since B11 is a Board
+      ruling, the Board confirms it. The Q4 entries for the two exclusion lists
+      are dropped. Signoffs and line-item approvals lose little: they are panels
+      of the expense page, whose entry already names the expense when the
+      browser tags the call.
+
+    Recommended: (a), because it keeps your decision that B11 is not narrowed,
+    with nothing for the Board.
+
+  Mark the stored payloads and change values? And (a) or (b) for the five?
 
 ## Follow-ups outside this design
 
