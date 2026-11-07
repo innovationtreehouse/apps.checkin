@@ -48,7 +48,6 @@ export const GET = withAuth(
                         // unit — see @/lib/person/merge/plan.ts). Kept explicit, not a bare include.
                         emailVerified: true,
                         dateOfBirth: true,
-                        mergedIntoId: true,
                         household: {
                             select: {
                                 id: true,
@@ -91,10 +90,6 @@ export const GET = withAuth(
                     return apiError("Cannot analyze: one of these participants has already been merged.", 409);
                 }
                 return apiError("Participant not found", 404);
-            }
-
-            if (pA.mergedIntoId != null || pB.mergedIntoId != null) {
-                return apiError("Cannot analyze: one of these participants has already been merged.", 409);
             }
 
             // Mirrors the POST guard so the picker warns before the operator commits.

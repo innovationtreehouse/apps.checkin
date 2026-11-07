@@ -43,7 +43,7 @@ function mockPeople(subjects: Record<number, Subject>) {
         if ('lastBackgroundCheck' in select) {
             return { isHouseholdLead: true, householdId: where.id * 10, ...subjects[where.id] };
         }
-        return { id: where.id, name: `Person ${where.id}`, mergedIntoId: null, household: null, _count: {} };
+        return { id: where.id, name: `Person ${where.id}`, household: null, _count: {} };
     });
 }
 
