@@ -154,8 +154,9 @@ jobs:
           # The library boundary check also reads its own script and checkin's
           # schema (a new checkin model can collide with a library's). Package
           # lint reads the root eslint.config.mjs; its plugins resolve through
-          # package-lock.json, already listed.
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
+          # package-lock.json, already listed. Every package and function
+          # tsconfig extends the root tsconfig.base.json.
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|tsconfig\.base\.json$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
