@@ -5,6 +5,7 @@
  * splices each missing constraint back in verbatim, right after its table's
  * CREATE TABLE statement.
  */
+import { groupByTable, insertAfterCreateTable, quoteIdent } from "./after-create-table";
 
 export interface CheckConstraintRow {
     tablename: string;
@@ -14,7 +15,6 @@ export interface CheckConstraintRow {
 }
 
 const key = (r: CheckConstraintRow) => `${r.tablename}.${r.conname}`;
-const quoteIdent = (name: string) => `"${name.replace(/"/g, '""')}"`;
 
 /**
  * Diffs TRUTH's CHECK constraints against CANDIDATE's. A same-named
@@ -42,28 +42,22 @@ export function findMissingCheckConstraints(truth: CheckConstraintRow[], candida
 
 /**
  * Inserts `ALTER TABLE ... ADD CONSTRAINT ... <condef>;` for each missing
- * constraint directly after its table's `CREATE TABLE` statement. Throws if
- * the table has no `CREATE TABLE` in the SQL, since the constraint then has
- * nowhere to go.
+ * constraint directly after its table's `CREATE TABLE` statement, in input
+ * order. Throws if the table has no `CREATE TABLE` in the SQL.
  */
 export function spliceCheckConstraints(migrationSql: string, missing: CheckConstraintRow[]): string {
     let sql = migrationSql;
-    for (const con of missing) {
-        const table = quoteIdent(con.tablename);
-        const start = sql.indexOf(`CREATE TABLE ${table} (`);
-        const end = start < 0 ? -1 : sql.indexOf("\n);", start);
-        if (end < 0) {
-            throw new Error(
-                `Cannot place CHECK constraint "${con.conname}": no CREATE TABLE ${table} statement in the candidate baseline.`,
-            );
-        }
-        const insertAt = end + "\n);".length;
-        const block =
-            `\n\n-- coalesce-migrations: CHECK constraint restored — Prisma's DSL can't express it, so\n` +
-            `-- prisma migrate diff --from-empty drops it. Spliced verbatim from the TRUTH DB's\n` +
-            `-- pg_get_constraintdef for "${con.conname}".\n` +
-            `ALTER TABLE ${table} ADD CONSTRAINT ${quoteIdent(con.conname)} ${con.condef};`;
-        sql = sql.slice(0, insertAt) + block + sql.slice(insertAt);
+    for (const [tablename, cons] of groupByTable(missing)) {
+        const block = cons
+            .map(
+                (con) =>
+                    `-- coalesce-migrations: CHECK constraint restored — Prisma's DSL can't express it, so\n` +
+                    `-- prisma migrate diff --from-empty drops it. Spliced verbatim from the TRUTH DB's\n` +
+                    `-- pg_get_constraintdef for "${con.conname}".\n` +
+                    `ALTER TABLE ${quoteIdent(tablename)} ADD CONSTRAINT ${quoteIdent(con.conname)} ${con.condef};`,
+            )
+            .join("\n\n");
+        sql = insertAfterCreateTable(sql, tablename, block, `CHECK constraint ${cons.map((c) => `"${c.conname}"`).join(", ")}`);
     }
     return sql;
 }
