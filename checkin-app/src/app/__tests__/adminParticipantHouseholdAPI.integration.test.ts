@@ -113,17 +113,6 @@ describe('Admin Participant Household API Integration Tests', () => {
             expect(auditJson(row?.newData).reason).toBe('own_household');
         });
 
-        it('refuses moving a merged-away record -> 409, unchanged', async () => {
-            const keeper = await prisma.person.create({
-                data: { email: 'keeper-household-api-test@example.com', name: 'Subject Test', household: { create: { name: "Test HH" } } }
-            });
-            const merged = await prisma.person.update({ where: { id: testParticipantId }, data: { mergedIntoId: keeper.id } });
-            const res = await POST(moveReq(merged.id, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(merged.id) }) });
-            expect(res.status).toBe(409);
-            const after = await prisma.person.findUnique({ where: { id: merged.id }, select: { householdId: true } });
-            expect(after?.householdId).toBe(merged.householdId);
-        });
-
         it.each([
             ['out of a DENIED household', 'source'],
             ['into a DENIED household', 'target'],

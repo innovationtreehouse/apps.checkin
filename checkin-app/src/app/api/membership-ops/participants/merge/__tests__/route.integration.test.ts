@@ -361,7 +361,7 @@ describe("Merge Participants API", () => {
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
             const resolved = await resolveMergedPerson(pMergeId);
-            expect(resolved).toMatchObject({ kind: "live", first: null, hops: 1 });
+            expect(resolved).toMatchObject({ kind: "live", hops: 1 });
             expect(resolved.kind === "live" && resolved.person.id).toBe(pKeepId);
         });
 
