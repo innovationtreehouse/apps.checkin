@@ -138,6 +138,16 @@ describe("the receiving page's Mapping column", () => {
     expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
   });
 
+  it("says Name unavailable and shows the banner when the org-items read fails", async () => {
+    mockApi.mockImplementation(async (path: string) => {
+      throw path.startsWith("/api/inventory/org-items/") ? new HttpError("Server error", 500) : new HttpError("Not found", 404);
+    });
+    mapped({ assignedGtin13: "4006381333931" });
+    wrap();
+    expect(await screen.findByText(BANNER)).toBeInTheDocument();
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("4006381333931 · Name unavailable ×2");
+  });
+
   it("names a provisional part by its provisional name even when the catalog read fails", async () => {
     mockApi.mockImplementation(async (path: string) => {
       if (path.startsWith("/api/inventory/org-items/")) {

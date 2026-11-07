@@ -6,7 +6,7 @@ import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollA
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
 import {
-  CatalogNamesUnavailable, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames,
+  CatalogNamesUnavailable, HttpError, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames,
   type CatalogItem, type CatalogNames,
 } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
@@ -76,11 +76,17 @@ interface SubcategoryOption {
 /** The provisional names GET /api/inventory/org-items/{gtin13} returns beside the row. */
 interface OrgItemNames { InventoryProvisionalItem?: { provisionalGtin13: string; name: string }[] }
 
-/** A part's catalog name, else its provisional name from org-items, else the error the catalog read threw. */
+/** A part's catalog name, else its provisional name from org-items, else the error the catalog or org-items read threw. */
 async function partName(gtin13: string): Promise<unknown> {
   const catalog = await api<CatalogItem>(`/api/catalog/items/${gtin13}`).then((item): unknown => item.name, (e: unknown) => e);
   if (typeof catalog === "string") return catalog;
-  const row = await api<OrgItemNames>(`/api/inventory/org-items/${gtin13}`).catch(() => null);
+  let row: OrgItemNames | null = null;
+  try {
+    row = await api<OrgItemNames>(`/api/inventory/org-items/${gtin13}`);
+  } catch (e) {
+    // A 404 means the org has no row for the part; any other failure leaves the name unknown.
+    if (!(e instanceof HttpError && e.status === 404)) return e;
+  }
   return row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13)?.name ?? catalog;
 }
 

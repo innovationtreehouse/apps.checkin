@@ -29,7 +29,8 @@ export function useCanSeeReceiving(): boolean {
 /**
  * Catalog item names for the given GTINs, read from the host's catalog route
  * one item at a time (callers pass only the visible page). A provisional
- * part's GTIN is one the catalog answers 404 for.
+ * part's GTIN is one the catalog answers 404 for. Found names stay cached
+ * across pages; `failed` holds only the latest page's failures.
  */
 export function useCatalogNames(gtins: readonly string[]): CatalogNames {
   const [lookup, setLookup] = useState<CatalogNames>(NO_CATALOG_NAMES);
@@ -41,7 +42,7 @@ export function useCatalogNames(gtins: readonly string[]): CatalogNames {
     Promise.all(
       ids.map((g) => api<{ gtin13: string; name: string }>(`/api/catalog/items/${g}`).then((item): unknown => item.name, (e: unknown) => e)),
     ).then((outcomes) => {
-      if (live) setLookup((prev) => ids.reduce((acc, g, i) => withLookup(acc, g, outcomes[i]), prev));
+      if (live) setLookup((prev) => ids.reduce<CatalogNames>((acc, g, i) => withLookup(acc, g, outcomes[i]), { ...prev, failed: new Set() }));
     });
     return () => { live = false; };
   }, [key]);
