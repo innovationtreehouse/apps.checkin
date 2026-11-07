@@ -63,9 +63,9 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
     await prisma.$transaction(async (tx) => {
         const person = await tx.person.findUnique({
             where: { id: personId },
-            select: { householdId: true, email: true, dateOfBirth: true, householdJoinPending: true, mergedIntoId: true },
+            select: { householdId: true, email: true, dateOfBirth: true, householdJoinPending: true },
         });
-        if (!person?.householdJoinPending || person.mergedIntoId !== null || !person.email) {
+        if (!person?.householdJoinPending || !person.email) {
             throw new JoinQuestionError("not_pending");
         }
         if (isYouth(person.dateOfBirth)) throw new JoinQuestionError("youth");
@@ -76,7 +76,7 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
         // Conditional on the question still being open: a second answer that read it open
         // before the first committed lands on no row.
         const close = async (data: Prisma.PersonUpdateManyMutationInput) => {
-            const { count } = await tx.person.updateMany({ where: { id: personId, householdJoinPending: true, mergedIntoId: null }, data: { ...data, householdJoinPending: false } });
+            const { count } = await tx.person.updateMany({ where: { id: personId, householdJoinPending: true }, data: { ...data, householdJoinPending: false } });
             if (count !== 1) throw new JoinQuestionError("not_pending");
         };
 

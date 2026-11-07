@@ -242,17 +242,12 @@ export const POST = withKiosk(
                 ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
                 : apiError(`Participant ${participantId} not found.`, 404);
         }
-        const { person: participant, first: badgeRecord, hops: mergeHops } = resolved;
+        const { person: participant, hops: mergeHops } = resolved;
         if (mergeHops > 0) {
             logger.info("Scan forwarded from merged record", {
                 badgeId: participantId,
-                tombstoneId: badgeRecord?.mergedIntoId ?? null,
                 survivorId: participant.id,
                 hops: mergeHops,
-                // The scanned id had no Person row at all — the archive resolved it.
-                // True means the tombstone was deleted and the archive took over; false
-                // while tombstones are being removed means badges resolve some other way.
-                viaArchive: badgeRecord == null,
             });
         }
 

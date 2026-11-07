@@ -83,7 +83,7 @@ describe("expense signer directory excludes people in a DENIED household", () =>
   it("a bucket's owner and treasurers", async () => {
     budgetOwnerFindUnique.mockResolvedValue({
       isOrgLevel: false,
-      owner: { id: 7, mergedIntoId: null, household: { orgMembership: { status: "DENIED" } } },
+      owner: { id: 7, household: { orgMembership: { status: "DENIED" } } },
       treasurers: [{ personId: 8 }],
     });
     const dir = await signoff();
@@ -93,7 +93,7 @@ describe("expense signer directory excludes people in a DENIED household", () =>
   });
 
   it("an org-level bucket has no approvers and no owner", async () => {
-    budgetOwnerFindUnique.mockResolvedValue({ isOrgLevel: true, owner: { id: 7, mergedIntoId: null, household: null }, treasurers: [{ personId: 8 }] });
+    budgetOwnerFindUnique.mockResolvedValue({ isOrgLevel: true, owner: { id: 7, household: null }, treasurers: [{ personId: 8 }] });
     await expect((await signoff()).bucketApprovers(100)).resolves.toEqual({ orgLevel: true, approvers: [], owner: null });
   });
 
@@ -113,24 +113,20 @@ describe("expense signer directory excludes people in a DENIED household", () =>
 });
 
 describe("the live person an id resolves to", () => {
-  const people: Record<number, { id: number; mergedIntoId: number | null }> = {
-    1: { id: 1, mergedIntoId: 2 },
-    2: { id: 2, mergedIntoId: null },
-    5: { id: 5, mergedIntoId: 5 },
-  };
-  const archive: Record<number, { toId: number }> = { 3: { toId: 1 } };
+  const people: Record<number, { id: number }> = { 2: { id: 2 } };
+  const archive: Record<number, { toId: number }> = { 1: { toId: 2 }, 3: { toId: 2 }, 5: { toId: 6 } };
   beforeEach(() => {
     personFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => people[where.id] ?? null);
     personMergeFindUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) => archive[where.fromId] ?? null);
-    personFindMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.filter((id) => people[id]?.mergedIntoId === null).map((id) => ({ id })));
+    personFindMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.filter((id) => id in people).map((id) => ({ id })));
   });
 
-  it("is the person when live, the survivor through a tombstone or an archived merge, else null", async () => {
+  it("is the person when live, the survivor through the merge archive, else null", async () => {
     const live = await (await signoff()).liveIds([2, 1, 3, 4]);
     expect([...live]).toEqual([[2, 2], [1, 2], [3, 2], [4, null]]);
   });
 
-  it("stops on a cyclic merge chain", async () => {
+  it("is nobody when the archived survivor is gone", async () => {
     expect((await (await signoff()).liveIds([5])).get(5)).toBeNull();
   });
 

@@ -60,7 +60,7 @@ function keyholderFilterSites(src: string): number[] {
 describe('keyholder filter drift guard', () => {
     it('flags a hand-rolled keyholder filter and passes a select or a write', () => {
         expect(keyholderFilterSites('db.visit.count({ where: { departedAt: null, person: { isKeyholder: true } } })')).toEqual([1]);
-        expect(keyholderFilterSites('db.person.findMany({ where: { ...LIVE_PERSON, isKeyholder: true } })')).toEqual([1]);
+        expect(keyholderFilterSites('db.person.findMany({ where: { householdId: 1, isKeyholder: true } })')).toEqual([1]);
         expect(keyholderFilterSites('db.person.findMany({ select: { id: true, isKeyholder: true } })')).toEqual([]);
         expect(keyholderFilterSites('db.person.update({ where: { id }, data: { isKeyholder: true } })')).toEqual([]);
         expect(keyholderFilterSites('// person: { isKeyholder: true }')).toEqual([]);

@@ -54,7 +54,7 @@ async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, Purch
 
 /**
  * The signed-in person as a receipt principal; null for any session checkin refuses or one
- * that names no live Person. Names and adulthood come from the Person row: the uploader's
+ * that names no Person. Names and adulthood come from the Person row: the uploader's
  * names fill "I am the donor", and only an adult may ask to be reimbursed.
  */
 async function getPrincipal(): Promise<ReceiptPrincipal | null> {
@@ -62,7 +62,7 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
   if (!user) return null;
   const [{ default: prisma }, { isKnownAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/programAge")]);
   const person = await prisma.person.findFirst({
-    where: { id: user.id, mergedIntoId: null },
+    where: { id: user.id },
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
   });
   if (!person) return null;

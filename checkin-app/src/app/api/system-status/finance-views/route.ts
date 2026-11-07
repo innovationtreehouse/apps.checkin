@@ -59,8 +59,7 @@ export const GET = handler('GET /api/system-status/finance-views', async ({ req 
         prisma.financeViewLog.groupBy({ by: ['actorId'] }),
     ]);
 
-    // Not LIVE_PERSON-filtered: a viewer since merged away must still be named,
-    // from the merge archive once the merge has deleted their row.
+    // A viewer since merged away has no Person row; they are named from the merge archive.
     const actorIds = actors.map((a) => a.actorId);
     const people: { id: number; name: string | null }[] = actors.length
         ? await prisma.person.findMany({
