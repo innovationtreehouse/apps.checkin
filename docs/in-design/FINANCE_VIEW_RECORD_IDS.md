@@ -16,8 +16,8 @@ its next meeting; the boundary PR waits for that.
 expense page for e_123 calls the expense detail route, then signoffs, line-item
 approvals, the reimbursee panel and the QuickBooks candidates. That is five
 calls. Each audited route writes its own log row, so one look at one expense
-can write up to five rows. The Board wants one entry: "Pat Lee viewed expense
-e_123 on the expense page". The routes still decide what is sensitive, but the
+can write up to five rows. The Board wants one entry: "Pat Lee viewed
+Expense:e_123 on /expense/expenses/e_123". The routes still decide what is sensitive, but the
 entry is the page view.
 
 **What the server can see.** The server sees only API calls. It does not know
@@ -68,8 +68,8 @@ What a lie can still do:
   receipt r_9, sending the same id both times; the log shows one entry, "on
   the expense page", naming e_123 and r_9.
 - **Claim a different path.** Example: the expense page's calls arrive
-  labelled `/finance/review`, so the entry reads "viewed expense e_123 on the
-  finance queue". The record is right; the screen is wrong.
+  labelled `/finance/review`, so the entry reads "viewed Expense:e_123 on
+  /finance/review". The record is right; the screen is wrong.
 
 Three server-side limits, proposed:
 
@@ -167,20 +167,23 @@ Two more consequences:
 ```ts
 auditedRead: {
   records: [
-    { kind: 'expense', key: 'FinanceQueueRow', id: 'expenseId' },
-    { kind: 'receipt', key: 'FinanceQueueRow', id: 'receiptId' },
+    { key: 'FinanceQueueRow', id: 'expenseId', model: 'Expense' },
+    { key: 'FinanceQueueRow', id: 'receiptId', model: 'Receipt' },
   ],
   query: ['tab'],
 },
 ```
 
-- `kind` comes from a closed list of record kinds (§3).
 - `key` is the bag key whose rows hold the records. A row of any other key is
   never recorded or counted.
 - `id` is a field on the row, a nested path (`members[].id`), a list of fields
   joined into one id (`['programId', 'personId']`), or a path param
-  (`{ param: 'id' }`). A row whose field is null contributes nothing for that
-  kind.
+  (`{ param: 'id' }`). A row whose field is null contributes nothing.
+- `model` is the schema model the id belongs to (§3). It is left out when the
+  id is the row's own `id` on a stored model, since the row's model is then the
+  record's. It is needed only when the id points at another model, as
+  `FinanceQueueRow.expenseId` points at an `Expense`. It must name a model in
+  the classifications.
 - `query` lists the query parameters that pick the screen (§2).
 
 Ids are still read from the **stripped** response, so the log names only what
@@ -190,6 +193,7 @@ left the server.
 
 - an audited route has no `records`;
 - a declared field is not classified on its model;
+- a declared `model` is not a model in the classifications;
 - a declared field's tier is not visible to every role in the route's
   `orderedView` that reaches others' rows. If it were not, that role's views
   would log nothing, silently.
@@ -210,20 +214,30 @@ name, which is content. The audit found no audited route that reads free text
 today; the allowlist keeps it that way when one is added. The declared query
 parameters go into the view key, so two tabs are two views.
 
-### 3. Store kind-qualified record ids
+### 3. Store model-qualified record ids
 
-`recordIds` holds `kind:id` strings: `expense:e_123`, `receipt:r_9`,
-`payment-plan:12:345`. That:
+`recordIds` holds `Model:id` strings: the schema model's own name and the
+record's id. Examples: `Expense:e_123`, `Receipt:r_9`, `InKindDonation:5`,
+`ProgramParticipant:12:345`. There is no hand-kept list of kinds or nouns
+(Q1, decided); the model name comes from the classification. That:
 
-- tells two tables' ids apart (`gift-of-goods-receipt:5`, `gift-of-goods-manual:5`);
-- lets the tab label and link each id from its kind, with no path-prefix guess;
-- keeps "who looked at this expense" one indexed `has` query on `expense:e_123`.
+- tells two tables' ids apart (`InKindDonation:5`, `ManualInKindDonation:5`);
+- keeps "who looked at this expense" one indexed `has` query on `Expense:e_123`;
+- needs nothing maintained when a model is added.
 
 `rowCount` becomes the number of distinct records named, not the number of
 top-level rows.
 
-The kind list lives in `core.ts` (a boundary file). Its labels and page links
-live in `financeViewKinds.ts` (app code), which drops its prefix table.
+The tab shows each entry as the exact information: "Pat Lee viewed
+Expense:e_123, Receipt:r_9 on /expense/expenses/e_123". It links an id to its
+page where the app has a page for that model (`Expense` → `/expense/expenses/<id>`),
+and otherwise shows it plain. `financeViewKinds.ts` (app code) becomes that
+model-to-page link map, and drops its prefix table and its nouns. `core.ts`
+gains no kind list.
+
+Some records live outside the app's schema. A QuickBooks transaction
+(`qbTxnId`) and a Benevity disbursement (`disbursementId`) have no model. Q14
+asks how those are named.
 
 ### 4. Response changes the declarations need
 
@@ -236,89 +250,87 @@ live in `financeViewKinds.ts` (app code), which drops its prefix table.
   entered by hand is row 5 of `ManualInKindDonation`. Both reach the list as
   `id: 5`, told apart only by the row's `source` field (`receipt` or `manual`),
   so today the log records `5` for either. The declaration reads `source` and
-  records `gift-of-goods-receipt:5` or `gift-of-goods-manual:5`. This is a
+  records `InKindDonation:5` or `ManualInKindDonation:5`. This is a
   mechanism detail, not a question.
 
 ### 5. Own records
 
 On a route that shows a person their own records beside others', the handler
 drops the caller's own records from the ids before writing. A view that showed
-only their own writes nothing. This needs each declared kind to name its owner
+only their own writes nothing. This needs each declared model to name its owner
 field where it has one (`uploadedByUserId` on a receipt). Today only
 confirmations needs it.
 
 ## What each route would declare
 
-Kinds proposed in §3: `expense`, `receipt`, `mail-item`, `workflow-mapping`,
-`qb-transaction`, `donated-capital-line`, `donation`, `donation-file`,
-`disbursement`, `gift-of-goods-receipt`, `gift-of-goods-manual`, `payout`,
-`payment-exception`, `payment-plan`, `membership-payment-plan`. The final list
-is Q1.
+Each line names the record's model, or for a record outside the app, the
+outside record (Q14).
 
 "Today" is what the current handler records: ✓ the right ids, ✗ wrong or none.
 
 | Route | Records shown → declared id | Today |
 |---|---|---|
-| `GET /api/expense/expenses` | expense ← `Expense.id`; query `view`, `active` | ✓ |
-| `GET /api/expense/queue` | expense ← `Expense.id`; query `view` | ✓ |
-| `GET /api/expense/expenses/[id]` | expense ← param `id`, not its lines (decided) | ✓ expense; reasons inflate count |
-| `GET /api/expense/expenses/[id]/line-item-approvals` | expense ← param `id` | ✗ approval and bucket ids |
-| `GET /api/expense/expenses/[id]/signoffs` | expense ← param `id` (decided) | ✗ none |
-| `GET /api/expense/expenses/[id]/reimbursee-vendor` | expense ← param `id` | ✗ link-row id; nothing when empty |
-| `GET /api/expense/expenses/[id]/qb-candidates` | expense ← param `id`; qb-transaction ← `ExpenseQbCandidateView.id` | ✗ expense missing; nothing when empty |
-| `GET /api/expense/finance-queue` | expense ← `expenseId`; receipt ← `receiptId` (§4); query `tab` | ✗ none |
-| `GET /api/expense/expense-events` | expense ← `ExpenseEvent.expenseId` | ✗ event and expense ids mixed |
-| `GET /api/expense/received-expense-payloads` | receipt ← `receiptId` (decided) | ✗ payload ids |
-| `GET /api/expense/qb-exclusions` | qb-transaction ← `qbTxnId` (decided) | ✗ exclusion ids |
-| `GET /api/expense/donated-capital` | donated-capital-line ← `id` | ✓ |
+| `GET /api/expense/expenses` | `Expense` ← `id`; query `view`, `active` | ✓ |
+| `GET /api/expense/queue` | `Expense` ← `id`; query `view` | ✓ |
+| `GET /api/expense/expenses/[id]` | `Expense` ← param `id`, not its lines (decided) | ✓ expense; reasons inflate count |
+| `GET /api/expense/expenses/[id]/line-item-approvals` | `Expense` ← param `id` | ✗ approval and bucket ids |
+| `GET /api/expense/expenses/[id]/signoffs` | `Expense` ← param `id` (decided) | ✗ none |
+| `GET /api/expense/expenses/[id]/reimbursee-vendor` | `Expense` ← param `id` | ✗ link-row id; nothing when empty |
+| `GET /api/expense/expenses/[id]/qb-candidates` | `Expense` ← param `id`; QuickBooks transaction (Q14) ← `ExpenseQbCandidateView.id` | ✗ expense missing; nothing when empty |
+| `GET /api/expense/finance-queue` | `Expense` ← `expenseId`; `Receipt` ← `receiptId` (§4); query `tab` | ✗ none |
+| `GET /api/expense/expense-events` | `Expense` ← `ExpenseEvent.expenseId` | ✗ event and expense ids mixed |
+| `GET /api/expense/received-expense-payloads` | `Receipt` ← `receiptId` (decided) | ✗ payload ids |
+| `GET /api/expense/qb-exclusions` | QuickBooks transaction (Q14) ← `qbTxnId` (decided) | ✗ exclusion ids |
+| `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` | ✓ |
 | `GET /api/expense/provisional-items` | not logged: catalog, not finance (decided) | ✗ mixed |
-| `GET /api/receipts` | receipt ← `id`; query `state`, `pushed` | ✓ |
-| `GET /api/receipts/needs-attention` | receipt ← `id` | ✓ |
-| `GET /api/receipts/confirmations` | receipt ← `id`, minus own (§5) | ✓ ids, but logs own |
-| `GET /api/receipts/[id]` | receipt ← param `id` | ✓ |
-| `GET /api/receipts/[id]/file` (file) | receipt ← param `id` | ✓ |
-| `GET /api/receipts/[id]/audit-logs` | receipt ← param `id`; folds into the receipt page's entry | ✗ history-entry ids |
-| `GET /api/receipts/[id]/duplicate-group` | receipt ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) | ✗ none |
+| `GET /api/receipts` | `Receipt` ← `id`; query `state`, `pushed` | ✓ |
+| `GET /api/receipts/needs-attention` | `Receipt` ← `id` | ✓ |
+| `GET /api/receipts/confirmations` | `Receipt` ← `id`, minus own (§5) | ✓ ids, but logs own |
+| `GET /api/receipts/[id]` | `Receipt` ← param `id` | ✓ |
+| `GET /api/receipts/[id]/file` (file) | `Receipt` ← param `id` | ✓ |
+| `GET /api/receipts/[id]/audit-logs` | `Receipt` ← param `id`; folds into the receipt page's entry | ✗ history-entry ids |
+| `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) | ✗ none |
 | `GET /api/receipts/duplicate-queue` | registered, but no route or handler exists | — |
-| `GET /api/receipts/mail-items` | mail-item ← `id` | ✓ |
-| `GET /api/receipts/mail-items/[id]/file` (file) | mail-item ← param `id` | ✓ |
+| `GET /api/receipts/mail-items` | `ReceiptMailItem` ← `id` | ✓ |
+| `GET /api/receipts/mail-items/[id]/file` (file) | `ReceiptMailItem` ← param `id` | ✓ |
 | `GET /api/receipts/ignored-files` | depends on Q9: an ignore-list entry (file hash and reason) | ✗ |
-| `GET /api/workflow-mapping/receipts` | workflow-mapping ← `id`; query `state`, `receiptId` | ✓ |
-| `GET /api/workflow-mapping/receipts/[id]` | workflow-mapping ← param `id` | ✓ id; helper and line rows inflate |
-| `GET /api/workflow-mapping/audit-log` | workflow-mapping ← `receivedReceiptId`; query `receiptId`; folds into its page's entry | ✗ history-entry ids |
-| `GET /api/donations/transactions` | donation ← `id`; query `assigned` | ✓ |
-| `GET /api/donations/transactions/unassigned` | donation ← `id` | ✓ |
-| `GET /api/donations/transactions/[id]` | donation ← param `id` | ✓ |
-| `GET /api/donations/uploaded-files` | donation-file ← `id` | ✓ |
-| `GET /api/donations/uploaded-files/[id]/blob` (file) | donation-file ← param `id` | ✓ |
+| `GET /api/workflow-mapping/receipts` | `ReceivedReceipt` ← `id`; query `state`, `receiptId` | ✓ |
+| `GET /api/workflow-mapping/receipts/[id]` | `ReceivedReceipt` ← param `id` | ✓ id; helper and line rows inflate |
+| `GET /api/workflow-mapping/audit-log` | `ReceivedReceipt` ← `receivedReceiptId`; query `receiptId`; folds into its page's entry | ✗ history-entry ids |
+| `GET /api/donations/transactions` | `Transaction` ← `id`; query `assigned` | ✓ |
+| `GET /api/donations/transactions/unassigned` | `Transaction` ← `id` | ✓ |
+| `GET /api/donations/transactions/[id]` | `Transaction` ← param `id` | ✓ |
+| `GET /api/donations/uploaded-files` | `UploadedFile` ← `id` | ✓ |
+| `GET /api/donations/uploaded-files/[id]/blob` (file) | `UploadedFile` ← param `id` | ✓ |
 | `GET /api/donations/comment-rules` | depends on Q9: a matching rule that carries donor comment text | ✗ rule ids |
-| `GET /api/donations/disbursement-holds` | disbursement ← `disbursementId`; donation ← `transactionId` (decided) | ✗ hold ids |
-| `GET /api/donations/disbursement-events` | disbursement ← `disbursementId` (decided) | ✗ event ids |
-| `GET /api/donations/in-kind/manual` | gift-of-goods-manual ← `id` | ✓ |
-| `GET /api/donations/in-kind/manual/[id]` | gift-of-goods-manual ← param `id` | ✓ |
-| `GET /api/donations/in-kind/receipt/[id]` | gift-of-goods-receipt ← param `id` | ✓ |
-| `GET /api/donations/in-kind/queue` | gift of goods, kind by `source` ← `id` (§4) | ✗ ids collide |
-| `GET /api/donations/in-kind/by-bucket` | gift of goods, kind by `source` ← `id` (§4) | ✗ ids collide |
-| `GET /api/income/payouts` | payout ← `payoutGid` | ✓ |
-| `GET /api/income/payouts/[gid]` | payout ← param `gid` | ✓ payout; reconciliation id and balance rows mixed in |
-| `GET /api/income/reconciliation` | payout or disbursement by `source` ← `payoutGid` (decided) | ✗ reconciliation ids |
-| `GET /api/income/reconciliation/[id]/candidates` | qb-transaction ← `IncomeQbDepositView.id` | ✓ deposits; the payout only in the path |
-| `GET /api/income/qb-exclusions` | qb-transaction ← `qbTxnId` (decided) | ✗ exclusion ids |
+| `GET /api/donations/disbursement-holds` | Benevity disbursement (Q14) ← `disbursementId`; `Transaction` ← `transactionId` (decided) | ✗ hold ids |
+| `GET /api/donations/disbursement-events` | Benevity disbursement (Q14) ← `disbursementId` (decided) | ✗ event ids |
+| `GET /api/donations/in-kind/manual` | `ManualInKindDonation` ← `id` | ✓ |
+| `GET /api/donations/in-kind/manual/[id]` | `ManualInKindDonation` ← param `id` | ✓ |
+| `GET /api/donations/in-kind/receipt/[id]` | `InKindDonation` ← param `id` | ✓ |
+| `GET /api/donations/in-kind/queue` | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` (§4) | ✗ ids collide |
+| `GET /api/donations/in-kind/by-bucket` | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` (§4) | ✗ ids collide |
+| `GET /api/income/payouts` | `ShopPayout` ← `payoutGid` | ✓ |
+| `GET /api/income/payouts/[gid]` | `ShopPayout` ← param `gid` | ✓ payout; reconciliation id and balance rows mixed in |
+| `GET /api/income/reconciliation` | `ShopPayout`, or a Benevity disbursement (Q14), by `source` ← `payoutGid` (decided) | ✗ reconciliation ids |
+| `GET /api/income/reconciliation/[id]/candidates` | QuickBooks transaction (Q14) ← `IncomeQbDepositView.id` | ✓ deposits; the payout only in the path |
+| `GET /api/income/qb-exclusions` | QuickBooks transaction (Q14) ← `qbTxnId` (decided) | ✗ exclusion ids |
 | `GET /api/income/items` | not audited (decided) | — |
-| `GET /api/finance-ops/payments` | payment-exception ← `id` | ✓ |
-| `GET /api/finance-ops/payment-plans` | payment-plan ← `['programId','personId']` (decided) | ✗ none; `BoardSettings` as `"1"` |
-| `GET /api/finance-ops/membership-payment-plans` | membership-payment-plan ← `id` | ✓ |
+| `GET /api/finance-ops/payments` | `PaymentException` ← `id` | ✓ |
+| `GET /api/finance-ops/payment-plans` | `ProgramParticipant` ← `['programId','personId']` (decided) | ✗ none; `BoardSettings` as `"1"` |
+| `GET /api/finance-ops/membership-payment-plans` | `OrgMembershipProcess` ← `id` | ✓ |
 
 ## The PR split
 
 1. **Boundary:** the declaration grammar and the start-up checks in `core.ts`;
    the handler and file handler reading declarations; the concrete path and
-   declared query on the log row; kind-qualified ids; every audited registry
+   declared query on the log row; model-qualified ids; every audited registry
    entry's declaration; `receiptId` in `FinanceQueueRow`'s classification;
    dropping `auditedRead` from `GET /api/income/items`. No migration (see
    below).
 2. **App code:** `receiptId` in the finance-queue rows; `financeViewKinds.ts`
-   labels and links by kind; the tab shows the path and query.
+   becomes a model-to-page link map; the tab shows the page path, the
+   model-qualified ids and the query.
 
 Until (2) adds `receiptId`, the declared field is absent and an intake row
 records nothing, as today.
@@ -425,34 +437,60 @@ the declared records, and does not replace them.
   >   which page, and when, never what the records said. A view of amounts with
   >   no person in it is not recorded, and neither is a count. Only the Board
   >   reads the record.  [Decision — owner; Board ruling B11, narrowed]
+- **No list of kinds or nouns (Q1).** An entry shows the exact information: the
+  concrete page path, and each record as `Model:id`, the model taken from the
+  classification. Example: "Pat Lee viewed Expense:e_123, Receipt:r_9 on
+  /expense/expenses/e_123", not "viewed 3 expenses on the expense page".
+  [Decision — owner]
+- **The donation upload file carries the mark.** The stored Benevity CSV behind
+  `GET /api/donations/uploaded-files/[id]/blob` holds employers and donor names,
+  so serving it is always logged.  [Decision — owner]
 - **Log rows written before the change stay as they are.** Nothing converts
   them, and the search does not match their bare ids.  [Decision — owner]
 
 ## Open questions for @thpr
 
-Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
-
-- **Q1. The kind list.** Each kind is the noun on the Board's tab. For example,
-  a row reads "Pat Lee (Finance) viewed 3 **expenses** on the finance queue" or
-  "viewed 1 **gift of goods (from a receipt)**". Proposed kinds: expense,
-  receipt, mail item, workflow mapping, QuickBooks transaction, donated capital
-  line, donation, donation file, disbursement, gift of goods (from a receipt),
-  gift of goods (entered by hand), payout, payment exception, payment plan,
-  membership payment plan. Are these the right nouns? Q9 may shorten the list.
+Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
 
 - **Q9. Which fields make a view a finance view: what is left.** The rule and
-  most of the list are decided (see Decided). Three items are left to confirm:
+  most of the list are decided (see Decided). Two items are left to confirm:
   - **Company donors.** `donorCompanyName` on `InKindDonation` (bulk-donation)
     and on `Receipt` (receipt). Example: "Acme gave goods worth $300". It names
     a donor beside a gift's value. Marked?
-  - **Donation upload files.** The Benevity CSV files
-    (`GET /api/donations/uploaded-files/[id]/blob`) carry donor names and
-    amounts, but they are not images or receipts. Is the file field marked,
-    like receipt files?
   - **Approvers and reviewers** (`approvedByUserId`, `decidedByUserId`,
     `reviewedByUserId`, `boardAuthorizedByUserId`). These name who acted on a
     record, not who paid or was paid. Example: "Lee approved Sam's $42.10
     expense". Marked, or left off?
+
+- **Q13. Record which marked fields were sent?** An entry could also list the
+  marked fields the response carried: names only, never values. Example: Pat
+  opens expense e_123 as Finance and is sent `Expense.submitterId`,
+  `Expense.reimburseePersonId` and `Expense.receiptTotalCents`. A bucket
+  approver opening the same expense is sent only `Expense.receiptTotalCents`.
+  - **For:** the entry answers "did they see who was paid, or only the
+    amount?" without anyone working it out from the role and the route.
+  - **Against:** every row is larger, and the field names go into the view
+    key. The same records seen through a different set of fields count as a
+    separate view, and a route that adds a marked field changes its view key.
+
+  Record the field names?
+
+- **Q14. Records with no model in the app.** Some ids name records that live
+  only in another system: a QuickBooks transaction (`qbTxnId` on both
+  QuickBooks exclusion lists, and the ids on the two QuickBooks candidate
+  lists), and a Benevity disbursement (`disbursementId` on disbursement holds
+  and events, and Benevity rows in income reconciliation). No schema model
+  names them. Options:
+  - (a) name them by the field they came from, for example
+    `IncomeQbMatchExclusion.qbTxnId:4412`. It is exact and needs no list, but
+    one QuickBooks transaction has a different name on each screen, so "who
+    looked at transaction 4412" searches several names;
+  - (b) name them by the outside system and its record type, for example
+    `QuickBooks.Transaction:4412` and `Benevity.Disbursement:BEN-889`. The same
+    transaction has one name everywhere, at the cost of a list of outside names
+    to keep: two today.
+
+  Which?
 
 ## Follow-ups outside this design
 
