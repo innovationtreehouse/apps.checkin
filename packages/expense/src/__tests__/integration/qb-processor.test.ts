@@ -41,6 +41,9 @@ function catalogResolvesAll(gtinByItemId: Record<number, string>) {
   );
 }
 
+/** What the catalog client throws when its database cannot be reached. */
+const catalogDown = () => Object.assign(new Error("Can't reach database server"), { code: "P1001" });
+
 async function stateOf(id: string): Promise<string> {
   const row = await db.expense.findFirst({ where: { id } });
   return row!.state;
@@ -303,6 +306,24 @@ describeDb("checkAndProcessExpense — failure path", () => {
     });
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ valueBefore: "qb_pending", valueAfter: "qb_error" });
+  });
+
+  it("parks in qb_error on a catalog outage mid-lookup, with no hold and no partial snapshot", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const first = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    const second = await seedLineItem(id, { partNumber: "PN-2", totalPriceCents: 100 });
+    inv.lookupItems.mockRejectedValue(catalogDown());
+    await signAllLines(id);
+
+    catalogResolvesAll({ [first]: "0000000000017", [second]: "0000000000024" });
+    inv.getItem.mockResolvedValueOnce({ gtin13: "0000000000017", categoryId: 1, subcategoryId: 10 }).mockRejectedValue(catalogDown());
+    await checkAndProcessExpense(ORG, id);
+
+    expect(await stateOf(id)).toBe("qb_error");
+    expect(inv.getItem).toHaveBeenCalledTimes(2);
+    expect(await holdsFor(id)).toHaveLength(0);
+    const lines = await db.expenseLineItem.findMany({ where: { expenseId: id }, select: { signedGtin13: true } });
+    expect(lines.map((l) => l.signedGtin13)).toEqual([null, null]);
   });
 
   it("ignores an expense that is not in a QB-processable state", async () => {

@@ -3,55 +3,31 @@
  * (expense, workflow-mapping, bulk-donation). One object satisfies every port
  * structurally; each consumer parses the responses on its side.
  *
- * Display reads fall back to the consumer's inert result (empty / null) and log when
- * the catalog is unreachable. `checkReferences` gates a reference proposal and
- * `getActiveItem` gates an association, so both fail closed: the error propagates
- * and the line holds.
+ * Every read passes its failure up; an unreachable catalog database reads as a system
+ * failure (`kindOf`), and the caller decides whether to hold, degrade or refuse.
  */
 import { readService, referenceMatchingService } from "@checkin/global-catalog";
 import { catalogCheckReferencesSchema, catalogLookupEntrySchema } from "@checkin/receipt-types";
 import type { CatalogItemsLookup, CatalogCheckReferences } from "@checkin/receipt-types";
 
-async function orInert<T>(method: string, read: () => Promise<T>, inert: T): Promise<T> {
-  try {
-    return await read();
-  } catch (err) {
-    console.warn(`[catalog-reader] ${method} unavailable; returning the inert result`, err);
-    return inert;
-  }
-}
-
 export const catalogReader = {
-  listCategories: () => orInert("listCategories", () => readService.listCategories(), []),
+  listCategories: () => readService.listCategories(),
 
-  listSubcategories: () => orInert("listSubcategories", () => readService.listSubcategories(), []),
+  listSubcategories: () => readService.listSubcategories(),
 
-  getItem: (gtin13: string) => orInert("getItem", () => readService.getItem(gtin13), null),
+  getItem: (gtin13: string) => readService.getItem(gtin13),
 
-  getItemNames: (gtin13s: string[]) => orInert("getItemNames", () => readService.getItemNames(gtin13s), []),
+  getItemNames: (gtin13s: string[]) => readService.getItemNames(gtin13s),
 
-  searchItems: (query: string) => orInert("searchItems", () => readService.searchItems(query), []),
+  searchItems: (query: string) => readService.searchItems(query),
 
   async lookupItems(retailer: string, lookups: CatalogItemsLookup["lookups"]) {
-    const entries = catalogLookupEntrySchema.array().parse(lookups);
-    return orInert("lookupItems", () => referenceMatchingService.lookupMany(retailer, entries), []);
+    return referenceMatchingService.lookupMany(retailer, catalogLookupEntrySchema.array().parse(lookups));
   },
 
   async checkReferences(fields: CatalogCheckReferences) {
-    try {
-      return await referenceMatchingService.checkReferences(catalogCheckReferencesSchema.parse(fields));
-    } catch (err) {
-      console.warn("[catalog-reader] checkReferences failed; the line holds", err);
-      throw err;
-    }
+    return referenceMatchingService.checkReferences(catalogCheckReferencesSchema.parse(fields));
   },
 
-  async getActiveItem(gtin13: string) {
-    try {
-      return await readService.getActiveItem(gtin13);
-    } catch (err) {
-      console.warn("[catalog-reader] getActiveItem failed; the line holds", err);
-      throw err;
-    }
-  },
+  getActiveItem: (gtin13: string) => readService.getActiveItem(gtin13),
 };

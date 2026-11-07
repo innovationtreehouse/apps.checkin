@@ -7,6 +7,8 @@ import { finance } from "../../routes";
 
 const NAMED = "0012345678905";
 const UNNAMED = "0098765432109";
+/** What the catalog client throws when its database cannot be reached. */
+const catalogDown = () => Object.assign(new Error("Can't reach database server"), { code: "P1001" });
 
 describeDb("GET ownership-map", () => {
   it("returns the catalog name of each mapped part on the page, and nothing for an unknown GTIN", async () => {
@@ -47,5 +49,24 @@ describeDb("GET ownership-map", () => {
     const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
 
     expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
+  });
+
+  it("shows the map without names when the catalog database is unreachable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
+    bindPorts({ catalog: { ...catalogResolving({}), getItemNames: async () => { throw catalogDown(); } } });
+
+    const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
+
+    expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
+  });
+});
+
+describeDb("GET account-mapping catalog", () => {
+  it("answers 503 when the catalog database is unreachable, not empty lists", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: async () => { throw catalogDown(); } } });
+
+    await expect(finance.mappingCatalog({ req: new Request("http://test/api/expense/account-mapping/catalog"), params: {}, principal: principal(3, { isFinance: true }) }))
+      .rejects.toMatchObject({ status: 503, message: "Catalog categories are unavailable; try again" });
   });
 });

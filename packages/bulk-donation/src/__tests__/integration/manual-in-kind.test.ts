@@ -90,6 +90,22 @@ describeDb("recordInKindWithoutReceipt", () => {
     expect(applied).toHaveLength(0);
   });
 
+  it("answers that the catalog is unavailable when its database is unreachable, recording nothing", async () => {
+    configureBulkDonation({
+      auth: { getPrincipal: async () => ({ id: 1, name: "testops" }) },
+      org: async () => ({ id: TEST_ORG_ID, name: "Test Org" }),
+      catalog: {
+        search: async () => [],
+        getItem: async () => {
+          throw Object.assign(new Error("Can't reach database server"), { code: "P1001" });
+        },
+      },
+    });
+    await expect(recordInKindWithoutReceipt(input)).rejects.toMatchObject({ status: 503, message: "The catalog is unavailable; try again" });
+    expect(await db.manualInKindDonation.count()).toBe(0);
+    expect(applied).toHaveLength(0);
+  });
+
   it("keeps the donation when the load fails, and a retry loads it once", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     applyFails = true;
