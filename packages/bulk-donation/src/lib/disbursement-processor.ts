@@ -70,6 +70,8 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
   const conflicts: ConflictRecord[] = [];
 
   for (const tx of txs) {
+    // A released row is fees-only, with no amount to book; finance booked its fee by hand.
+    if (tx.feeReleasedAt) continue;
     const lookup = determineAccountsFromMap(rules, {
       companyName: tx.companyName,
       corporatePeerCampaign: tx.corporatePeerCampaign,

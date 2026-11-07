@@ -52,6 +52,9 @@ export const classifications = {
         ownerAssignedAt: 'internal',
         ownerAssignedByUserId: 'internal',
         isOrganizationalLevel: 'internal',
+        feeReleasedAt: 'internal',
+        feeReleasedByUserId: 'internal',
+        feeReleasedByName: 'internal',
     },
     TransactionCommentRule: {
         id: 'internal',
