@@ -143,9 +143,14 @@ How the pieces are built is described in
   `[Decision — deliberate limit]`
 
 - A receipt's lines can be edited only while it waits for review. Once it is
-  sent to apply, its lines can't be edited, even when the apply fails: a
-  failed part is retried with the same lines, and a mistake is corrected by
-  hand outside receiving. `[Decision — owner]`
+  sent to apply, its lines can't be edited, even when the apply fails. A
+  failure that may be temporary is retried automatically once a day, up to
+  five times. After the fifth try, or as soon as a part is refused outright,
+  the receipt waits in Apply failed for a person, who either retries it with
+  the same lines or corrects it by hand outside receiving and closes it as
+  handled by hand. A close-out names, for each part not applied, whether it
+  was done by hand or isn't needed, and carries a note; a blank note is
+  refused. A closed receipt can't be reopened. `[Decision — owner]`
 
 - The person who uploaded a receipt, or anyone in their household, may map its
   lines in Part mapping (link, propose or mark not inventory) and send it to
@@ -184,8 +189,11 @@ How the pieces are built is described in
   managers change it. `[Decision — *Principle: least privilege*]`
 
 - Only inventory managers, finance and the board may see receiving, because
-  receipts show spending. Only inventory managers act on it.
-  `[Decision — *Principle: least privilege*]`
+  receipts show spending. Only inventory managers act on it, apart from the
+  close-out below. `[Decision — *Principle: least privilege*]`
+
+- Inventory managers retry a receipt in Apply failed and close it out as
+  handled by hand; the board may also close one out. `[Decision — owner]`
 
 - Board membership is enough to view receipt and inventory data, and to edit it
   wherever the app allows an edit. `[Decision — owner]`

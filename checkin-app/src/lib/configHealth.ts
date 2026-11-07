@@ -154,6 +154,18 @@ export function message(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
 
+/** The alert address row: unset until a person enters it on Settings → Email. */
+export function alertAddressCheck(address: string | null | undefined): ConfigCheck {
+    return {
+        id: "alert-address",
+        label: "Alert address",
+        ok: !!address,
+        detail: address
+            ? "Set."
+            : "NOT set — set the alert address on Settings → Email.",
+    };
+}
+
 /** Count of failing checks — the red nav-badge number. */
 export function openConfigIssues(checks: ConfigCheck[] = getConfigHealth()): number {
     return checks.filter((c) => !c.ok).length;
