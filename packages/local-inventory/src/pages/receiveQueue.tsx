@@ -4,7 +4,9 @@ import { ActionIcon, Button, Checkbox, Group, Modal, Table, Text, Textarea, Titl
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName } from "../components/api";
+import {
+  api, CatalogNamesUnavailable, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
+} from "../components/api";
 import { LoadError } from "@checkin/component-ui";
 
 interface QueueRow {
@@ -25,7 +27,8 @@ export default function ReceiveQueuePage() {
   const [includeFulfilled, setIncludeFulfilled] = useState(false);
   const queue = useLoad<QueueBag>(`/receive-queue?includeFulfilled=${includeFulfilled}`);
   const lines = queue.data?.ReceiveQueue ?? null;
-  const names = withProvisionalNames(useCatalogNames((lines ?? []).map((r) => r.gtin13)), queue.data?.InventoryProvisionalItem);
+  const catalogNames = useCatalogNames((lines ?? []).map((r) => r.gtin13));
+  const names = withProvisionalNames(catalogNames, queue.data?.InventoryProvisionalItem);
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueRow | null>(null);
   const [reason, setReason] = useState("");
@@ -65,6 +68,7 @@ export default function ReceiveQueuePage() {
         <Checkbox label="Show fulfilled and cancelled" checked={includeFulfilled} onChange={(e) => setIncludeFulfilled(e.currentTarget.checked)} />
       </Group>
       {queue.error && <LoadError what="the receive queue" message={queue.error} onRetry={queue.reload} />}
+      <CatalogNamesUnavailable lookup={catalogNames} />
       {lines === null ? <Text c="dimmed">Loading…</Text>
         : lines.length === 0 ? <Text c="dimmed">No items in the receive queue.</Text>
         : (

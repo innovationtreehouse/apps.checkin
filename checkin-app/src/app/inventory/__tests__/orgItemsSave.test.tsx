@@ -13,7 +13,7 @@ jest.mock("@checkin/local-inventory/components/api", () => ({
   ...jest.requireActual("@checkin/local-inventory/components/api"),
   api: (...args: unknown[]) => mockApi(...args),
   useCanManage: () => true,
-  useCatalogNames: () => new Map(),
+  useCatalogNames: () => ({ names: new Map(), missing: new Set(), failed: new Set() }),
   useLoad: (path: string) => ({
     data: path.startsWith("/org-items/count") ? { total: 1 } : path === "/locations" ? [{ id: 7, name: "Bin" }] : { OrgItem: [LOADED], InventoryProvisionalItem: [] },
     error: null,

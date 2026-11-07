@@ -201,4 +201,5 @@ export function LoadError({ what, message, onRetry }: { what: string; message: s
   );
 }
 
+export * from "./catalogNames";
 export * from "./catalogPicker";

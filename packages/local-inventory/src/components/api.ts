@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { createClient, useViewer } from "@checkin/component-ui";
+import { createClient, NO_CATALOG_NAMES, useViewer, withLookup, type CatalogNames } from "@checkin/component-ui";
 
 /**
  * Client fetch helpers. Every inventory read and write goes through the host's
@@ -11,7 +11,9 @@ const BASE = "/api/inventory";
 
 export const { api, useLoad } = createClient(BASE);
 
-export { errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, type Loaded } from "@checkin/component-ui";
+export {
+  CatalogNamesUnavailable, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, withProvisionalNames, type CatalogNames, type Loaded, type ProvisionalName,
+} from "@checkin/component-ui";
 
 /** Whether the viewer may write inventory. Mirrors the routes' INVENTORY_MANAGER gate. */
 export function useCanManage(): boolean {
@@ -26,42 +28,22 @@ export function useCanSeeReceiving(): boolean {
 
 /**
  * Catalog item names for the given GTINs, read from the host's catalog route
- * one item at a time (callers pass only the visible page). A GTIN the catalog
- * does not know — e.g. a provisional — simply has no name.
+ * one item at a time (callers pass only the visible page). A provisional
+ * part's GTIN is one the catalog answers 404 for.
  */
-export function useCatalogNames(gtins: readonly string[]): ReadonlyMap<string, string> {
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+export function useCatalogNames(gtins: readonly string[]): CatalogNames {
+  const [lookup, setLookup] = useState<CatalogNames>(NO_CATALOG_NAMES);
   const key = [...new Set(gtins)].sort().join(",");
   useEffect(() => {
     if (!key) return;
     let live = true;
+    const ids = key.split(",");
     Promise.all(
-      key.split(",").map((g) =>
-        api<{ gtin13: string; name: string }>(`/api/catalog/items/${g}`).then(
-          (item) => [g, item.name] as const,
-          () => null,
-        ),
-      ),
-    ).then((pairs) => {
-      if (!live) return;
-      setNames((prev) => {
-        const next = new Map(prev);
-        for (const p of pairs) if (p) next.set(p[0], p[1]);
-        return next;
-      });
+      ids.map((g) => api<{ gtin13: string; name: string }>(`/api/catalog/items/${g}`).then((item): unknown => item.name, (e: unknown) => e)),
+    ).then((outcomes) => {
+      if (live) setLookup((prev) => ids.reduce((acc, g, i) => withLookup(acc, g, outcomes[i]), prev));
     });
     return () => { live = false; };
   }, [key]);
-  return names;
-}
-
-/** A provisional part's name, which the stock and receiving reads return beside their rows. */
-export interface ProvisionalName { provisionalGtin13: string; name: string }
-
-/** Part names by GTIN: the catalog's, else the provisional part's. */
-export function withProvisionalNames(
-  catalog: ReadonlyMap<string, string>,
-  provisionals: readonly ProvisionalName[] = [],
-): ReadonlyMap<string, string> {
-  return new Map([...provisionals.map((p) => [p.provisionalGtin13, p.name] as const), ...catalog]);
+  return lookup;
 }
