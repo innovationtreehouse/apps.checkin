@@ -237,9 +237,8 @@ missed a row stored at a different time of day.
   that returns an empty result, or throws where it has no answer to give: expense's
   QuickBooks reader throws `QuickBooksNotConnectedError`, and every library's
   catalog reader and catalog event source throw `NotWiredError`, so an unbound
-  catalog never reads as "no match" or "no events". A route that checks a part
-  against an unbound catalog answers 503 "No catalog is connected"; an outage stays
-  502. The catch-up sweep records an unbound event source as `notConnected`, not
+  catalog never reads as "no match" or "no events". A route that reads an
+  unbound catalog answers 503 "No catalog is connected"; an outage stays 502. The catch-up sweep records an unbound event source as `notConnected`, not
   as an unreadable catalog, and raises no alert. A callee that takes an `orgId`
   from its caller checks it with `assertOrg` first.
 

@@ -137,10 +137,13 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, princi
   return {};
 };
 
-/** Catalog category and subcategory names, through the CatalogReader port; an unbound catalog throws NotWiredError. */
+/** Catalog category and subcategory names, through the CatalogReader port; an unbound catalog is a 503. */
 export const mappingCatalog: ExpenseRouteHandler = async () => {
   const catalog = getExpenseRuntime().catalog;
-  const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]);
+  const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]).catch((err: unknown) => {
+    if (kindOf(err) === "settings") throw httpError(503, "No catalog is connected");
+    throw err;
+  });
   return { Category: categories, Subcategory: subcategories };
 };
 

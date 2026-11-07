@@ -117,9 +117,10 @@ describe("caller ports", () => {
     expect(await getInventoryApply().failureReason(inventorySourceKey(1))).toBeNull();
   });
 
-  it("an unbound catalog says it is not wired, never \"no item\"", async () => {
-    await expect(searchCatalog("drill")).rejects.toBeInstanceOf(NotWiredError);
-    await expect(getCatalogItem("0000000000000")).rejects.toBeInstanceOf(NotWiredError);
+  it("an unbound catalog is a 503 saying none is connected, never \"no item\"", async () => {
+    const notConnected = { status: 503, message: "No catalog is connected" };
+    await expect(searchCatalog("drill")).rejects.toMatchObject(notConnected);
+    await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(notConnected);
   });
 
   it("X10 parses what the bound catalog returns", async () => {
@@ -180,6 +181,6 @@ describe("no-receipt in-kind entry: input bounds (rejected before any catalog or
   });
 
   it("with no catalog bound, says so rather than call the item not found", async () => {
-    await expect(recordInKindWithoutReceipt(input)).rejects.toBeInstanceOf(NotWiredError);
+    await expect(recordInKindWithoutReceipt(input)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
   });
 });

@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { db } from "../db";
 import { InKindDonorSchema, inventorySourceKey } from "../contract";
-import { getCatalogLookup, getInventoryApply } from "../runtime";
+import { catalogNotConnected, getCatalogLookup, getInventoryApply } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "@checkin/component-kit";
@@ -76,7 +76,7 @@ export const manualInKindService = {
 
     const catalog = getCatalogLookup();
     for (const gtin13 of new Set(lines.map((l) => l.gtin13))) {
-      if (!(await catalog.getItem(gtin13))) throw new ServiceError(400, `Catalog item ${formatGtinDisplay(gtin13)} not found`);
+      if (!(await catalog.getItem(gtin13).catch(catalogNotConnected))) throw new ServiceError(400, `Catalog item ${formatGtinDisplay(gtin13)} not found`);
     }
 
     const donation = await db.$transaction(async (tx) => {

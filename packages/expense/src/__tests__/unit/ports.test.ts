@@ -9,7 +9,8 @@ import { approveLine } from "../../services/approvalService";
 import { resolveDonatedPartAccounts } from "../../services/donatedPartAccounts";
 import { lookupCatalogInfo } from "../../lib/expense-qb-processor";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
-import { ORG } from "../helpers/seed";
+import { finance } from "../../routes";
+import { ORG, principal } from "../helpers/seed";
 
 describe("callerId", () => {
   it("returns an integer id", () => {
@@ -49,6 +50,11 @@ describe("runtime", () => {
       getExpenseRuntime().catalogEvents.eventsSince("org", 0),
     ];
     for (const call of calls) expect(kindOf(await call.catch((err: unknown) => err))).toBe("settings");
+  });
+
+  it("the mapping catalog route answers an unbound catalog with 503 \"No catalog is connected\"", async () => {
+    const ctx = { req: new Request("http://test/api/expense/mapping-catalog"), params: {}, principal: principal(3, { isFinance: true }) };
+    await expect(finance.mappingCatalog(ctx)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
   });
 
   it("matching carries on without the catalog and records that it is not connected", async () => {

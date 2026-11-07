@@ -1,4 +1,4 @@
-import { defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { defineRuntime, kindOf, NotWiredError, ServiceError } from "@checkin/component-kit";
 import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
@@ -60,6 +60,12 @@ export const getPrincipal = bulkDonationRuntime.getPrincipal;
 export const getOrgId = bulkDonationRuntime.getOrgId;
 
 export const assertOrg = bulkDonationRuntime.assertOrg;
+
+/** An unbound catalog as the 503 a person reads; any other failure is rethrown. */
+export function catalogNotConnected(err: unknown): never {
+  if (kindOf(err) === "settings") throw new ServiceError(503, "No catalog is connected");
+  throw err;
+}
 
 export function getOwnerDirectory(): OwnerDirectory {
   return requireRuntime().owners ?? INERT_OWNERS;
