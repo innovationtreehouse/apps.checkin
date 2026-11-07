@@ -174,6 +174,12 @@ never which records were seen:
   After that, a reused id starts a new row.
 - **One path per id.** Calls merge only when they claim the same page path as
   the id's first call.
+- **A call that fails a limit is untagged (G3).** A tagged call from another
+  person than the id's first user, claiming another path than the id's first
+  call, or from a route not on its page's list (below) writes a plain untagged
+  row: `pageViewId` and `pagePath` null, the one call in `calls`. It never
+  starts or joins a page-view entry, so another person can never start one on
+  an id already used.  [Decision — owner]
 - **A per-page allowlist (Q11).** A map from each page to the API routes it may
   fold into its entry:
 
@@ -202,10 +208,12 @@ names e_123 even when its reimbursee panel is empty.
 
 | Column | Holds |
 |---|---|
-| `viewedAt`, `actorId`, `role` | as now |
+| `viewedAt`, `actorId` | as now; on a page-view row, `viewedAt` is its first call's time |
+| `role` | the role the view was chosen under; on a page-view row, its first call's role (G4) |
+| `endpoint`, `params`, `rowCount` | written by the current handler as now; null on rows that carry `calls` and `recordCount` (G1) |
 | `pagePath` | the claimed page path, such as `/expense/expenses/e_123`; null on an untagged row |
 | `pageViewId` | the browser's page-view id; null on an untagged row |
-| `calls` | each merged call's registry key, concrete path and declared query |
+| `calls` | each merged call as `{ endpoint, path, query, role }`: registry key, concrete path, declared query, and the role it was chosen under (G4). An identical repeat is listed once |
 | `records` | each record as `{ ref: "Expense:e_123", fields: ["submitterId", "receiptTotalCents"] }` |
 | `recordIds` | the `ref`s alone, as text, for the GIN index ("who looked at Expense:e_123") |
 | `recordCount` | the number of distinct records |
@@ -218,12 +226,38 @@ first seen with only its amount is a new view, and is not swallowed by the
 earlier one. The cost is more rows when the same records are seen through
 different fields.
 
-A page-view row is keyed by person and page-view id, and the merge adds to it.
-A reload is a new page load, with a new id, so it is a new row. Collapsing
-identical page loads within the window is not done, because a row is complete
-only after its 30 seconds have passed (Q16, decided).
+A page-view row is found by person and page-view id, and the merge adds to it.
+A reload is a new page load, with a new id, so it starts a new row (Q16). Once
+finished, a page-view row whose content matches an earlier one may collapse
+into it (G2): one row per person, view key and fifteen-minute window, as for
+untagged rows. A page-view row's view key hashes its page path, record refs and
+field names, never its page-view id, so identical loads match.
+
+A page-view row fills over its first 30 seconds, so its content is not final
+until then. The writer handles that in two steps:
+
+- **While open,** the row's view key is `open:<random uuid>`, unique to it. A
+  half-built row therefore never matches, collapses into or blocks any other
+  row through the unique index.
+- **Closing.** Each later call by the same person first closes that person's
+  page-view rows whose 30 seconds have passed. A closed row takes its content
+  key. If an earlier row of the same person in the same window already holds
+  that key, the closed row's calls are unioned into the earlier row and the
+  closed row is removed. The two showed the same records with the same field
+  names on the same page, so no record or field is lost.
+
+A row whose person makes no later call keeps its `open:` key and is never
+collapsed. That costs a duplicate row, never a lost one. One person's calls
+are serialised by an advisory lock on the person, and a page-view id's first
+use by a second lock on the id.  [Decision — owner; approach as built in PR 1]
 
 Rows written before the change stay as they are (decided).
+
+The five new columns are nullable, since rows from the current handler and
+earlier rows carry none of them. The index on person and page-view id is
+non-unique, since a reused id after 30 seconds starts a second row. It is
+ordered page-view id first, because the writer also looks an id up on its own
+to find its first user and first path.
 
 ### 6. The Board's tab
 
@@ -397,8 +431,23 @@ as today but with exact records and fields.
 - **Records outside the app are named by system and type (Q14 (b)):**
   `QuickBooks.Transaction:4412`, `Benevity.Disbursement:BEN-889`. One name on
   every screen, from a fixed list of outside names, two today.  [Decision — owner]
-- **A reload writes a new entry (Q16).** Each page load is its own page view;
-  identical loads are not collapsed.  [Decision — owner]
+- **A reload writes a new entry (Q16).** Each page load is its own page view.
+  [Decision — owner]
+- **Identical finished page views may collapse (G2).** A finished page-view
+  entry identical to an earlier one from the same person in the same
+  fifteen-minute window collapses into it; its key is the page path, records
+  and field names, not the page-view id. How a row still filling is kept out of
+  that is in §5.  [Decision — owner]
+- **Rows that carry `calls` leave `endpoint`, `params` and `rowCount` null
+  (G1).** The migration drops NOT NULL on the three; the current handler keeps
+  filling them. Until the tab is rebuilt (PR 3), its kind filter, which reads
+  `endpoint`, misses rows that carry `calls`.  [Decision — owner]
+- **A tagged call that fails a limit writes an untagged row (G3).** Another
+  person's id, another path, or a route not on the page's list: `pageViewId`
+  and `pagePath` null, one call. It never starts or joins a page-view entry.
+  [Decision — owner]
+- **A merged entry's `role` is its first call's (G4),** and each entry in
+  `calls` records its own role.  [Decision — owner]
 - **Stored payloads and change values carry the mark (Q17).** Their text holds
   amounts and names that no other field mark sees, as a stored file does:
   `ReceivedExpensePayload.payloadJson`, `DisbursementEvent.payload`,
