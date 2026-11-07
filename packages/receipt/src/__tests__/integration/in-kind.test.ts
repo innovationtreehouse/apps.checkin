@@ -6,7 +6,7 @@ import { importReceipts } from "../../services/importService";
 import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, TEST_ORG_ID, clearAll, configure, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -76,6 +76,27 @@ describeDb("in-kind mark and donor (X13)", () => {
         needsReimbursement: true,
       }),
     ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("refuses \"I am the donor\" from a person whose profile has no first or last name", async () => {
+    const self = { isInKind: true, donor: { self: true } };
+    const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
+    for (const blank of [{ firstName: "" }, { lastName: "  " }]) {
+      actAs({ ...ALICE, ...blank });
+      await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...self })).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining("Your profile is missing a first or last name"),
+      });
+      await expect(receiptService.setInKind(r.id, self)).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Your profile is missing a first or last name") });
+    }
+    expect(await db.receipt.count()).toBe(1);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: false, donorSync: "none" });
+    expect(ports.calls.donors).toEqual([]);
+
+    const gift = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...typed });
+    await receiptService.setInKind(r.id, typed);
+    expect(ports.calls.donors.map((c) => c.receiptId)).toEqual([gift.id, r.id]);
   });
 
   it("'I am the donor' sends the uploader's names; the push carries only isInKind", async () => {
