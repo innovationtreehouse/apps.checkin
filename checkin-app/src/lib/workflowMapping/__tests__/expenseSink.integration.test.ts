@@ -204,6 +204,18 @@ describe('X5 ExpenseSink → expense intake', () => {
         expect(await expenses('x5-down')).toHaveLength(1);
     });
 
+    it('stamps the expense leg once expense has stored the payload, even when building the expense fails', async () => {
+        const { id } = await seedReceipt('x5-build-fails');
+        jest.spyOn(ex, '$transaction').mockRejectedValueOnce(new Error('lost the expense database mid-build'));
+
+        expect(await proceedAndApply(id)).toEqual({ state: 'resolved' });
+
+        expect((await legs(id)).expenseAppliedAt).not.toBeNull();
+        expect(await expenses('x5-build-fails')).toHaveLength(0);
+        expect(await ex.receivedExpensePayload.findMany({ where: { receiptId: 'x5-build-fails' } }))
+            .toEqual([expect.objectContaining({ status: 'failed', failureReason: 'lost the expense database mid-build' })]);
+    });
+
     it('refuses a receipt for another org', async () => {
         await expect(expenseSink.pushReceipt({ ...receiptFor('x5-foreign'), orgId: 'elsewhere' })).rejects.toThrow(/not this org/);
         expect(await expenses('x5-foreign')).toHaveLength(0);
