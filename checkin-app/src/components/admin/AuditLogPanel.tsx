@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { LoadError } from "@checkin/component-ui";
 import { normalizeAuditData } from "@/lib/auditPayload";
+import { useLoad } from "@/lib/api";
 import {
   Badge,
+  Box,
   Center,
   Code,
   Group,
@@ -51,8 +54,6 @@ const ACTION_COLOR: Record<AuditLog["action"], string> = {
 const ACTIONS = ["CREATE", "EDIT", "DELETE", "BECOME_ADMIN"];
 
 export function AuditLogPanel() {
-  const [data, setData] = useState<AuditResponse | null>(null);
-  const [failed, setFailed] = useState(false);
   const [page, setPage] = useState(1);
   const [action, setAction] = useState<string | null>(null);
   const [table, setTable] = useState<string | null>(null);
@@ -61,26 +62,16 @@ export function AuditLogPanel() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
-  useEffect(() => {
-    const qs = new URLSearchParams({ page: String(page) });
-    if (action) qs.set("action", action);
-    if (table) qs.set("table", table);
-    if (actor) qs.set("actor", actor);
-    if (entityId.trim()) qs.set("entityId", entityId.trim());
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-
-    fetch(`/api/system-status/audit-log?${qs}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((d) => {
-        setData(d);
-        setFailed(false);
-      })
-      .catch(() => setFailed(true));
-  }, [page, action, table, actor, entityId, from, to]);
+  const qs = new URLSearchParams({ page: String(page) });
+  if (action) qs.set("action", action);
+  if (table) qs.set("table", table);
+  if (actor) qs.set("actor", actor);
+  if (entityId.trim()) qs.set("entityId", entityId.trim());
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  // Keeps the filter options and the rows on screen while the next page or filter loads.
+  const { data, error, loading, retrying, reload } = useLoad<AuditResponse>(`/api/system-status/audit-log?${qs}`, { keepPrevious: true });
+  const stale = loading || retrying;
 
   // Filter changes reset to page 1.
   const onFilter =
@@ -143,9 +134,9 @@ export function AuditLogPanel() {
         <DateField label="To" value={to} onChange={onFilter(setTo)} />
       </Group>
 
-      {failed ? (
-        <Text c="red">Failed to load audit log.</Text>
-      ) : !data ? (
+      {error ? (
+        <LoadError what="the audit log" message={error} onRetry={reload} />
+      ) : !data || (stale && data.logs.length === 0) ? (
         <Center mih="30vh">
           <Loader />
         </Center>
@@ -160,6 +151,7 @@ export function AuditLogPanel() {
               {data.total} change{data.total === 1 ? "" : "s"} — forensic trail, read-only.
             </Text>
           </Group>
+          <Box aria-busy={stale} style={{ opacity: stale ? 0.5 : 1 }}>
           <Table.ScrollContainer minWidth={760}>
             <Table striped highlightOnHover withTableBorder verticalSpacing={4} fz="xs">
               <Table.Thead>
@@ -216,9 +208,10 @@ export function AuditLogPanel() {
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
+          </Box>
           {totalPages > 1 && (
             <Group justify="center">
-              <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
+              <Pagination total={totalPages} value={page} onChange={setPage} size="sm" disabled={stale} />
             </Group>
           )}
         </>

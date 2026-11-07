@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import { notifications } from '@mantine/notifications';
+import { useLoad } from '@/lib/api';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { isValidPhone, PHONE_ERROR } from '@/lib/phone';
@@ -22,16 +23,10 @@ import {
 } from '@mantine/core';
 
 function HouseholdQuestion() {
-  const [householdName, setHouseholdName] = useState<string | null>(null);
+  const { data, error: loadError } = useLoad<{ household: { name: string } | null }>('/api/profile/household-question', { expireOn401: false });
+  const householdName = data?.household?.name ?? null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    fetch('/api/profile/household-question')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setHouseholdName(data?.household?.name ?? null))
-      .catch(() => setError('Could not load this question. Please try again.'));
-  }, []);
 
   const answer = async (join: boolean) => {
     setSaving(true);
@@ -68,6 +63,7 @@ function HouseholdQuestion() {
           <Text size="sm" c="dimmed">
             If you say no, you get a new record of your own and sign in again.
           </Text>
+          {loadError && <Alert color="red">Could not load this question. Please try again.</Alert>}
           {error && <Alert color="red">{error}</Alert>}
           <Group>
             <Button loading={saving} onClick={() => answer(true)}>Yes, join</Button>

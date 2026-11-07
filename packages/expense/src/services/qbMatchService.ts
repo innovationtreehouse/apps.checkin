@@ -1,6 +1,6 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
 // @checkin/quickbooks is stateless; expense hands it the closed-books gate and the ids it must skip.
-import { appKeyOf, qbKey, shiftDate, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
+import { appKeyOf, postFailure, qbKey, shiftDate, type PostFailure, type QboPurchase, type QuickBooksClient } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import { readExpenseSettings } from "./settingsService";
 import type { ExpensePrincipal, QbTxn } from "../contract";
@@ -32,7 +32,7 @@ export type OwnEntry =
   | { kind: "own"; entry: QboPurchase }
   | { kind: "held"; note: string }
   | { kind: "unsure"; note: string }
-  | { kind: "failed"; note: string };
+  | { kind: "failed"; note: string; failure: PostFailure };
 
 /** Every app key a QuickBooks entry's memo carries. */
 export const appKeysOf = (entry: QboPurchase) => appKeyOf(entry)?.split(" ") ?? [];
@@ -40,9 +40,10 @@ export const appKeysOf = (entry: QboPurchase) => appKeyOf(entry)?.split(" ") ?? 
 /**
  * For an expense the app may already have created in QuickBooks: every `entity` QuickBooks created
  * since its first attempt, kept to those carrying its key. Creation time does not change when
- * finance edits the date, so a re-dated entry is still found. An entry carrying another key
- * beside it, several keyed entries, or a full page is unsure; an entry another expense or line
- * holds is held.
+ * finance edits the date, so a re-dated entry is still found. A voided entry keeps its memo at a
+ * zero total, so a $0 entry is ignored unless the expense's own total, `totalCents`, is $0 too. An
+ * entry carrying another key beside it, several keyed entries, or a full page is unsure; an entry
+ * another expense or line holds is held.
  */
 export async function lookupOwnEntry(
   client: QuickBooksClient,
@@ -50,17 +51,18 @@ export async function lookupOwnEntry(
   expenseId: string,
   entity: QbMatchEntity,
   since: Date,
+  totalCents: number,
 ): Promise<OwnEntry> {
   let read: { entries: QboPurchase[]; full: boolean };
   try {
     read = await client.createdSince(entity, since);
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    return { kind: "failed", note: `the app may already have booked this expense: the QuickBooks read failed (${error.slice(0, 200)})` };
+    const failure = postFailure(err);
+    return { kind: "failed", note: `the app may already have booked this expense: the QuickBooks read failed (${failure.error.slice(0, 200)})`, failure };
   }
   if (read.full) return { kind: "unsure", note: `the app may already have booked this expense: QuickBooks returned a full page of ${entity}s created since its first attempt` };
   const key = qbKey("expense", expenseId);
-  const keyed = read.entries.filter((e) => appKeysOf(e).includes(key));
+  const keyed = read.entries.filter((e) => appKeysOf(e).includes(key) && (e.TotalAmt !== 0 || totalCents === 0));
   if (keyed.length === 0) return { kind: "none" };
   if (keyed.length > 1 || appKeyOf(keyed[0]) !== key) {
     return { kind: "unsure", note: `the app may already have booked this expense: ${entity}s ${keyed.map((e) => e.Id).join(", ")} carry its key` };
@@ -177,7 +179,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
   if (!expense.qbCreateAttemptedAt) return null;
   const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) throw new ServiceError(503, "QuickBooks is not connected");
-  const own = await lookupOwnEntry(posting.client, expense.orgId, expense.id, entity, expense.qbCreateAttemptedAt);
+  const own = await lookupOwnEntry(posting.client, expense.orgId, expense.id, entity, expense.qbCreateAttemptedAt, postedTotalCents(expense));
   switch (own.kind) {
     case "none":
       return null;
@@ -200,7 +202,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
       }
       const linked = await tx.expense.updateMany({
         where: { id: expense.id, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "CREATED", qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
+        data: { qbMatchState: "CREATED", qbFailureKind: null, qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, expense.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
@@ -251,7 +253,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       }
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "MATCHED", qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
+        data: { qbMatchState: "MATCHED", qbFailureKind: null, qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, current.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
@@ -311,7 +313,7 @@ export async function skipExpenseQb(principal: ExpensePrincipal, expenseId: stri
     ) {
       throw new ServiceError(409, "The app may have tried to book this expense meanwhile; reload and try again");
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED" } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED", qbFailureKind: null } });
     await checkOffHeldOnPost(tx, expenseId, SKIPPED_CHECK_OFF);
     await writeAudit(tx, actorOf(principal), {
       expenseId,

@@ -1,9 +1,11 @@
-import { defineRuntime, NotWiredError } from "@checkin/component-kit";
+import { defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
+import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
   CatalogLookup,
   IncomeDeposits,
+  InKindAccounts,
   InKindCapital,
   InKindDirectory,
   InKindQbPosting,
@@ -17,6 +19,7 @@ const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");
   },
+  failureReason: async () => null,
 };
 
 /** Nobody holds a role or is conflicted, so nobody can decide a gift. */
@@ -31,6 +34,9 @@ const INERT_IN_KIND: InKindDirectory = {
 
 /** Unbound, no line goes to capital review and none waits on it. */
 const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [], assetLineIds: async () => [] };
+
+/** Unbound, no part resolves, so every gift line waits for finance to set its account. */
+const INERT_ACCOUNTS: InKindAccounts = { resolve: async (_orgId, parts) => parts.map((p) => ({ lineId: p.lineId, reason: "The expense account rules are not connected" })) };
 
 export { NotWiredError };
 
@@ -63,6 +69,10 @@ export function getInKindCapital(): InKindCapital {
   return requireRuntime().capital ?? INERT_CAPITAL;
 }
 
+export function getInKindAccounts(): InKindAccounts {
+  return requireRuntime().partAccounts ?? INERT_ACCOUNTS;
+}
+
 export function getInventoryApply(): InventoryApply {
   return requireRuntime().inventory ?? INERT_INVENTORY;
 }
@@ -75,4 +85,13 @@ export function getInKindQbPosting(): InKindQbPosting | undefined {
 /** Income's deposit ports; undefined until the host binds them, and nothing is handed over. */
 export function getIncomeDeposits(): IncomeDeposits | undefined {
   return requireRuntime().deposits;
+}
+
+const NO_QUICKBOOKS: QboAccountList = async () => {
+  throw new ServiceError(503, "QuickBooks is not connected.");
+};
+
+/** QuickBooks' live account list; unbound, every read answers 503. */
+export function getQuickBooksAccounts(): QboAccountList {
+  return requireRuntime().quickBooksAccounts ?? NO_QUICKBOOKS;
 }

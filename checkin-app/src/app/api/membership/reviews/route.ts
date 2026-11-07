@@ -6,7 +6,6 @@ import { handler, unauthorized } from "@/security/handler";
 import { eligibleReviewProcessIds, attestedUnclearedProcessIds, ownRejectedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
 import { apiError } from "@/lib/api-response";
 import { reviewErrorResponse } from "@/lib/domainErrorResponse";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -64,9 +63,8 @@ export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) 
                             // signal a volunteer-only household uses to ask the reviewer to
                             // mark them volunteer. Classified pii; reviewers hold that band.
                             intakeNotes: true,
-                            // Live leads only: these are the selectable check subjects, and
-                            // the service rejects a tombstone the card offered.
-                            householdMembers: { where: { isHouseholdLead: true, ...LIVE_PERSON }, select: { id: true, name: true, email: true } },
+                            // The leads are the selectable check subjects.
+                            householdMembers: { where: { isHouseholdLead: true }, select: { id: true, name: true, email: true } },
                         },
                     },
                 },

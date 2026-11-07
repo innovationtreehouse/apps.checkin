@@ -3,13 +3,14 @@
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getOrgId } from "../runtime";
+import { assertOrg, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeOrgAudit } from "../lib/audit";
 import { classifyCapital } from "../lib/expense-rules";
 import { formatItfa, fullyDepreciatedDate, nextItfaSeq } from "../lib/capital-register";
 import { requireFinance, requireLiveBuckets } from "./approvalService";
 import { ServiceError } from "@checkin/component-kit";
+import { allocateCents } from "@checkin/money";
 
 /** One accepted gift line, valued with its share of the receipt's tax and shipping. */
 export interface DonatedLine {
@@ -45,13 +46,12 @@ const unitsOf = (quantity: number) => Math.max(1, Math.round(quantity));
 
 /** Each unit's share of the line's cost; the shares sum to the cost exactly, the first units taking the odd cents. */
 export function unitCosts(costCents: number, units: number): number[] {
-  const base = Math.floor(costCents / units);
-  const extra = costCents - base * units;
-  return Array.from({ length: units }, (_, u) => base + (u < extra ? 1 : 0));
+  return allocateCents(costCents, Array.from({ length: units }, () => 1));
 }
 
 /** Keeps the lines at or over the org's capital thresholds for review. A resend does nothing. */
 export async function submitDonatedLines(orgId: string, lines: DonatedLine[]): Promise<void> {
+  await assertOrg(orgId);
   const settings = await db.expenseOrgSettings.findFirst({ where: { orgId } });
   const candidates = lines.filter((l) =>
     classifyCapital(l.costCents, [{ unitPriceCents: unitCosts(l.costCents, unitsOf(l.quantity))[0] }], settings),

@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
+import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
@@ -83,6 +83,8 @@ export interface ReimbursementStatus {
 /** Where a finalized receipt's purchase stands downstream, as its uploader and reimbursee may read it. */
 export const purchaseOutcomeSchema = z.object({
   receiving: z.enum(["waiting", "applying", "stuck", "received"]).nullable(),
+  /** The receipt's lines still open on receiving's receive queue; absent means none. */
+  openBackorders: z.number().int().nonnegative().optional(),
   money: z
     .object({
       status: z.enum(["awaiting_confirmation", "awaiting_approval", "exception", "with_finance", "line_rejected", "complete", "backfill"]),
@@ -165,7 +167,7 @@ export const OcrDataSchema = z.object({
   receiptNumber: z.string().max(200).optional(),
   orderNumber: z.string().max(200).optional(),
   receiptDate: z.string().max(50),
-  currency: z.string().max(10),
+  currency: z.string().regex(CURRENCY_CODE),
   shipping: ocrMoney,
   tax: ocrMoney,
   discount: ocrMoney,

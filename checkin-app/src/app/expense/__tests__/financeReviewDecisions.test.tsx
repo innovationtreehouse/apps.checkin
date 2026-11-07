@@ -7,9 +7,10 @@ let mockLoads: Record<string, unknown> = {};
 const mockSend = jest.fn<Promise<boolean>, [string, string, unknown, string]>();
 const mockApi = jest.fn<Promise<unknown>, [string]>();
 const mockGoTo = jest.fn<void, [string]>();
+const mockReload = jest.fn<void, [string]>();
 
 jest.mock("@checkin/expense/components/api", () => ({
-  useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
+  useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => { if (path) mockReload(path); } }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
   send: (...args: [string, string, unknown, string]) => mockSend(...args),
   api: (path: string) => mockApi(path),
@@ -65,6 +66,7 @@ beforeEach(() => {
   mockSend.mockReset().mockResolvedValue(true);
   mockApi.mockReset();
   mockGoTo.mockReset();
+  mockReload.mockReset();
 });
 
 describe("the reasons alert", () => {
@@ -265,5 +267,36 @@ describe("required notes", () => {
     fireEvent.click(screen.getByRole("button", { name: "Raise exception" }));
     expect(await screen.findByLabelText(/Notes/)).toBeRequired();
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  });
+});
+
+describe("a refused QuickBooks action", () => {
+  const line = { id: 1, lineNumber: 1, description: "Bolts", partNumber: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isCapital: false, depreciationYears: null, capitalOwnerId: null, manualQbAccount: "6110" };
+  const cases: [string, () => void][] = [
+    ["Retry QuickBooks post", () => load(expense({ qbMatchState: "NEEDS_FINANCE" }), [reason("QB_POST_FAILED", { tab: "qb", count: 5 })])],
+    ["Book it", () => load(expense({ qbMatchState: "UNBOOKED" }), [reason("QB_UNBOOKED", { tab: "qb" })], { "/expenses/e1/qb-candidates": [] })],
+    ["Resubmit", () => load(
+      expense({ lineItems: [line], holds: [{ id: 3, lineItemId: 1, reason: "NO_PART_NUMBER", matchedRows: "[]", status: "PENDING" }] }),
+      [reason("ACCOUNT_HOLD", { tab: "holds", count: 1 })],
+    )],
+  ];
+
+  it.each(cases)("rereads the expense in place after a refused %s", async (button, setUp) => {
+    setUp();
+    mockSend.mockResolvedValue(false);
+    wrap(<ExpenseDetailPage id="e1" queueHref="/finance/review?queue=qb" />);
+    fireEvent.click(screen.getByRole("button", { name: button }));
+    await waitFor(() => expect(mockReload).toHaveBeenCalledWith("/expenses/e1"));
+    expect(mockGoTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("the line for an expense waiting on finance", () => {
+  it("says it waits for finance, without claiming posts kept failing", () => {
+    load(expense({ qbMatchState: "NEEDS_FINANCE" }), [reason("QB_POST_FAILED", { tab: "qb", detail: "the expense has no receipt date" })]);
+    wrap(<ExpenseDetailPage id="e1" />);
+    expect(screen.getByText("Not posted: the expense has no receipt date · QuickBooks panel")).toBeInTheDocument();
+    expect(screen.getByText(/Not sent to QuickBooks: it waits for finance/)).toBeInTheDocument();
+    expect(screen.queryByText(/kept failing/)).not.toBeInTheDocument();
   });
 });

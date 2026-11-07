@@ -16,6 +16,8 @@ jest.mock('@/lib/quickbooks/health', () => ({
     getQuickBooksHealth: async () => [{ id: 'quickbooks-connection', label: 'QuickBooks connection', ok: true, detail: 'Connected to the sandbox company.' }],
 }));
 
+jest.mock('@/lib/receipt/mailboxHealth', () => ({ getReceiptMailboxHealth: async () => [] }));
+
 import { GET } from '../route';
 import prisma from '@/lib/prisma';
 
@@ -26,6 +28,7 @@ beforeEach(() => {
         { job: 'nightly', _max: { finishedAt: LAST_SUCCESS } },
     ]);
     prisma.cronRunLog.findMany = jest.fn().mockResolvedValue([]);
+    prisma.boardSettings.findUnique = jest.fn().mockResolvedValue({ alertEmailAddress: null });
 });
 
 const req = () => new Request('http://localhost/api/system-status/config-health');
@@ -60,6 +63,12 @@ describe('GET /api/system-status/config-health — auth gate', () => {
     it('200 for a sysadmin', async () => {
         const res = await call({ type: 'session', user: { isSysadmin: true, isBoardMember: false } });
         expect(res.status).toBe(200);
+    });
+
+    it('reports an unset alert address as a failing check', async () => {
+        const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
+        const body = await res.json();
+        expect(body.checks).toContainEqual(expect.objectContaining({ id: 'alert-address', ok: false }));
     });
 
     it('carries the cron run ledger alongside the config checks', async () => {

@@ -2,7 +2,7 @@ import { createActor } from 'xstate';
 import { db as defaultDb, isUniqueConstraintError, type DbOrTx } from '../db';
 import { disbursementMachine } from './disbursement.machine';
 import { assertEventAccepted, isLegalTransition, isConsumedTriggerReplay } from './disbursement.invariants';
-import { runAccountDetermination, isAllOwnersReady, type AccountDeterminationResult } from '../lib/disbursement-processor';
+import { runAccountDetermination, isAllOwnersReady, type AccountDeterminationResult, type ConflictRecord } from '../lib/disbursement-processor';
 import { recordEvent } from '../repositories/audit';
 import { handOverDeposit } from '../lib/deposit-handover';
 import type { DisbursementEvent } from './disbursement.events';
@@ -150,7 +150,7 @@ async function persistStateTx(
     if (previousState === 'on_hold') {
       await resolvePendingHolds(tx, orgId, disbursementId, now, auditBase);
     }
-    const conflicts = (determinationResult as { type: 'ACCOUNT_UNRESOLVED'; conflicts: Array<{ txId: number; reason: 'NO_MATCH' | 'MULTIPLE_MATCHES'; matchedRows: unknown[] }> }).conflicts;
+    const conflicts = (determinationResult as { type: 'ACCOUNT_UNRESOLVED'; conflicts: ConflictRecord[] }).conflicts;
     for (const conflict of conflicts) {
       await tx.disbursementHold.create({
         data: {

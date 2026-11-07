@@ -40,6 +40,18 @@ How the pieces are built is described in
   item, across the whole catalog. A change must not create a second item for the
   same GTIN or move a GTIN to a different item. `[Decision]`
 
+- A GTIN shown to a person uses its short form: `P000123` for a provisional GTIN,
+  `03B0042` for one minted from the catalog's category and sequence, and the 13
+  digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
+  digits. `[Decision]`
+
+- A person picks a part from the catalog rather than typing its GTIN. A new org
+  item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
+  names an active catalog item or a pending provisional part of the org. A
+  provisional part the catalog approved or mapped is refused, naming the real
+  part that replaced it; a rejected one is refused. Rows stored before this
+  check are kept as they are. `[Decision]`
+
 - A category is keyed by a letter, and a subcategory by a number within its
   category; each item carries a category, a subcategory and a sequence number.
   The letter and number are part of how items are named, so they must not
@@ -131,9 +143,14 @@ How the pieces are built is described in
   `[Decision — deliberate limit]`
 
 - A receipt's lines can be edited only while it waits for review. Once it is
-  sent to apply, its lines can't be edited, even when the apply fails: a
-  failed part is retried with the same lines, and a mistake is corrected by
-  hand outside receiving. `[Decision — owner]`
+  sent to apply, its lines can't be edited, even when the apply fails. A
+  failure that may be temporary is retried automatically once a day, up to
+  five times. After the fifth try, or as soon as a part is refused outright,
+  the receipt waits in Apply failed for a person, who either retries it with
+  the same lines or corrects it by hand outside receiving and closes it as
+  handled by hand. A close-out names, for each part not applied, whether it
+  was done by hand or isn't needed, and carries a note; a blank note is
+  refused. A closed receipt can't be reopened. `[Decision — owner]`
 
 - The person who uploaded a receipt, or anyone in their household, may map its
   lines in Part mapping (link, propose or mark not inventory) and send it to
@@ -141,6 +158,10 @@ How the pieces are built is described in
   goods are, not what is paid. Finance and the expense sign-off seats decide
   the money side, under the conflict rules in `expenses.md`.
   `[Decision — owner]`
+
+- A receipt reads "Received, N on backorder", not done, while N of its lines
+  are open on the receive queue, and "Received" once none are. A cancelled
+  line counts as closed. `[Decision — owner]`
 
 ### Access
 
@@ -168,8 +189,11 @@ How the pieces are built is described in
   managers change it. `[Decision — *Principle: least privilege*]`
 
 - Only inventory managers, finance and the board may see receiving, because
-  receipts show spending. Only inventory managers act on it.
-  `[Decision — *Principle: least privilege*]`
+  receipts show spending. Only inventory managers act on it, apart from the
+  close-out below. `[Decision — *Principle: least privilege*]`
+
+- Inventory managers retry a receipt in Apply failed and close it out as
+  handled by hand; the board may also close one out. `[Decision — owner]`
 
 - Board membership is enough to view receipt and inventory data, and to edit it
   wherever the app allows an edit. `[Decision — owner]`

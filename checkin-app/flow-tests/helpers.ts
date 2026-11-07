@@ -25,7 +25,8 @@ export async function loginAs(email: string): Promise<Session> {
     const jar: Jar = new Map();
 
     // Persona ids are autoincrement (vary per seed) — resolve by stable email.
-    const res = await fetch(`${BASE}/api/auth/dev-personas`).catch(() => null);
+    // Searched, because the unfiltered list is capped and minted families push people off it.
+    const res = await fetch(`${BASE}/api/auth/dev-personas?q=${encodeURIComponent(email)}`).catch(() => null);
     if (!res) {
         throw new Error(
             `no server reachable at ${BASE}. Flow tests don't start one — run ` +

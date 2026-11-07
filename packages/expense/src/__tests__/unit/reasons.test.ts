@@ -126,6 +126,7 @@ describe("reasonText", () => {
     expect(reasonText(r({ code: "TAX_NOT_REVIEWED", amountCents: 1240 }), "USD")).toBe("Tax $12.40 not reviewed on the receipt");
     expect(reasonText(r({ code: "BOARD_APPROVAL", amountCents: 234_000 }), "USD")).toBe("Board approval of a $2,340.00 purchase not recorded");
     expect(reasonText(r({ code: "QB_POST_FAILED", count: 5, detail: "Account is inactive" }), "USD")).toBe("Posting failed 5 times: Account is inactive");
+    expect(reasonText(r({ code: "QB_POST_FAILED", count: 0, detail: "the expense has no receipt date" }), "USD")).toBe("Not posted: the expense has no receipt date");
     expect(reasonText(r({ code: "QB_DRIFT", detail: "amount, accounts" }), "USD")).toBe("Changed in QuickBooks after posting: amount, account");
     expect(reasonText(r({ code: "QB_POST_HELD", detail: "closed but not posted: a line is missing a sign-off seat" }), "USD"))
       .toBe("Closed but not posted: a line is missing a sign-off seat");

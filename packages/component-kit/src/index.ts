@@ -8,6 +8,7 @@
  * module, so class identity differs, while the global symbol registry is shared. The file
  * has no relative imports: Turbopack resolves only the package's `.` export.
  */
+import { isDbUnavailableError } from "@checkin/pg-kit";
 import type { ZodType } from "zod";
 
 const SERVICE_ERROR = Symbol.for("@checkin/component-kit/ServiceError");
@@ -39,14 +40,16 @@ export class ComponentHttpError extends Error {
     public readonly status: number,
     message: string,
     public readonly code?: string,
+    /** Names of the refused inputs, never their submitted values. */
+    public readonly fields?: readonly string[],
   ) {
     super(message);
     this.name = "ComponentHttpError";
   }
 }
 
-export function httpError(status: number, message: string, code?: string): ComponentHttpError {
-  return new ComponentHttpError(status, message, code);
+export function httpError(status: number, message: string, code?: string, fields?: readonly string[]): ComponentHttpError {
+  return new ComponentHttpError(status, message, code, fields);
 }
 
 export function isServiceError(err: unknown): err is ServiceError {
@@ -59,6 +62,7 @@ export function isComponentHttpError(err: unknown): err is ComponentHttpError {
 
 interface ZodIssueLike {
   message: string;
+  path: readonly PropertyKey[];
 }
 
 function isZodError(err: unknown): err is Error & { issues: ZodIssueLike[] } {
@@ -71,13 +75,24 @@ export function zodMessage(error: { issues: readonly ZodIssueLike[] }, fallback 
 }
 
 /**
+ * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named, since
+ * a deeper segment can be a submitted key. A schema whose top level is a `z.record`, a
+ * `z.map` or an object with `.catchall()` puts a submitted key in `path[0]` too, so it must
+ * not reach this with request input.
+ */
+export function zodHttpError(error: { issues: readonly ZodIssueLike[] }, fallback?: string): ComponentHttpError {
+  const names = error.issues.map((issue) => issue.path[0]).filter((name): name is string => typeof name === "string");
+  return httpError(400, zodMessage(error, fallback), undefined, [...new Set(names)]);
+}
+
+/**
  * The HTTP error an expected failure renders as: a ServiceError or ComponentHttpError keeps
  * its status and code, a ZodError is a 400. Anything else is null and stays an opaque 500.
  */
 export function toHttpError(err: unknown): ComponentHttpError | null {
   if (isComponentHttpError(err)) return err;
   if (isServiceError(err)) return httpError(err.status, err.message, err.code);
-  if (isZodError(err)) return httpError(400, zodMessage(err, "Invalid request"));
+  if (isZodError(err)) return zodHttpError(err, "Invalid request");
   return null;
 }
 
@@ -88,6 +103,21 @@ export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
   } catch (err) {
     throw toHttpError(err) ?? err;
   }
+}
+
+/** Runs each named count; a failed one is logged and left out, so one failing count never blanks the others. */
+export async function settleCounts<T extends Record<string, unknown>>(
+  label: string,
+  counts: { [K in keyof T]: () => Promise<T[K]> },
+): Promise<Partial<T>> {
+  const keys = Object.keys(counts) as (keyof T & string)[];
+  const results = await Promise.allSettled(keys.map(async (k) => counts[k]()));
+  const settled: Partial<T> = {};
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") settled[keys[i]] = r.value;
+    else console.error(`nav counts: ${label} ${keys[i]} failed`, r.reason);
+  });
+  return settled;
 }
 
 /** A positive integer path or query id: decimal digits only, so `0x1f`, `1e2` and ` 42` are a 400. */
@@ -107,7 +137,7 @@ export async function readJson(req: Request): Promise<unknown> {
 
 export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   const result = schema.safeParse(await readJson(req));
-  if (!result.success) throw httpError(400, zodMessage(result.error));
+  if (!result.success) throw zodHttpError(result.error);
   return result.data;
 }
 
@@ -115,10 +145,57 @@ export function query(req: Request): URLSearchParams {
   return new URL(req.url).searchParams;
 }
 
+/**
+ * What kind of failure an outside call met, which decides who acts and whether the item is
+ * charged a try: `system` a service or our infrastructure is down, `connection` a credential
+ * or link is broken, `settings` our configuration is wrong or missing, `data` this item can't
+ * be taken, `bug` our code failed unexpectedly.
+ */
+export type FailureKind = "system" | "connection" | "settings" | "data" | "bug";
+
+const KINDED_ERROR = Symbol.for("@checkin/component-kit/KindedError");
+
+/** An error sorted where the outside call caught it. */
+export class KindedError extends Error {
+  readonly [KINDED_ERROR] = true;
+
+  constructor(
+    public readonly kind: FailureKind,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "KindedError";
+  }
+}
+
+export function isKindedError(err: unknown): err is KindedError {
+  return err instanceof Error && KINDED_ERROR in err && "kind" in err && typeof err.kind === "string";
+}
+
+/**
+ * The kind of any error. A library's 4xx is data, except 401 (our wiring lost the caller: bug)
+ * and 429 (a passing overload: system). Anything unrecognised is a bug, which keeps today's
+ * retry-then-hold.
+ */
+export function kindOf(err: unknown): FailureKind {
+  if (isKindedError(err)) return err.kind;
+  if (isServiceError(err) || isComponentHttpError(err)) return statusKind(err.status);
+  if (isZodError(err)) return "data";
+  if (isDbUnavailableError(err)) return "system";
+  return "bug";
+}
+
+function statusKind(status: number): FailureKind {
+  if (status === 401) return "bug";
+  if (status === 429 || status >= 500) return "system";
+  return "data";
+}
+
 /** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
-export class NotWiredError extends Error {
+export class NotWiredError extends KindedError {
   constructor(port: string) {
-    super(`${port} is not wired`);
+    super("settings", `${port} is not wired`);
     this.name = "NotWiredError";
   }
 }

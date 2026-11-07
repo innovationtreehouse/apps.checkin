@@ -1,6 +1,6 @@
 // The QuickBooks entry an expense posts, composed from the rows the outbound gateway passed. No
 // database: the poster reads the rows and the host's gateway strips them before this runs.
-import type { TxnWrite } from "@checkin/quickbooks";
+import { isQuickBooksId, type TxnWrite } from "@checkin/quickbooks";
 import type { ExpensePosting, OutboundBag } from "./contract";
 import type { ExpenseLineItem } from "./db/schema";
 
@@ -11,7 +11,16 @@ export function lineCents(l: LineAmounts): number {
   return l.totalPriceCents + (l.allocatedTaxCents ?? 0) + (l.allocatedShippingCents ?? 0) - (l.allocatedDiscountCents ?? 0);
 }
 
-export type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { noClass: string } | { error: string };
+/**
+ * `unpostable`: the expense's own data cannot make an entry, so it waits for finance. `error`: a
+ * field did not pass the gateway, which a retry may clear.
+ */
+export type Built =
+  | { write: TxnWrite; lineAccounts: Map<number, string> }
+  | { queue: string }
+  | { noClass: string }
+  | { unpostable: string }
+  | { error: string };
 
 type Row = Record<string, unknown>;
 
@@ -36,12 +45,14 @@ function int(r: Row | undefined, field: string): number | null {
 
 type WriteLineRow = { id: number; description: string; account: string | null; amountCents: number };
 
+const notPassed = (field: string) => ({ error: `${field} did not pass the outbound gateway` });
+
 /** A line as the gateway passed it; null when a field the write needs did not pass. */
 function writeLineRow(r: Row): WriteLineRow | null {
   const id = int(r, "id");
   const description = text(r, "description");
   const totalPriceCents = int(r, "totalPriceCents");
-  if (id === null || description === null || totalPriceCents === null) return null;
+  if (id === null || description === null || totalPriceCents === null || !("resolvedQbAccount" in r)) return null;
   const amountCents = lineCents({
     totalPriceCents,
     allocatedTaxCents: int(r, "allocatedTaxCents"),
@@ -71,24 +82,30 @@ function lineClasses(stripped: OutboundBag, lines: WriteLineRow[]): Map<number, 
 
 /**
  * The entry to create, from the rows the outbound gateway passed; each line keeps its own account
- * and its bucket's Class. A field the write needs that did not pass fails the post.
+ * and its bucket's Class. A field the write needs that did not pass fails the post; one that passed
+ * empty makes the expense unpostable.
  */
 export function composeWrite(stripped: OutboundBag, posting: Pick<ExpensePosting, "paymentType" | "paymentAccountId">): Built {
   const [expense] = rowsOf(stripped.Expense);
+  if (!expense || !("receiptDate" in expense)) return notPassed("the expense's receipt date");
   const txnDate = text(expense, "receiptDate");
-  if (!txnDate) return { error: "the expense has no receipt date" };
-  const needsReimbursement = expense?.needsReimbursement;
-  if (typeof needsReimbursement !== "boolean") return { error: "the expense's reimbursement flag did not pass the outbound gateway" };
+  if (!txnDate) return { unpostable: "the expense has no receipt date" };
+  const needsReimbursement = expense.needsReimbursement;
+  if (typeof needsReimbursement !== "boolean") return notPassed("the expense's reimbursement flag");
+  if (!("ExpenseLineItem" in stripped)) return notPassed("the expense's lines");
   const items = rowsOf(stripped.ExpenseLineItem);
-  if (items.length === 0) return { error: "the expense has no lines" };
+  if (items.length === 0) return { unpostable: "the expense has no lines" };
   const lines: WriteLineRow[] = [];
   for (const item of items) {
     const line = writeLineRow(item);
-    if (!line) return { error: "a line's id, description or price did not pass the outbound gateway" };
+    if (!line) return notPassed("a line's id, description, price or account");
     lines.push(line);
   }
   const unresolved = lines.find((l) => !l.account);
-  if (unresolved) return { error: `line "${unresolved.description}" has no resolved QuickBooks account` };
+  if (unresolved) return { unpostable: `line "${unresolved.description}" has no resolved QuickBooks account` };
+  // Refused here, before any QuickBooks call, so the drain counts it as no call made.
+  const notAnId = lines.find((l) => !isQuickBooksId(l.account!));
+  if (notAnId) return { unpostable: `line "${notAnId.description}" has account "${notAnId.account}", not a QuickBooks id` };
   const accounts = new Map(lines.map((l) => [l.id, l.account!]));
   const classes = lineClasses(stripped, lines);
   if ("noClass" in classes) return classes;

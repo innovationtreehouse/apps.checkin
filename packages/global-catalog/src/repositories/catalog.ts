@@ -1,9 +1,22 @@
+import { parseGtinInput } from "@checkin/gtin";
 import type { PrismaClient, Prisma } from "../generated/prisma/client";
 
 const ITEM_INCLUDE = {
   category: { select: { name: true, letter: true } },
   subcategory: { select: { name: true, number: true } },
 } as const;
+
+/** What a search box matches: name, GTIN, category, subcategory, or the GTIN a typed short ID stands for. */
+export function itemSearch(q: string): Prisma.ItemWhereInput[] {
+  const gtin13 = parseGtinInput(q);
+  return [
+    { name: { contains: q, mode: "insensitive" } },
+    { gtin13: { contains: q } },
+    { category: { name: { contains: q, mode: "insensitive" } } },
+    { subcategory: { name: { contains: q, mode: "insensitive" } } },
+    ...(gtin13 ? [{ gtin13 }] : []),
+  ];
+}
 
 export function createCatalogRepository(db: PrismaClient) {
   return {
@@ -103,12 +116,7 @@ export function createCatalogRepository(db: PrismaClient) {
       db.item.findMany({
         where: {
           archivedAt: null,
-          OR: [
-            { name: { contains: query, mode: "insensitive" } },
-            { gtin13: { contains: query } },
-            { category: { name: { contains: query, mode: "insensitive" } } },
-            { subcategory: { name: { contains: query, mode: "insensitive" } } },
-          ],
+          OR: itemSearch(query),
         },
         select: { gtin13: true, name: true },
         orderBy: { name: "asc" },

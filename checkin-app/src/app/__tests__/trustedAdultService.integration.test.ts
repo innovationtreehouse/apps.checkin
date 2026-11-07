@@ -407,9 +407,8 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(revokeAudit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    // A renewal after approval leaves TWO APPROVED reviews (renew doesn't
-    // retire the prior approval). Withdraw must revoke BOTH — the pickup list shows a
-    // TA while ANY review is APPROVED, so revoking only the latest would keep it on the list.
+    // A renewal after approval leaves TWO APPROVED reviews. Withdraw must revoke BOTH, or
+    // the unexpired one keeps the adult on the pickup list.
     it('withdraw revokes every APPROVED review, so a renewed-then-approved TA leaves none live', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
@@ -477,17 +476,14 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
     });
 
-    it('re-overrides an already-overridden terminal review with no phase guard', async () => {
+    it('force-approve refuses a review the board already revoked; the family resubmits', async () => {
         const ta = await discloseOne();
         await overrideReview(ta.reviews[0].id, boardId, 'revoke'); // terminal: REVOKED
 
-        // No wrong_phase / throw — board can flip a terminal review again.
-        const reapproved = await overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED);
-        expect(reapproved.status).toBe('APPROVED');
+        await expect(overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED)).rejects.toMatchObject({ code: 'wrong_phase' });
 
         const audit = await latestAudit(ta.id);
-        expect(normalizeAuditData(audit?.oldData)).toMatchObject({ status: 'REVOKED' });
-        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
+        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
     // Conflict of interest on the OVERRIDE path — mirrors decideReview's rule, and no

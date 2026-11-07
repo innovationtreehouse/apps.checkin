@@ -47,7 +47,7 @@ describe("errorMessage", () => {
 
 describe("what the server says", () => {
   it.each([
-    ["a network failure", () => new TypeError("Failed to fetch"), "Something went wrong. Try again.", null],
+    ["a network failure", () => new TypeError("Failed to fetch"), "Couldn't reach the server. Check your connection and try again.", null],
     ["a 5xx", () => json({ error: "Boom" }, 503), "Boom", 503],
   ])("%s retries at 2s, 4s, 8s, 16s without a message, then sets error", async (_name, answer, message, status) => {
     const fetchMock = stubFetch(answer);
@@ -84,7 +84,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x"));
     await advance(30000);
     expect(result.current.error).toBe("Boom");
-    act(() => result.current.reload());
+    act(() => { void result.current.reload(); });
     await advance();
     expect(fetchMock).toHaveBeenCalledTimes(6);
     expect(result.current).toMatchObject({ retrying: true, error: null });
@@ -124,6 +124,17 @@ describe("what the server says", () => {
     expect(result.current).toMatchObject({ status: 401, retrying: false });
   });
 
+  it("expireOn401 false reports a 401 without calling onSessionExpired", async () => {
+    const fetchMock = stubFetch(() => json({ error: "Unauthorized" }, 401));
+    const expired = vi.fn();
+    const wrapper = ({ children }: { children: ReactNode }) => <ViewerProvider viewer={person(1)} onSessionExpired={expired}>{children}</ViewerProvider>;
+    const { result } = renderHook(() => useLoad("/x", { expireOn401: false }), { wrapper });
+    await advance(30000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(expired).not.toHaveBeenCalled();
+    expect(result.current).toMatchObject({ status: 401, retrying: false });
+  });
+
   it("a write answered 401 does not call onSessionExpired", async () => {
     stubFetch((_url, init) => (init?.method ? json({ error: "Unauthorized" }, 401) : json([])));
     const expired = vi.fn();
@@ -153,7 +164,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x", { retry: false }));
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.current).toMatchObject({ error: "Something went wrong. Try again.", retrying: false });
+    expect(result.current).toMatchObject({ error: "Couldn't reach the server. Check your connection and try again.", retrying: false });
   });
 
   it("keeps retrying in a hidden tab", async () => {
@@ -171,7 +182,7 @@ describe("what the server says", () => {
     const { result } = renderHook(() => useLoad("/x"));
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(result.current.error).toBe("Something went wrong. Try again.");
+    expect(result.current.error).toBe("Couldn't reach the server. Check your connection and try again.");
   });
 
   it("two hooks on one key report the same retry state", async () => {
@@ -432,5 +443,44 @@ describe("a write re-reads cached loads", () => {
     await api("/y", { method: "POST", invalidate: false });
     await advance();
     expect(gets(fetchMock)).toBe(1);
+  });
+});
+
+describe("the promise from reload", () => {
+  it("settles only after the fresh answer has arrived", async () => {
+    let finish: (answer: Response) => void = () => {};
+    let reads = 0;
+    stubFetch(() => {
+      reads += 1;
+      return reads === 1 ? json({ n: 1 }) : new Promise<Response>((resolve) => { finish = resolve; });
+    });
+    const { result } = renderHook(() => useLoad<{ n: number }>("/reload-fresh"));
+    await advance(0);
+
+    let settled = false;
+    void result.current.reload().then(() => { settled = true; });
+    await advance(0);
+    expect(settled).toBe(false);
+
+    finish(json({ n: 2 }));
+    await advance(0);
+    expect(settled).toBe(true);
+    expect(result.current.data).toEqual({ n: 2 });
+  });
+
+  it("settles without rejecting on a failed load, whose message lands in error", async () => {
+    let reads = 0;
+    stubFetch(() => {
+      reads += 1;
+      return reads === 1 ? json({ n: 1 }) : json({ error: "No such thing" }, 404);
+    });
+    const { result } = renderHook(() => useLoad<{ n: number }>("/reload-failed"));
+    await advance(0);
+
+    let outcome = "pending";
+    void result.current.reload().then(() => { outcome = "resolved"; }, () => { outcome = "rejected"; });
+    await advance(0);
+    expect(outcome).toBe("resolved");
+    expect(result.current.error).toBe("No such thing");
   });
 });

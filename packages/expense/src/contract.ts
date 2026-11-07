@@ -2,8 +2,8 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
-import { ServiceError } from "@checkin/component-kit";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import { NotWiredError, ServiceError } from "@checkin/component-kit";
+import type { QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
@@ -124,17 +124,23 @@ export interface CatalogReader {
   listCategories(): Promise<unknown>;
   listSubcategories(): Promise<unknown>;
   getItem(gtin13: string): Promise<unknown>;
+  getActiveItem(gtin13: string): Promise<unknown>;
   getItemNames(gtin13s: string[]): Promise<unknown>;
   lookupItems(retailer: string, lookups: LookupEntry[]): Promise<unknown>;
 }
 
-/** An empty catalog: every part-numbered line raises a NO_MATCH hold. */
+const catalogNotWired = (method: string) => async (): Promise<never> => {
+  throw new NotWiredError(`CatalogReader.${method}`);
+};
+
+/** An unbound catalog says so rather than answer "no match"; its callers record "catalog not connected". */
 export const inertCatalogReader: CatalogReader = {
-  listCategories: async () => [],
-  listSubcategories: async () => [],
-  getItem: async () => null,
-  getItemNames: async () => [],
-  lookupItems: async () => [],
+  listCategories: catalogNotWired("listCategories"),
+  listSubcategories: catalogNotWired("listSubcategories"),
+  getItem: catalogNotWired("getItem"),
+  getActiveItem: catalogNotWired("getActiveItem"),
+  getItemNames: catalogNotWired("getItemNames"),
+  lookupItems: catalogNotWired("lookupItems"),
 };
 
 // ── S5: catalog org events ────────────────────────────────────────────────────
@@ -259,6 +265,8 @@ export interface QbVendors {
 
 export const inertQbVendors: QbVendors = { open: async () => null };
 
+export const inertQbAccounts: QboAccountList = notConnected;
+
 /** Display names of checkin people. */
 export interface PeopleDirectory {
   /** A live person's name; null when unknown. */
@@ -298,7 +306,8 @@ export interface ExpensePosting {
 
 /** S2 callee: the orchestrator hands a completed receipt's money side to expense. */
 export interface ExpenseIntake {
-  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
+  /** "accepted": stored, but the expense is not built yet; expense owns it from here. */
+  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }>;
 }
 
 /** Who is reimbursed: a Person on file, or a non-member adult added by name. */

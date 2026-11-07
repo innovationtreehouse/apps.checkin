@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import { withArchivedHouseholds } from "@/lib/household/archived";
 import { handler } from "@/security/handler";
 
 export const dynamic = "force-dynamic";
@@ -6,10 +6,11 @@ export const dynamic = "force-dynamic";
 /**
  * Board-only read-only list of every background-check attestation — "who signed
  * off what". Returns attestations newest-first with the reviewer, the subject
- * (when named), the household, the result, and the process kind.
+ * (when named), the household, the result, and the process kind. An audit trail,
+ * so archived households are named too.
  */
 export const GET = handler('GET /api/membership-audit/bg-attestations', async () => {
-    const rows = await prisma.backgroundCheckAttestation.findMany({
+    const rows = await withArchivedHouseholds((tx) => tx.backgroundCheckAttestation.findMany({
         select: {
             id: true,
             result: true,
@@ -28,7 +29,7 @@ export const GET = handler('GET /api/membership-audit/bg-attestations', async ()
             },
         },
         orderBy: { createdAt: "desc" },
-    });
+    }));
 
     return { BackgroundCheckAttestation: rows };
 });

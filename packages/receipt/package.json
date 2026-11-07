@@ -29,7 +29,8 @@
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
     "db:seed": "node -e \"console.log('receipt: no seed rows; it starts empty')\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",

@@ -31,6 +31,9 @@ import {
     ALL_STATUSES,
     ALL_KINDS,
     ARCHIVABLE_STATUSES,
+    CLOSABLE_STATUSES,
+    RESTORE_CLOSABLE_STATUSES,
+    refundLandsIn,
     RESTORABLE_STATUSES,
     LEGACY_REOPEN_STATUSES,
     openProcess,
@@ -109,22 +112,28 @@ describe('grantableApplicationWhere / settledThisCycleWhere', () => {
         // year exactly as a renewer does, so no kind clause. Paid and waiting on the
         // board's clearance is settled money too. ARCHIVED (closed) is unpaid by rule
         // and must not extend a horizon.
-        const settledSince = new Date('2026-06-01T00:00:00.000Z');
-        expect(settledThisCycleWhere(settledSince)).toEqual({
+        expect(settledThisCycleWhere(2026)).toEqual({
             OR: [
                 { status: 'ACTIVE' },
                 { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } },
             ],
-            stageEnteredAt: { gte: settledSince },
+            appliesToYear: 2026,
         });
     });
 
     test('handledThisCycleWhere (sweep) additionally counts ARCHIVED — board already closed this cycle', () => {
         const windowStart = new Date('2026-06-01T00:00:00.000Z');
-        expect(handledThisCycleWhere(windowStart)).toEqual({
-            status: { in: ['ACTIVE', 'ARCHIVED'] },
-            stageEnteredAt: { gte: windowStart },
+        expect(handledThisCycleWhere(2026, windowStart)).toEqual({
+            OR: [
+                { status: 'ACTIVE', appliesToYear: 2026 },
+                { status: 'ARCHIVED', stageEnteredAt: { gte: windowStart } },
+            ],
         });
+    });
+
+    test('no live year matches no row, never the rows with no year', () => {
+        expect(settledThisCycleWhere(null).appliesToYear).toEqual({ in: [] });
+        expect(handledThisCycleWhere(null, new Date(0)).OR).toContainEqual({ status: 'ACTIVE', appliesToYear: { in: [] } });
     });
 });
 
@@ -246,6 +255,25 @@ describe('isLegalTransition covers the declared edges', () => {
 
     test('record refund returns a paid clearance wait to payment', () => {
         expect(TRANSITIONS.some((t) => t.from === 'PENDING_BG_CLEARANCE' && t.to === 'PENDING_PAYMENT' && t.event === 'recordRefund')).toBe(true);
+    });
+
+    // Owner ruling 2026-11-07: a refund applies at every paid step that never became a
+    // membership, and lands in that step unpaid; a rejection is never erased.
+    test('record refund applies to every open step, keeps each in place but a clearance wait, and never unblocks', () => {
+        for (const st of openProcess.statuses as readonly ProcessStatus[]) {
+            expect(refundLandsIn(st)).toBe(st === 'PENDING_BG_CLEARANCE' ? 'PENDING_PAYMENT' : st);
+        }
+        expect(refundLandsIn('ACTIVE')).toBeNull();
+        expect(refundLandsIn('ARCHIVED')).toBeNull();
+        expect(TRANSITIONS.filter((t) => t.event === 'recordRefund').map((t) => [t.from, t.to])).toEqual([['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT']]);
+        expect(TRANSITIONS.some((t) => t.from === 'BLOCKED' && t.event === 'recordRefund')).toBe(false);
+    });
+
+    test('close takes the legacy RENEWAL_PENDING_BG too, and a restore closes it, without a reopen edge back', () => {
+        expect([...CLOSABLE_STATUSES].sort()).toEqual([...ARCHIVABLE_STATUSES, 'RENEWAL_PENDING_BG'].sort());
+        expect([...RESTORE_CLOSABLE_STATUSES].sort()).toEqual([...CLOSABLE_STATUSES, 'BLOCKED'].sort());
+        expect(TRANSITIONS.some((t) => t.from === 'RENEWAL_PENDING_BG' && t.to === 'ARCHIVED' && t.legacy)).toBe(true);
+        expect(isLegalTransition('ARCHIVED', 'RENEWAL_PENDING_BG')).toBe(false);
     });
 
     // GUARD: the restore set and the transition table differ by one status on purpose.

@@ -18,7 +18,7 @@ import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@c
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg } from "@/lib/components/host";
 import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
-import { budgetOwners, householdIds, householdOf, householdsOf } from "@/lib/components/ports";
+import { budgetOwners, householdIds, householdOf, householdsOf, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
@@ -45,16 +45,17 @@ export const signoff: SignoffDirectory = {
       where: { id: bucketId },
       select: {
         isOrgLevel: true,
-        owner: { select: { id: true, mergedIntoId: true, household: { select: { orgMembership: { select: { status: true } } } } } },
+        owner: { select: { id: true, household: { select: { orgMembership: { select: { status: true } } } } } },
         treasurers: { where: { person: await eligibleSigner() }, select: { personId: true } },
       },
     });
     if (!bucket) return { orgLevel: false, approvers: [], owner: null };
     if (bucket.isOrgLevel) return { orgLevel: true, approvers: [], owner: null };
     const owner = bucket.owner;
-    const ownerEligible = owner && owner.mergedIntoId === null && !orgMembershipStatusBlocksLogin(owner.household?.orgMembership?.status);
+    // Row security returns an archived owner's household as null; an archived owner approves nothing.
+    const ownerEligible = owner && owner.household !== null && !orgMembershipStatusBlocksLogin(owner.household.orgMembership?.status);
     const approvers = [...(ownerEligible ? [owner.id] : []), ...bucket.treasurers.map((t) => t.personId)];
-    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner ? (owner.mergedIntoId ?? owner.id) : null };
+    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner?.id ?? null };
   },
 
   async bucketsApprovedBy(personId) {
@@ -69,8 +70,7 @@ export const signoff: SignoffDirectory = {
   householdIds,
 
   async personExists(personId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    return (await (await db()).person.count({ where: { id: personId, ...LIVE_PERSON } })) > 0;
+    return (await (await db()).person.count({ where: { id: personId } })) > 0;
   },
 
   async liveIds(personIds) {
@@ -87,15 +87,15 @@ export const signoff: SignoffDirectory = {
   },
 
   async isAdult(personId) {
-    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
-    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { dateOfBirth: true, isDeclaredAdult: true } });
+    const { isKnownAdult } = await import("@/lib/programAge");
+    const person = await (await db()).person.findFirst({ where: { id: personId }, select: { dateOfBirth: true, isDeclaredAdult: true } });
     return person !== null && isKnownAdult(person);
   },
 
   async searchAdults(query, limit) {
-    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
+    const { isKnownAdult } = await import("@/lib/programAge");
     const matches = await (await db()).person.findMany({
-      where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+      where: { name: { contains: query, mode: "insensitive" }, household: { archivedAt: null } },
       select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
@@ -176,8 +176,7 @@ const qbVendors: QbVendors = {
 
 const people: PeopleDirectory = {
   async nameOf(personId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { name: true } });
+    const person = await (await db()).person.findFirst({ where: { id: personId }, select: { name: true } });
     return person?.name ?? null;
   },
 };
@@ -264,7 +263,7 @@ export function configureRuntime(): void {
     catalogEvents: { eventsSince: catalogEventsSince },
     alerts: orgEventAlerts("board.expenseEventsStuck", "Expense catalog event alert failed:"),
     people,
-    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },
+    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting, accounts: quickBooksAccounts },
     outbound: outboundCall,
     outcomeMail,
   });

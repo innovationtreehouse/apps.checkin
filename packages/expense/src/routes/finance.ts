@@ -3,16 +3,19 @@
  * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
-import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { httpError, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
+import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
+import { LISTED_TYPES, bookableTypes, refuseWrongType } from "../lib/account-types";
 import { writeOrgAudit } from "../lib/audit";
-import { getItemNames } from "../lib/catalog";
+import { getActiveItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
-import { withLiveParty } from "../lib/livePeople";
+import { withLiveParties, withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
 import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
@@ -30,20 +33,25 @@ async function asFinance(principal: ExpensePrincipal) {
   return principal;
 }
 
+/** A QuickBooks account id, as the posters accept it. */
+const qbAccountId = z.string().trim().refine(isQuickBooksId, "qbAccount must be a QuickBooks id (digits only)");
+
 // ── Holds ─────────────────────────────────────────────────────────────────────
 
-export const holds: ExpenseRouteHandler = async ({ req }) => ({
-  ExpenseHold: await db.expenseHold.findMany({
+export const holds: ExpenseRouteHandler = async ({ req }) => {
+  const rows = await db.expenseHold.findMany({
     where: { orgId: await getOrgId(), status: "PENDING" },
     orderBy: [{ expenseId: "asc" }, { id: "asc" }],
     ...pageArgs(query(req)),
     include: { lineItem: true, expense: true },
-  }),
-});
+  });
+  const expenses = await withLiveParties(rows.map((row) => row.expense));
+  return { ExpenseHold: rows.map((row, i) => ({ ...row, expense: expenses[i] })) };
+};
 
 export const holdLineAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");
-  const { qbAccount } = await parseBody(req, z.object({ qbAccount: z.string().trim().min(1, "qbAccount is required") }));
+  const { qbAccount } = await parseBody(req, z.object({ qbAccount: qbAccountId }));
   await mapServiceErrors(() => setHeldLineAccount(principal, params.expenseId, lineItemId, qbAccount));
   return { ExpenseLineItem: await db.expenseLineItem.findFirst({ where: { id: lineItemId } }) };
 };
@@ -62,9 +70,18 @@ const mappingSchema = z.object({
   partNumber: z.string().min(1),
   isDelayed: triBool,
   isCapital: triBool,
-  qbAccount: z.string().min(1),
+  qbAccount: qbAccountId,
 });
-const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: z.string().trim().min(1) });
+/** A rule's part is `*` or a GTIN-13: the processor matches it against the line's catalog GTIN. */
+function checkRulePart(partNumber: string): void {
+  if (partNumber !== "*" && !isValidGtin13(partNumber)) throw httpError(400, "A rule's part must be * or a 13-digit GTIN with a valid check digit");
+}
+const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: qbAccountId });
+
+/** A rule marked capital books to a Fixed Asset account; any other rule to an expense type. */
+const refuseRuleType = (data: { qbAccount: string; isCapital: boolean | null }) =>
+  mapServiceErrors(() => refuseWrongType(data.qbAccount, bookableTypes(data.isCapital), data.isCapital ? "A capital rule's account" : "A rule's account"));
+const refuseListType = (qbAccount: string) => mapServiceErrors(() => refuseWrongType(qbAccount, LISTED_TYPES, "An expense account"));
 
 export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
   AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),
@@ -73,6 +90,8 @@ export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
 export const createAccountMapping: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, mappingSchema);
   const actor = actorOf(await asFinance(principal));
+  checkRulePart(data.partNumber);
+  await refuseRuleType(data);
   const orgId = await getOrgId();
   return {
     AccountMapping: await db.$transaction(async (tx) => {
@@ -95,6 +114,8 @@ export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params, p
   const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
+  if (data.partNumber !== before.partNumber) checkRulePart(data.partNumber);
+  await refuseRuleType(data);
   return {
     AccountMapping: await db.$transaction(async (tx) => {
       const row = await tx.accountMapping.update({ where: { id }, data });
@@ -130,6 +151,7 @@ export const qbAccounts: ExpenseRouteHandler = async () => ({
 export const createQbAccount: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
+  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   return {
     ExpenseQbAccount: await db.$transaction(async (tx) => {
@@ -144,6 +166,7 @@ export const updateQbAccount: ExpenseRouteHandler = async ({ req, params, princi
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
+  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
   return {
@@ -177,17 +200,45 @@ export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView
 
 export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
-  return { PartOwnerMap: rows, Item: await getItemNames(rows.map((r) => r.gtin13)), ExpenseBucketView: await buckets() };
+  // An unbound catalog shows the map without names.
+  const names = await getItemNames(rows.map((r) => r.gtin13)).catch((err: unknown) => {
+    if (kindOf(err) === "settings") return [];
+    throw err;
+  });
+  return { PartOwnerMap: rows, Item: names, ExpenseBucketView: await buckets() };
 };
+
+/**
+ * Why a new write may not name this part, or null for an active catalog item or a pending
+ * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
+ */
+async function partRefusal(orgId: string, gtin13: string): Promise<string | null> {
+  const provisional = await db.provisionalItemMap.findFirst({ where: { orgId, provisionalGtin13: gtin13 }, select: { status: true, resolvedToGtin13: true } });
+  const id = formatGtinDisplay(gtin13);
+  if (provisional?.status === "pending") return null;
+  if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
+  if (provisional) return `${id} was rejected by the catalog`;
+  const active = await getActiveItem(gtin13).catch((err: unknown) => {
+    console.error("[expense] catalog check failed", err);
+    throw httpError(502, "The catalog couldn't be reached; try again");
+  });
+  return active ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
+}
 
 export const setOwnership: ExpenseRouteHandler = async ({ req, principal }) => {
   const { gtin13, ownerId } = await parseBody(
     req,
-    z.object({ gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"), ownerId: z.number().int().positive() }),
+    z.object({
+      gtin13: z.string().refine(isValidGtin13, "gtin13 must be 13 digits with a valid check digit"),
+      ownerId: z.number().int().positive(),
+    }),
   );
   const actor = actorOf(await asFinance(principal));
   if (!(await buckets()).some((b) => b.id === ownerId && !b.archivedAt)) throw httpError(400, "Unknown or archived bucket");
   const orgId = await getOrgId();
+  const mapped = await db.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { id: true } });
+  const refusal = mapped ? null : await partRefusal(orgId, gtin13);
+  if (refusal) throw httpError(400, refusal);
   await db.$transaction(async (tx) => {
     const before = await tx.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { ownerId: true } });
     await createPartOwnerRepository(tx).updateItemOwner(orgId, gtin13, ownerId);

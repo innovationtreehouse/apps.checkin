@@ -250,10 +250,11 @@ export const REGISTRY = {
         defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
     },
     "finance.inKindDrainStopped": {
-        allowedTokens: { failures: text, remaining: text, actionLink: link("Open the in-kind queue") },
-        sampleCtx: { failures: "3", remaining: "12", actionLink: SAMPLE_URL },
+        // cause: the sender's sentence naming why the run stopped.
+        allowedTokens: { failures: text, remaining: text, cause: text, actionLink: link("Open the in-kind queue") },
+        sampleCtx: { failures: "3", remaining: "12", cause: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.", actionLink: SAMPLE_URL },
         defaultSubject: "Gifts of goods: today's QuickBooks run stopped early",
-        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failures in a row, leaving {{remaining}} more gifts for the next run. QuickBooks may be down, or the oldest gifts may be failing on their own. {{actionLink}}",
+        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failed gifts, leaving {{remaining}} more for the next run. {{cause}} {{actionLink}}",
     },
 
     // ── receipt ─────────────────────────────────────────────────────────────
@@ -300,6 +301,15 @@ export const REGISTRY = {
         sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
         defaultSubject: "Reimbursement approved",
         defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
+    },
+
+    // ── lifecycle ───────────────────────────────────────────────────────────
+    "lifecycle.driftDigest": {
+        allowedTokens: { newCount: text, stillPresentCount: text, newList: text, stillPresentList: text, actionLink: link("Open the Lifecycle panel") },
+        sampleCtx: { newCount: "1", stillPresentCount: "1", newList: "OrgMembershipProcess process 12: invariant intake-is-unpaid (status INTAKE)", stillPresentList: "ProgramParticipant program 3 / person 45: invariant I2 (status PENDING)", actionLink: SAMPLE_URL },
+        defaultSubject: "Lifecycle drift: {{newCount}} new, {{stillPresentCount}} still present",
+        defaultBody: "These records are off their lifecycle diagram and need a person to resolve them. Nothing was changed automatically.\n\n"
+            + "New since the last report\n{{newList}}\n\nStill present\n{{stillPresentList}}\n\n{{actionLink}}",
     },
 
     // ── shopify ─────────────────────────────────────────────────────────────

@@ -17,7 +17,9 @@
  * field, so a donor name on the row is stripped from every view.
  *
  * InKindQueueLineView — one line of a queued gift: the item and its description,
- * its quantity, the value finance set and the value ops suggested, all `internal`.
+ * its quantity, the value finance set, the value ops suggested, and the
+ * QuickBooks account finance set by hand on a line no rule resolves (null until
+ * then), all `internal`.
  *
  * InKindDecisionView — the reply to accepting, refusing or returning a gift:
  * which gift, the outcome, who decided and when, the bucket and the total value,
@@ -42,7 +44,8 @@
  * the last load failed. All but the three donor fields are `internal`.
  *
  * InKindGiftDetailLineView — one line of that gift: item and its description,
- * quantity, the value finance set and the value ops suggested, all `internal`.
+ * quantity, the value finance set, the value ops suggested, and the QuickBooks
+ * account finance set by hand (null until then), all `internal`.
  *
  * InKindGiftEventView — one row of that gift's history: the event, who acted
  * and when, and its payload, all `internal`. In-kind event payloads carry
@@ -101,6 +104,7 @@ export const classifications = {
     quantity: "internal",
     valueCents: "internal",
     suggestedValueCents: "internal",
+    quickBooksAccountId: "internal",
   },
   InKindDecisionView: {
     id: "internal",
@@ -171,6 +175,7 @@ export const classifications = {
     quantity: "internal",
     valueCents: "internal",
     suggestedValueCents: "internal",
+    quickBooksAccountId: "internal",
   },
   InKindGiftEventView: {
     id: "internal",

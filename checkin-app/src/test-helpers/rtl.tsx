@@ -18,6 +18,7 @@ import { MantineProvider } from "@mantine/core";
 import type { ReactElement, ReactNode } from "react";
 import { EnvProvider } from "@/components/EnvProvider";
 import type { CheckinEnv } from "@/lib/config";
+import type { DevMocks } from "@/lib/nav/sections/devTools";
 
 // RTL's default findBy*/waitFor timeout is 1000ms of real (non-fake) timers.
 // The full coverage run's CI job (290 suites, --coverage instrumentation, no
@@ -59,6 +60,7 @@ if (typeof window !== "undefined") {
 let checkinEnv: CheckinEnv = "prod";
 let shopifyStoreDomain: string | null = null;
 let isStaging = false;
+let devMocks: DevMocks = { shopify: false, bgConsent: false };
 
 /** Set the mocked CHECKIN_ENV seen by useCheckinEnv/useIsLocalInstance. */
 export function setCheckinEnv(env: CheckinEnv) {
@@ -72,12 +74,16 @@ export function setShopifyStoreDomain(domain: string | null) {
 export function setStagingInstance(v: boolean) {
     isStaging = v;
 }
+/** Set the mocked dev-mock flags seen by useDevMocks. */
+export function setDevMocks(v: DevMocks) {
+    devMocks = v;
+}
 
 /** Render `ui` wrapped in the providers a page/component tree needs. */
 export function renderWithProviders(ui: ReactElement, options?: RenderOptions) {
     return render(
         <MantineProvider>
-            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging }}>{ui}</EnvProvider>
+            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging, devMocks }}>{ui}</EnvProvider>
         </MantineProvider>,
         options,
     );
@@ -139,6 +145,7 @@ export function resetRtl() {
     checkinEnv = "prod";
     shopifyStoreDomain = null;
     isStaging = false;
+    devMocks = { shopify: false, bgConsent: false };
 }
 
 // ── fetch stub ───────────────────────────────────────────────────────────────

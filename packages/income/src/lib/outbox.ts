@@ -1,3 +1,4 @@
+import { kindOf, type FailureKind } from "@checkin/component-kit";
 import { SWEEP_DAYS, appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
@@ -76,11 +77,15 @@ interface PayoutSales {
   orderLines: MirrorOrderLine[];
   /** variantId → bucket id, or null for general income. An item with no entry is undecided. */
   categories: Map<string, number | null>;
+  /** variantId → the QuickBooks account its sales book to. An item with no entry is undecided. */
+  accounts: Map<string, string>;
+  /** The books map's account for custom items; a sale of one waits while it is unset. */
+  customItemsAccountId?: string;
   /** orderGid → the order's current subtotal. An order with no entry is not checked for missing lines. */
   subtotals: Map<string, number>;
 }
 
-async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirror): Promise<PayoutSales> {
+async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirror, roles: RoleAccounts): Promise<PayoutSales> {
   const txns = await mirror.transactions(payoutGid);
   const orderGids = [...new Set(txns.flatMap((t) => (t.orderGid ? [t.orderGid] : [])))];
   const [orderLines, subtotals] = orderGids.length ? await Promise.all([mirror.orderLines(orderGids), mirror.orderSubtotals(orderGids)]) : [[], []];
@@ -90,6 +95,8 @@ async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirro
     txns,
     orderLines,
     categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])),
+    accounts: new Map(mapped.flatMap((m) => (m.quickBooksAccountId ? [[m.variantId, m.quickBooksAccountId] as const] : []))),
+    customItemsAccountId: roles.SHOPIFY_CUSTOM_ITEMS,
     subtotals: new Map(subtotals.map((s) => [s.orderGid, s.subtotalCents])),
   };
 }
@@ -105,10 +112,11 @@ function missingLines(lines: MirrorOrderLine[], subtotalCents: number): boolean 
 }
 
 /**
- * Why a payout's deposit can't be built yet, naming its undecided items, unusable buckets, and
- * sales the mirror holds no or only some lines for, or null when every sale has a usable decision. Custom
- * items carry no variant and book as general income. Orders are named by gid: an order's name
- * can carry its buyer's, and income keeps no record of who bought.
+ * Why a payout's deposit can't be built yet, naming its undecided items (no bucket choice or no
+ * account), unusable buckets, custom items while their account is unset, and sales the mirror holds
+ * no or only some lines for, or null when every sale has a usable decision. Custom items carry no
+ * variant and book as general income. Orders are named by gid: an order's name can carry its
+ * buyer's, and income keeps no record of who bought.
  */
 export function mappingGap(sales: PayoutSales, problem: BucketProblem): string | null {
   const lined = new Set(sales.orderLines.map((l) => l.orderGid));
@@ -127,9 +135,13 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   }
   const undecided = new Set<string>();
   const broken = new Map<number, string>();
+  let customUnmapped = false;
   for (const l of sales.orderLines) {
-    if (!l.variantId) continue;
-    if (!sales.categories.has(l.variantId)) {
+    if (!l.variantId) {
+      customUnmapped ||= !sales.customItemsAccountId;
+      continue;
+    }
+    if (!sales.categories.has(l.variantId) || !sales.accounts.has(l.variantId)) {
       undecided.add(l.variantId);
       continue;
     }
@@ -140,6 +152,7 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   const parts = [
     ...(undecided.size ? [`undecided items: ${[...undecided].sort().join(", ")}`] : []),
     ...[...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`),
+    ...(customUnmapped ? ["custom items: no account picked for Shopify: custom items"] : []),
     ...(noLines.size ? [`orders with no lines: ${[...noLines].sort().join(", ")}`] : []),
     ...(missing.size ? [`orders with missing lines: ${[...missing].sort().join(", ")}`] : []),
     ...(noOrder.size ? [`transactions with no order: ${[...noOrder].sort().join(", ")}`] : []),
@@ -147,8 +160,13 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   return parts.length ? parts.join("; ") : null;
 }
 
-/** Why a Benevity deposit can't be built yet, naming its unusable buckets, or null when every line's bucket is usable. */
+/** What finance is told about a deposit with a line that names no account: one handed over before its lines named accounts or before fees reduced income. */
+export const NO_LINE_ACCOUNT =
+  "handed over before every line named its QuickBooks account (the giving-platform account rules, or fees taken from income), so the app can't tell which accounts it books to; book it by hand or dismiss it";
+
+/** Why a Benevity deposit can't be built yet: a line without its account, or its unusable buckets; null when it can. */
 export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): string | null {
+  if (expected.lines.some((l) => l.accountId === undefined)) return NO_LINE_ACCOUNT;
   const broken = new Map<number, string>();
   for (const l of expected.lines) {
     const issue = l.budgetOwnerId == null ? undefined : problem(l.budgetOwnerId);
@@ -157,12 +175,9 @@ export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): 
   return [...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`).join("; ") || null;
 }
 
-/** The books-map roles a row's deposit needs that the map leaves unset. A Benevity row with no deposit yet needs only its bank. */
+/** The books-map roles a row's deposit needs that the map leaves unset. A Benevity row needs only its bank: its lines name their accounts. */
 export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
-  const expected = isBenevity(row) ? expectedOf(row) : null;
-  const roles = isBenevity(row)
-    ? [expected?.bankRole ?? BANK_ROLE.benevity, ...(expected?.lines ?? []).map((l) => l.role)]
-    : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
+  const roles = isBenevity(row) ? [expectedOf(row)?.bankRole ?? BANK_ROLE.benevity] : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
   return [...new Set(roles)].filter((r) => !accounts[r]);
 }
 
@@ -213,22 +228,26 @@ function holdForMapping(
 type DepositBasis = { payout: MirrorPayout; sales: PayoutSales } | { expected: ExpectedDeposit };
 
 /**
- * The deposit income would create for a row, its accounts and Classes resolved through the books
- * map. A payout's lines split by bucket; an expected deposit's lines are the lane's own. Both sum
- * to the row's net.
+ * The deposit income would create for a row. A payout's sale lines split by item account and bucket;
+ * an expected deposit's lines are the lane's own, each on the account it names. Roles and Classes
+ * resolve through the books map. Both sum to the row's net.
  */
 async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
   const lines =
     "expected" in basis
-      ? basis.expected.lines.map((l) => ({ role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
-      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => ({ ...l, role: SHOPIFY_LINE_ROLES[l.account], description: undefined }));
+      ? basis.expected.lines.map((l) => ({ accountId: l.accountId, role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
+      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => {
+          if (l.account !== "income") return { ...l, accountId: undefined, role: SHOPIFY_LINE_ROLES[l.account], description: undefined };
+          if (!l.accountId) throw new Error("a sale line has no QuickBooks account");
+          return { ...l, accountId: l.accountId, role: undefined, description: undefined };
+        });
   const bankRole = "expected" in basis ? basis.expected.bankRole : BANK_ROLE.shopify;
 
   const bucketed = lines.some((l) => l.budgetOwnerId !== null);
   const [owners, classes] = bucketed ? await Promise.all([getIncomeConfig().owners?.list() ?? [], bucketClasses()]) : [[], new Map<number, string>()];
   const buckets = new Map(owners.map((o) => [o.id, o]));
-  const account = (role: string) => {
-    const id = accounts[role as keyof RoleAccounts];
+  const account = (role: string | undefined) => {
+    const id = role && accounts[role as keyof RoleAccounts];
     if (!id) throw new Error(`the books-map role ${role} has no QuickBooks account`);
     return id;
   };
@@ -239,7 +258,7 @@ async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: R
       depositToAccountId: account(bankRole),
       memo: "expected" in basis ? (basis.expected.memo ?? "Benevity disbursement") : "Shopify payout",
       lines: lines.map((l): WriteLine => {
-        const base = { amountCents: l.amountCents, accountId: account(l.role), ...(l.description ? { description: l.description } : {}) };
+        const base = { amountCents: l.amountCents, accountId: l.accountId ?? account(l.role), ...(l.description ? { description: l.description } : {}) };
         if (l.budgetOwnerId === null) return base;
         const bucket = buckets.get(l.budgetOwnerId);
         if (!bucket) throw new Error(`bucket ${l.budgetOwnerId} is not in the owner directory`);
@@ -275,17 +294,19 @@ const appKeysOf = (entry: { PrivateNote?: string }) => appKeyOf(entry)?.split(" 
 /**
  * Look for the deposit the app created for an attempted payout: every deposit QuickBooks
  * created since the first attempt, kept when its memo carries the payout's key. An entry
- * carrying more than one key is never taken as the payout's own. Throws when the read fails.
+ * carrying more than one key is never taken as the payout's own. A voided deposit keeps its
+ * memo at a zero total, so a $0 deposit is not the payout's own unless the payout nets to $0.
+ * Throws when the read fails.
  */
 export async function ownEntry(
   client: QuickBooksClient,
   orgId: string,
-  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid">,
+  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid" | "payoutNetCents">,
   since: Date,
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
   const key = rowKey(row);
-  const keyed = entries.filter((e) => appKeysOf(e).includes(key));
+  const keyed = entries.filter((e) => appKeysOf(e).includes(key) && (e.TotalAmt !== 0 || row.payoutNetCents === 0));
   if (full) return { kind: "unsure", note: "the app may already have booked this payout: QuickBooks returned a full page of new deposits" };
   const shared = keyed.find((e) => appKeysOf(e).length > 1);
   if (shared) return { kind: "unsure", note: `the app may already have booked this payout: deposit ${shared.Id} carries more than one app key` };
@@ -339,6 +360,7 @@ export async function postPayout(
   const row = await db.payoutReconciliation.findUniqueOrThrow({ where: { id } });
   if (!postable(row)) return { outcome: "waiting", row };
 
+  const accounts = opts.accounts ?? (await roleAccounts());
   let basis: DepositBasis;
   let gap: string | null;
   const expected = expectedOf(row);
@@ -353,7 +375,7 @@ export async function postPayout(
     if (payout?.status !== "paid" || payout.source !== "api" || payout.netCents !== row.payoutNetCents) {
       return { outcome: "waiting", row };
     }
-    const sales = opts.sales ?? (await payoutSales(orgId, payout.payoutGid, mirror));
+    const sales = opts.sales ?? (await payoutSales(orgId, payout.payoutGid, mirror, accounts));
     basis = { payout, sales };
     gap = mappingGap(sales, opts.problem ?? (await bucketProblems(orgId)));
   }
@@ -362,16 +384,17 @@ export async function postPayout(
     return held && heldOutcome(held);
   }
   // A row whose roles finance has not mapped waits, as an unbound lane does.
-  const accounts = opts.accounts ?? (await roleAccounts());
   if (missingRoles(row, accounts).length) return { outcome: "waiting", row };
 
   const window = matchWindow(row.payoutDate, row.source, opts.benevityWindowDays ?? (await readIncomeSettings(db, orgId)).benevityMatchWindowDays);
   let write: TxnWrite | null = null;
   let buildError = "";
+  let buildFailure: FailureKind = "bug";
   try {
     write = await depositWrite(row.payoutDate, basis, accounts);
   } catch (e) {
     buildError = e instanceof Error ? e.message : String(e);
+    buildFailure = kindOf(e);
   }
 
   const claimedAt = new Date();
@@ -393,7 +416,7 @@ export async function postPayout(
 
   let result: PostResult;
   if (!write) {
-    result = { kind: "failed", error: buildError };
+    result = { kind: "failed", error: buildError, failure: buildFailure };
   } else {
     let own: OwnEntry = { kind: "none" };
     if (claim.attempted) {
@@ -429,7 +452,7 @@ export async function postPayout(
   if (result.kind === "found") {
     const foundId = result.id;
     [found] = (await posting.client.depositsBetween(window.from, window.to)).filter((x) => x.Id === foundId).map(toQbDeposit);
-    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window` };
+    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window`, failure: "bug" };
   }
 
   const settleIn = () => db.$transaction(async (tx) => {
@@ -606,7 +629,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     const mayCreate = r.createdAt > onAt;
     // The mapping check comes before the caps so a held row keeps its reason.
     const expected = isBenevity(r) ? expectedOf(r) : null;
-    const sales = expected || !mirror ? undefined : await payoutSales(orgId, r.payoutGid, mirror);
+    const sales = expected || !mirror ? undefined : await payoutSales(orgId, r.payoutGid, mirror, accounts);
     const gap = expected ? expectedGap(expected, problem) : sales ? mappingGap(sales, problem) : null;
     if (gap) {
       const held = await holdForMapping(orgId, r.id, gap, false);

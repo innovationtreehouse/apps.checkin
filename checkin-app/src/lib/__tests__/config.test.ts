@@ -2,7 +2,7 @@ import { config, ORG_DOMAIN, isStagingAccessAllowed, DEV_MOCK_SHOPIFY_WEBHOOK_SE
 
 const ENV_KEYS = [
     "DATABASE_URL", "NEXTAUTH_URL", "NEXTAUTH_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-    "KIOSK_PUBLIC_KEY", "RESEND_API_KEY", "EMAIL_FROM", "AVERITY_CONSENT_URL", "ZOHO_WEBHOOK_SECRET",
+    "KIOSK_PUBLIC_KEY", "ANTHROPIC_API_KEY", "RESEND_API_KEY", "EMAIL_FROM", "AVERITY_CONSENT_URL", "ZOHO_WEBHOOK_SECRET",
     "AWS_REGION", "AGREEMENT_PDF_S3_BUCKET", "AGREEMENT_PDF_S3_KEY", "ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET",
     "ZOHO_REFRESH_TOKEN", "ZOHO_ACCOUNTS_URL", "ZOHO_SIGN_API", "CHECKIN_ENV", "VERCEL_URL", "NODE_ENV",
     "SHOPIFY_STORE_DOMAIN", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_WEBHOOK_SECRET",
@@ -331,6 +331,12 @@ describe("simple optional getters (env-set vs default)", () => {
         expect(config.kioskPublicKey()).toBeNull();
         process.env.KIOSK_PUBLIC_KEY = "key123";
         expect(config.kioskPublicKey()).toBe("key123");
+    });
+    it("anthropicApiKey", () => {
+        delete process.env.ANTHROPIC_API_KEY;
+        expect(config.anthropicApiKey()).toBeNull();
+        process.env.ANTHROPIC_API_KEY = "sk-1";
+        expect(config.anthropicApiKey()).toBe("sk-1");
     });
     it("resendApiKey", () => {
         delete process.env.RESEND_API_KEY;

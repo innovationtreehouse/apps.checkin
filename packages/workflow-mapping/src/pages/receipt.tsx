@@ -2,12 +2,16 @@
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { formatGtinDisplay } from "@checkin/gtin";
+import {
+  CatalogNamesUnavailable, HttpError, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames,
+  type CatalogItem, type CatalogNames,
+} from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
-import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, STATE_COLOR, STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { MIN_CATALOG_SEARCH_LENGTH, catalogSearchTerm } from "../lib/catalog-search";
 import { type LineFormKind, lineFormBody } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
 
@@ -33,6 +37,7 @@ interface LineItem {
 }
 interface ParsedReceipt {
   receiptId?: string;
+  openBackorders: number;
   vendorName?: string | null;
   currency: string;
   receiptTotalCents?: number;
@@ -68,34 +73,37 @@ interface SubcategoryOption {
   number: number;
   categoryId: number;
 }
-/** GET /api/catalog/items rows, with their category and subcategory included. */
-interface CatalogItem {
-  gtin13: string;
-  name: string;
-  category: { name: string };
-  subcategory: { name: string };
+/** The provisional names GET /api/inventory/org-items/{gtin13} returns beside the row. */
+interface OrgItemNames { InventoryProvisionalItem?: { provisionalGtin13: string; name: string }[] }
+
+/** A part's catalog name, else its provisional name from org-items, else the error the catalog or org-items read threw. */
+async function partName(gtin13: string): Promise<unknown> {
+  const catalog = await api<CatalogItem>(`/api/catalog/items/${gtin13}`).then((item): unknown => item.name, (e: unknown) => e);
+  if (typeof catalog === "string") return catalog;
+  let row: OrgItemNames | null = null;
+  try {
+    row = await api<OrgItemNames>(`/api/inventory/org-items/${gtin13}`);
+  } catch (e) {
+    // A 404 means the org has no row for the part; any other failure leaves the name unknown.
+    if (!(e instanceof HttpError && e.status === 404)) return e;
+  }
+  return row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13)?.name ?? catalog;
 }
 
-const itemLabel = (item: CatalogItem) => `${item.name} · ${item.category.name} / ${item.subcategory.name} · ${item.gtin13}`;
-
-/** Catalog items matching the typed text, from the catalog's own search route; none until a search for the current text returns. */
-function useCatalogSearch(q: string): { items: CatalogItem[]; error: string | null } {
-  const [result, setResult] = useState<{ term: string; items: CatalogItem[]; error: string | null } | null>(null);
-  const term = catalogSearchTerm(q);
+/** Part names by GTIN, one lookup per distinct GTIN, with the GTINs the catalog lacks or failed to answer for. */
+function usePartNames(gtins: string[]): CatalogNames {
+  const [lookup, setLookup] = useState<CatalogNames>(NO_CATALOG_NAMES);
+  const key = [...new Set(gtins)].sort().join(",");
   useEffect(() => {
-    if (term === null) return;
+    if (!key) return;
     let live = true;
-    const t = setTimeout(() => {
-      api<CatalogItem[]>(`/api/catalog/items?q=${encodeURIComponent(term)}&limit=20`)
-        .then((rows) => { if (live) setResult({ term, items: rows, error: null }); })
-        .catch((e: unknown) => { if (live) setResult({ term, items: [], error: errorMessage(e) }); });
-    }, 250);
-    return () => { live = false; clearTimeout(t); };
-  }, [term]);
-  return result && result.term === term ? { items: result.items, error: result.error } : { items: [], error: null };
+    const ids = key.split(",");
+    Promise.all(ids.map(partName))
+      .then((found) => { if (live) setLookup(ids.reduce((acc, gtin13, i) => withLookup(acc, gtin13, found[i]), NO_CATALOG_NAMES)); });
+    return () => { live = false; };
+  }, [key]);
+  return lookup;
 }
-
-type Form = "associate" | "propose" | null;
 
 /**
  * /inventory/receiving/[id] — one receipt's lines, their mapping decisions, and the push controls.
@@ -105,8 +113,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
+  const partLookup = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<{ lineId: number; form: Form }>({ lineId: 0, form: null });
+  const [openLineId, setOpenLineId] = useState<number | null>(null);
 
   async function act(path: string, body?: unknown, message = "Saved"): Promise<boolean> {
     setBusy(true);
@@ -137,16 +146,21 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const editable = canManage && !lockReason;
   const base = `/receipts/${receipt.id}`;
   const items = new Map(parsed.lineItems.map((li) => [li.receiptLineItemId, li]));
+  const partLabels = withProvisionalNames(partLookup);
 
   return (
     <>
-      <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
+      {editable && openLineId !== null ? (
+        <Anchor component="button" size="sm" onClick={() => setOpenLineId(null)}>← Back to receipt</Anchor>
+      ) : (
+        <Anchor component={Link} href={backHref} size="sm">← Back</Anchor>
+      )}
       <Group justify="space-between" mt="md">
         <Stack gap={0}>
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>
           <Text size="sm" c="dimmed">{parsed.receiptDate ?? "No date"}</Text>
         </Stack>
-        <Badge size="lg" variant="light" color={STATE_COLOR[receipt.state] ?? "gray"}>{STATE_LABEL[receipt.state] ?? receipt.state}</Badge>
+        <Badge size="lg" variant="light" color={stateColor(receipt.state, parsed.openBackorders)}>{stateLabel(receipt.state, parsed.openBackorders)}</Badge>
       </Group>
       <Group gap="xl" align="start" my="md">
         <Field label="Total" value={formatCents(parsed.receiptTotalCents, parsed.currency)} money />
@@ -190,6 +204,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           )}
         </Group>
       )}
+      <CatalogNamesUnavailable lookup={partLookup} />
       <Table withTableBorder>
         <Table.Thead>
           <Table.Tr>
@@ -207,7 +222,10 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           {lines.map((ls, i) => {
             const li = items.get(ls.receiptLineItemId);
             const lineBase = `${base}/lines/${ls.id}`;
-            const isOpen = editable && open.lineId === ls.id && !!open.form;
+            const isOpen = editable && openLineId === ls.id;
+            const mappedGtin = ls.assignedGtin13 ?? ls.provisionalItemGtin13;
+            // A provisional part has no row until the receipt applies, and then takes the line's description as its name.
+            const mappedName = (mappedGtin && partLookup.names.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : li?.description) ?? (mappedGtin && partLabels.get(mappedGtin));
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>
@@ -221,20 +239,19 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     <Badge size="sm" variant="light" color={LINE_STATUS_COLOR[ls.recognitionStatus] ?? "gray"}>
                       {LINE_STATUS_LABEL[ls.recognitionStatus] ?? ls.recognitionStatus}
                     </Badge>
-                    {(ls.assignedGtin13 ?? ls.provisionalItemGtin13) && (
+                    {mappedGtin && (
                       <Text size="xs" ff="monospace" c="dimmed">
-                        {ls.assignedGtin13 ?? ls.provisionalItemGtin13} ×{ls.conversionFactor}
+                        {formatGtinDisplay(mappedGtin)}{mappedName ? ` · ${mappedName}` : ""} ×{ls.conversionFactor}
                       </Text>
                     )}
                   </Table.Td>
                   {editable && (
                     <Table.Td>
                       {isOpen ? (
-                        <Button size="xs" variant="subtle" onClick={() => setOpen({ lineId: 0, form: null })}>Close</Button>
+                        <Button size="xs" variant="subtle" onClick={() => setOpenLineId(null)}>Close</Button>
                       ) : (
                         <Group gap={4} wrap="nowrap">
-                          <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "associate" })}>Associate</Button>
-                          <Button size="xs" variant="light" onClick={() => setOpen({ lineId: ls.id, form: "propose" })}>Propose</Button>
+                          <Button size="xs" variant="light" onClick={() => setOpenLineId(ls.id)}>Associate</Button>
                           <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
                             Not inventory
                           </Button>
@@ -243,18 +260,17 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     </Table.Td>
                   )}
                 </Table.Tr>
-                {isOpen && open.form && (
+                {isOpen && (
                   <Table.Tr>
                     <Table.Td colSpan={COLUMNS + 1}>
                       <Paper component="section" p="md" withBorder aria-label={`Line ${li?.lineNumber ?? i + 1} details`}>
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
                           <LineDetails item={li} currency={parsed.currency} />
                           <LineForm
-                            form={open.form}
                             busy={busy}
-                            onCancel={() => setOpen({ lineId: 0, form: null })}
-                            onSubmit={async (body) => {
-                              if (await act(`${lineBase}/${open.form}`, body)) setOpen({ lineId: 0, form: null });
+                            onCancel={() => setOpenLineId(null)}
+                            onSubmit={async (form, body) => {
+                              if (await act(`${lineBase}/${form}`, body)) setOpenLineId(null);
                             }}
                           />
                         </SimpleGrid>
@@ -300,18 +316,16 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ form, busy, onSubmit, onCancel }: {
-  form: LineFormKind;
+function LineForm({ busy, onSubmit, onCancel }: {
   busy: boolean;
-  onSubmit: (body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
+  onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
 }) {
+  const [form, setForm] = useState<LineFormKind>("associate");
   const [chosen, setChosen] = useState<CatalogItem | null>(null);
   const [search, setSearch] = useState("");
-  // Choosing an option fills the search box with its label; that is not a new search.
-  const found = useCatalogSearch(chosen && search === itemLabel(chosen) ? "" : search);
-  const itemOptions = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)]
-    .map((item) => ({ value: item.gtin13, label: itemLabel(item) }));
+  const found = useCatalogSearch(search);
+  const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
   const gtin13 = chosen?.gtin13 ?? null;
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -330,20 +344,36 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
   return (
     <Stack gap={4}>
       {form === "associate" ? (
-        <Select
-          size="xs"
-          placeholder="Search the catalog by name, GTIN or category"
-          data={itemOptions}
-          value={gtin13}
-          onChange={(v) => setChosen([chosen, ...found.items].find((item) => item?.gtin13 === v) ?? null)}
-          searchable
-          searchValue={search}
-          onSearchChange={setSearch}
-          filter={({ options }) => options}
-          error={found.error && `Couldn't search the catalog: ${found.error}`}
-          nothingFoundMessage={catalogSearchTerm(search) === null ? `Type at least ${MIN_CATALOG_SEARCH_LENGTH} characters` : "No matching catalog items"}
-          miw={320}
-        />
+        <>
+          <TextInput
+            size="xs"
+            placeholder="Search the catalog by name, GTIN or category"
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+            error={found.error && `Couldn't search the catalog: ${found.error}`}
+            miw={320}
+          />
+          {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
+          {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
+          {results.length > 0 && (
+            <ScrollArea.Autosize mah={220}>
+              <Radio.Group
+                aria-label="Catalog items"
+                value={gtin13}
+                onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
+              >
+                <Stack gap={6} py={4}>
+                  {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
+                </Stack>
+              </Radio.Group>
+            </ScrollArea.Autosize>
+          )}
+          {found.answered && !found.error && (
+            <Group>
+              <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+            </Group>
+          )}
+        </>
       ) : (
         <>
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
@@ -377,11 +407,11 @@ function LineForm({ form, busy, onSubmit, onCancel }: {
           size="xs"
           loading={busy}
           disabled={!body}
-          onClick={() => { if (body) onSubmit(body); }}
+          onClick={() => { if (body) onSubmit(form, body); }}
         >
           Save
         </Button>
-        <Button size="xs" variant="subtle" onClick={onCancel}>Cancel</Button>
+        <Button size="xs" variant="subtle" onClick={form === "propose" ? () => setForm("associate") : onCancel}>Cancel</Button>
       </Group>
     </Stack>
   );

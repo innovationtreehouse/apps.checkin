@@ -13,12 +13,13 @@
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
  * An accepted gift's lines go to the expense library's capital review, which
- * keeps donated equipment at or over its thresholds. Boot stays DB-free.
+ * keeps donated equipment at or over its thresholds, and each gift line's account comes from the
+ * expense library's account rules. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
+import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting, InKindStopKind } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/components/host";
-import { booksMap, budgetOwners, quickBooks } from "@/lib/components/ports";
+import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
 import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation/donorSurname";
@@ -60,6 +61,13 @@ export async function inKindPostingMissing(): Promise<string[]> {
   ];
 }
 
+/** What the in-kind stop alert tells finance, by the stop's kind. */
+const DRAIN_STOP_CAUSES: Record<InKindStopKind, string> = {
+  system: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.",
+  connection: "QuickBooks refused the app's connection. Reconnect QuickBooks; until then no gift books.",
+  bug: "The gifts failed on their own while QuickBooks was answering. Each failure counts against its gift, and a gift that keeps failing comes to you.",
+};
+
 /** Loaded on first use; the books map is read per run. */
 function inKindQbPosting(): InKindQbPosting | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
@@ -73,11 +81,12 @@ function inKindQbPosting(): InKindQbPosting | undefined {
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       }, "In-kind sweep alert failed:");
     },
-    async drainStopped({ failures, remaining }) {
+    async drainStopped({ failures, remaining, cause }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
       await notifyFinanceAlert("finance.inKindDrainStopped", {
         failures: String(failures),
         remaining: String(remaining),
+        cause: DRAIN_STOP_CAUSES[cause],
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       }, "In-kind drain alert failed:");
     },
@@ -114,6 +123,12 @@ const capital: InKindCapital = {
   },
 };
 
+const partAccounts: InKindAccounts = {
+  async resolve(orgId, parts) {
+    return (await import("@checkin/expense")).resolveDonatedPartAccounts(orgId, parts);
+  },
+};
+
 export function configureRuntime(): void {
   configureBulkDonation({
     auth: { getPrincipal },
@@ -125,5 +140,7 @@ export function configureRuntime(): void {
     deposits: donationPostingMissing().length ? undefined : incomeDeposits,
     inKind,
     capital,
+    quickBooksAccounts,
+    partAccounts,
   });
 }

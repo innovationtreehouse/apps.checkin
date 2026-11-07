@@ -129,8 +129,7 @@ test.describe("the catalog in the browser", () => {
     const page = await context.newPage();
     const watch = watchPage(page);
 
-    await page.goto("/catalog/proposals");
-    await page.getByRole("tab", { name: "Provisional Items" }).click();
+    await page.goto("/catalog/provisional-items");
     // The row's actions are Approve, Map to existing item, Reject.
     await itemRow(page, name).getByRole("button").nth(0).click();
     await page.getByRole("dialog").getByRole("button", { name: "Approve & Create Item" }).click();
@@ -150,8 +149,7 @@ test.describe("the catalog in the browser", () => {
     const page = await context.newPage();
     const watch = watchPage(page);
 
-    await page.goto("/catalog/proposals");
-    await page.getByRole("tab", { name: "Provisional Items" }).click();
+    await page.goto("/catalog/provisional-items");
     await itemRow(page, name).getByRole("button").nth(2).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("button", { name: "Reject", exact: true })).toBeDisabled();
@@ -182,7 +180,7 @@ test.describe("the catalog in the browser", () => {
   test("a signed-out visitor is sent away from the catalog", async ({ browser }) => {
     const context = await browser.newContext();
     const page = await context.newPage();
-    for (const path of ["/catalog/items", "/catalog/categories", "/catalog/proposals"]) {
+    for (const path of ["/catalog/items", "/catalog/categories", "/catalog/item-reference-proposals"]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       await expect(page, path).not.toHaveURL((url) => url.pathname === path);

@@ -107,7 +107,7 @@ function FinanceViewsPanel() {
 
       {error ? (
         <LoadError what="the finance view log" message={error} onRetry={reload} />
-      ) : !data ? (
+      ) : !data || (stale && rows.length === 0) ? (
         <Center mih="30vh">
           <Loader />
         </Center>

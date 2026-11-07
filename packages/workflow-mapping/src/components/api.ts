@@ -15,7 +15,7 @@ export function useCanManage(): boolean {
   return useViewer()?.isInventoryManager === true;
 }
 
-export { STATE_LABEL } from "../lib/stateLabels";
+export { STATE_LABEL, stateLabel } from "../lib/stateLabels";
 
 export const STATE_COLOR: Record<string, string> = {
   pending_review: "yellow",
@@ -23,6 +23,12 @@ export const STATE_COLOR: Record<string, string> = {
   apply_failed: "red",
   resolved: "green",
 };
+
+/** The state colour; a resolved receipt with lines still on backorder is neutral, not green. */
+export function stateColor(state: string, openBackorders: number): string {
+  if (state === "resolved" && openBackorders > 0) return "gray";
+  return STATE_COLOR[state] ?? "gray";
+}
 
 /** A line's mapping decision, in plain words. */
 export const LINE_STATUS_LABEL: Record<string, string> = {

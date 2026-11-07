@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { KindedError, type FailureKind } from "@checkin/component-kit";
 import { centsToDollars } from "@checkin/money";
 import { CREATE, CREATE_JOURNAL } from "./internal";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
@@ -40,14 +41,23 @@ async function faultCodes(res: Response): Promise<string[]> {
   }
 }
 
-/** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
-export class QboRequestError extends Error {
-  readonly codes: readonly string[];
+/** A refused login is connection; 403 is too until the logged fault codes show which 403s are settings. */
+function statusKind(status: number): FailureKind {
+  if (status === 401 || status === 403) return "connection";
+  if (status === 429 || status >= 500) return "system";
+  return "data";
+}
 
-  constructor(message: string, codes: readonly string[]) {
-    super(codes.length ? `${message}: codes ${codes.join(",")}` : message);
+/** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
+export class QboRequestError extends KindedError {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly requestId: string | null,
+    readonly codes: readonly string[],
+  ) {
+    super(statusKind(status), codes.length ? `${message}: codes ${codes.join(",")}` : message);
     this.name = "QboRequestError";
-    this.codes = codes;
   }
 }
 
@@ -212,8 +222,13 @@ function privateNote(memo: string | undefined, key: string, env: QboEnv): string
   return note;
 }
 
+/** QuickBooks ref ids (accounts, Classes, Vendors) are digits only. */
+export function isQuickBooksId(id: string): boolean {
+  return /^\d+$/.test(id);
+}
+
 function ref(id: string): { value: string } {
-  if (!/^\d+$/.test(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
+  if (!isQuickBooksId(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
   return { value: id };
 }
 
@@ -414,7 +429,8 @@ export class QuickBooksClient {
   private async byIds<T>(entity: string, ids: readonly string[]): Promise<T[]> {
     if (ids.length === 0) return [];
     if (ids.length > PAGE_SIZE) throw new Error(`QBO id lookup takes at most ${PAGE_SIZE} ids, got ${ids.length}`);
-    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")})`);
+    // QuickBooks returns 100 rows unless MAXRESULTS says otherwise.
+    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")}) MAXRESULTS ${ids.length}`);
   }
 
   /** The BillPayments a Bill's LinkedTxn names. */
@@ -495,7 +511,12 @@ export class QuickBooksClient {
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "application/json" };
     if (init.body !== undefined) headers["Content-Type"] = "application/json";
     for (let attempt = 1; ; attempt++) {
-      const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      let res: Response;
+      try {
+        res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      } catch (e) {
+        throw new KindedError("system", `QBO ${what} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+      }
       // intuit_tid is Intuit's per-request trace id — capture it for support/debugging every call.
       this.lastTid = res.headers.get("intuit_tid");
       if (res.status === 429 && attempt === 1) {
@@ -503,7 +524,12 @@ export class QuickBooksClient {
         await new Promise((r) => setTimeout(r, Math.min(Number.isFinite(wait) ? wait : 1, MAX_RETRY_AFTER_S) * 1000));
         continue;
       }
-      if (!res.ok) throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, await faultCodes(res));
+      if (!res.ok) {
+        const codes = await faultCodes(res);
+        const lane = new URL(url).searchParams.get("requestid")?.split(":")[0] ?? null;
+        console.warn("[quickbooks] request failed", { lane, operation: what, status: res.status, codes, requestId: this.lastTid });
+        throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, res.status, this.lastTid, codes);
+      }
       return res.json();
     }
   }
@@ -532,7 +558,7 @@ export class QuickBooksClient {
     return { Id: created.Id };
   }
 
-  /** Creates one balanced JournalEntry; only findOrCreateInKindJournal calls it, after checking every account is an in-kind role's. */
+  /** Creates one balanced JournalEntry; only findOrCreateInKindJournal calls it, after checking it credits in-kind income and debits no books-map role's account. */
   async [CREATE_JOURNAL](fields: JournalEntryFields, key: string): Promise<{ Id: string }> {
     assertAppKey(key);
     assertRealmAllowed(this.realm);

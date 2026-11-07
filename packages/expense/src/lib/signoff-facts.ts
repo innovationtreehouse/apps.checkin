@@ -5,6 +5,7 @@ import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApp
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
+import { dropHandSetAccount } from "./account-types";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
 import { liveIds } from "./livePeople";
@@ -262,6 +263,15 @@ export async function lockExpense(tx: Prisma.TransactionClient, expenseId: strin
   await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
 }
 
+/**
+ * Takes a bucket's line hold: shared by every path that puts a line in the bucket, after that
+ * path's expense locks; exclusive by the host while it makes the bucket a program bucket.
+ */
+export async function lockBucketLines(tx: Prisma.TransactionClient, bucketId: number, mode: "shared" | "exclusive" = "shared"): Promise<void> {
+  if (mode === "shared") await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock_shared(hashtext('expense.bucket'), ${bucketId}::int)`;
+  else await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtext('expense.bucket'), ${bucketId}::int)`;
+}
+
 /** A step on a line, in the order of its signatures: the submitter seat, the approval, the Treasurer seat. */
 export type ClearedStep = "SUBMITTER" | "APPROVAL" | "TREASURER";
 
@@ -296,6 +306,7 @@ async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor:
       valueBefore: `${l.isCapital ? "capital" : "non_capital"}/owner:${l.capitalOwnerId ?? "none"}/${l.depreciationYears ?? "none"}y`,
       notes: reason,
     });
+    if (l.isCapital) await dropHandSetAccount(tx, actor, expenseId, l, reason);
   }
 
   const assets = await tx.capitalAsset.findMany({ where: { sourceExpenseId: expenseId, seeded: false }, orderBy: { id: "asc" } });
@@ -314,7 +325,7 @@ async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor:
   if (outbox.count > 0) {
     // Finance's skip is final, so going back never makes the expense postable again.
     const qbMatchState = expense.qbMatchState === "SKIPPED" ? "SKIPPED" : "UNMATCHED";
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState, qbPostAttempts: 0 } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState, qbPostAttempts: 0, qbFailureKind: null } });
     await writeAudit(tx, actor, { expenseId, action: "qb_outbox_cleared", fieldChanged: "qbMatchState", valueBefore: expense.qbMatchState, valueAfter: qbMatchState, notes: reason });
   }
 }

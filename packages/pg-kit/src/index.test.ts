@@ -9,6 +9,7 @@ import {
   createLazyPrisma,
   isUniqueConstraintError,
   isRecordNotFoundError,
+  isDbUnavailableError,
   retryOnUniqueRace,
   withAdvisoryLock,
   ConcurrentRunError,
@@ -119,5 +120,20 @@ describe("withAdvisoryLock", () => {
     session.end.mockRejectedValue(new Error("socket gone"));
 
     await expect(withAdvisoryLock("k", vi.fn().mockResolvedValue(7), open)).resolves.toBe(7);
+  });
+});
+
+describe("isDbUnavailableError", () => {
+  it("matches P1001, P2024 and both pg connect-timeout messages", () => {
+    expect(isDbUnavailableError({ code: "P1001" })).toBe(true);
+    expect(isDbUnavailableError({ code: "P2024" })).toBe(true);
+    expect(isDbUnavailableError(new Error("timeout exceeded when trying to connect"))).toBe(true);
+    expect(isDbUnavailableError(new Error("Connection terminated due to connection timeout"))).toBe(true);
+  });
+
+  it("rejects mid-query drops and unrelated errors, so a retried write never ran twice", () => {
+    expect(isDbUnavailableError(new Error("Connection terminated unexpectedly"))).toBe(false);
+    expect(isDbUnavailableError({ code: "P2002" })).toBe(false);
+    expect(isDbUnavailableError(null)).toBe(false);
   });
 });

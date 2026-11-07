@@ -77,7 +77,7 @@ beforeAll(async () => {
         auth: { getPrincipal: async () => ({ id: 1, name: 'Manager' }) },
         org: async () => ORG,
         expenseSink,
-        inventorySink: { applyDelta: async () => {} },
+        inventorySink: { applyDelta: async () => {}, openBackorders: async () => new Map() },
     });
 }, 120_000);
 
@@ -202,6 +202,20 @@ describe('X5 ExpenseSink → expense intake', () => {
         await receiptService.retryApply(id);
         expect(await receiptService.apply(id)).toEqual({ state: 'resolved' });
         expect(await expenses('x5-down')).toHaveLength(1);
+    });
+
+    it('stamps the expense leg once expense has stored the payload, even when building the expense fails', async () => {
+        const { id } = await seedReceipt('x5-build-fails');
+        jest.spyOn(ex, '$transaction').mockRejectedValueOnce(new Error('lost the expense database mid-build'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        expect(await proceedAndApply(id)).toEqual({ state: 'resolved' });
+        expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"intake_build_failed","receiptId":"x5-build-fails"'));
+
+        expect((await legs(id)).expenseAppliedAt).not.toBeNull();
+        expect(await expenses('x5-build-fails')).toHaveLength(0);
+        expect(await ex.receivedExpensePayload.findMany({ where: { receiptId: 'x5-build-fails' } }))
+            .toEqual([expect.objectContaining({ status: 'failed', failureReason: 'lost the expense database mid-build' })]);
     });
 
     it('refuses a receipt for another org', async () => {

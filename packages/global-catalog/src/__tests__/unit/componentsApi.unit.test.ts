@@ -19,8 +19,8 @@ describe("api()", () => {
   });
 
   it("falls back to the status for a non-JSON error body", async () => {
-    stubFetch(502, "<html>Bad Gateway</html>");
-    await expect(api("/items")).rejects.toThrow("HTTP 502");
+    stubFetch(500, "<html>Internal Server Error</html>");
+    await expect(api("/items")).rejects.toThrow("HTTP 500");
   });
 
   it("rejects a non-JSON success body instead of returning it", async () => {

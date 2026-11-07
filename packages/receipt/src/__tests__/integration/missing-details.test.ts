@@ -86,6 +86,14 @@ describeDb("a receipt missing its retailer, date or total", () => {
     expect((await receiptService.get(r.id, "submitter")).validationNotes).toBe("This receipt is missing its date. Fill it in, then confirm.");
   });
 
+  it("never reaches the in-kind lane as a gift with no date", async () => {
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, ocr: okOcr({ receiptDate: "" }) });
+    const r = await receiptService.upload(textFile(), "text/plain", { isInKind: true, donor: { self: true } });
+    expect(r.state).toBe("submitter_review");
+    await expect(receiptService.submitterConfirm(r.id)).rejects.toMatchObject({ status: 400 });
+    expect(ports.calls.pushes).toEqual([]);
+  });
+
   it("refuses typed details with a blank retailer, on upload and on edit", async () => {
     await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "   " }) })).rejects.toMatchObject({
       status: 400,

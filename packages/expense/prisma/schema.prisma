@@ -148,9 +148,11 @@ model Expense {
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
   // QuickBooks match state of the whole expense (one QB entry per expense):
   // UNMATCHED | POSTING | MATCHED | CREATED | AMBIGUOUS | UNBOOKED | POST_FAILED, or not sent:
-  // SKIPPED (finance, with a reason, for good) | NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) | NEEDS_FINANCE (posts kept failing). qb_txn_id is the
-  // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
-  // once; qb_vendor_id is the Vendor a Bill was posted to.
+  // SKIPPED (finance, with a reason, for good) | NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) |
+  // NEEDS_FINANCE (finance must act: posts kept failing, the expense can't make an entry, or the
+  // app can't tell whether it already booked it).
+  // qb_txn_id is the claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an
+  // entry is claimed once; qb_vendor_id is the Vendor a Bill was posted to.
   /// @sensitivity:internal
   qbMatchState       String    @default("UNMATCHED") @map("qb_match_state")
   /// @sensitivity:internal
@@ -162,6 +164,9 @@ model Expense {
   // Failed QuickBooks posts since the last success or finance retry; at the limit the expense stops at NEEDS_FINANCE.
   /// @sensitivity:internal
   qbPostAttempts     Int       @default(0) @map("qb_post_attempts")
+  // The kind of the last failed post (system, connection, settings, data, bug); null when the last post did not fail or none failed.
+  /// @sensitivity:internal
+  qbFailureKind      String?   @map("qb_failure_kind")
   // When a post claimed the expense (POSTING) before calling QuickBooks; cleared when it settles.
   /// @sensitivity:internal
   qbClaimedAt        DateTime? @map("qb_claimed_at")

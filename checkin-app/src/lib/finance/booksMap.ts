@@ -5,9 +5,10 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
-import { BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, LIVE_BOOKS_MAP_ROLES, accountTypeRefusal, isBooksMapRole, isQuickBooksId, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
-// The books map (docs/in-design/QB_ENTRY_OWNERSHIP.md): bucket -> QuickBooks Class,
+// The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
 // stored on BudgetOwner, and named role -> QuickBooks account, stored in
 // BooksMapRoleAccount. FINANCE or BOARD reads it; FINANCE edits it, audited.
 
@@ -24,7 +25,7 @@ export async function listBooksMap() {
     const set = new Map(rows.map((r) => [r.role, r.quickBooksAccountId]));
     return {
         BooksMapClass: buckets.map((b) => ({ budgetOwnerId: b.id, budgetOwnerName: b.name, quickBooksClassId: b.quickBooksClassId })),
-        BooksMapAccount: BOOKS_MAP_ROLES.map((role) => ({ role, quickBooksAccountId: set.get(role) ?? null })),
+        BooksMapAccount: LIVE_BOOKS_MAP_ROLES.map((role) => ({ role, quickBooksAccountId: set.get(role) ?? null })),
     };
 }
 
@@ -32,8 +33,8 @@ function readQuickBooksId(value: unknown, field: string): string | null {
     if (value === null) return null;
     if (typeof value !== "string") throw badRequest(`${field} must be a string or null`);
     const id = value.trim();
-    // QuickBooks ref ids are numeric; the posters refuse anything else.
-    if (id && !/^\d+$/.test(id)) throw badRequest(`${field} must be a QuickBooks id (digits only)`);
+    // The posters refuse a ref id QuickBooks cannot hold.
+    if (id && !isQuickBooksId(id)) throw badRequest(`${field} must be a QuickBooks id (digits only)`);
     return id || null;
 }
 
@@ -44,11 +45,18 @@ export async function setBooksMapClass(actorId: number, budgetOwnerId: number, b
     return { budgetOwnerId: bucket.id, budgetOwnerName: bucket.name, quickBooksClassId: bucket.quickBooksClassId };
 }
 
-/** Sets or clears one role's account, audited with the old and new id. */
+/** Refuses an account QuickBooks doesn't list, or lists under a type the role does not accept. Reads QuickBooks live. */
+async function refuseWrongType(role: BooksMapRole, quickBooksAccountId: string) {
+    const refusal = accountTypeRefusal(await listQuickBooksAccounts(), quickBooksAccountId, BOOKS_MAP_ROLE_ACCOUNT_TYPES[role], BOOKS_MAP_ROLE_LABELS[role]);
+    if (refusal) throw badRequest(refusal);
+}
+
+/** Sets or clears one role's account, audited with the old and new id. A new account must be of a type the role accepts. */
 export async function setBooksMapAccount(actorId: number, role: string, body: Record<string, unknown>) {
     if (!isBooksMapRole(role)) throw badRequest(`Unknown books-map role "${role}"`);
     if (body.quickBooksAccountId === undefined) throw badRequest("quickBooksAccountId is required");
     const quickBooksAccountId = readQuickBooksId(body.quickBooksAccountId, "quickBooksAccountId");
+    if (quickBooksAccountId !== null) await refuseWrongType(role, quickBooksAccountId);
     return prisma.$transaction(async (tx) => {
         const before = await tx.booksMapRoleAccount.findUnique({ where: { role }, select: { quickBooksAccountId: true } });
         const oldId = before?.quickBooksAccountId ?? null;
@@ -80,9 +88,13 @@ export const LOCAL_QUICKBOOKS_ACCOUNTS = [
     { id: "8003", name: "Donations:Benevity", accountType: "Income", active: true },
     { id: "8004", name: "Merchant fees", accountType: "Expense", active: true },
     { id: "8005", name: "Old savings", accountType: "Bank", active: false },
+    { id: "8006", name: "Shop supplies", accountType: "Expense", active: true },
+    { id: "8007", name: "Equipment repairs", accountType: "Other Expense", active: true },
+    { id: "8008", name: "Kit materials", accountType: "Cost of Goods Sold", active: true },
+    { id: "8009", name: "Equipment", accountType: "Fixed Asset", active: true },
 ];
 
-/** Every QuickBooks account by its full name, inactive ones flagged, for the role picker. */
+/** Every QuickBooks account by its full name, inactive ones flagged, for the role picker and expense's account list. */
 export async function listQuickBooksAccounts() {
     if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_ACCOUNTS.map((a) => ({ ...a }));
     const qb = await quickBooks();
@@ -94,6 +106,27 @@ export async function listQuickBooksAccounts() {
     return accounts
         .map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "", active: a.Active !== false }))
         .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const either = new Intl.ListFormat("en", { type: "disjunction" });
+
+/**
+ * Each set live role whose account QuickBooks lists under a type the role does
+ * not accept, or no longer lists, in plain words for System Status. Stored values
+ * stay as they are; finance re-picks them.
+ */
+export async function misTypedRoleAccounts(qbAccounts: readonly Pick<QboAccount, "Id" | "FullyQualifiedName" | "AccountType">[]): Promise<string[]> {
+    const byId = new Map(qbAccounts.map((a) => [a.Id, a]));
+    const set = await booksMap.accounts();
+    return LIVE_BOOKS_MAP_ROLES.flatMap((role) => {
+        const id = set[role];
+        if (!id) return [];
+        const account = byId.get(id);
+        const allowed = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
+        if (account?.AccountType && allowed.includes(account.AccountType)) return [];
+        const is = account ? `${account.FullyQualifiedName} is ${account.AccountType ?? "of no type"}` : `id ${id} is not in QuickBooks`;
+        return [`${BOOKS_MAP_ROLE_LABELS[role]} (${is}; takes ${either.format(allowed)})`];
+    });
 }
 
 /** The host's books-map port: what the income, gifts-of-goods and expense lanes read. */

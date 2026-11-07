@@ -1,4 +1,5 @@
 import { config } from "@/lib/config";
+import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
 
 /**
  * One config-health check: an integration/env that must be wired for a feature to
@@ -106,7 +107,63 @@ export function getConfigHealth(): ConfigCheck[] {
                   ? "Not set (fine on local; no mirror to read)."
                   : "NOT configured — set SHOPIFY_READ_DB ('Live payment' stays blank and the reconciler backstop no-ops).",
         },
+        {
+            id: "receipt-ocr",
+            label: "Receipt reading (OCR)",
+            // A deployed instance always uses the real reader (configure.ts); a laptop reads fixtures.
+            ok: config.isLocal() || !!config.anthropicApiKey(),
+            detail: config.anthropicApiKey()
+                ? "API key configured."
+                : config.isLocal()
+                  ? "Not required on local; receipts are read from fixtures."
+                  : "NOT configured — set ANTHROPIC_API_KEY (uploaded and mailed receipts land in OCR failed).",
+        },
+        receiptMailboxCheck(),
     ];
+}
+
+function receiptMailboxCheck(): ConfigCheck {
+    const mailbox = receiptMailboxConfig();
+    const label = "Receipt mailbox";
+    if (mailbox.bound) return { id: "receipt-mailbox", label, ok: true, detail: "Mail intake configured." };
+    if (mailbox.refused) return { id: "receipt-mailbox", label, ok: false, detail: `NOT bound — ${mailbox.refused}.` };
+    // Only production must read mail; dev and ops-stg may run without a mailbox.
+    const required = config.isProd() && !config.isStaging();
+    return {
+        id: "receipt-mailbox",
+        label,
+        ok: !required,
+        detail: required
+            ? "NOT configured — set GMAIL_REFRESHER_FN and RECEIPT_MAILBOX_ADDRESS (mailed receipts are not read)."
+            : "Not set (fine outside prod; mailed receipts are not read).",
+    };
+}
+
+const READ_TIMEOUT_MS = 5_000;
+
+/** A live System Status read that gives up after five seconds, so an outage cannot hang the page. */
+export function withTimeout<T>(work: Promise<T>, what: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} did not answer within ${READ_TIMEOUT_MS / 1000} seconds`)), READ_TIMEOUT_MS);
+    });
+    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+export function message(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
+/** The alert address row: unset until a person enters it on Settings → Email. */
+export function alertAddressCheck(address: string | null | undefined): ConfigCheck {
+    return {
+        id: "alert-address",
+        label: "Alert address",
+        ok: !!address,
+        detail: address
+            ? "Set."
+            : "NOT set — set the alert address on Settings → Email.",
+    };
 }
 
 /** Count of failing checks — the red nav-badge number. */

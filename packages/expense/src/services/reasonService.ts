@@ -8,7 +8,7 @@ import { REVIEW_KINDS, reviewKindOf } from "../lib/flags";
 import { deriveReasons, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, isConflicted, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
-import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
+import { POSTABLE_QB_STATES, lastPostError } from "../lib/expense-qb-poster";
 import { reimburseeVendorId } from "./reimburseeVendorService";
 
 /** Open flag rows that are reviews: the kept kinds. */
@@ -23,9 +23,6 @@ const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE",
 
 /** Reasons a conflicted FINANCE holder answers by choosing the line's bucket. */
 const BUCKET_CHOICE = new Set<ReasonCode>(["BUCKET_TO_ASSIGN", "BUCKET_UNKNOWN", "OWNER_EXCEPTION"]);
-
-/** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
-const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
 
 /**
  * The bucket that stops an outboxed, postable expense for a missing QuickBooks Class, or undefined
@@ -62,10 +59,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     ? await Promise.all([boardApprovalNeeded(db, expense), signoffFactsByLine(db, expense, { readOnly }), filledSeatsByLine(db, expense.id)])
     : [false, new Map(), new Map()];
   const signerHeld = [...facts].some(([lineId, f]) => blockedSeats(f, filled.get(lineId) ?? []).length > 0);
-  const lastFailure =
-    expense.qbMatchState === "NEEDS_FINANCE"
-      ? await db.expenseAuditLog.findFirst({ where: { expenseId, action: "qb_needs_finance" }, orderBy: { changedAt: "desc" }, select: { notes: true } })
-      : null;
+  const lastFailure = expense.qbMatchState === "NEEDS_FINANCE" ? await lastPostError(expenseId) : null;
   const vendorLinked =
     expense.qbMatchState === "AMBIGUOUS" && expense.needsReimbursement && expense.reimburseePersonId !== null
       ? (await reimburseeVendorId(expense.reimburseePersonId)) !== null
@@ -79,7 +73,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     heldLines: new Set(expense.holds.map((h) => h.lineItemId)).size,
     boardApprovalNeeded: boardNeeded,
     signerHeld,
-    lastPostError: lastFailure?.notes?.replace(ATTEMPT_PREFIX, "") ?? null,
+    lastPostError: lastFailure,
     reimburseeVendorLinked: vendorLinked,
     missingClass: await missingClass(expense, expense.approvals.map((a) => a.ownerId)),
     openReviews: expense.flags.flatMap((flag) => {

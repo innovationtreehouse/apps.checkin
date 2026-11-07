@@ -57,4 +57,11 @@ describe("membership-audit/bg-attestations page", () => {
     fireEvent.click(screen.getByRole("button", { name: /Reviewer/ }));
     expect(bodyRowText()[0]).toContain("Bob Board");
   });
+
+  it("shows the failure, not an empty list, when the load fails", async () => {
+    mockFetchJson({});
+    renderWithProviders(<BgAttestationsPage />);
+    expect(await screen.findByText("Couldn't load attestation data")).toBeInTheDocument();
+    expect(screen.queryByText("No attestations on record.")).not.toBeInTheDocument();
+  });
 });

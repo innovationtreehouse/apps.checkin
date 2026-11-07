@@ -154,8 +154,9 @@ jobs:
           # The library boundary check also reads its own script and checkin's
           # schema (a new checkin model can collide with a library's). Package
           # lint reads the root eslint.config.mjs; its plugins resolve through
-          # package-lock.json, already listed.
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
+          # package-lock.json, already listed. Every package and function
+          # tsconfig extends the root tsconfig.base.json.
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|tsconfig\.base\.json$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
@@ -184,8 +185,9 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Bound the job: a lock-wait hang would otherwise hold a runner up to the
-    # 6-hour default. Unit tier baseline is ~2-3 min end to end.
-    timeout-minutes: 15
+    # 6-hour default. Unit tier baseline is ~8-14 min end to end, and a slow
+    # runner can take half as long again.
+    timeout-minutes: 30
 
     # checks: write is required by dorny/test-reporter (publishes the JUnit
     # results as a Check Run below); everything else defaults to the repo's
@@ -684,6 +686,13 @@ jobs:
         if: needs.changes.outputs.packages == 'true'
         run: npm run typecheck:functions
 
+      # Package source, tests and test helpers. checkin-app's tsc sees only the
+      # package files it imports. Each package's client comes from its
+      # postinstall `prisma generate` during npm ci.
+      - name: Typecheck packages
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run typecheck:packages
+
       # Packages share checkin-app's root eslint.config.mjs (one rule set).
       - name: Lint packages
         if: needs.changes.outputs.packages == 'true'
@@ -888,11 +897,6 @@ jobs:
           docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
             -c 'node checkin-app/receipt-file-backfill.mjs 2>&1 | grep -q RECEIPT_DATABASE_URL' \
             || { echo "::error::the receipt file backfill bundle does not load inside the image"; exit 1; }
-
-          # The donor-read copy's bundle loads in the image and stops at its missing --cutoff.
-          docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
-            -c 'node checkin-app/copy-donor-reads.mjs 2>&1 | grep -q -- --cutoff' \
-            || { echo "::error::the donor-read copy bundle does not load inside the image"; exit 1; }
 
       # Probe each wired library's error statuses against the production image
       # with a migrated DB and a signed-in FINANCE+BOARD+INVENTORY_MANAGER person:

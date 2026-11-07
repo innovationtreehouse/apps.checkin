@@ -33,6 +33,7 @@ export function recordingSinks() {
       },
     },
     inventorySink: {
+      openBackorders: async () => new Map(),
       applyDelta: async (d: ResolvedInventoryDelta) => {
         calls.inventory.push(d);
         if (fail.inventory) throw new Error("inventory down");
@@ -57,7 +58,6 @@ export async function clearAll(): Promise<void> {
   await db.workflowAuditLog.deleteMany({});
   await db.receivedReceiptLineStatus.deleteMany({});
   await db.receivedReceipt.deleteMany({});
-  await db.workflowSystemData.deleteMany({});
   await db.workflowFailedOrgEvent.deleteMany({});
   await db.workflowAppliedOrgEvent.deleteMany({});
 }

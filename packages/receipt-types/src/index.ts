@@ -41,6 +41,8 @@ export {
   CompletedReceiptLineItemSchema,
   CompletedReceiptFinanceReviewSchema,
   CompletedReceiptSubmitterConfirmationSchema,
+  CURRENCY_CODE,
+  DEFAULT_CURRENCY,
   FINANCIAL_REVIEW_REASONS,
   MAX_LINE_QUANTITY,
 } from "./completed-receipt";

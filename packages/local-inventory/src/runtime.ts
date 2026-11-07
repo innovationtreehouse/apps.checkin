@@ -3,7 +3,7 @@
  * boot; routes read it through the accessors below. Binding touches no
  * database — the services below build lazily on first request.
  */
-import { defineRuntime } from "@checkin/component-kit";
+import { defineRuntime, settleCounts } from "@checkin/component-kit";
 import { db } from "./lib/db";
 import { createInventoryRepository } from "./lib/repositories/inventoryRepository";
 import { createLocationRepository } from "./lib/repositories/locationRepository";
@@ -32,6 +32,13 @@ export const getOrgId = localInventoryRuntime.getOrgId;
 /** The S5 replay read the host bound, or the inert one. */
 export function getCatalogEventSource(): CatalogEventSource {
   return requireRuntime().catalogEventSource ?? inertCatalogEventSource;
+}
+
+/** Whether the catalog the host bound has an active item with this GTIN; throws when the host bound none. */
+export async function catalogHasActiveItem(gtin13: string): Promise<boolean> {
+  const catalog = requireRuntime().catalog;
+  if (!catalog) throw new Error("local-inventory: no catalog is bound, so no catalog item can be checked");
+  return (await catalog.getActiveItem(gtin13)) != null;
 }
 
 /** The alerts the host bound, if any. */
@@ -67,13 +74,26 @@ export function getServices(): ReturnType<typeof buildServices> {
   return services;
 }
 
-/** What the host binds its inventory crossings to: stock applied once per receipt or donation. */
-export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonation"> = {
+/** What the host binds its inventory crossings to: stock applied once per receipt or donation, and why a donation's apply failed. */
+export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonation" | "donationFailureReason"> = {
   applyReceipt: (...args) => getServices().receiptService.applyReceipt(...args),
   applyDonation: (...args) => getServices().receiptService.applyDonation(...args),
+  donationFailureReason: (...args) => getServices().receiptService.donationFailureReason(...args),
 };
 
-/** The host nav's pill counts for the current org: open receive-queue lines. */
-export async function getNavCounts(): Promise<{ openBackorders: number }> {
-  return { openBackorders: await getServices().receiveQueueService.countOpen(await getOrgId()) };
+/** What the host binds receiving's backorder count to: each receipt's lines still open on the receive queue. */
+export const openBackordersByReceipt = (orgId: string, receiptIds: string[]): Promise<Map<string, number>> =>
+  getServices().receiveQueueService.openBackordersByReceipt(orgId, receiptIds);
+
+/** An org's items with no location: the Needs a location list and its pill. */
+export const unlocatedWhere = (orgId: string) => ({ orgId, locationId: null });
+
+/** The host nav's pill counts for the current org: open receive-queue lines, pending merge conflicts and unlocated items. A failed count is left out. */
+export async function getNavCounts(): Promise<Partial<Record<"openBackorders" | "pendingMergeConflicts" | "unlocated", number>>> {
+  const orgId = await getOrgId();
+  return settleCounts("local-inventory", {
+    openBackorders: () => getServices().receiveQueueService.countOpen(orgId),
+    pendingMergeConflicts: () => db.inventoryMergeConflict.count({ where: { orgId, status: "pending" } }),
+    unlocated: () => db.orgItem.count({ where: unlocatedWhere(orgId) }),
+  });
 }

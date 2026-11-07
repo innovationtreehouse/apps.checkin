@@ -9,7 +9,6 @@ import prisma from "@/lib/prisma";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { lockMailAliasKey } from "@/lib/person/mailAliases";
 import { ApiResponseError, badRequest, forbidden, notFound } from "@/security/handler";
 
@@ -46,7 +45,7 @@ export async function addMailAlias(actorId: number, input: unknown) {
   if (!isValidEmail(address)) throw badRequest("Invalid email format");
 
   const person = await prisma.person.findFirst({
-    where: { ...LIVE_PERSON, email: { equals: body.data.personEmail.trim(), mode: "insensitive" } },
+    where: { email: { equals: body.data.personEmail.trim(), mode: "insensitive" } },
     select: { id: true, householdId: true, email: true },
   });
   if (!person) throw notFound("Nobody signs in with that email");
@@ -88,7 +87,7 @@ async function addRefusal(
   if (mailbox && canonicalizeEmail(mailbox) === canonicalKey) return "mailbox";
   if (person.email?.toLowerCase() === address) return "sign_in";
   // ponytail: scans every email, as canonical keys are not stored on Person; a rare finance action.
-  const people = await tx.person.findMany({ where: { ...LIVE_PERSON, email: { not: null }, id: { not: person.id } }, select: { email: true } });
+  const people = await tx.person.findMany({ where: { email: { not: null }, id: { not: person.id } }, select: { email: true } });
   if (people.some((p) => p.email && canonicalizeEmail(p.email) === canonicalKey)) return "sign_in";
   const aliases = await tx.personMailAlias.findMany({ where: { canonicalKey }, select: { personId: true, address: true } });
   return aliases.some((a) => a.personId !== person.id || a.address === address) ? "alias" : null;

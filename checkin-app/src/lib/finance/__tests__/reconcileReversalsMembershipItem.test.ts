@@ -28,7 +28,7 @@ jest.mock("@/lib/prisma", () => ({
 jest.mock("@/lib/membership/payment", () => ({ activateByProcessId: jest.fn() }));
 jest.mock("@/lib/shopifyRead/client", () => ({
     ordersByLegacyIds: (...a: unknown[]) => ordersByLegacyIds(...a),
-    disputedOrderGids: async () => new Set<string>(),
+    orderDisputeCounts: async () => new Map<string, number>(),
     incomeOrderLines: (...a: unknown[]) => incomeOrderLines(...a),
     orderLineVariantIds: (...a: unknown[]) => orderLineVariantIds(...a),
 }));

@@ -141,6 +141,17 @@ describe("in-kind queue: finance's QuickBooks actions", () => {
     await waitFor(() => expect(lastBody()).toEqual({ action: "clear", reason: "Voided 9100" }));
   });
 
+  it("offers a gift changed in QuickBooks match and skip, never book, even with its note cleared", async () => {
+    mockQueue = [{ ...unbooked, state: "booking", waitingOn: ["booking"], qbState: "DRIFT", qbNote: null, revenueBooking: "DRIFT", expenseBooking: "DRIFT" }];
+    wrap();
+    expect(screen.getByText("Changed in QuickBooks")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "QuickBooks" }));
+    expect(screen.queryByRole("button", { name: "Book" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Journal entry id"), { target: { value: "9100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Match" }));
+    await waitFor(() => expect(lastBody()).toEqual({ action: "match", journalEntryId: "9100" }));
+  });
+
   it("shows a board member no QuickBooks actions", () => {
     mockUser = { id: 1, isBoardMember: true };
     wrap();

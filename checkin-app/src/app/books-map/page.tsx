@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { errorMessage } from "@checkin/component-ui";
 import type { BooksMapRole } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { api } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
@@ -26,18 +29,8 @@ interface Option {
   active: boolean;
 }
 
-/** Reads JSON, or says why it could not; never throws. */
-async function request<T>(url: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  let res: Response;
-  try {
-    res = await fetch(url, init);
-  } catch {
-    return { ok: false, error: "Couldn't reach the server. Check your connection and try again." };
-  }
-  const data: unknown = await res.json().catch(() => null);
-  if (res.ok) return { ok: true, data: data as T };
-  const error = data && typeof data === "object" && "error" in data && typeof data.error === "string" ? data.error : "The server returned an unexpected error.";
-  return { ok: false, error: `${error} (${res.status})` };
+interface AccountOption extends Option {
+  accountType: string;
 }
 
 function showError(title: string, message: string) {
@@ -52,6 +45,16 @@ function choices(options: Option[] | null, saved: string | null) {
   return list;
 }
 
+/** A role's account options: only the types it accepts, plus the saved one marked when it is of another type. */
+function accountChoices(options: AccountOption[] | null, role: BooksMapRole, saved: string | null) {
+  const allowed = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
+  const fits = (options ?? []).filter((o) => allowed.includes(o.accountType) || o.id === saved);
+  return choices(fits, saved).map((c) => {
+    const type = fits.find((o) => o.id === c.value)?.accountType;
+    return type && !allowed.includes(type) ? { ...c, label: `${c.label} (wrong type: ${type})` } : c;
+  });
+}
+
 export default function BooksMapPage() {
   const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
@@ -59,24 +62,28 @@ export default function BooksMapPage() {
   const [classRows, setClassRows] = useState<ClassRow[]>([]);
   const [accountRows, setAccountRows] = useState<AccountRow[]>([]);
   const [classes, setClasses] = useState<Option[] | null>(null);
-  const [accounts, setAccounts] = useState<Option[] | null>(null);
+  const [accounts, setAccounts] = useState<AccountOption[] | null>(null);
 
-  const load = useCallback(() => Promise.all([
-    request<{ BooksMapClass: ClassRow[]; BooksMapAccount: AccountRow[] }>("/api/books-map"),
-    request<Option[]>("/api/budget-owners/quickbooks-classes"),
-    request<Option[]>("/api/books-map/quickbooks-accounts"),
+  const load = useCallback(() => Promise.allSettled([
+    api<{ BooksMapClass: ClassRow[]; BooksMapAccount: AccountRow[] }>("/api/books-map"),
+    api<Option[]>("/api/budget-owners/quickbooks-classes"),
+    api<AccountOption[]>("/api/books-map/quickbooks-accounts"),
   ]).then(([map, c, a]) => {
-    if (map.ok) { setClassRows(map.data.BooksMapClass); setAccountRows(map.data.BooksMapAccount); } else showError("Books map not loaded", map.error);
-    if (c.ok) setClasses(c.data); else showError("QuickBooks Classes unavailable", c.error);
-    if (a.ok) setAccounts(a.data); else showError("QuickBooks accounts unavailable", a.error);
+    if (map.status === "fulfilled") { setClassRows(map.value.BooksMapClass); setAccountRows(map.value.BooksMapAccount); } else showError("Books map not loaded", errorMessage(map.reason));
+    if (c.status === "fulfilled") setClasses(c.value); else showError("QuickBooks Classes unavailable", errorMessage(c.reason));
+    if (a.status === "fulfilled") setAccounts(a.value); else showError("QuickBooks accounts unavailable", errorMessage(a.reason));
   }), []);
 
   useEffect(() => { if (ready) void load(); }, [ready, load]);
 
   const save = async (url: string, body: unknown, failed: string) => {
     notifications.hide(failed);
-    const res = await request(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!res.ok) { showError(failed, res.error); return; }
+    try {
+      await api(url, { method: "PUT", body: JSON.stringify(body) });
+    } catch (e) {
+      showError(failed, errorMessage(e));
+      return;
+    }
     notifications.show({ message: "Saved." });
     await load();
   };
@@ -104,7 +111,7 @@ export default function BooksMapPage() {
               <Table.Td>
                 <Select
                   aria-label={BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}
-                  data={choices(accounts, r.quickBooksAccountId)}
+                  data={accountChoices(accounts, r.role, r.quickBooksAccountId)}
                   value={r.quickBooksAccountId}
                   placeholder="Not set"
                   searchable

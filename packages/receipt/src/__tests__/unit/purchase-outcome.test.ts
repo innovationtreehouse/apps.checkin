@@ -31,4 +31,11 @@ describe("a finalized receipt's purchase outcome in words", () => {
     expect(latestOutcome({ receiving: "received", money: null, gift: "accepted" })).toMatchObject({ label: "Gift accepted", tone: "done" });
     expect(latestOutcome({ receiving: "received", money: null, gift: "refused" })).toMatchObject({ label: "Gift refused", tone: "refused" });
   });
+
+  it("reads received with lines on backorder as waiting, and as done once none are open", () => {
+    expect(outcomeSteps({ receiving: "received", openBackorders: 2, money: null, gift: null })).toEqual([
+      { label: "Received, 2 on backorder", tone: "waiting", notes: [] },
+    ]);
+    expect(outcomeSteps({ receiving: "received", openBackorders: 0, money: null, gift: null })).toEqual([{ label: "Received", tone: "done", notes: [] }]);
+  });
 });

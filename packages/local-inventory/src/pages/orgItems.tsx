@@ -1,14 +1,16 @@
 "use client";
 import { useState } from "react";
 import {
-  ActionIcon, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
+  ActionIcon, Box, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCatalogNames, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import {
+  api, CatalogNamesUnavailable, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
+} from "../components/api";
+import { CatalogPicker, LoadError } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {
@@ -21,6 +23,7 @@ interface OrgItemRow {
   location: LocationRef | null;
   backstockLocation: LocationRef | null;
 }
+interface OrgItemsBag { OrgItem: OrgItemRow[]; InventoryProvisionalItem: ProvisionalName[] }
 
 const toId = (v: string | null) => (v ? Number(v) : null);
 
@@ -69,10 +72,12 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const [q] = useDebouncedValue(search.trim(), 300);
   const filter = new URLSearchParams({ ...(q ? { q } : {}), ...(unlocated ? { unlocated: "true" } : {}) });
   const order = new URLSearchParams({ sortBy, sortDir });
-  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const rows = useLoad<OrgItemsBag>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
   const count = useLoad<{ total: number }>(`/org-items/count?${filter}`, { keepPrevious: true });
   const locations = useLoad<LocationRef[]>("/locations");
-  const names = useCatalogNames((rows.data ?? []).map((r) => r.gtin13));
+  const items = rows.data?.OrgItem ?? null;
+  const catalogNames = useCatalogNames((items ?? []).map((r) => r.gtin13));
+  const names = withProvisionalNames(catalogNames, rows.data?.InventoryProvisionalItem);
 
   const [form, setForm] = useState<ItemForm | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -114,7 +119,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         ? api("/org-items", {
           method: "POST",
           body: JSON.stringify({
-            gtin13: form.gtin13.replace(/\D/g, ""),
+            gtin13: form.gtin13,
             existingQuantity: form.existingQuantity,
             desiredQuantity: form.desiredQuantity,
             locationId: toId(form.locationId),
@@ -122,6 +127,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
           }),
         })
         : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify(changes) }));
+      notifyNavCounts();
       notifications.show({ message: isNew ? "Item added" : "Item updated", color: "green" });
       setForm(null);
       reload();
@@ -136,7 +142,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   /** Show what moved on the server in the open form and check against it, keeping the manager's other edits. */
   async function reloadForm(gtin13: string) {
     reload();
-    const row = await api<OrgItemRow>(`/org-items/${gtin13}`).catch(() => null);
+    const row = await api<{ OrgItem: OrgItemRow }>(`/org-items/${gtin13}`).then((bag) => bag.OrgItem, () => null);
     if (!row) return;
     const fresh = editableValues(row);
     setForm((f) => {
@@ -158,6 +164,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     setSaving(true);
     try {
       await api(`/org-items/${removeTarget.gtin13}`, { method: "DELETE" });
+      notifyNavCounts();
       notifications.show({ message: "Item removed from organization inventory", color: "green" });
       setRemoveTarget(null);
       reload();
@@ -186,6 +193,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         )}
       </Group>
       {rows.error && <LoadError what="inventory" message={rows.error} onRetry={reload} />}
+      <CatalogNamesUnavailable lookup={catalogNames} />
       <Table striped highlightOnHover withTableBorder>
         <Table.Thead>
           <Table.Tr>
@@ -199,11 +207,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {rows.data === null ? (
+          {items === null ? (
             <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">Loading…</Text></Table.Td></Table.Tr>
-          ) : rows.data.length === 0 ? (
+          ) : items.length === 0 ? (
             <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">No items found</Text></Table.Td></Table.Tr>
-          ) : rows.data.map((item) => (
+          ) : items.map((item) => (
             <Table.Tr key={item.id}>
               <Table.Td>{label(item.gtin13)}</Table.Td>
               <Table.Td ff="monospace">{formatGtinDisplay(item.gtin13)}</Table.Td>
@@ -241,7 +249,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         {form && (
           <form onSubmit={save}>
             {isNew && (
-              <TextInput label="GTIN-13" required value={form.gtin13} onChange={(e) => setForm({ ...form, gtin13: e.currentTarget.value })} mb="sm" />
+              <Box mb="sm"><CatalogPicker label="Part" value={form.gtin13 || null} onChange={(v) => setForm({ ...form, gtin13: v ?? "" })} /></Box>
             )}
             <NumberInput label="Have (existing quantity)" value={form.existingQuantity} onChange={(v) => setForm({ ...form, existingQuantity: Number(v) || 0 })} min={0} allowDecimal={false} mb="sm" />
             <NumberInput label="Desired quantity" value={form.desiredQuantity} onChange={(v) => setForm({ ...form, desiredQuantity: Number(v) || 0 })} min={0} allowDecimal={false} mb="sm" />
@@ -249,7 +257,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
             <Select label="Backstock location" data={locationOptions} value={form.backstockLocationId} onChange={(v) => setForm({ ...form, backstockLocationId: v })} clearable mb="md" />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setForm(null)}>Cancel</Button>
-              <Button type="submit" loading={saving}>Save</Button>
+              <Button type="submit" loading={saving} disabled={isNew && !form.gtin13}>Save</Button>
             </Group>
           </form>
         )}

@@ -6,7 +6,6 @@ import { isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageD
 import { mintMemberDiscountCode } from "@/lib/shopify/discounts";
 import { checkoutVariantId } from "@/lib/programs/variants";
 import { fromWhere } from "@/lib/programs/enrollmentState";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { householdLeadship } from "@/lib/household/leads";
 import { signCheckout } from "@/lib/programs/checkoutSignature";
 
@@ -41,7 +40,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
     const caller = await householdLeadship(auth.user.id);
     if (!caller?.canManage) return apiError("Only a household lead can pay for the household.", 403);
-    const enrollees = await prisma.person.findMany({ where: { id: { in: participantIds }, ...LIVE_PERSON }, select: { householdId: true } });
+    const enrollees = await prisma.person.findMany({ where: { id: { in: participantIds } }, select: { householdId: true } });
     if (enrollees.length !== participantIds.length || enrollees.some((e) => e.householdId !== caller.householdId)) {
         return apiError("Everyone in one checkout must be from your household. Pay for each household separately.", 400);
     }
@@ -69,7 +68,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
     // A code is minted only for a checkout that pays for real unpaid claims.
     const unpaid = await prisma.programParticipant.count({
-        where: { programId, personId: { in: participantIds }, person: LIVE_PERSON, ...fromWhere("PENDING_UNPAID") },
+        where: { programId, personId: { in: participantIds }, ...fromWhere("PENDING_UNPAID") },
     });
     if (unpaid !== participantIds.length) return NextResponse.json({ code: null, signature });
 

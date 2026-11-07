@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * GET /api/cron/reconcile-shopify: the library catch-up, program-stock heal and donor re-send steps are
- * isolated, so no one step's failure fails checkin's reconcile. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
+ * GET /api/cron/reconcile-shopify: every step is isolated, so no one step's failure stops the others,
+ * and the run records every crashed step and failed row. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
  */
 import { runExpenseCatchUp } from '@checkin/expense';
 import { catchUpOrgEvents as catchUpInventoryEvents } from '@checkin/local-inventory';
@@ -96,7 +96,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(res.status).toBe(200);
         const body = await res.json();
         const failed = { status: 'error' };
-        expect(body).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: failed, expense: failed, programStock: failed, inventoryEvents: failed, workflowEvents: failed, receivingApply: failed, receipt: failed, receiptStuck: failed, receiptPush: failed, donorSync: failed, receiptMail: failed, receiptOutcomes: failed });
+        expect(body).toEqual({ success: true, ...RECONCILED, failed: steps.length, saleSweep: SALE_SWEEP, income: failed, expense: failed, programStock: failed, inventoryEvents: failed, workflowEvents: failed, receivingApply: failed, receipt: failed, receiptStuck: failed, receiptPush: failed, donorSync: failed, receiptMail: failed, receiptOutcomes: failed });
         const order = steps.map((step) => step.mock.invocationCallOrder[0]);
         expect(order).toEqual([...order].sort((a, b) => a - b));
         expect(logged).toHaveBeenCalledTimes(steps.length);
@@ -111,7 +111,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         expect(runReconcile).toHaveBeenCalledTimes(1);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: RECEIPT_STUCK, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: RECEIPT_STUCK, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(logged).toHaveBeenCalledWith('[reconcile] expense catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
@@ -159,7 +159,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: { status: 'error' }, receiptStuck: RECEIPT_STUCK, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: { status: 'error' }, receiptStuck: RECEIPT_STUCK, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
@@ -171,7 +171,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt stuck-upload sweep failed:', expect.any(Error));
         logged.mockRestore();
     });
@@ -262,6 +262,57 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(body).toMatchObject({ success: true, failed: 3 });
         expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '3 item(s) failed' }) });
+    });
+
+    it('a throwing Shopify reconcile still runs every other step and records the run as failed', async () => {
+        jest.mocked(runReconcile).mockRejectedValue(new Error('mirror down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ success: true, failed: 1, reconcile: { status: 'error' }, saleSweep: SALE_SWEEP, receiptOutcomes: RECEIPT_OUTCOMES });
+        expect(sweepOutcomeNotices).toHaveBeenCalledTimes(1);
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+        expect(logged).toHaveBeenCalledWith('[reconcile] Shopify reconcile failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('records the cron run as failed when the sale sweep reports its own error', async () => {
+        jest.mocked(runSaleSweep).mockResolvedValue({ error: 'shopify down' });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1, saleSweep: { error: 'shopify down' } });
+    });
+
+    it('records the cron run as failed for an expense catch-up part that failed', async () => {
+        jest.mocked(runExpenseCatchUp).mockResolvedValue({ ...EXPENSE, intake: { error: true } });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+    });
+
+    it('records the cron run as failed for re-push, donor re-send and outcome email failures', async () => {
+        jest.mocked(repushUnpushed).mockResolvedValue({ ...RECEIPT_PUSH, failed: 1 });
+        jest.mocked(resendDonorSync).mockResolvedValue({ ...DONOR_SYNC, failed: 2 });
+        jest.mocked(sweepOutcomeNotices).mockResolvedValue({ ...RECEIPT_OUTCOMES, failed: 3 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 6 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '6 item(s) failed' }) });
+    });
+
+    it('records the cron run as failed for receipts the stuck-apply sweep gave up on', async () => {
+        jest.mocked(sweepStuckApplying).mockResolvedValue({ ...RECEIVING_APPLY, errored: 2, gaveUp: 2 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 2 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '2 item(s) failed' }) });
     });
 
     it('records a clean run when the mailbox was read', async () => {

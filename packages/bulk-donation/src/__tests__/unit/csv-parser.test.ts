@@ -158,6 +158,30 @@ describe('parseBenevityCsv', () => {
     expect(() => parseBenevityCsv(Buffer.from(lines.join('\n')))).toThrow('no header row with a "Transaction ID" column');
   });
 
+  it.each(['Donation Amount', 'Match Amount', 'Cause Support Fee', 'Merchant Fee', 'Check Fee'])(
+    'refuses the whole file when the %s column is missing, naming it and the headers found',
+    (missing) => {
+      const rows = [makeRow({ 'Transaction ID': 'TXN-1' }), makeRow({ 'Transaction ID': 'TXN-2' })];
+      const headers = Object.keys(rows[0]).filter((h) => h !== missing);
+      const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => r[h]).join(','))];
+      expect(() => parseBenevityCsv(Buffer.from(lines.join('\n')))).toThrow(
+        `Could not import the CSV (1 problem):\nno "${missing}" column; the header has: ${headers.join(', ')}`,
+      );
+    },
+  );
+
+  it('names every missing amount column in one problem', () => {
+    const csv = 'Transaction ID,Disbursement Date,Donation Amt\nT1,2025-09-01,5.00';
+    expect(() => parseBenevityCsv(Buffer.from(csv))).toThrow(
+      'no "Donation Amount", "Match Amount", "Cause Support Fee", "Merchant Fee" or "Check Fee" column; the header has: Transaction ID, Disbursement Date, Donation Amt',
+    );
+  });
+
+  it('refuses a flat export whose Check Fee column is renamed', () => {
+    const csv = toCsv([makeRow()]).toString().replace('Check Fee', 'Check Fees');
+    expect(() => parseBenevityCsv(Buffer.from(csv))).toThrow('no "Check Fee" column; the header has:');
+  });
+
   it('collects validation issues from multiple bad rows before throwing', () => {
     const bad1 = makeRow({ 'Transaction ID': 'TXN-BAD1', 'Donation Amount': 'X' });
     const bad2 = makeRow({ 'Transaction ID': 'TXN-BAD2', 'Match Amount': 'Y' });
@@ -183,8 +207,9 @@ describe('parseBenevityCsv', () => {
 });
 
 describe('date normalisation', () => {
-  const HEADER = 'Transaction ID,Disbursement Date,Bank Date,Donation Date';
-  const parse = (row: string) => parseBenevityCsv(Buffer.from(`${HEADER}\n${row}`));
+  const AMOUNTS = 'Donation Amount,Match Amount,Cause Support Fee,Merchant Fee,Check Fee';
+  const HEADER = `Transaction ID,Disbursement Date,Bank Date,Donation Date,${AMOUNTS}`;
+  const parse = (row: string) => parseBenevityCsv(Buffer.from(`${HEADER}\n${row},5.00,0.00,0.00,0.00,0.00`));
 
   it('keeps ISO dates, drops a time part, and leaves blanks empty', () => {
     const [row] = parse('T1,2025-09-01,2025-09-03T14:05:00Z,');
@@ -195,7 +220,7 @@ describe('date normalisation', () => {
 
   it('fails the whole file on a gift with no disbursement date, naming the line and the column', () => {
     expect(() => parse('T1,,,')).toThrow(/line 2 \(T1\), "Disbursement Date": no disbursement date/);
-    expect(() => parseBenevityCsv(Buffer.from('Transaction ID,Donation Date\nT1,2025-09-01'))).toThrow(/"Disbursement Date": no disbursement date/);
+    expect(() => parseBenevityCsv(Buffer.from(`Transaction ID,Donation Date,${AMOUNTS}\nT1,2025-09-01,5.00,0.00,0.00,0.00,0.00`))).toThrow(/"Disbursement Date": no disbursement date/);
   });
 
   it('fails the file on a non-ISO or impossible date', () => {
@@ -243,6 +268,11 @@ describe('Donations Report layout', () => {
     'Net Total Payment,"4,900.00"',
     '',
   ].join('\r\n'));
+
+  it('accepts the report without a Check Fee column, as its fee is a footer row', () => {
+    expect(HEADER).not.toContain('Check Fee');
+    expect(parseBenevityCsv(report())).toHaveLength(2);
+  });
 
   it('reads gifts from the table and the disbursement fields from the preamble', () => {
     const rows = parseBenevityCsv(report());
@@ -334,5 +364,28 @@ describe('malformed CSV', () => {
   it('reports the line of an unclosed quote', () => {
     expect(() => parseBenevityCsv(Buffer.from('Transaction ID,Donation Amount\nT1,"5.00\n')))
       .toThrow(/Could not import the CSV \(1 problem\):\n.*line/i);
+  });
+});
+
+describe('file-level problems', () => {
+  it('says an empty file is empty', () => {
+    expect(() => parseBenevityCsv(Buffer.from(''))).toThrow('the file is empty');
+    expect(() => parseBenevityCsv(Buffer.from('\uFEFF\n\n'))).toThrow('the file is empty');
+  });
+
+  it('says an Excel workbook renamed to .csv is not a CSV', () => {
+    const xlsx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('rest of zip')]);
+    expect(() => parseBenevityCsv(xlsx)).toThrow(/Excel workbook.*CSV/);
+  });
+
+  it('names the line and column of broken quoting without echoing the cell', () => {
+    let message = '';
+    try {
+      parseBenevityCsv(Buffer.from('Transaction ID,Donor Last Name\nT1,x"Example"\n'));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain('line 2, column 2');
+    expect(message).not.toContain('Example');
   });
 });

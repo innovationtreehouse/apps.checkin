@@ -116,6 +116,18 @@ register already limits what the kiosk receives: no whole last names, emails,
 birth dates or phone numbers. The file is readable only by the kiosk user, on the
 same card as the signing key, which is the more sensitive item.
 
+**What stays on the Pi (owner, 2026-11-01).** A scan is deleted once the server
+acknowledges it. With a clean uplink and the building empty, the active data is empty
+after the 23:00 clear; not losing scans comes first, so an unsent scan stays queued
+through an outage. Only a directory persists: ID, limited display name and keyholder
+flag for everyone allowed to badge, with no email or other contact data. The server
+versions it by content hash, roster replies and acknowledgements carry the hash, and
+on a difference the kiosk replaces its whole copy in one transaction. So nothing ages:
+someone removed is gone at the next contact. This replaces the snapshot's `knownPeople`
+and `knownKeyholders`, needs a registry PR then a route PR, and lands after cutover.
+The list is everyone active in the system, leaving out any DENIED household and any
+archived household.
+
 **Schema rule.** Queue and state changes are additive and nullable, so an older
 image can run against a newer file. Without this, rollback is unsafe.
 
@@ -146,6 +158,13 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
   tiers run against that digest with the same release's server code. A failure
   leaves the tag where it is and fails the run visibly. A forced update skips this:
   it is for a door already wrong, and two people approve it.
+- **Publishing is its own job, with its own approval (owner, 2026-11-01).** It runs
+  after the deploy job in the `production` environment, and pushes, tests and moves
+  the tag as one job, so each release takes one extra approval. Publishing needs an
+  approved environment because the role trusts only approved environments. Keeping
+  it apart from the deploy job means a kiosk failure does not fail the server deploy,
+  and a retry reruns only this job. Folding it into the deploy job would save the
+  approval and lose both of those.
 - **The tag moves after the prod deploy.** The existing protocol hold still
   protects any skew. The server must keep accepting the protocol of a kiosk up to
   a day behind, which the presence rollout already requires.

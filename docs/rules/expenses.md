@@ -152,9 +152,15 @@ Things the app takes as true because they are handled outside it.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - After a merge, an expense's submitter, reimbursee and signers count as the
-  surviving person, so the conflict and one-step-per-person rules still bind
-  them. If a submitter or reimbursee names nobody the app can find, nobody may
-  act on the expense until that is repaired.
+  surviving person, so the conflict and one-step-per-person rules bind every
+  step taken after the merge; signatures given before it stand, under Spending
+  sign-off. If a submitter or reimbursee names nobody the app can find, everyone
+  counts as conflicted on the expense until that is repaired. Nobody may approve
+  a line, raise or reject an exception, sign a seat, confirm the receipt, or
+  record Board authorization, and finance may not approve its tax, close its
+  reviews, name its reimbursee, link a QuickBooks Vendor, or skip it in
+  QuickBooks. Choosing a line's bucket and bookkeeping, QuickBooks matching
+  included, still run.
   [Decision — owner; *Principle: fail closed*]
 
 - Choosing a line's bucket before sign-off is not a conflicted step. A
@@ -280,11 +286,33 @@ Things the app takes as true because they are handled outside it.
   system. Archiving keeps the row, because finance records point at it.
   [Decision]
 
+- Finance may restore an archived bucket. It comes back with its class, owner
+  and treasurers. An archived bucket keeps its class, so no other bucket can
+  hold that class when it returns. Each restore is recorded.
+  [Decision — owner ruling 2026-11-01]
+
 - A bucket's approvers are its owner and its treasurers, stored on the bucket
   and not derived from any program: a budget and a program need not match one
-  to one. An org-level bucket has none, and whether a bucket is org-level is set
-  when it is created and never changes.
+  to one. An org-level bucket has none.
   [Decision — owner]
+
+- Finance may change whether a bucket is org-level, and each change is recorded.
+  A bucket does not become org-level while it holds an owner or treasurers: the
+  Board removes them first. An org-level bucket does not stop being org-level
+  while an open expense in it has a non-Everyday card-charge line with no Board
+  authorization and no Board signature, so the change never removes a Board seat
+  a line still owes.
+  [Decision — owner ruling 2026-11-01; *Policy: Financial Policy, Art. XII §XII.4*]
+
+- A change to whether a bucket is org-level undoes no signature, and the seats
+  still unsigned follow the bucket as it now is. A bucket that becomes org-level
+  gives its open non-Everyday card-charge lines a Board seat, signed lines
+  included, unless a Board authorization is recorded. Its unapproved lines go to
+  a Board member, who gives no reason. A bucket that stops being org-level has no
+  approvers until the Board names them, and a Board member in their place gives
+  the reason. Once it is a program bucket, its lines take no Board seat for being
+  in it, on finance's change alone.
+  [Decision — owner ruling 2026-11-01]
 
 - A bucket's owner and treasurers are set by the board alone, because they come
   from the board-approved budget. Nobody sets, replaces or removes themself or
@@ -385,6 +413,12 @@ Things the app takes as true because they are handled outside it.
   The void and the new confirmation are both recorded.
   [Decision — owner]
 
+- The same change voids the signature when the uploader makes it on a
+  reimbursement for someone else, whether the person reimbursed confirmed it or
+  a Board member did on their behalf. An uploader who is also the person
+  reimbursed does not void their own confirmation by changing the receipt.
+  [Decision — owner]
+
 - A line's program approver signs it by approving it: the approval records who
   approved and when, and no separate signature is taken. Whoever may not hold a
   seat on the expense may not approve the line.
@@ -456,6 +490,14 @@ Things the app takes as true because they are handled outside it.
   A signature that has to be given again is judged anew, so they are refused
   and another signer takes the seat.
   [Decision — deliberate limit]
+
+- A signature given before a merge stands, even if the merge leaves one person
+  on two steps of the expense, or makes a signer the same person as its
+  submitter or the person reimbursed. This is the one exception to every signer
+  being a different person. The expense still reaches the books, needing no new
+  signature. A signature that has to be given again is judged anew against the
+  surviving person. The risk is accepted because merges are very rare.
+  [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*; owner accepted 2026-11-01]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
@@ -565,6 +607,32 @@ the parts specific to expenses.
   set it.
   [Decision]
 
+- An account rule names its part by the part's GTIN-13, or `*` for any part. A
+  new or changed part must be one of these; a rule stored with any other value
+  is kept, and its page shows that it never matches.
+  [Decision]
+
+- A gift of goods' line books to the account the expense account rules give its
+  part, the same account a purchase of that part would use. A line no rule
+  resolves to exactly one account, or one without a GTIN-13, waits for finance to
+  set its account, and its gift waits with it. An account finance sets on a line
+  wins over every rule.
+  [Decision — owner]
+
+- Only a rule marked capital may give donated equipment its account, which must
+  be a fixed-asset account. Any other donated line takes an expense or cost of
+  goods sold account. A line whose account is of the wrong type, inactive or not
+  in QuickBooks waits for finance.
+  [Decision — owner]
+
+- An expense account rule takes a fixed-asset account only when it is marked
+  capital, and then only a fixed-asset account; any other rule takes an expense
+  or cost of goods sold account. A held line's account follows the same rule by
+  whether the line is capital, and finance's hand-set account is dropped when
+  the line's capital designation changes. Expense's QuickBooks account list
+  admits all of these types. A rule already stored with another type is kept.
+  [Decision]
+
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]
@@ -578,6 +646,20 @@ the parts specific to expenses.
   25 and 50 by default. Finance may lower them; raising one takes the Board. The
   per-run limit may not exceed the per-day limit. Each change is recorded. No
   dollar limit per run applies to expenses.
+  [Decision — owner]
+
+- An expense line's account comes from finance's own mapping rules and account
+  list, which finance keeps by hand. The accounts on that list, Classes, Vendors
+  and the books map's accounts finance picks from QuickBooks' live lists, one at
+  a time. The app
+  never imports the chart of accounts, the Class list or the vendor list in
+  bulk, and never matches vendor names on its own.
+  [Decision — deliberate limit]
+
+- Expense posting switches on the first time the daily catch-up runs with
+  QuickBooks connected, once and for good. An expense submitted after that books
+  on its own, matching first. One submitted before it only matches, and goes to finance to book or
+  skip when nothing matches.
   [Decision — owner]
 
 - Finance may skip an expense that waits on it to reach the books, giving a

@@ -1,11 +1,13 @@
 "use client";
 
 import { centsToDecimalString } from "@checkin/money";
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { Alert, Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { SettingsTabs } from "@/components/admin/SettingsTabs";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { api, useLoad } from "@/lib/api";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -83,66 +85,21 @@ export default function MembershipSettingsPage() {
 
   const [confirmOpenRenewalsOpened, { open: openConfirmOpenRenewals, close: closeConfirmOpenRenewals }] = useDisclosure(false);
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
-  const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
-  const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
-  const [releasedLibraries, setReleasedLibraries] = useState<string[]>([]);
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
-  const load = useCallback(() => fetch("/api/settings/membership")
-    .then(async (sRes) => {
-      if (sRes.ok) {
-        const { settings: body } = (await sRes.json()) as { settings: SettingsBody };
-        const settings = "BoardSettings" in body ? body.BoardSettings : body;
-        const rows = "BoardSettings" in body ? body.MembershipYearVariant : [];
-        const loadedSlots: YearSlot[] = settings.orgMembershipYearBoundary
-          ? variantSlotYears(new Date(settings.orgMembershipYearBoundary), new Date()).map((year) => {
-              const row = rows.find((r) => r.membershipYear === year);
-              return { year, variantId: row?.shopifyVariantId ?? "", productUrl: row?.productUrl ?? "" };
-            })
-          : [];
-        const snap = {
-          standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
-          volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
-          bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
-          scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
-          boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
-          variantId: settings.orgMembershipVariantId ?? "",
-          productUrl: settings.orgMembershipProductUrl ?? "",
-          discountCode: settings.volunteerFamilyDiscountCode ?? "",
-          signingTarget: settings.devSigningTarget ?? "zoho",
-          slots: JSON.stringify(loadedSlots),
-        };
-        setStandardFee(snap.standardFee);
-        setVolunteerFee(snap.volunteerFee);
-        setBgRecheckMonths(snap.bgRecheckMonths);
-        setScholarshipGraceDays(snap.scholarshipGraceDays);
-        setBoundary(snap.boundary);
-        setVariantId(snap.variantId);
-        setProductUrl(snap.productUrl);
-        setDiscountCode(snap.discountCode);
-        setSigningTarget(snap.signingTarget);
-        setSlots(loadedSlots);
-        setSavedSlots(loadedSlots);
-        setReleasedLibraries(settings.releasedLibraries ?? []);
-        setInitial(snap);
-      }
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  const { data, error, reload } = useLoad<{ settings: SettingsBody }>("/api/settings/membership");
+  const body = data?.settings;
+  const releasedLibraries = (body && "BoardSettings" in body ? body.BoardSettings : body)?.releasedLibraries ?? [];
 
-  useEffect(() => { load(); }, [load]);
+  const current = { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) };
 
   // Confirm-checkbox gate only matters when a boundary already exists — changing
   // it shifts every household's cycle. First-time set has nothing to shift.
   const boundaryWasSet = !!initial?.boundary;
 
   const saveSettings = async () => {
-    setSaveNotice(null);
     setFieldErrors({});
     const fe: { standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string } = {};
     const nd = parseFloat(standardFee); if (standardFee.trim() === "" || isNaN(nd) || nd < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
@@ -165,9 +122,8 @@ export default function MembershipSettingsPage() {
       (slot.variantId.trim() !== savedSlots[i]?.variantId || slot.productUrl.trim() !== savedSlots[i]?.productUrl));
     setSaving(true);
     try {
-      const res = await fetch("/api/settings/membership", {
+      await api("/api/settings/membership", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           perYearVariantClient: true,
           standardMembershipFeeCents: Math.round(parseFloat(standardFee || "0") * 100),
@@ -191,9 +147,12 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setLoading(true); await load(); }
-      else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      showSuccess("Settings saved.");
+      setBoundaryUnlocked(false);
+      notifyNavRefresh();
+      setInitial(current);
+      setSavedSlots(slots);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
@@ -202,22 +161,16 @@ export default function MembershipSettingsPage() {
   // there is nowhere to copy it from). Fills the variant-ID field only —
   // nothing is persisted until the admin presses Save settings.
   const extractVariant = async (slot: number | "single", url: string, fill: (variantId: string) => void) => {
-    setSaveNotice(null);
     setExtracting(slot);
     try {
-      const res = await fetch("/api/settings/membership/extract-variant", {
+      const { variantId } = await api<{ variantId: string }>("/api/settings/membership/extract-variant", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productUrl: url.trim() }),
+        invalidate: false,
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        fill(data.variantId);
-        notifications.show({ message: `Variant ${data.variantId} filled in — press Save settings to keep it.` });
-      } else {
-        setSaveNotice({ text: data.error || "Could not extract the variant.", err: true });
-      }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      fill(variantId);
+      showSuccess(`Variant ${variantId} filled in — press Save settings to keep it.`);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setExtracting(null); }
   };
 
@@ -229,27 +182,58 @@ export default function MembershipSettingsPage() {
   const bulkOpenRenewals = async () => {
     closeConfirmOpenRenewals();
     setSaving(true);
-    setRenewalNotice(null);
     try {
-      const res = await fetch("/api/settings/membership/bulk-open-renewals", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) setRenewalNotice({ text: `Opened ${data.opened} renewal(s); ${data.skipped} already in progress.`, err: false });
-      else setRenewalNotice({ text: data.error || "Failed.", err: true });
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      const data = await api<{ opened: number; skipped: number }>("/api/settings/membership/bulk-open-renewals", { method: "POST" });
+      showSuccess(`Opened ${data.opened} renewal(s); ${data.skipped} already in progress.`);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
-  const isDirty =
-    !!initial &&
-    !shallowEqual(initial, { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) });
+  const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
+  useSeedForm(data, isDirty, ({ settings: answer }) => {
+    const settings = "BoardSettings" in answer ? answer.BoardSettings : answer;
+    const rows = "BoardSettings" in answer ? answer.MembershipYearVariant : [];
+    const loadedSlots: YearSlot[] = settings.orgMembershipYearBoundary
+      ? variantSlotYears(new Date(settings.orgMembershipYearBoundary), new Date()).map((year) => {
+          const row = rows.find((r) => r.membershipYear === year);
+          return { year, variantId: row?.shopifyVariantId ?? "", productUrl: row?.productUrl ?? "" };
+        })
+      : [];
+    const snap = {
+      standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
+      volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
+      bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
+      scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
+      boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
+      variantId: settings.orgMembershipVariantId ?? "",
+      productUrl: settings.orgMembershipProductUrl ?? "",
+      discountCode: settings.volunteerFamilyDiscountCode ?? "",
+      signingTarget: settings.devSigningTarget ?? "zoho",
+      slots: JSON.stringify(loadedSlots),
+    };
+    setStandardFee(snap.standardFee);
+    setVolunteerFee(snap.volunteerFee);
+    setBgRecheckMonths(snap.bgRecheckMonths);
+    setScholarshipGraceDays(snap.scholarshipGraceDays);
+    setBoundary(snap.boundary);
+    setVariantId(snap.variantId);
+    setProductUrl(snap.productUrl);
+    setDiscountCode(snap.discountCode);
+    setSigningTarget(snap.signingTarget);
+    setSlots(loadedSlots);
+    setSavedSlots(loadedSlots);
+    setInitial(snap);
+  });
 
   return (
     <Stack>
       <SettingsTabs active="membership" />
 
-      {loading ? (
-        <Center py="xl"><Loader /></Center>
+      {error && <LoadError what="the membership settings" message={error} onRetry={reload} />}
+
+      {!data ? (
+        !error && <Center py="xl"><Loader /></Center>
       ) : (
         <>
           <Card withBorder radius="md" padding="lg">
@@ -445,18 +429,12 @@ export default function MembershipSettingsPage() {
               </Alert>
             )}
 
-            {saveNotice && (
-              <Alert mt="lg" color={saveNotice.err ? "red" : "treehouseGreen"} variant="light">
-                {saveNotice.text}
-              </Alert>
-            )}
-
             <Button mt="lg" disabled={saving} loading={saving} onClick={saveSettings} style={{ alignSelf: "flex-start" }}>
               Save settings
             </Button>
           </Card>
 
-          {isBoardMember && <LibraryReleaseCard initial={releasedLibraries} />}
+          {isBoardMember && <LibraryReleaseCard key={releasedLibraries.join()} initial={releasedLibraries} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>
@@ -465,11 +443,6 @@ export default function MembershipSettingsPage() {
               they renew for the upcoming year. Press this once, after your existing members are
               imported (board or isSysadmin).
             </Text>
-            {renewalNotice && (
-              <Alert mt="md" mb="md" color={renewalNotice.err ? "red" : "treehouseGreen"} variant="light">
-                {renewalNotice.text}
-              </Alert>
-            )}
             <Button color="yellow" disabled={saving} loading={saving} onClick={openConfirmOpenRenewals}>
               Open renewals for all active members
             </Button>

@@ -152,12 +152,15 @@ Shopify products.
   `src/security/__tests__/payment-plans-strip.test.ts`. Re-run the grep for
   `stageEnteredAt` in test files across all three test roots before building; the
   list moves.
-- **Migration safety:** no schema change. Before merging, run in production: count
-  the paid `INITIAL`/`RENEWAL` rows with no year whose `stageEnteredAt` is inside
-  the live year's window, plus the paid `BLOCKED` rows with no year at any date. PR 3
-  does not fill the `BLOCKED` rows, and a reset and clearance would activate one with
-  no year. The count must be zero, or those households lose coverage.
-- **Blocked on:** PR 3 run in production and the count above.
+- **Migration safety:** no schema change. A follow-up fill
+  (`20261106100000_membership_year_fill_paid`) replaces a production count. It
+  re-runs PR 3's fill, then gives every paid `INITIAL`/`RENEWAL` row with no year
+  outside the archive the year its `paidAt` falls in, the year the payment stamp
+  records. Every row that is, or a reset or clearance can make, settled then has a
+  year, so no household loses coverage at the switch. An old paid `BLOCKED` row
+  reset and cleared later keeps its old year and is asked to renew. A legacy paid
+  archived row that is unarchived returns with no year; that is a separate fix.
+- **Blocked on:** PR 3 and the follow-up fill run in production.
 
 ### PR 5: grant buttons name their year [app]
 

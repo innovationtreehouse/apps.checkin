@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { kindOf } from "@checkin/component-kit";
+import { inertCatalogReader } from "../../contract";
 import { callerId, requireActor } from "../../runtime";
 import { configure } from "../helpers/setup";
 
@@ -21,5 +23,12 @@ describe("actor ids come only from an integer principal id", () => {
   it.each([Number.NaN, 1.5])("requireActor is 401 for a principal whose id is %s", async (id) => {
     configure({ principal: { id, name: "ghost" } });
     await expect(requireActor()).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe("inert catalog reader", () => {
+  it("an unbound catalog match says it is not wired, never \"no match\"", async () => {
+    const err = await inertCatalogReader.lookupItems("Acme", [{ index: 0, partNumber: "P1" }]).catch((e: unknown) => e);
+    expect(kindOf(err)).toBe("settings");
   });
 });

@@ -1,4 +1,4 @@
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 jest.mock("@mantine/modals", () => ({ modals: { openConfirmModal: jest.fn() } }));
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
@@ -163,16 +163,15 @@ describe("AdminEditHouseholdModal", () => {
     renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
     await screen.findByDisplayValue("Smith Family");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Name taken." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: "Name taken." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Save Changes — As Admin" }));
-    // Failure routes to a modal-local Alert next to the form, not a corner toast.
-    expect(await screen.findByText("Name taken.")).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Name taken.", autoClose: false })));
     // The modal stays open on failure (only success calls onClose).
     expect(screen.getByText(/Edit Household Info/)).toBeInTheDocument();
 
     global.fetch = jest.fn(() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Save Changes — As Admin" }));
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
   });
 
   it("removes a lead (reloading after success) and blocks removing the last lead", async () => {
@@ -255,13 +254,13 @@ describe("AdminEditHouseholdModal", () => {
     renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
     await screen.findByDisplayValue("Smith Family");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot remove." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: "Cannot remove." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getAllByRole("button", { name: "Remove lead" })[0]);
-    expect(await screen.findByText("Cannot remove.")).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Cannot remove.", autoClose: false })));
 
     global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
     fireEvent.click(screen.getAllByRole("button", { name: "Remove lead" })[0]);
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
   });
 
   it("toggles the volunteer-only flag and sends isVolunteerFamily in the PATCH body", async () => {

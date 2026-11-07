@@ -1,7 +1,6 @@
 import type { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import type { DbClient } from "@/lib/db-client";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import { bgValidUntilBoundary } from "@/lib/membership/renewal";
 import { isYouth, orgCalendarDay } from "@/lib/time";
@@ -85,7 +84,7 @@ export async function supervisingAdultVisits(
     })) ?? { orgMembershipYearBoundary: null, bgRecheckMonths: 0 };
 
     const openVisits = await db.visit.findMany({
-        where: { departedAt: null, deletedAt: null, person: LIVE_PERSON },
+        where: { departedAt: null, deletedAt: null },
         select: {
             id: true,
             person: {
@@ -127,7 +126,7 @@ export async function supervisingAdultVisits(
  */
 export async function youthIsPresent(db: DbClient = prisma): Promise<boolean> {
     const candidates = await db.visit.findMany({
-        where: { departedAt: null, deletedAt: null, person: { ...LIVE_PERSON, isDeclaredAdult: false } },
+        where: { departedAt: null, deletedAt: null, person: { isDeclaredAdult: false } },
         select: { person: { select: { dateOfBirth: true } } },
     });
     return candidates.some(v => isYouth(v.person.dateOfBirth, { unknownIs: "youth" }));

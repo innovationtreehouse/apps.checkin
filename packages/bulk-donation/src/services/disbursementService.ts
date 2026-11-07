@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
-import { runDisbursementCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { lockDisbursementTx, runDisbursementCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 import { handOverDeposit } from "../lib/deposit-handover";
 import { ServiceError } from "@checkin/component-kit";
 import type { AccountMap } from "../generated/prisma/client";
@@ -65,6 +65,39 @@ export const disbursementService = {
         actorUserId: audit.actorUserId,
         actorUsername: audit.actorUsername,
         correlationId: audit.correlationId,
+      });
+      await runDisbursementCycleTx(tx, orgId, disbursementId, { type: "HOLD_RESUBMITTED" }, audit);
+    });
+    await handOverDeposit(orgId, disbursementId);
+  },
+
+  /**
+   * Finance booked a fees-only row's fee by hand in QuickBooks: stamp the row, release its hold and
+   * rerun the cycle so the rest of the disbursement posts without that fee. Final; there is no undo.
+   */
+  async releaseFeesOnlyHold(orgId: string, disbursementId: string, holdId: number, audit: AuditContext) {
+    await db.$transaction(async (tx) => {
+      await lockDisbursementTx(tx, orgId, disbursementId);
+      const hold = await tx.disbursementHold.findFirst({ where: { id: holdId, orgId, disbursementId } });
+      if (hold?.status !== "PENDING" || hold.reason !== "FEES_ONLY") {
+        throw new ServiceError(409, "Only a pending fees-only hold of this disbursement can be released");
+      }
+      const now = new Date();
+      await tx.transaction.update({
+        where: { id: hold.transactionId },
+        data: { feeReleasedAt: now, feeReleasedByUserId: audit.actorUserId ?? null, feeReleasedByName: audit.actorUsername ?? null },
+      });
+      await tx.disbursementHold.update({ where: { id: hold.id }, data: { status: "RELEASED", resolvedAt: now } });
+      await recordEvent(tx, {
+        orgId,
+        disbursementId,
+        entityType: "transaction",
+        entityId: hold.transactionId,
+        eventType: "HOLD_RELEASED",
+        actorUserId: audit.actorUserId,
+        actorUsername: audit.actorUsername,
+        correlationId: audit.correlationId,
+        payload: { holdId: hold.id },
       });
       await runDisbursementCycleTx(tx, orgId, disbursementId, { type: "HOLD_RESUBMITTED" }, audit);
     });

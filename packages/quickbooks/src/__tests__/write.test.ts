@@ -1,11 +1,13 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
-import { createVendor, findOrCreate, findOrCreateInKindJournal, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
+import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
+import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
+import * as accountTypes from "../accountTypes";
 
 const tokens: AccessTokenSource = { current: async () => "tok" };
 const sandbox = { env: "sandbox" as const, realmId: "123" };
@@ -187,7 +189,8 @@ describe("closed-enum writer", () => {
     expect(c.create).toBeUndefined();
     expect(Object.values(pkg)).not.toContain(CREATE);
     const pkgJson = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { exports: Record<string, unknown> };
-    expect(Object.keys(pkgJson.exports)).toEqual([".", "./oauth"]);
+    expect(Object.keys(pkgJson.exports)).toEqual([".", "./oauth", "./accountTypes"]);
+    expect(Object.values(accountTypes)).not.toContain(CREATE);
   });
 
   it("keys the writer with a registered symbol, so a second loaded copy of the module matches", () => {
@@ -210,17 +213,29 @@ describe("request limits", () => {
     expect(posts().map((c) => c.url.searchParams.get("requestid"))).toEqual([KEY, KEY]);
   });
 
-  it("fails on a second 429", async () => {
+  it("fails on a second 429, as a system failure", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }));
-    await expect(client()[CREATE](deposit, KEY)).rejects.toThrow(/failed 429/);
+    const err = await client()[CREATE](deposit, KEY).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/failed 429/);
+    expect(kindOf(err)).toBe("system");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs each refusal once with its lane, operation, status, codes and request id, never the fault text", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6240", Detail: "Pat O'Neil" }] } }, 400));
+    await client()[CREATE](deposit, KEY).catch(() => {});
+    expect(warn.mock.calls).toEqual([
+      ["[quickbooks] request failed", { lane: "income", operation: "create Deposit", status: 400, codes: ["6240"], requestId: "tid-w" }],
+    ]);
+    warn.mockRestore();
   });
 
   it("returns failed when a request times out, without posting", async () => {
     fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/timeout/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/timeout/), failure: "system" });
     expect(posts()).toEqual([]);
   });
 });
@@ -373,9 +388,32 @@ describe("findOrCreate", () => {
     }
   });
 
+  it("postFailure carries a refusal's fault codes and request id, and only a refusal's", () => {
+    expect(postFailure(new QboRequestError("QBO create failed 400 (intuit_tid=t1)", 400, "t1", ["2500"]))).toEqual({
+      error: "QBO create failed 400 (intuit_tid=t1): codes 2500", failure: "data", codes: ["2500"], requestId: "t1",
+    });
+    expect(postFailure(new Error("boom"))).toEqual({ error: "boom", failure: "bug" });
+  });
+
+  it("failed: a create that fails after the match read answered says QuickBooks answered", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("Deposit", []))
+      .mockResolvedValueOnce(prefs("2025-02-28"))
+      .mockResolvedValueOnce(new Response("down", { status: 503 }));
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", failure: "system", answered: true, onCreate: true });
+  });
+
+  it("failed: a match read that fails does not say QuickBooks answered", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("down", { status: 503 }));
+    const result = await findOrCreate(client(), req());
+    expect(result).toMatchObject({ kind: "failed", failure: "system" });
+    expect(result).not.toHaveProperty("answered");
+    expect(result).not.toHaveProperty("onCreate");
+  });
+
   it("failed: a closing-date read that fails never falls through to a create", async () => {
     fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(new Response("down", { status: 503 }));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/503/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/503/), failure: "system" });
     expect(posts()).toEqual([]);
   });
 
@@ -401,18 +439,20 @@ describe("findOrCreate", () => {
       .mockResolvedValueOnce(rows("Deposit", []))
       .mockResolvedValueOnce(prefs())
       .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6000" }] } }, 400));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/) });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/), failure: "data", onCreate: true });
   });
 
   it("failed: a read error never falls through to a create", async () => {
     fetchMock.mockResolvedValueOnce(new Response("expired", { status: 401 }));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/401/) });
+    const result = await findOrCreate(client(), req());
+    expect(result).toMatchObject({ kind: "failed", error: expect.stringMatching(/401/), failure: "connection" });
+    expect(result).not.toHaveProperty("onCreate");
     expect(posts()).toEqual([]);
   });
 
   it("failed: a TxnDate outside the window is refused before any request", async () => {
     const late: TxnWrite = { entity: "Deposit", fields: { ...deposit.fields, txnDate: "2025-03-11" } };
-    await expect(findOrCreate(client(), req({ write: late }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/outside the match window/) });
+    await expect(findOrCreate(client(), req({ write: late }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/outside the match window/), failure: "bug" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -492,13 +532,13 @@ describe("createVendor", () => {
 
 describe("findOrCreateInKindJournal", () => {
   const IN_KIND_KEY = qbKey("in-kind", "org-1:receipt:42");
-  const accounts = { INKIND_INCOME: "400", INKIND_EXPENSE: "600", FIXED_ASSETS: "150", SHOPIFY_BANK: "35" };
+  const accounts = { INKIND_INCOME: "400", INKIND_CLEARING: "290", SHOPIFY_BANK: "35" };
   const jreq = (over: Partial<InKindJournalRequest> = {}): InKindJournalRequest => ({
     txnDate: "2025-03-05",
     lines: [
-      { postingType: "Credit", role: "INKIND_INCOME", amountCents: 150_00, classId: "7" },
-      { postingType: "Debit", role: "INKIND_EXPENSE", amountCents: 50_00, classId: "7", description: "Paper" },
-      { postingType: "Debit", role: "FIXED_ASSETS", amountCents: 100_00, classId: "7", description: "Lathe" },
+      { postingType: "Credit", accountId: "400", amountCents: 150_00, classId: "7" },
+      { postingType: "Debit", accountId: "600", amountCents: 50_00, classId: "7", description: "Paper" },
+      { postingType: "Debit", accountId: "150", amountCents: 100_00, classId: "7", description: "Lathe" },
     ],
     memo: "In-kind gift receipt 42",
     key: IN_KIND_KEY,
@@ -511,22 +551,34 @@ describe("findOrCreateInKindJournal", () => {
   });
   const journal = (Id: string, TotalAmt: number, PrivateNote?: string) => ({ Id, TxnDate: "2025-03-05", TotalAmt, PrivateNote });
 
-  it("refuses a line booked to any account outside the in-kind roles, before reading QuickBooks", async () => {
-    const lines = jreq().lines.map((l) => (l.role === "INKIND_EXPENSE" ? { ...l, role: "SHOPIFY_BANK" as const } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/may not debit SHOPIFY_BANK/);
-    const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, role: "INKIND_EXPENSE" as const } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may not credit INKIND_EXPENSE/);
+  it("credits only in-kind income and debits no books-map account, before reading QuickBooks", async () => {
+    const bank = jreq().lines.map((l) => (l.accountId === "600" ? { ...l, accountId: "35" } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: bank }))).rejects.toThrow(/may not debit account 35/);
+    const income = jreq().lines.map((l) => (l.accountId === "600" ? { ...l, accountId: "400" } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: income }))).rejects.toThrow(/may not debit account 400/);
+    const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, accountId: "600" } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may credit only in-kind income/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("debits an account a retired role still holds in the books map", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("JournalEntry", []))
+      .mockResolvedValueOnce(prefs("2025-02-28"))
+      .mockResolvedValueOnce(json({ JournalEntry: { Id: "89" } }));
+    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { ...accounts, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" } }))).resolves.toEqual({ kind: "created", id: "89" });
+  });
+
   it("refuses an unbalanced entry, before reading QuickBooks", async () => {
-    const lines = jreq().lines.map((l) => (l.role === "FIXED_ASSETS" ? { ...l, amountCents: 99_99 } : l));
+    const lines = jreq().lines.map((l) => (l.accountId === "150" ? { ...l, amountCents: 99_99 } : l));
     await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/not balanced/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a role the books map has no account for", async () => {
-    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { INKIND_INCOME: "400", INKIND_EXPENSE: "600" } }))).rejects.toThrow(/no account for FIXED_ASSETS/);
+  it("refuses while the books map has no in-kind income account", async () => {
+    const err = await findOrCreateInKindJournal(client(), jreq({ accounts: { SHOPIFY_BANK: "35" } })).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/no account for INKIND_INCOME/);
+    expect(kindOf(err)).toBe("settings");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -1,12 +1,13 @@
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { badRequest, forbidden, notFound, ApiResponseError } from "@/security/handler";
 import { personActor } from "@/lib/auditActor";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -91,26 +92,52 @@ export async function createBudgetOwner(actorId: number, body: Record<string, un
     });
 }
 
-// Rename and QuickBooks Class mapping. Whether a bucket is org-level never
-// changes: lines already approved by assignment would silently need approvers.
+// Rename, QuickBooks Class mapping, the org-level flag and restoring an archived bucket.
 export async function updateBudgetOwner(actorId: number, id: number, body: Record<string, unknown>) {
-    const data: { name?: string; quickBooksClassId?: string | null } = {};
+    const data: { name?: string; quickBooksClassId?: string | null; isOrgLevel?: boolean; archivedAt?: null } = {};
     if (body.name !== undefined) data.name = readName(body.name);
     if (body.quickBooksClassId !== undefined) data.quickBooksClassId = readClassId(body.quickBooksClassId);
+    if (body.isOrgLevel !== undefined) {
+        if (typeof body.isOrgLevel !== "boolean") throw badRequest("isOrgLevel must be a boolean");
+        data.isOrgLevel = body.isOrgLevel;
+    }
+    if (body.archived !== undefined) {
+        if (body.archived !== false) throw badRequest("archived can only be false: this restores a bucket");
+        data.archivedAt = null;
+    }
     if (Object.keys(data).length === 0) throw badRequest("Nothing to change.");
 
-    return prisma.$transaction(async (tx) => {
-        const before = await tx.budgetOwner.findUnique({ where: { id }, select: { name: true, quickBooksClassId: true } });
-        if (!before) throw notFound("Bucket not found");
+    const change = (awaitingBoardSeat: () => Promise<number>) => prisma.$transaction(async (tx) => {
+        await lockBucket(tx, id);
+        const stored = await tx.budgetOwner.findUnique({
+            where: { id },
+            select: { name: true, quickBooksClassId: true, isOrgLevel: true, archivedAt: true, ownerId: true, _count: { select: { treasurers: true } } },
+        });
+        if (!stored) throw notFound("Bucket not found");
+        const { ownerId, _count, ...before } = stored;
+        if (data.isOrgLevel === true && !before.isOrgLevel && (ownerId !== null || _count.treasurers > 0)) {
+            // Only the Board removes approvers, so finance's change waits for it.
+            throw new ApiResponseError(409, "The Board must remove this bucket's owner and treasurers first.");
+        }
+        if (data.isOrgLevel === false && before.isOrgLevel) {
+            // A program bucket's lines take no Board seat, so the change would drop a seat still owed.
+            if ((await awaitingBoardSeat()) > 0) {
+                throw new ApiResponseError(409, "Open expenses in this bucket still need a Board signature; have them signed or recorded first.");
+            }
+        }
         const bucket = await tx.budgetOwner.update({ where: { id }, data, select: BUCKET_SELECT }).catch(rethrowClassTaken);
         await tx.auditLog.create({
             data: { ...personActor(actorId), action: "EDIT", tableName: "BudgetOwner", affectedEntityId: id, oldData: before, newData: data },
         });
         return bucket;
     });
+    if (data.isOrgLevel !== false) return change(async () => 0);
+    // Lock order: the expense library's bucket line hold, then the BudgetOwner row. No line enters the bucket until this commits.
+    const { holdBucketLines } = await import("@checkin/expense");
+    return holdBucketLines(id, change);
 }
 
-// Archive is soft and one-way: library rows reference buckets by id.
+// Archive is soft: library rows reference buckets by id, and updateBudgetOwner restores it.
 export async function archiveBudgetOwner(actorId: number, id: number) {
     return prisma.$transaction(async (tx) => {
         const before = await tx.budgetOwner.findUnique({ where: { id }, select: { archivedAt: true } });
@@ -124,38 +151,50 @@ export async function archiveBudgetOwner(actorId: number, id: number) {
     });
 }
 
+const ORG_LEVEL_HAS_NO_APPROVERS = "An org-level bucket has no owner or treasurers.";
+
+/** Locks the bucket row, so a change to its org-level flag and a change to its approvers run one at a time. */
+async function lockBucket(tx: Prisma.TransactionClient, budgetOwnerId: number): Promise<{ isOrgLevel: boolean } | undefined> {
+    const [bucket] = await tx.$queryRaw<{ isOrgLevel: boolean }[]>`SELECT "isOrgLevel" FROM "BudgetOwner" WHERE id = ${budgetOwnerId} FOR UPDATE`;
+    return bucket;
+}
+
+/** Locks the bucket and refuses once it is org-level, which it may have become since the caller checked. */
+async function lockProgramBucket(tx: Prisma.TransactionClient, budgetOwnerId: number): Promise<void> {
+    if ((await lockBucket(tx, budgetOwnerId))?.isOrgLevel) throw new ApiResponseError(409, ORG_LEVEL_HAS_NO_APPROVERS);
+}
+
 export type ApproverRole = "OWNER" | "TREASURER";
 
-/** A bucket's live owner, then its live treasurers by name. */
+/** A bucket's owner, then its treasurers by name. */
 export async function listBucketApprovers(budgetOwnerId: number) {
     const bucket = await prisma.budgetOwner.findUnique({
         where: { id: budgetOwnerId },
         select: {
-            owner: { select: { id: true, name: true, mergedIntoId: true } },
-            treasurers: { select: { person: { select: { id: true, name: true, mergedIntoId: true } } }, orderBy: { person: { name: "asc" } } },
+            owner: { select: { id: true, name: true } },
+            treasurers: { select: { person: { select: { id: true, name: true } } }, orderBy: { person: { name: "asc" } } },
         },
     });
     if (!bucket) throw notFound("Bucket not found");
-    type Person = { id: number; name: string; mergedIntoId: number | null };
+    type Person = { id: number; name: string };
     const row = (person: Person, role: ApproverRole) => ({ budgetOwnerId, personId: person.id, name: person.name, role });
-    const live = (person: Person | null): person is Person => person !== null && person.mergedIntoId === null;
     return [
-        ...(live(bucket.owner) ? [row(bucket.owner, "OWNER")] : []),
-        ...bucket.treasurers.map((t) => t.person).filter(live).map((p) => row(p, "TREASURER")),
+        ...(bucket.owner ? [row(bucket.owner, "OWNER")] : []),
+        ...bucket.treasurers.map((t) => row(t.person, "TREASURER")),
     ];
 }
 
-/** Every live person, by name, for the Board's owner and treasurer pickers. */
+/** Every person outside an archived household, by name, for the Board's owner and treasurer pickers. */
 export async function listApproverOptions() {
-    return prisma.person.findMany({ where: LIVE_PERSON, select: { id: true, name: true }, orderBy: { name: "asc" } });
+    return prisma.person.findMany({ where: IN_LIVE_HOUSEHOLD, select: { id: true, name: true }, orderBy: { name: "asc" } });
 }
 
 /** Refuses a missing or org-level bucket, a missing person, and the actor or their household. */
 async function assertMayName(actorId: number, budgetOwnerId: number, personId: number) {
     const bucket = await prisma.budgetOwner.findUnique({ where: { id: budgetOwnerId }, select: { isOrgLevel: true } });
     if (!bucket) throw notFound("Bucket not found");
-    if (bucket.isOrgLevel) throw new ApiResponseError(409, "An org-level bucket has no owner or treasurers.");
-    const target = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
+    if (bucket.isOrgLevel) throw new ApiResponseError(409, ORG_LEVEL_HAS_NO_APPROVERS);
+    const target = await prisma.person.findFirst({ where: { id: personId }, select: { householdId: true } });
     if (!target) throw notFound("Person not found");
     if (actorId === personId || (await hasHouseholdConflict(prisma, actorId, target.householdId))) {
         throw forbidden(OWN_HOUSEHOLD_MESSAGE);
@@ -174,6 +213,7 @@ export async function setBucketOwner(actorId: number, budgetOwnerId: number, per
     }
     if (before.ownerId !== personId) {
         await prisma.$transaction(async (tx) => {
+            await lockProgramBucket(tx, budgetOwnerId);
             await tx.budgetOwner.update({ where: { id: budgetOwnerId }, data: { ownerId: personId } });
             await tx.auditLog.create({
                 data: {
@@ -198,6 +238,7 @@ export async function setBucketTreasurer(actorId: number, budgetOwnerId: number,
     await assertMayName(actorId, budgetOwnerId, personId);
     const key = { budgetOwnerId_personId: { budgetOwnerId, personId } };
     await prisma.$transaction(async (tx) => {
+        await lockProgramBucket(tx, budgetOwnerId);
         const isTreasurer = (await tx.budgetOwnerTreasurer.findUnique({ where: key, select: { personId: true } })) !== null;
         if (isTreasurer === on) return;
         if (on) await tx.budgetOwnerTreasurer.create({ data: { budgetOwnerId, personId } });

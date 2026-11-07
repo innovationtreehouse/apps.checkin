@@ -5,7 +5,7 @@ import type { BulkDonationConfig } from "@checkin/bulk-donation";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureBulkDonation = jest.fn<void, [BulkDonationConfig]>();
-const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"];
+const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_CLEARING"];
 const inKindAccountsReady = jest.fn();
 jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation, IN_KIND_ROLES, inKindAccountsReady }));
 const ORG = { id: "treehouse", name: "Treehouse" };
@@ -32,7 +32,8 @@ const signoff = {
 jest.mock("@/lib/expense/configure", () => ({ signoff }));
 const getExpenseSettings = jest.fn();
 const donatedAssetLineIds = jest.fn();
-jest.mock("@checkin/expense", () => ({ getExpenseSettings, donatedAssetLineIds }));
+const resolveDonatedPartAccounts = jest.fn();
+jest.mock("@checkin/expense", () => ({ getExpenseSettings, donatedAssetLineIds, resolveDonatedPartAccounts }));
 const booksMap = { accounts: jest.fn(), classes: jest.fn() };
 jest.mock("@/lib/finance/booksMap", () => ({ booksMap }));
 const notifyFinanceAlert = jest.fn();
@@ -134,18 +135,26 @@ describe("bulk-donation wiring", () => {
   it("names what gift-of-goods posting lacks, from the books map the drain reads", async () => {
     const { inKindPostingMissing } = await import("../configure");
     delete process.env.QBO_REALM_ID;
-    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401" });
+    booksMap.accounts.mockResolvedValue({ INKIND_EXPENSE: "401", FIXED_ASSETS: "402" });
     await expect(inKindPostingMissing()).resolves.toEqual([
       "QuickBooks company (QBO_REALM_ID)",
-      "no account picked for: Gifts of goods: fixed assets (donated equipment), Gifts of goods: clearing account (finance's past bookings)",
+      "no account picked for: Gifts of goods: in-kind income, Gifts of goods: clearing account (finance's past bookings)",
     ]);
     process.env.QBO_REALM_ID = "123";
-    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_EXPENSE: "401", FIXED_ASSETS: "402", INKIND_CLEARING: "35" });
+    booksMap.accounts.mockResolvedValue({ INKIND_INCOME: "400", INKIND_CLEARING: "35" });
     inKindAccountsReady.mockReturnValue(false);
     await expect(inKindPostingMissing()).resolves.toEqual(["a Gifts of goods: clearing account (finance's past bookings) that no other lane books to"]);
     expect(inKindAccountsReady).toHaveBeenLastCalledWith(expect.objectContaining({ INKIND_CLEARING: "35" }));
     inKindAccountsReady.mockReturnValue(true);
     await expect(inKindPostingMissing()).resolves.toEqual([]);
+  });
+
+  it("resolves each gift line's account through the expense library's account rules", async () => {
+    const { partAccounts } = await config();
+    const parts = [{ lineId: 7, gtin13: "0011111111116", isCapital: false }];
+    resolveDonatedPartAccounts.mockResolvedValue([{ lineId: 7, accountId: "600" }]);
+    await expect(partAccounts!.resolve(ORG.id, parts)).resolves.toEqual([{ lineId: 7, accountId: "600" }]);
+    expect(resolveDonatedPartAccounts).toHaveBeenCalledWith(ORG.id, parts);
   });
 
   it("leaves income's intake ports unbound without a realm, so nothing is handed over", async () => {
@@ -157,7 +166,7 @@ describe("bulk-donation wiring", () => {
     process.env.CHECKIN_ENV = "dev";
     process.env.QBO_REALM_ID = "123";
     const { deposits } = await config();
-    const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ role: "BENEVITY_DONATIONS" as const, budgetOwnerId: null, amountCents: 100 }] };
+    const expected = { txnDate: "2026-10-01", netCents: 100, bankRole: "BENEVITY_BANK" as const, lines: [{ accountId: "60", budgetOwnerId: null, amountCents: 100 }] };
     depositStatus.mockResolvedValue({ D1: { state: "waiting" } });
 
     expect(deposits!.prod).toBe(false);
@@ -189,9 +198,11 @@ describe("bulk-donation wiring", () => {
     await inKindQb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
     expect(notifyFinanceAlert.mock.calls[0][0]).toBe("finance.inKindSweepIncomplete");
     expect(notifyFinanceAlert.mock.calls[0][1].since).toBe("2026-10-01");
-    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 3, remaining: 12 });
+    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 3, remaining: 12, cause: "system" });
     expect(notifyFinanceAlert.mock.calls[1][0]).toBe("finance.inKindDrainStopped");
-    expect(notifyFinanceAlert.mock.calls[1][1]).toMatchObject({ failures: "3", remaining: "12" });
+    expect(notifyFinanceAlert.mock.calls[1][1]).toMatchObject({ failures: "3", remaining: "12", cause: expect.stringMatching(/may be down/) });
+    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 1, remaining: 4, cause: "connection" });
+    expect(notifyFinanceAlert.mock.calls[2][1]).toMatchObject({ failures: "1", cause: expect.stringMatching(/Reconnect QuickBooks/) });
   });
 
   it("reads which donated lines became assets from the expense library's capital review", async () => {

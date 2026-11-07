@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   ComponentHttpError,
@@ -7,13 +7,17 @@ import {
   callerId,
   defineRuntime,
   httpError,
+  KindedError,
   isComponentHttpError,
+  isKindedError,
+  kindOf,
   isServiceError,
   mapServiceErrors,
   orgEventStep,
   parseBody,
   parseId,
   readJson,
+  settleCounts,
   sweepOrgEvents,
   toHttpError,
   zodMessage,
@@ -77,7 +81,12 @@ describe("mapServiceErrors", () => {
     const schema = z.object({ amount: z.number({ error: "amount must be a number" }) });
     const err = await mapServiceErrors(async () => schema.parse({ amount: "x" })).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ComponentHttpError);
-    expect(err).toMatchObject({ status: 400, message: "amount must be a number" });
+    expect(err).toMatchObject({ status: 400, message: "amount must be a number", fields: ["amount"] });
+  });
+
+  it("keeps a thrown ComponentHttpError's fields, and sets none on a ServiceError", () => {
+    expect(toHttpError(httpError(400, "bad", undefined, ["email"]))?.fields).toEqual(["email"]);
+    expect(toHttpError(new ServiceError(409, "taken"))?.fields).toBeUndefined();
   });
 });
 
@@ -103,6 +112,26 @@ describe("parseBody", () => {
 
   it("is a 400 with the first issue's message on a schema failure", async () => {
     await expect(parseBody(jsonRequest("{}"), schema)).rejects.toMatchObject({ status: 400, message: "name is required" });
+  });
+
+  it("names each refused top-level input once, and never a submitted value", async () => {
+    const nested = z.object({
+      name: z.string().min(3),
+      lines: z.array(z.object({ note: z.string() })),
+      extras: z.object({}).catchall(z.number()),
+    });
+    const secret = "secret-value";
+    const body = JSON.stringify({ name: "x", lines: [{ note: 1 }, { note: 2 }], extras: { [secret]: secret } });
+    const err = await parseBody(jsonRequest(body), nested).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 400, fields: ["name", "lines", "extras"] });
+    expect(JSON.stringify((err as ComponentHttpError).fields)).not.toContain(secret);
+  });
+
+  it("names nothing for an issue with an empty path or a numeric first segment", async () => {
+    const strict = await parseBody(jsonRequest('{"typo":1}'), z.object({}).strict()).catch((e: unknown) => e);
+    expect(strict).toMatchObject({ status: 400, fields: [] });
+    const list = await parseBody(jsonRequest('["a"]'), z.array(z.number())).catch((e: unknown) => e);
+    expect(list).toMatchObject({ status: 400, fields: [] });
   });
 
   it("is a 400 on a body that is not JSON", async () => {
@@ -280,5 +309,56 @@ describe("sweepOrgEvents", () => {
     expect(unreadable).toBe(1);
     expect(res).toMatchObject({ unreadable: true, needsAlert: true });
     expect(res.counts.failed).toBe(1);
+  });
+});
+
+describe("kindOf", () => {
+  const zodError = z.object({ a: z.string() }).safeParse({}).error;
+
+  it.each([
+    ["a KindedError keeps its kind", new KindedError("connection", "revoked"), "connection"],
+    ["a 5xx ServiceError is system", new ServiceError(503, "down"), "system"],
+    ["a 4xx ServiceError is data", new ServiceError(409, "taken"), "data"],
+    ["a 5xx http error is system", httpError(502, "bad gateway"), "system"],
+    ["a 4xx http error is data", httpError(400, "bad"), "data"],
+    ["a 401 ServiceError is a bug", new ServiceError(401, "Unauthorized"), "bug"],
+    ["a 401 http error is a bug", httpError(401, "Unauthorized"), "bug"],
+    ["a 429 ServiceError is system", new ServiceError(429, "limit"), "system"],
+    ["a 429 http error is system", httpError(429, "slow down"), "system"],
+    ["a zod error is data", zodError, "data"],
+    ["an unreachable database is system", Object.assign(new Error("Can't reach database server"), { code: "P1001" }), "system"],
+    ["a NotWiredError is settings", new NotWiredError("receipt org"), "settings"],
+    ["a plain error is a bug", new Error("boom"), "bug"],
+    ["a unique violation is a bug", Object.assign(new Error("dup"), { code: "P2002" }), "bug"],
+    ["a non-error is a bug", "boom", "bug"],
+  ])("%s", (_label, err, kind) => {
+    expect(kindOf(err)).toBe(kind);
+  });
+
+  it("recognises a kinded error from another copy of the class by its brand", () => {
+    const foreign = Object.assign(new Error("x"), { [Symbol.for("@checkin/component-kit/KindedError")]: true, kind: "system" });
+    expect(isKindedError(foreign)).toBe(true);
+    expect(kindOf(foreign)).toBe("system");
+  });
+
+  it("keeps the cause", () => {
+    const cause = new Error("root");
+    expect(new KindedError("system", "wrapped", { cause }).cause).toBe(cause);
+  });
+});
+
+describe("settleCounts", () => {
+  it("keeps the counts that succeed and logs and leaves out the ones that fail", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = new Error("db down");
+    const counts = await settleCounts("demo", {
+      ok: async () => 3,
+      rejected: async () => { throw boom; },
+      thrown: () => { throw boom; },
+    });
+    expect(counts).toEqual({ ok: 3 });
+    expect(error).toHaveBeenCalledWith("nav counts: demo rejected failed", boom);
+    expect(error).toHaveBeenCalledWith("nav counts: demo thrown failed", boom);
+    error.mockRestore();
   });
 });

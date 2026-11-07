@@ -31,13 +31,23 @@ describeDb("finance queue — expenses tab", () => {
     expect(await codes(FINANCE, "expenses", id)).toEqual([]);
   });
 
-  it("lists a failed intake with the payload's vendor and amount, linking to Receiving", async () => {
+  it("lists a failed intake with the payload's vendor and amount, linking to its receipt", async () => {
     await db.receivedExpensePayload.create({
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
     expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02" });
-    expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/inventory/receiving?queue=failed" }]);
+    expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
+  });
+
+  it("shows a failed intake's currency as a code: trimmed and upper-cased, or the default when it is not one", async () => {
+    for (const [receiptId, currency] of [["r-lower", " eur "], ["r-symbol", "$"]] as const) {
+      await db.receivedExpensePayload.create({
+        data: { orgId: ORG, receiptId, status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: receiptId, receiptTotalCents: 900, currency }) },
+      });
+    }
+    const rows = await financeQueueRows(FINANCE, "expenses");
+    expect(Object.fromEntries(rows.map((r) => [r.vendorName, r.currency]))).toMatchObject({ "r-lower": "EUR", "r-symbol": "USD" });
   });
 
   it("counts a decision for FINANCE not conflicted on the expense, bookkeeping for any FINANCE, and nothing for the Board", async () => {

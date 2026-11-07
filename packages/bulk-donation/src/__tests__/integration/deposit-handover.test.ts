@@ -1,5 +1,5 @@
 /**
- * Donation hands every completed disbursement's deposit to income (QB_ENTRY_OWNERSHIP): the call
+ * Donation hands every completed disbursement's deposit to income: the call
  * after the completion commit with its re-send job, and no call of its own to QuickBooks.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -48,14 +48,14 @@ function bind() {
   });
 }
 
-/** A completed disbursement: its gifts and its event. */
-async function completed(disbursementId: string, overrides: { date?: string | null; feeCents?: number } = {}) {
-  const { date = "2026-09-10", feeCents = 50 } = overrides;
+/** A completed disbursement: its gifts and its event, the gift net of its fee. */
+async function completed(disbursementId: string, overrides: { date?: string | null; netCents?: number; feeItem?: boolean } = {}) {
+  const { date = "2026-09-10", netCents = 950, feeItem = false } = overrides;
   const file = await makeFile(orgId);
   const tx = await makeTransaction(orgId, file.id, { disbursementId, disbursementDate: "2026-09-10", ownerId: 1 });
   const items = [
-    { type: "donation", account: "4000-Donations", amountCents: 1000, transactionId: tx.transactionId },
-    { type: "fees", account: "6000-Fees", amountCents: feeCents, transactionId: tx.transactionId },
+    { type: "donation", account: "4000-Donations", accountId: "60", amountCents: netCents, transactionId: tx.transactionId },
+    ...(feeItem ? [{ type: "fees", account: "6000-Fees", amountCents: 50, transactionId: tx.transactionId }] : []),
   ];
   const payload = { version: 1, orgId, disbursementId, disbursementDate: date, disbursementFrom: "Benevity", items };
   return db.disbursementEvent.create({ data: { orgId, disbursementId, payload: JSON.stringify(payload) } });
@@ -100,7 +100,7 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
       txnDate: "2026-09-10",
       netCents: 1000,
       bankRole: "BENEVITY_BANK",
-      lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 1, amountCents: 1000, description: "Benevity donations" }],
+      lines: [{ accountId: "60", budgetOwnerId: 1, amountCents: 1000, description: "Benevity donations" }],
       memo: "Benevity disbursement TEST-C1",
     });
   });
@@ -144,11 +144,22 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
     expect(income.expected.size).toBe(0);
   });
 
+  it("raises a batch finished with a fee item, before fees reduced income, and hands over nothing", async () => {
+    await completed("TEST-FEE", { feeItem: true });
+
+    await runDonationDepositHandOver(orgId);
+
+    expect(income.raised).toEqual([
+      [{ disbursementId: "TEST-FEE", reason: "it was finished before fees came out of income, so its fees have no account to book to" }],
+    ]);
+    expect(income.expected.size).toBe(0);
+  });
+
   it.each([
-    ["zero", 1000],
-    ["less", 1500],
-  ])("raises a batch netting to %s, and hands over nothing", async (_net, feeCents) => {
-    await completed("TEST-NET", { feeCents });
+    ["zero", 0],
+    ["less", -500],
+  ])("raises a batch netting to %s, and hands over nothing", async (_net, netCents) => {
+    await completed("TEST-NET", { netCents });
 
     await runDonationDepositHandOver(orgId);
 
@@ -166,6 +177,21 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
     income.expectFails = false;
     expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 1, failed: 0 });
     expect(income.raised).toHaveLength(1);
+  });
+
+  it("raises a batch finished before its rules named accounts to finance, and hands over nothing", async () => {
+    const file = await makeFile(orgId);
+    const tx = await makeTransaction(orgId, file.id, { disbursementId: "TEST-OLD", disbursementDate: "2026-09-10", ownerId: 1 });
+    const items = [{ type: "donation", account: "4000-Donations", amountCents: 1000, transactionId: tx.transactionId }];
+    const payload = { version: 1, orgId, disbursementId: "TEST-OLD", disbursementDate: "2026-09-10", disbursementFrom: "Benevity", items };
+    await db.disbursementEvent.create({ data: { orgId, disbursementId: "TEST-OLD", payload: JSON.stringify(payload) } });
+
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+
+    expect(income.raised).toHaveLength(1);
+    expect(income.raised[0]).toEqual([{ disbursementId: "TEST-OLD", reason: expect.stringMatching(/finished before its account rules named QuickBooks accounts/) }]);
+    expect(income.expected.size).toBe(0);
   });
 
   it("raises again next run when the alert itself fails", async () => {

@@ -1,4 +1,4 @@
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent } from "@testing-library/react";
 import { ModalsProvider } from "@mantine/modals";

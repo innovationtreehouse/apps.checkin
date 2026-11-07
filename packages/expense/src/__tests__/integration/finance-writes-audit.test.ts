@@ -4,7 +4,7 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses, finance } from "../../routes";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
@@ -118,6 +118,8 @@ describeDb("FINANCE writes are audited", () => {
   });
 
   it("QuickBooks account create, update and delete each record one row", async () => {
+    const accounts = ["5100", "5200"].map((id) => ({ id, name: `Supplies ${id}`, accountType: "Expense" }));
+    bindPorts({ quickbooks: { accounts: async () => accounts } });
     const created = await auditOf(() => call(finance.createQbAccount, "POST", {}, { name: "Supplies", qbAccount: "5100" }));
     expect(created).toMatchObject({ entityType: "qb_account", action: "created" });
     const id = created.entityId!;
@@ -131,6 +133,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("setting a part's owner records the previous and new bucket", async () => {
     const gtin13 = "0000000000017";
+    bindPorts({ catalog: catalogResolving({ 1: gtin13 }) });
     await auditOf(() => call(finance.setOwnership, "PUT", {}, { gtin13, ownerId: 100 }));
     const row = await auditOf(() => call(finance.setOwnership, "PUT", {}, { gtin13, ownerId: 101 }));
     expect(row).toMatchObject({ entityType: "part_owner", entityId: gtin13, action: "owner_set" });

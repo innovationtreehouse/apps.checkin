@@ -1,7 +1,7 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { BooksMap, BooksMapRole, QuickBooksClient } from "@checkin/quickbooks";
+import type { BooksMap, BooksMapRole, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
@@ -62,12 +62,17 @@ export interface CatalogLookup {
  */
 export interface InventoryApply {
   apply(delta: ResolvedInventoryDelta): Promise<void>;
+  /** Why the last load under this source key failed; null once it loads, or if it never failed. */
+  failureReason(sourceKey: string): Promise<string | null>;
 }
 
 /** Per-source idempotency key for X11, beside the receipt pipeline's `receipt:<id>`. */
 export function inventorySourceKey(inKindDonationId: number): string {
   return `donation:${inKindDonationId}`;
 }
+
+/** Why an in-kind run stopped early: QuickBooks down, its connection lost, or gifts failing on the app's own fault. */
+export type InKindStopKind = "system" | "connection" | "bug";
 
 /**
  * What the in-kind drain books with: checkin's one guarded client (null while the guard keeps
@@ -78,13 +83,13 @@ export interface InKindQbPosting {
   booksMap: BooksMap;
   /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
-  /** Tells finance a run stopped on its failure streak, leaving `remaining` gifts unposted. */
-  drainStopped(event: { orgId: string; failures: number; remaining: number }): Promise<void>;
+  /** Tells finance a run stopped on its failure streak or a lost connection, leaving `remaining` gifts unposted; `cause` is the stop's kind. */
+  drainStopped(event: { orgId: string; failures: number; remaining: number; cause: InKindStopKind }): Promise<void>;
 }
 
-/** One line of a disbursement's deposit: kind's account role, the gift's bucket (null at organization level), signed cents. */
+/** One deposit line: a gift or match line on its rule's QuickBooks account, net of its fees, and the gift's bucket (null at organization level). */
 export type DonationDepositLine = {
-  role: BooksMapRole;
+  accountId: string;
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;
@@ -160,8 +165,20 @@ export interface InKindCapital {
   submit(orgId: string, lines: CapitalReviewLine[]): Promise<void>;
   /** The gifts with a line still waiting on capital review. */
   awaitingReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]>;
-  /** The gift's lines capital review made assets; they book to fixed assets. */
+  /** The gift's lines capital review made assets; each books to a fixed-asset account. */
   assetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]>;
+}
+
+/** One donated part to resolve: the gift line, its GTIN-13, and whether capital review made it an asset. */
+export interface DonatedPart {
+  lineId: number;
+  gtin13: string;
+  isCapital: boolean;
+}
+
+/** Donations → the expense library's account rules: each part's account, or why none resolves. */
+export interface InKindAccounts {
+  resolve(orgId: string, parts: DonatedPart[]): Promise<({ lineId: number } & ({ accountId: string } | { reason: string }))[]>;
 }
 
 export interface BulkDonationConfig {
@@ -175,6 +192,10 @@ export interface BulkDonationConfig {
   deposits?: IncomeDeposits;
   inKind?: InKindDirectory;
   capital?: InKindCapital;
+  /** QuickBooks' live account list, read when an account rule saves an account. */
+  quickBooksAccounts?: QboAccountList;
+  /** Each gift line's account from the expense account rules. */
+  partAccounts?: InKindAccounts;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */

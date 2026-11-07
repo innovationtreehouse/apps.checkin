@@ -6,6 +6,7 @@ import { classifyCapital, isTerminalApproval, anyRejected } from "./expense-rule
 import { advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
+import { lockBucketLines } from "./signoff-facts";
 
 const partOwners = createPartOwnerRepository(db);
 
@@ -39,6 +40,9 @@ export async function initFinancialFlow(expenseId: string, orgId: string, backfi
     // Row-locking claim on the pending expense: a concurrent caller waits here, then finds it started.
     const claimed = await tx.expense.updateMany({ where: { id: expenseId, state: "pending" }, data: { state: "pending" } });
     if (claimed.count === 0) return;
+    for (const bucketId of new Set([...resolvedOwners.values()].filter((o): o is number => o !== null).sort((a, b) => a - b))) {
+      await lockBucketLines(tx, bucketId);
+    }
     for (const li of lineItems) {
       // Every line, an org-level one included, waits for its approval; a backfill takes none.
       await tx.lineItemOwnerApproval.create({

@@ -13,11 +13,22 @@ import { createProvisionalResolutionRepository } from "../repositories/provision
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
 import { recordSubmitterSeats } from "./submitterSeatService";
-import { ServiceError } from "@checkin/component-kit";
+import { kindOf, ServiceError } from "@checkin/component-kit";
 
+/** A stored payload as the contract reads it now, so a code it normalizes does not count as a difference. */
+function asParsed(payloadJson: string): string {
+  const stored = CompletedReceiptSchema.safeParse(JSON.parse(payloadJson));
+  return stored.success ? JSON.stringify(stored.data) : payloadJson;
+}
+
+/**
+ * Refusals at arrival (schema, org, a changed payload for a built expense) throw. Once the payload
+ * is stored expense owns it: a failure building the expense is recorded on the stored row and the
+ * call returns "accepted" — "refused" when the payload can never build, "failed" for the daily replay.
+ */
 export async function receiveCompletedReceipt(
   raw: unknown,
-): Promise<{ receiptId: string; status: "created" | "already_applied" }> {
+): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }> {
   const receipt = CompletedReceiptSchema.parse(raw);
   await assertOrg(receipt.orgId);
   const { receiptId } = receipt;
@@ -27,7 +38,7 @@ export async function receiveCompletedReceipt(
 
   // Once the expense exists it was built from the stored payload, so a replay must match it.
   const payloadJson = JSON.stringify(receipt);
-  if (existingPayload && existingPayload.payloadJson !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
+  if (existingPayload && asParsed(existingPayload.payloadJson) !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
     throw new ServiceError(409, `Receipt ${receiptId} was already received with a different payload`);
   }
 
@@ -45,17 +56,19 @@ export async function receiveCompletedReceipt(
   try {
     created = await processCompletedReceipt(receipt);
   } catch (err) {
-    await db.receivedExpensePayload.updateMany({
-      where: { receiptId, status: { not: "applied" } },
-      data: { status: "failed", failureReason: err instanceof Error ? err.message : String(err) },
-    });
-    throw err;
+    const status = kindOf(err) === "data" ? "refused" : "failed";
+    logError(status === "refused" ? "intake_refused" : "intake_build_failed", { receiptId }, err);
+    await db.receivedExpensePayload
+      .updateMany({ where: { receiptId, status: { not: "applied" } }, data: { status, failureReason: err instanceof Error ? err.message : String(err) } })
+      // The row stays "received", which the daily replay still picks up.
+      .catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
+    return { receiptId, status: "accepted" };
   }
   await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null } });
   return { receiptId, status: created ? "created" : "already_applied" };
 }
 
-/** Catch-up sweep: re-runs payloads left received or failed. Capped; counts only. */
+/** Catch-up sweep: re-runs payloads left received or failed; a refused one waits on finance. Capped; counts only. */
 export async function replayReceivedPayloads(limit = 50): Promise<{ applied: number; failed: number }> {
   const rows = await db.receivedExpensePayload.findMany({
     where: { orgId: await getOrgId(), status: { in: ["received", "failed"] } },
@@ -66,8 +79,8 @@ export async function replayReceivedPayloads(limit = 50): Promise<{ applied: num
   const counts = { applied: 0, failed: 0 };
   for (const r of rows) {
     try {
-      await receiveCompletedReceipt(JSON.parse(r.payloadJson));
-      counts.applied++;
+      const { status } = await receiveCompletedReceipt(JSON.parse(r.payloadJson));
+      counts[status === "accepted" ? "failed" : "applied"]++;
     } catch (err) {
       counts.failed++;
       logError("intake_replay_failed", {}, err);

@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
 import { api, errorMessage, useCanWrite, useLoad, when } from "../components/api";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -52,6 +53,7 @@ interface Gift {
   expenseBooking: string | null;
   inventorySourceKey: string | null;
   inventoryLoadedAt: string | null;
+  inventoryLoadFailureReason: string | null;
   lines: GiftLine[];
   events: GiftEvent[];
 }
@@ -117,7 +119,11 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
   ) : (
     <Alert color="red" title="Goods not loaded into inventory">
       <Group justify="space-between" wrap="nowrap">
-        <Text size="sm">The load for {gift.inventorySourceKey} failed or has not run.</Text>
+        <Text size="sm">
+          {gift.inventoryLoadFailureReason
+            ? `The load for ${gift.inventorySourceKey} failed: ${gift.inventoryLoadFailureReason}`
+            : `The load for ${gift.inventorySourceKey} failed or has not run.`}
+        </Text>
         {canWrite && <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void retry()}>Load again</Button>}
       </Group>
     </Alert>
@@ -186,8 +192,8 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
         <Table.Tbody>
           {g.lines.map((l) => (
             <Table.Tr key={l.id}>
-              <Table.Td>{l.description ?? l.gtin13 ?? "—"}</Table.Td>
-              <Table.Td>{l.gtin13 ?? "—"}</Table.Td>
+              <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
+              <Table.Td>{l.gtin13 ? formatGtinDisplay(l.gtin13) : "—"}</Table.Td>
               <Table.Td>{l.quantity}</Table.Td>
               <Table.Td>{l.valueCents === null ? "—" : formatCents(l.valueCents)}</Table.Td>
               {isManual && <Table.Td>{l.suggestedValueCents === null ? "—" : formatCents(l.suggestedValueCents)}</Table.Td>}

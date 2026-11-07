@@ -31,6 +31,15 @@ const households = {
 describe("membership-ops/households page", () => {
   pinTimezone();
 
+  it("says the list failed instead of showing no households", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({}); // every fetch 404s
+    renderWithProviders(<AdminHouseholdsPage />);
+
+    expect(await screen.findByText("Couldn't load the households")).toBeInTheDocument();
+    expect(screen.queryByText("No households found.")).not.toBeInTheDocument();
+  });
+
   it("renders a UTC-midnight memberSince as its own calendar day, not the day before", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
@@ -145,7 +154,7 @@ describe("membership-ops/households page", () => {
         "/api/membership-ops/households",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ householdId: 2, active: true, year: 2026, reason: "Paid by check" }),
+          body: JSON.stringify({ householdId: 2, year: 2026, reason: "Paid by check" }),
         }),
       ),
     );
@@ -274,7 +283,7 @@ describe("membership-ops/households page", () => {
           "/api/membership-ops/households",
           expect.objectContaining({
             method: "POST",
-            body: JSON.stringify({ householdId: 1, active: true, year: 2027, reason: "Family paid cash at the front desk" }),
+            body: JSON.stringify({ householdId: 1, year: 2027, reason: "Family paid cash at the front desk" }),
           }),
         ),
       );

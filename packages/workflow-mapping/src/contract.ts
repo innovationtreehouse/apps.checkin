@@ -4,6 +4,7 @@
  * sibling library. Every crossing is one port; flipping a crossing swaps one
  * binding. Unbound ports fall back to the inert adapters below.
  */
+import { NotWiredError } from "@checkin/component-kit";
 import { z } from "zod";
 import type {
   CatalogCheckReferences,
@@ -95,6 +96,8 @@ export interface DonationSink {
 /** S3: load the receipt's goods. The callee applies at most once per source key `receipt:<receiptId>`. */
 export interface InventorySink {
   applyDelta(delta: ResolvedInventoryDelta): Promise<void>;
+  /** How many of each receipt's lines are still open on the receive queue; a receipt with none is left out. */
+  openBackorders(receiptIds: string[]): Promise<Map<string, number>>;
 }
 
 // ── S5: catalog org events ───────────────────────────────────────────────────
@@ -131,8 +134,11 @@ function notWired(port: string): never {
   throw new Error(`${port} not wired`);
 }
 
+// An unbound catalog says so rather than answer "no match".
 export const inertCatalogReader: CatalogReader = {
-  lookupItems: async () => [],
+  lookupItems: async () => {
+    throw new NotWiredError("CatalogReader.lookupItems");
+  },
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
   getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
 };
@@ -154,6 +160,7 @@ export const inertDonationSink: DonationSink = {
 
 export const inertInventorySink: InventorySink = {
   applyDelta: async () => notWired("InventorySink.applyDelta"),
+  openBackorders: async () => new Map(),
 };
 
 export const inertCatalogEventSource: CatalogEventSource = {

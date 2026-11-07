@@ -53,13 +53,17 @@ is also the step that updates every artifact at once.
 
 ## Reading a red lifecycle test
 
-Six guards cover this area, and each fails for a different reason:
+Seven guards cover this area, and each fails for a different reason:
 
 - **Artifacts drift** — a machine changed and the generated files were not
   regenerated. Run the command above.
 - **Guard ↔ transitions parity** — a compare-and-set guard's from-state no longer
   matches the transition table. The guard takes its from-state from the table;
   reconcile them rather than editing one side.
+- **Enrollment guards** (`enrollmentGuards.integration.test.ts`) — a declared
+  `ENROLLMENT_WRITES` filter or write, run on Postgres over every row shape, admits
+  a state its `ENROLLMENT_GUARDS` entry does not name, or lands a row somewhere else.
+  Decide which is right; a row it lands off the diagram is a real bug.
 - **Status-literal allowlist** — new code hand-codes a set of statuses instead of
   consuming a state set's query filter. Consume the definition, or add an
   allowlist entry with a justification.
@@ -67,10 +71,11 @@ Six guards cover this area, and each fails for a different reason:
   `classify` and `validate` disagreed somewhere in it. One of the two is wrong.
 - **Enum parity** — a status was added to or removed from the Prisma enum without
   the machine's local union following.
-- **No raw status writes** — code writes `OrgMembership.status` or
-  `OrgMembershipProcess.status` outside a declared helper, or an allowlisted
-  file's write count changed. Route the write through the machine's helper, or
-  drop the allowlist row once its file has moved onto it.
+- **No raw status writes** — code writes a machine column on `ProgramParticipant`,
+  `OrgMembership` or `OrgMembershipProcess` outside a declared helper, flag-only
+  writes included, or an allowlisted file's write count changed. Route the write
+  through the machine's helper, or drop the allowlist row once its file has moved
+  onto it.
 
 ## Off-diagram rows in production
 

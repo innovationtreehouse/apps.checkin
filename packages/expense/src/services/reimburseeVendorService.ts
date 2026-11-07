@@ -137,7 +137,7 @@ export async function linkReimburseeVendor(
         select: { id: true },
       });
       for (const { id } of parked) {
-        await tx.expense.update({ where: { id }, data: { qbMatchState: "UNMATCHED" } });
+        await tx.expense.update({ where: { id }, data: { qbMatchState: "UNMATCHED", qbFailureKind: null } });
         await writeAudit(tx, actor, {
           expenseId: id,
           action: "qb_unmatched",

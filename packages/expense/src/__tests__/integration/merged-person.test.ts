@@ -5,7 +5,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { OutcomeMail } from "../../contract";
 import { db } from "../../db";
-import { expenses } from "../../routes";
+import { expenses, finance } from "../../routes";
 import { oweOutcomeNotice, sendOutcomeNotices } from "../../lib/outcome-notices";
 import { isConflicted } from "../../lib/signoff-facts";
 import { approveLine } from "../../services/approvalService";
@@ -145,6 +145,15 @@ describeDb("a merged uploader and reimbursee", () => {
     await db.$transaction((tx) => oweOutcomeNotice(tx, id, "qb_complete"));
     await sendOutcomeNotices([id]);
     expect(send.mock.calls.map(([notice, to]) => [notice.uploaderPersonId, to])).toEqual([[B, "uploader"]]);
+  });
+});
+
+describeDb("the holds list", () => {
+  it("names the survivor as submitter and reimbursee", async () => {
+    const id = await seed({ reimburseePersonId: A, needsReimbursement: true });
+    await db.expenseHold.create({ data: { orgId: ORG, expenseId: id, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
+    const { ExpenseHold } = (await finance.holds({ req: new Request("http://test"), params: {}, principal: principal(FINANCE, { isFinance: true }) })) as { ExpenseHold: { expenseId: string; expense: { submitterId: number; reimburseePersonId: number | null } }[] };
+    expect(ExpenseHold.filter((h) => h.expenseId === id).map((h) => h.expense)).toEqual([expect.objectContaining({ submitterId: B, reimburseePersonId: B })]);
   });
 });
 

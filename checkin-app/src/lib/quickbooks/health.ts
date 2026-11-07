@@ -1,15 +1,16 @@
 /**
- * QuickBooks rows for the System Status page: the connection, the books closing date, and
- * whether each posting lane is bound. Reads live (token, closing date) only when the page
+ * QuickBooks rows for the System Status page: the connection, the books closing date, the
+ * books map's account types, and whether each posting lane is bound. Reads live (token, closing date) only when the page
  * asks, cached briefly, each under a short timeout, so a QuickBooks outage cannot hang it.
  * Never names a realm id, token or secret. Not counted in the nav badge, which stays a
  * presence check with no network read.
  */
-import type { ConfigCheck } from "@/lib/configHealth";
+import type { QboAccount } from "@checkin/quickbooks";
+import { kindOf } from "@checkin/component-kit";
+import { message, withTimeout, type ConfigCheck } from "@/lib/configHealth";
 import { tryBuildQuickBooks } from "@/lib/quickbooks/client";
 
 const CACHE_MS = 60_000;
-const READ_TIMEOUT_MS = 5_000;
 
 let cached: { at: number; checks: Promise<ConfigCheck[]> } | null = null;
 
@@ -19,17 +20,6 @@ export function getQuickBooksHealth(now: number = Date.now()): Promise<ConfigChe
     return cached.checks;
 }
 
-function withTimeout<T>(work: Promise<T>, what: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} did not answer within ${READ_TIMEOUT_MS / 1000} seconds`)), READ_TIMEOUT_MS);
-    });
-    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
-
-function message(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
-}
 
 /** True only where the guard lets a client be built at all; elsewhere QuickBooks is off by design. */
 function quickBooksExpectedHere(): boolean {
@@ -40,26 +30,48 @@ async function connectionChecks(): Promise<ConfigCheck[]> {
     const id = "quickbooks-connection";
     const label = "QuickBooks connection";
     if (!quickBooksExpectedHere()) {
-        return [{ id, label, ok: true, detail: "Off on this instance by design (QuickBooks runs only on prod and dev)." }, closingNotRead(true)];
+        return [{ id, label, ok: true, detail: "Off on this instance by design (QuickBooks runs only on prod and dev)." }, ...notRead(true)];
     }
     const built = tryBuildQuickBooks();
-    if (!built.ok) return [{ id, label, ok: false, detail: `Off: ${built.reason}.` }, closingNotRead(false)];
+    if (!built.ok) return [{ id, label, ok: false, detail: `Off: ${built.reason}.` }, ...notRead(false)];
     try {
         await withTimeout(built.tokens.current(), "The token refresher");
     } catch (err) {
-        return [{ id, label, ok: false, detail: `Off: the token refresher failed (${message(err)}).` }, closingNotRead(false)];
+        const detail = kindOf(err) === "connection" ? message(err) : `Off: the token refresher failed (${message(err)}).`;
+        return [{ id, label, ok: false, detail }, ...notRead(false)];
     }
     const company = built.env === "production" ? "production" : "sandbox";
-    const closing = await closingDateCheck(() => built.client.bookCloseDate());
-    return [{ id, label, ok: true, detail: `Connected to the ${company} company.` }, closing];
+    const [closing, types] = await Promise.all([
+        closingDateCheck(() => built.client.bookCloseDate()),
+        accountTypesCheck(() => built.client.accounts()),
+    ]);
+    return [{ id, label, ok: true, detail: `Connected to the ${company} company.` }, closing, types];
 }
 
 const CLOSE_ID = "quickbooks-close-date";
 const CLOSE_LABEL = "QuickBooks books closing date";
 
-/** The closing date is read only over a working connection; its row follows the connection's. */
-function closingNotRead(ok: boolean): ConfigCheck {
-    return { id: CLOSE_ID, label: CLOSE_LABEL, ok, detail: "Not read while QuickBooks is off." };
+const TYPES_ID = "quickbooks-account-types";
+const TYPES_LABEL = "QuickBooks books map: account types";
+
+/** These rows are read only over a working connection; they follow the connection's. */
+function notRead(ok: boolean): ConfigCheck[] {
+    const detail = "Not read while QuickBooks is off.";
+    return [{ id: CLOSE_ID, label: CLOSE_LABEL, ok, detail }, { id: TYPES_ID, label: TYPES_LABEL, ok, detail }];
+}
+
+async function accountTypesCheck(read: () => Promise<QboAccount[]>): Promise<ConfigCheck> {
+    const id = TYPES_ID;
+    const label = TYPES_LABEL;
+    try {
+        const accounts = await withTimeout(read(), "QuickBooks");
+        const wrong = await (await import("@/lib/finance/booksMap")).misTypedRoleAccounts(accounts);
+        return wrong.length === 0
+            ? { id, label, ok: true, detail: "Every account picked is of a type its role accepts." }
+            : { id, label, ok: false, detail: `Re-pick on the books map: ${wrong.join("; ")}.` };
+    } catch (err) {
+        return { id, label, ok: false, detail: `Could not read it: ${message(err)}.` };
+    }
 }
 
 async function closingDateCheck(read: () => Promise<string | null>): Promise<ConfigCheck> {

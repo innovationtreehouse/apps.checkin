@@ -21,6 +21,8 @@
  * - booksMap: finance's books map (role -> QuickBooks account, bucket -> Class),
  *   which income resolves every deposit's accounts and Classes through. A source
  *   whose bank role it leaves unset is not matched.
+ * - quickBooksAccounts: the books map's live QuickBooks account list, read when
+ *   finance saves an item's account so a wrong account type is refused.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
  * - alerts: a drain that stops at a cap emails finance (the board when no one
@@ -45,7 +47,7 @@ import {
   type QbDepositSource,
 } from "@checkin/income";
 import { getOrg, getPrincipal } from "@/lib/components/host";
-import { booksMap, budgetOwners } from "@/lib/components/ports";
+import { booksMap, budgetOwners, quickBooksAccounts } from "@/lib/components/ports";
 import {
   incomeItemsSeen,
   incomeOrderLines,
@@ -59,7 +61,7 @@ import {
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
-import { BOOKS_MAP_ROLES } from "@checkin/quickbooks";
+import { LIVE_BOOKS_MAP_ROLES } from "@checkin/quickbooks";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -154,10 +156,10 @@ export async function incomePostingMissing(): Promise<string[]> {
   ];
 }
 
-/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every Benevity role must be picked. */
+/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every live Benevity role must be picked. */
 export async function benevityPostingMissing(): Promise<string[]> {
   const accounts = await roleAccounts();
-  const unpicked = BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
+  const unpicked = LIVE_BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
   return [
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
@@ -180,6 +182,7 @@ export function configureRuntime(): void {
     posting: posting(),
     owners: budgetOwners,
     booksMap,
+    quickBooksAccounts,
     classes: classSource(),
     alerts,
   });

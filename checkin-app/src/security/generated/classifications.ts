@@ -101,6 +101,7 @@ export const classifications = {
         zohoEnvelopeId: 'internal',
         zohoActionId: 'internal',
         zohoSignerPersonId: 'internal',
+        zohoClaimedAt: 'internal',
         contractSignedAt: 'internal',
         agreementVersion: 'internal',
         bgConsentAt: 'internal',
@@ -154,6 +155,9 @@ export const classifications = {
         emailFromAddress: 'public',
         emailReplyToAddress: 'public',
         scholarshipNotifyEmail: 'internal',
+        alertEmailAddress: 'internal',
+        boardEmailAddress: 'internal',
+        financeContactEmail: 'public',
         scholarshipAckSubject: 'internal',
         scholarshipAckMembershipBody: 'internal',
         scholarshipAckProgramBody: 'internal',
@@ -316,6 +320,8 @@ export const classifications = {
         attendanceConfirmedAt: 'internal',
         attendanceConfirmedById: 'internal',
         postEventEmailSent: 'internal',
+        postEventEmailClaimedAt: 'internal',
+        postEventEmailAttempts: 'internal',
         recurringGroupId: 'public',
     },
     RSVP: {
@@ -452,6 +458,32 @@ export const classifications = {
         finishedAt: 'internal',
         success: 'internal',
         error: 'internal',
+        failuresByKind: 'internal',
+    },
+    OpsIncident: {
+        id: 'internal',
+        key: 'internal',
+        openKey: 'internal',
+        cause: 'internal',
+        kind: 'internal',
+        lanes: 'internal',
+        firstSeenAt: 'internal',
+        lastSeenAt: 'internal',
+        notifiedAt: 'internal',
+        lastRemindedAt: 'internal',
+        escalatedAt: 'internal',
+        closedAt: 'internal',
+        recoveryNotifiedAt: 'internal',
+        runsSeen: 'internal',
+        itemsAffected: 'internal',
+        detail: 'internal',
+    },
+    LifecycleDriftReport: {
+        id: 'internal',
+        model: 'internal',
+        key: 'internal',
+        invariant: 'internal',
+        firstReportedAt: 'internal',
     },
     PersonMerge: {
         id: 'internal',
@@ -492,6 +524,7 @@ export const classifications = {
         resolvedAt: 'internal',
         resolutionNote: 'personal',
         detectedAt: 'internal',
+        evidence: 'internal',
     },
     BulkSend: {
         id: 'internal',
@@ -704,6 +737,10 @@ export const relations = {
     IntegrationErrorLog: {
     },
     CronRunLog: {
+    },
+    OpsIncident: {
+    },
+    LifecycleDriftReport: {
     },
     PersonMerge: {
         to: { model: 'Person', isList: false },

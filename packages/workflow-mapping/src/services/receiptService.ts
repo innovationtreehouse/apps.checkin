@@ -1,10 +1,11 @@
 import { httpError } from "@checkin/component-kit";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrgId, requireActor } from "../runtime";
+import { getOrgId, ports, requireActor } from "../runtime";
 import {
   areAllLinesResolved,
   assertWorkflowMappingTransition,
@@ -16,6 +17,12 @@ function asState(raw: string): ReceivedReceiptState {
   const state = receivedReceiptStateEnum.find((s) => s === raw);
   if (!state) throw httpError(400, "Invalid state");
   return state;
+}
+
+/** Open receive-queue lines per receipt, in one call for every resolved receipt given; only a resolved receipt has queued lines. */
+export async function openBackorders(rows: { receiptId: string; state: string }[]): Promise<Map<string, number>> {
+  const ids = rows.filter((r) => r.state === "resolved").map((r) => r.receiptId);
+  return ids.length ? ports().inventorySink.openBackorders(ids) : new Map();
 }
 
 export const receiptService = {
@@ -31,6 +38,7 @@ export const receiptService = {
       },
       orderBy: { createdAt: "desc" },
     });
+    const backorders = await openBackorders(rows);
 
     return rows.map((row) => {
       const parsed = parseStoredReceipt(row.receiptJson);
@@ -42,8 +50,9 @@ export const receiptService = {
         state: row.state,
         vendorName: r?.vendorName ?? null,
         receiptTotalCents: r?.receiptTotalCents ?? null,
-        currency: r?.currency ?? "USD",
+        currency: r?.currency ?? DEFAULT_CURRENCY,
         lineItemCount: r?.lineItems.length ?? 0,
+        openBackorders: backorders.get(row.receiptId) ?? 0,
         validationNotes: row.validationNotes,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
@@ -72,6 +81,7 @@ export const receiptService = {
   async detail(receiptId: number) {
     await requireActor();
     const { receiptJson, ...receipt } = await loadReceipt(receiptId);
+    const backorders = await openBackorders([receipt]);
     const parsed = parseStoredReceipt(receiptJson);
     if (!parsed.ok) throw httpError(422, parsed.error);
     const p = parsed.receipt;
@@ -92,6 +102,7 @@ export const receiptService = {
       discountCents: p.discountCents,
       receiptDate: p.receiptDate,
       isInKind: p.isInKind,
+      openBackorders: backorders.get(receipt.receiptId) ?? 0,
       lineItems: p.lineItems.map((li) => ({
         receiptLineItemId: li.receiptLineItemId,
         lineNumber: li.lineNumber,

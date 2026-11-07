@@ -17,6 +17,7 @@ export {
   getOrgId,
   getNavCounts,
   inventoryApply,
+  openBackordersByReceipt,
 } from "./runtime";
 export type {
   InventoryPrincipal,

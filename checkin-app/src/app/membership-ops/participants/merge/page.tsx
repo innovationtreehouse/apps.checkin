@@ -6,7 +6,6 @@ import { Alert, Anchor, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid
 import Link from "next/link";
 import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
-import { MergedBadge } from "@/components/ui/MergedBadge";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -22,7 +21,6 @@ interface ParticipantMergeView {
   googleId?: string;
   emailVerified?: string | null;
   dateOfBirth?: string | null;
-  mergedIntoId?: number | null;
   _count: { visits: number, rawBadgeLogs: number, programParticipants: number, programVolunteers: number };
   household?: { id: number, name: string, _count?: { householdMembers: number }, householdMembers: Record<string, unknown>[] } | null;
   [key: string]: unknown;
@@ -178,50 +176,61 @@ export default function MergeParticipants() {
     }
   }
 
-  // Picking (or un-picking) either side re-runs the analysis for the pair.
+  // Picking (or un-picking) either side drops the analysis; the effect below re-runs it.
   const pick = (a: ParticipantMergeView | null, b: ParticipantMergeView | null) => {
     setPA(a);
     setPB(b);
-    if (a && b) {
-      setLoading(true);
-      fetch(`/api/membership-ops/participants/merge/analyze?a=${a.id}&b=${b.id}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.participants) {
-            setAnalyzedA(d.participants[0]);
-            setAnalyzedB(d.participants[1]);
-            setMembershipBlock(d.membershipBlock ?? null);
-            setBgNotices(d.bgNotice ?? null);
-
-            // Recommend keeping the one with more activity or better data
-            const score = (p: ParticipantMergeView) => {
-              let s = 0;
-              s += p._count.visits * 2;
-              s += p._count.rawBadgeLogs;
-              s += p._count.programParticipants * 5;
-              s += p._count.programVolunteers * 5;
-              if (p.email) s += 10;
-              if (p.phone) s += 10;
-              if (p.googleId) s += 20; // real account
-              return s;
-            };
-            const sA = score(d.participants[0]);
-            const sB = score(d.participants[1]);
-
-            setKeepId(sA >= sB ? a.id : b.id);
-          }
-        })
-        .catch(() => setError("Failed to analyze participants"))
-        .finally(() => setLoading(false));
-    } else {
-      setAnalyzedA(null);
-      setAnalyzedB(null);
-      setKeepId(null);
-      setPreviewMode(false);
-      setMembershipBlock(null);
-      setBgNotices(null);
-    }
+    setAnalyzedA(null);
+    setAnalyzedB(null);
+    setKeepId(null);
+    setPreviewMode(false);
+    setMembershipBlock(null);
+    setBgNotices(null);
+    setLoading(!!(a && b));
   };
+
+  // Only the selected pair's response lands, so what is on screen is always the
+  // current selection, and a merge deletes the record the operator was shown.
+  const aId = pA?.id;
+  const bId = pB?.id;
+  useEffect(() => {
+    if (aId === undefined || bId === undefined) return;
+    let selected = true;
+    fetch(`/api/membership-ops/participants/merge/analyze?a=${aId}&b=${bId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (selected && d.participants) {
+          setAnalyzedA(d.participants[0]);
+          setAnalyzedB(d.participants[1]);
+          setMembershipBlock(d.membershipBlock ?? null);
+          setBgNotices(d.bgNotice ?? null);
+
+          // Recommend keeping the one with more activity or better data
+          const score = (p: ParticipantMergeView) => {
+            let s = 0;
+            s += p._count.visits * 2;
+            s += p._count.rawBadgeLogs;
+            s += p._count.programParticipants * 5;
+            s += p._count.programVolunteers * 5;
+            if (p.email) s += 10;
+            if (p.phone) s += 10;
+            if (p.googleId) s += 20; // real account
+            return s;
+          };
+          const sA = score(d.participants[0]);
+          const sB = score(d.participants[1]);
+
+          setKeepId(sA >= sB ? aId : bId);
+        }
+      })
+      .catch(() => {
+        if (selected) setError("Failed to analyze participants");
+      })
+      .finally(() => {
+        if (selected) setLoading(false);
+      });
+    return () => { selected = false; };
+  }, [aId, bId]);
 
   if (authLoading) {
     return <PageLoader />;
@@ -239,8 +248,8 @@ export default function MergeParticipants() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keepId,
-          mergeId: keepId === pA?.id ? pB?.id : pA?.id,
+          keepId: keepParticipant?.id,
+          mergeId: mergeParticipant?.id,
           fieldChoices,
           ...(emailChangeReason.trim() && { emailChangeReason }),
         })
@@ -302,9 +311,8 @@ export default function MergeParticipants() {
     <Card withBorder radius="md" padding="lg" style={{ borderColor: isKept ? "var(--mantine-color-green-6)" : "var(--mantine-color-red-6)", borderWidth: 2 }}>
       <Group gap="xs" mb="sm">
         <Title order={4} c={isKept ? "green" : "red"}>
-          {isKept ? "Keep and augment" : "Merge and tombstone"}
+          {isKept ? "Keep and augment" : "Merge and delete"}
         </Title>
-        <MergedBadge person={p} />
       </Group>
 
       <Box mb="md">
@@ -379,7 +387,7 @@ export default function MergeParticipants() {
       <div>
         <Text c="dimmed">
           Combine two participant records. The data from the merged record (visits, programs, etc)
-          will be moved to the kept record. The merged record will be tombstoned.
+          will be moved to the kept record. The merged record will be deleted, and an archive of it names the kept record.
         </Text>
         <Anchor component={Link} href="/membership-ops/participants/tombstones" size="sm">
           View tombstone census
@@ -484,10 +492,10 @@ export default function MergeParticipants() {
           <Text my="sm"><strong>This action is extremely difficult to undo.</strong> Please review the changes below.</Text>
 
           <List spacing="xs" my="lg">
-            <List.Item><strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong> will be tombstoned.</List.Item>
+            <List.Item><strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong> will be deleted, and an archive of the record will name the kept participant.</List.Item>
             <List.Item>All visits, program enrollments, RSVPs, and fee payments will be transferred to <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong>.</List.Item>
             <List.Item>Missing personal info on the kept participant will be filled in from the merged participant.</List.Item>
-            <List.Item>Raw badge scans will remain on the tombstoned record for audit purposes.</List.Item>
+            <List.Item>Raw badge scans will move to the kept participant.</List.Item>
           </List>
 
           {bgNotice && (
@@ -515,7 +523,7 @@ export default function MergeParticipants() {
 
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setPreviewMode(false)} disabled={merging}>Cancel</Button>
-            <Button color="red" onClick={handleMerge} disabled={merging} loading={merging}>Confirm Merge &amp; Tombstone</Button>
+            <Button color="red" onClick={handleMerge} disabled={merging} loading={merging}>Confirm Merge &amp; Delete</Button>
           </Group>
         </Card>
       ) : null}
