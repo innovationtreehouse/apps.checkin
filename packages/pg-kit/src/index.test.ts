@@ -9,6 +9,7 @@ import {
   createLazyPrisma,
   isUniqueConstraintError,
   isRecordNotFoundError,
+  dbFailureKind,
   isDbUnavailableError,
   retryOnUniqueRace,
   withAdvisoryLock,
@@ -135,5 +136,37 @@ describe("isDbUnavailableError", () => {
     expect(isDbUnavailableError(new Error("Connection terminated unexpectedly"))).toBe(false);
     expect(isDbUnavailableError({ code: "P2002" })).toBe(false);
     expect(isDbUnavailableError(null)).toBe(false);
+  });
+
+  it.each(["P1000", "P1003", "P1008", "P1010", "P1011", "P1017", "P2037"])("does not retry %s", (code) => {
+    expect(isDbUnavailableError({ code })).toBe(false);
+  });
+});
+
+describe("dbFailureKind", () => {
+  it.each([
+    ["P1001", "system"],
+    ["P2024", "system"],
+    ["P1008", "system"],
+    ["P1017", "system"],
+    ["P2037", "system"],
+    ["P1000", "connection"],
+    ["P1010", "connection"],
+    ["P1011", "connection"],
+    ["P1003", "settings"],
+  ])("sorts %s as %s", (code, kind) => {
+    expect(dbFailureKind({ code })).toBe(kind);
+  });
+
+  it("sorts the pg pool's connect timeout as system", () => {
+    expect(dbFailureKind(new Error("timeout exceeded when trying to connect"))).toBe("system");
+  });
+
+  it.each([["P2002"], ["P2025"], ["P2021"], [undefined]])("leaves %s unsorted", (code) => {
+    expect(dbFailureKind({ code })).toBeUndefined();
+  });
+
+  it("leaves a non-object unsorted", () => {
+    expect(dbFailureKind(null)).toBeUndefined();
   });
 });

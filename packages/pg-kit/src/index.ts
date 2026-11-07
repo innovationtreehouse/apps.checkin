@@ -83,6 +83,31 @@ export function isDbUnavailableError(err: unknown): boolean {
 }
 
 /**
+ * Prisma's connection error codes, as the driver adapter assigns them, by who acts: `system`
+ * the database is down or overloaded and comes back by itself, `connection` the login or link
+ * is refused until someone fixes it, `settings` the configured database does not exist.
+ */
+const DB_CODE_KINDS = new Map<unknown, "system" | "connection" | "settings">([
+  ["P1008", "system"], // socket timed out
+  ["P1017", "system"], // server closed the connection
+  ["P2037", "system"], // too many connections
+  ["P1000", "connection"], // authentication failed
+  ["P1010", "connection"], // access denied
+  ["P1011", "connection"], // TLS connection failed
+  ["P1003", "settings"], // database does not exist
+]);
+
+/**
+ * The failure kind of a database error that says the database can't be used right now, or
+ * undefined for any other error. Wider than {@link isDbUnavailableError}: P1008 and P1017 can
+ * strike mid-query, so they are an outage but not safe to retry.
+ */
+export function dbFailureKind(err: unknown): "system" | "connection" | "settings" | undefined {
+  if (isDbUnavailableError(err)) return "system";
+  return DB_CODE_KINDS.get(prismaErrorCode(err));
+}
+
+/**
  * Run an idempotent upsert that may lose a create race against a concurrent caller. On the
  * unique-constraint loss, retry once: the row now exists, so the retry takes the `update` branch.
  */

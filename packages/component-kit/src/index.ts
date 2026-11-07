@@ -8,7 +8,7 @@
  * module, so class identity differs, while the global symbol registry is shared. The file
  * has no relative imports: Turbopack resolves only the package's `.` export.
  */
-import { isDbUnavailableError } from "@checkin/pg-kit";
+import { dbFailureKind } from "@checkin/pg-kit";
 import type { ZodType } from "zod";
 
 const SERVICE_ERROR = Symbol.for("@checkin/component-kit/ServiceError");
@@ -175,15 +175,14 @@ export function isKindedError(err: unknown): err is KindedError {
 
 /**
  * The kind of any error. A library's 4xx is data, except 401 (our wiring lost the caller: bug)
- * and 429 (a passing overload: system). Anything unrecognised is a bug, which keeps today's
- * retry-then-hold.
+ * and 429 (a passing overload: system). A database connection error takes the kind pg-kit's
+ * `dbFailureKind` gives it. Anything unrecognised is a bug, which keeps today's retry-then-hold.
  */
 export function kindOf(err: unknown): FailureKind {
   if (isKindedError(err)) return err.kind;
   if (isServiceError(err) || isComponentHttpError(err)) return statusKind(err.status);
   if (isZodError(err)) return "data";
-  if (isDbUnavailableError(err)) return "system";
-  return "bug";
+  return dbFailureKind(err) ?? "bug";
 }
 
 function statusKind(status: number): FailureKind {
