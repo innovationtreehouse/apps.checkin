@@ -11,11 +11,12 @@ import { runDevDataCheck } from "../src/lib/dev/dataCheck";
  */
 
 // Receipts are counted for information only; they are mostly anonymous and outside the check.
-async function countReceipts(): Promise<number | string> {
+// The error text stays out of the output: workflow logs are public, and a connection error names hosts.
+async function countReceipts(): Promise<number | "unavailable"> {
     try {
         return await getReceiptPrisma().receipt.count();
-    } catch (e) {
-        return `unavailable: ${e instanceof Error ? e.message.split("\n")[0] : "unknown error"}`;
+    } catch {
+        return "unavailable";
     }
 }
 
