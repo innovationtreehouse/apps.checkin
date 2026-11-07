@@ -7,8 +7,10 @@ came through. No code changes with this doc.
 **Status: under discussion, nothing is being built.** Two framing questions
 come first and may change everything below:
 
-- **Q10. One log entry per page view, not per API route call** (next section).
-- **Q9. Which fields make a view a finance view** (at the end).
+- **Q10. One log entry per page view, not per API route call** (next section),
+  with **Q11**, which routes a page may fold into its entry.
+- **Q9. Which fields make a view a finance view**, and **Q12**, whether that
+  narrows Board ruling B11 (at the end).
 
 The route-by-route design below stands only until both are settled.
 
@@ -47,6 +49,71 @@ directly, about 200 times across `checkin-app/src`.
   cannot stand alone.
 
 Proposed: (a).
+
+### Can it be fooled?
+
+The page-view id and the page path both come from the browser, so a client can
+lie about either. The design makes a lie cost **attribution only, never
+coverage**:
+
+- The records named always come from the stripped server responses, never
+  from the client.
+- Merging only ever adds record ids to the row. It never drops a call's
+  records and never skips a write.
+- The own-records exclusion (§5) is decided by the server from the records
+  themselves, never from the claimed path.
+- Leaving the header off produces more rows, not fewer.
+
+What a lie can still do:
+
+- **Reuse one id across pages.** Unrelated views fold into one row under one
+  page name, with coarser timing. Example: Pat opens expense e_123, then
+  receipt r_9, sending the same id both times; the log shows one entry, "on
+  the expense page", naming e_123 and r_9.
+- **Claim a different path.** Example: the expense page's calls arrive
+  labelled `/finance/review`, so the entry reads "viewed expense e_123 on the
+  finance queue". The record is right; the screen is wrong.
+
+Three server-side limits, proposed:
+
+- **Bound to the person.** A page-view id merges only calls from the person who
+  first used it. The same id from someone else starts their own row.
+- **A short window.** Calls merge only within 30 seconds of the id's first call.
+  After that, a reused id starts a new row.
+- **One path per id.** Calls merge only when they claim the same page path as
+  the id's first call. A call claiming another path starts a new row.
+
+With these, a lie can only merge one person's own calls, made within 30 seconds,
+under one page name. What it can still do is put the wrong page name on that
+entry. Q11 asks whether to close that too.
+
+**Q11. A per-page allowlist of routes.** You suggested the server keep a map
+from each page to the API routes that page may fold into its entry. A call
+from a route not on its claimed page's list writes its own row. Example:
+
+| Page | Routes it may fold |
+|---|---|
+| `/expense/expenses/[id]` | expense detail, signoffs, line-item approvals, reimbursee-vendor, qb-candidates |
+| `/finance/review` | finance-queue |
+
+A call to `GET /api/donations/transactions` claiming `/expense/expenses/e_123`
+is not on that page's list, so it writes its own row and does not fold into
+the expense entry.
+
+- **What it buys over the three limits:** the words "on the X page" become
+  trustworthy. A client can no longer fold a donation view into an expense
+  entry, or label a finance-queue call as the expense page.
+- **What it costs:** every new panel or route a page calls has to be added to
+  the map. Until it is, that call logs as a separate row. That is safe (nothing
+  goes unlogged), just noisier, and the noise shows that the map is behind.
+- **Where it lives:** the page registry (`checkin-app/src/components/pageRegistry.ts`)
+  lists only named pages, not dynamic ones such as `/expense/expenses/[id]`
+  (it says so at its top and in `REGISTRY_EXCLUDED`). So the map needs a
+  declaration of its own beside the registry, or the registry has to grow
+  dynamic pages. The map decides what gets merged in the log, so it is a
+  boundary file either way.
+
+Should the server keep this allowlist, or are the three limits enough?
 
 **Effect on the other questions.** Under (a), the panels on a record's page fold
 into that page's single entry:
@@ -251,13 +318,24 @@ is Q1.
    the handler and file handler reading declarations; the concrete path and
    declared query on the log row; kind-qualified ids; every audited registry
    entry's declaration; `receiptId` in `FinanceQueueRow`'s classification;
-   dropping `auditedRead` from `GET /api/income/items`. With its migration for
-   the new columns.
+   dropping `auditedRead` from `GET /api/income/items`. No migration (see
+   below).
 2. **App code:** `receiptId` in the finance-queue rows; `financeViewKinds.ts`
    labels and links by kind; the tab shows the path and query.
 
 Until (2) adds `receiptId`, the declared field is absent and an intake row
 records nothing, as today.
+
+**The migration ships first, on its own.** The boundary isolation workflow
+(`.github/workflows/security-boundary-isolation.yml`) does not accept
+`prisma/migrations/` as a companion of a boundary change; only a whole-entry
+decommission may carry one. So any new log columns land first in an app-code
+PR: an additive migration plus the writer changes that fill the columns, as
+B11's first PR (#2659) did. The order is:
+
+1. App code: the additive migration and the writer.
+2. Boundary: the items in (1) above, with no migration.
+3. App code: the items in (2) above.
 
 ## Decided
 
@@ -275,6 +353,11 @@ records nothing, as today.
   information. This covers `GET /api/expense/provisional-items`.  [Decision — owner]
 - **"Payout record" means a payout from Shopify, and nothing else.**
   [Decision — owner]
+- **QuickBooks account names are not on the list.** The sensitive part is
+  linking people to money; an account name is neither.  [Decision — owner]
+- **The starting list of fields that link a person to money stands:** every
+  `…Cents` amount; a donor's name, email, address and comment text; and the
+  person reimbursed and the vendor on an expense.  [Decision — owner]
 - **Log rows written before the change stay as they are.** Nothing converts
   them, and the search does not match their bare ids.  [Decision — owner]
 
@@ -341,24 +424,69 @@ Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
   e_123", or log nothing?
 
 - **Q9. Which fields make a view a finance view.** You said what matters is the
-  fields shown, not the screens: dollars or a donor's name make a view a
-  finance view, and the views follow from that. The design above instead
-  flags each route by hand. Deriving the views from fields would work like
+  fields shown, not the screens: the sensitive part is linking people to money,
+  and the views follow from that. Deriving the views from fields would work like
   this: fields carry a mark, and a view is logged when the response sent
   contains a marked field on a record that is not the viewer's own. The
   records named are the rows carrying those fields.
 
-  To get there, the mark needs a list. Candidates from the schema, for you to
-  confirm or cut:
-  - money amounts: every `…Cents` field (totals, line amounts, payouts,
-    deposits, gift values);
-  - donor identity: a donor's name, email and address on a donation, and a
-    donor's comment text;
-  - payee identity: who is reimbursed, and the vendor on an expense;
-  - anything else: bank or card details, QuickBooks account names?
+  The starting list is decided (see Decided). Searching the schemas of checkin,
+  expense, receipt, income, bulk-donation, workflow-mapping, and the Shopify
+  mirror (`packages/s-ingest-core`) for other fields that tie a person to money
+  turned up these. Please confirm or cut each:
 
-  Which fields are on the list? Until this is settled the design does not
-  change, and nothing is built.
+  | Field | Model | Example | Why it ties a person to money |
+  |---|---|---|---|
+  | `uploadedByUserId` | `Receipt` (receipt) | Sam uploaded a $42.10 receipt | The submitter, who may not be the reimbursee: the person who spent or handed in the money. |
+  | `submitterId` | `Expense` (expense) | Sam submitted a $42.10 expense | The same person, on the expense. |
+  | `customerName`, `customerEmail` | `ShopOrder` (s-ingest-core) | Jo Diaz paid $180 for a program seat | A buyer and the amount they paid or were refunded (`totalCents`, `totalRefundedCents`). |
+  | `familyName`, `familyEmail` | `PaymentQueueRow` (view, shopify read) | The Diaz family's $180 order is short | The same buyer, on Finance Ops → Payments. |
+  | `personId` with `isPaymentPlanRequested` / `scholarshipRequestKind` | `ProgramParticipant` (checkin) | Jo asked for a scholarship for a $180 program | A person asking for help to pay. The price is on `Program`, public. |
+  | `donorCompanyName` | `InKindDonation` (bulk-donation) and `Receipt` (receipt) | Acme gave goods worth $300 | A donor that is a company, beside the gift's value. |
+  | `companyName` | `Transaction` (bulk-donation) | Gift through Acme's matching programme | The donor's employer on a Benevity gift: names who matched, beside `matchAmountCents`. |
+
+  Checked and **not** found:
+  - **Cardholder:** no field names the cardholder on a card charge. The
+    submitter of a card-charge expense is the nearest thing, so `submitterId`
+    covers it.
+  - **Donor email and address:** no schema stores them. A Benevity gift and a
+    gift of goods carry only the donor's first and last name, company and
+    comment.
+  - **Refunds:** `ShopRefund` holds amounts but no person. It links to a person
+    only through its order, so `ShopOrder`'s customer fields cover it.
+  - **Membership payment plans:** `OrgMembershipProcess` carries no amount.
+    The dues are `BoardSettings` fees, which are public. The plan links a
+    household to dues only by implication.
+  - **Approvers and reviewers** (`approvedByUserId`, `decidedByUserId`,
+    `reviewedByUserId`, `boardAuthorizedByUserId`): these name who acted on a
+    record, not who paid or was paid. They are left off unless you want them.
+
+  **Stored files.** A receipt image (`Receipt` file), a mail item's file and a
+  donation upload file carry names and amounts inside their bytes, where no
+  field mark can see. Proposed: the file field itself carries the mark, so
+  serving such a file to anyone other than its owner is always logged.
+
+  **Where the mark lives.** A schema annotation beside `@sensitivity` on each
+  field (for example `/// @moneyLink`, name to be settled), in each library's
+  `schema.prisma`. For a view model, it goes in the hand-authored synthetic
+  classification files. `checkin-app/scripts/security-generator.js` carries it
+  into the generated classifications the handler reads. Schema annotations and
+  the generated files are boundary companions, so the mark lands in the
+  boundary PR. `packages/s-ingest-core` already runs the same `security`
+  generator, so `ShopOrder` is marked the same way.
+
+- **Q12. Does this narrow Board ruling B11?** "Linking people to money" means a
+  view that shows amounts with no person is not logged. Today these are logged,
+  because the register line in `docs/rules/revenue.md` reads "every view of
+  finance records other than a person's own is recorded":
+  - the payouts list (`GET /api/income/payouts`): amounts and dates, no people;
+  - gifts of goods shown to operations and inventory managers without the donor
+    (`GET /api/donations/in-kind/manual` under their no-donor view);
+  - a bucket approver's expense lines, without the submitter or reimbursee
+    (`GET /api/expense/expenses` under the approver view).
+
+  Is that narrowing intended? If it is, the `revenue.md` line needs rewording,
+  and since B11 is a Board ruling, the change may need the Board's sign-off.
 
 ## Follow-ups outside this design
 
