@@ -90,8 +90,8 @@ Things the app takes as true because they are handled outside it.
 - Every account the app books to must be of a QuickBooks type listed for its
   line or role. The books map, the giving-platform account rules, expense's
   QuickBooks accounts and account rules, the account finance sets on a held
-  expense line and the one finance sets on a gift-of-goods line refuse any other
-  type on save, reading the type from
+  expense line, the one finance sets on a gift-of-goods line and online-store
+  items' accounts refuse any other type on save, reading the type from
   QuickBooks, and refuse the save while QuickBooks can't be read. A stored
   account that later reads as another type is flagged on System Status for
   finance to re-pick; the app never rewrites it. Online-store fees take only an

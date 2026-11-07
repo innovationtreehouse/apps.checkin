@@ -70,15 +70,27 @@ interface SubcategoryOption {
   number: number;
   categoryId: number;
 }
-/** Catalog names by GTIN, one request per distinct GTIN; a name that fails to load is left out and the part still shows its ID. */
-function useCatalogNames(gtins: string[]): Map<string, string> {
+/** The provisional names GET /api/inventory/org-items/{gtin13} returns beside the row. */
+interface OrgItemNames { InventoryProvisionalItem?: { provisionalGtin13: string; name: string }[] }
+
+/** A part's catalog name, else its provisional name from org-items; null when neither loads. */
+async function partName(gtin13: string): Promise<string | null> {
+  const item = await api<CatalogItem>(`/api/catalog/items/${gtin13}`).catch(() => null);
+  if (item?.name) return item.name;
+  const row = await api<OrgItemNames>(`/api/inventory/org-items/${gtin13}`).catch(() => null);
+  return row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13)?.name ?? null;
+}
+
+/** Part names by GTIN, one lookup per distinct GTIN; a part with no name is left out and still shows its ID. */
+function usePartNames(gtins: string[]): Map<string, string> {
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const key = [...new Set(gtins)].sort().join(",");
   useEffect(() => {
     if (!key) return;
     let live = true;
-    Promise.all(key.split(",").map((gtin13) => api<CatalogItem>(`/api/catalog/items/${gtin13}`).catch(() => null)))
-      .then((rows) => { if (live) setNames(new Map(rows.flatMap((row) => (row ? [[row.gtin13, row.name] as const] : [])))); });
+    const ids = key.split(",");
+    Promise.all(ids.map(partName))
+      .then((found) => { if (live) setNames(new Map(ids.flatMap((gtin13, i) => (found[i] ? [[gtin13, found[i]] as const] : [])))); });
     return () => { live = false; };
   }, [key]);
   return names;
@@ -92,7 +104,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
-  const catalogNames = useCatalogNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? []));
+  const partNames = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
   const [busy, setBusy] = useState(false);
   const [openLineId, setOpenLineId] = useState<number | null>(null);
 
@@ -201,8 +213,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
             const lineBase = `${base}/lines/${ls.id}`;
             const isOpen = editable && openLineId === ls.id;
             const mappedGtin = ls.assignedGtin13 ?? ls.provisionalItemGtin13;
-            // A provisional part takes its name from the line's description when the receipt applies.
-            const mappedName = ls.assignedGtin13 ? catalogNames.get(ls.assignedGtin13) : li?.description;
+            // A provisional part has no row until the receipt applies, and then takes the line's description as its name.
+            const mappedName = (mappedGtin && partNames.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : li?.description);
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>

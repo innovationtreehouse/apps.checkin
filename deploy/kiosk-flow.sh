@@ -3,6 +3,8 @@
 # a throwaway signing key, and runs checkin-app/kiosk-flow inside it.
 #   deploy/kiosk-flow.sh       the flow tier (jest)
 #   deploy/kiosk-flow.sh e2e   the browser tier (Playwright, the new image only)
+# KIOSK_IMAGE_REF=<image>@sha256:<digest> tests that published image as the new one
+# instead of building it.
 set -euo pipefail
 TIER="${1:-flow}"
 cd "$(dirname "$0")/.."
@@ -13,7 +15,12 @@ OLD_IMAGE_COMMIT=c7415d82f
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-kiosk-flow-$(basename "$PWD" | tr A-Z a-z | tr -cd a-z0-9_-)}"
 compose() { docker compose -f deploy/docker-compose.flow.yml -f deploy/docker-compose.flow-kiosk.yml "$@"; }
 
-docker build -q -t $COMPOSE_PROJECT_NAME:new client/
+if [ -n "${KIOSK_IMAGE_REF:-}" ]; then
+  docker pull -q "$KIOSK_IMAGE_REF"
+  docker tag "$KIOSK_IMAGE_REF" $COMPOSE_PROJECT_NAME:new
+else
+  docker build -q -t $COMPOSE_PROJECT_NAME:new client/
+fi
 if [ "$TIER" = flow ]; then
   git archive "$OLD_IMAGE_COMMIT:client" | docker build -q -t $COMPOSE_PROJECT_NAME:old -
 fi
