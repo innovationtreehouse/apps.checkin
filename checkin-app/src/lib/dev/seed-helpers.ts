@@ -349,7 +349,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     // The alert address local and dev send alerts to, unless one is set. Prod's is set by a person.
     await prisma.boardSettings.updateMany({
         where: { id: 1, alertEmailAddress: null },
-        data: { alertEmailAddress: "finance@innovationtreehouse.org" },
+        data: { alertEmailAddress: "alerts@example.com" },
     });
 
     // 6. Sample programs: Woodworking 101, which the flow tests use, then one per sale state.

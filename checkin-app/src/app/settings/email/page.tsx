@@ -202,7 +202,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="Alert address"
               description="A group address. Every system and QuickBooks alert goes here. Blank = alerts are not sent."
-              placeholder="finance@innovationtreehouse.org"
+              placeholder="alerts@example.com"
               w={440}
               value={alertAddress}
               error={fieldErrors.alertAddress}
@@ -212,7 +212,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="Board address"
               description="The Board's group address."
-              placeholder="board@innovationtreehouse.org"
+              placeholder="board@example.com"
               w={440}
               value={boardAddress}
               error={fieldErrors.boardAddress}
