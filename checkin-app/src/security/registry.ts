@@ -406,33 +406,6 @@ defineRoute({
     ],
 });
 
-// Tombstone census. Lists merged-away Person rows and, per tombstone, the
-// residue still parked on it, for sysadmin/board triage. The bag is
-// { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
-// _count of the residue relations) and { PersonMerge } (fromId only, so the page
-// can flag a tombstone that has no archive row). Exposes tombstone identity,
-// so isSysadmin/board only — the same band that already sees applicant PII.
-//
-// The grant is pii + internal + public: email is the one pii field; name/id/
-// mergedInto are public; PersonMerge.fromId and the `roles`/`rawBadgeLogs` relations
-// are internal-tier, and `_count` is gated per-relation on relationVisible (any
-// field of the target model visible under these tokens) — without everyones:internal
-// those two counts silently drop and PersonMerge always reads empty, understating
-// the census (every tombstone reads "no archive" and the no-pathway total
-// under-reports).
-defineRoute({
-    endpoint: 'GET /api/membership-ops/participants/tombstones',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
-    envelope: null,
-    // Bag: { Person } (tombstones, with mergedInto Person for the survivor and a
-    // _count of the residue relations) and { PersonMerge } (archive rows, fromId).
-    returns: ['Person', 'PersonMerge'],
-    orderedView: [
-        ['isSysadmin',    ['everyones:internal', 'everyones:pii', 'public']],
-        ['isBoardMember', ['everyones:internal', 'everyones:pii', 'public']],
-    ],
-});
-
 // A reviewer withdraws their own approval while the review still waits on its
 // second reviewer; the service enforces ownership, APPROVE-only and phase. Same
 // admission band as the queue. No bag: the response is {}, no model data.
