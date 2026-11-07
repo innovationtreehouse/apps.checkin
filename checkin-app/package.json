@@ -23,6 +23,7 @@
     "check-route-coverage": "ts-node --project scripts/tsconfig.json scripts/check-route-coverage.ts",
     "shopify:webhook": "tsx scripts/register-shopify-webhook.ts",
     "coalesce-migrations": "tsx scripts/coalesce-migrations.ts",
+    "dev-data-check": "tsx scripts/dev-data-check.ts",
     "generate:lifecycle-artifacts": "tsx src/lib/lifecycle/generate.ts"
   },
   "engines": {
