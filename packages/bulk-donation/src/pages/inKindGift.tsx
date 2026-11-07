@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
-import { api, errorMessage, useCanWrite, useLoad, when } from "../components/api";
+import { api, errorMessage, isRefusal, useCanWrite, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError } from "@checkin/component-ui";
@@ -92,6 +92,7 @@ function donorName(g: Gift): string {
 function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }) {
   const canWrite = useCanWrite();
   const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
 
   if (gift.source === "receipt") {
     return (
@@ -108,7 +109,8 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
       notifications.show({ message: "Goods loaded into inventory", color: "green" });
       onReload();
     } catch (e) {
-      notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(e), color: "red", autoClose: false });
+      if (isRefusal(e)) setRefusal(e.message);
+      else notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(e), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }
@@ -120,11 +122,17 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
     <Alert color="red" title="Goods not loaded into inventory">
       <Group justify="space-between" wrap="nowrap">
         <Text size="sm">
-          {gift.inventoryLoadFailureReason
-            ? `The load for ${gift.inventorySourceKey} failed: ${gift.inventoryLoadFailureReason}`
-            : `The load for ${gift.inventorySourceKey} failed or has not run.`}
+          {refusal ??
+            (gift.inventoryLoadFailureReason
+              ? `The load for ${gift.inventorySourceKey} failed: ${gift.inventoryLoadFailureReason}`
+              : `The load for ${gift.inventorySourceKey} failed or has not run.`)}
         </Text>
-        {canWrite && <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void retry()}>Load again</Button>}
+        {canWrite &&
+          (refusal ? (
+            <Button size="xs" variant="light" color="red" disabled>Can&apos;t be loaded: adjust stock by hand</Button>
+          ) : (
+            <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void retry()}>Load again</Button>
+          ))}
       </Group>
     </Alert>
   );

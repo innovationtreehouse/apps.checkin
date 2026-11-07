@@ -1,5 +1,5 @@
 "use client";
-import { createClient, errorMessage, useViewer, type Loaded } from "@checkin/component-ui";
+import { createClient, errorMessage, HttpError, useViewer, type Loaded } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 
 /**
@@ -29,6 +29,11 @@ export function useOwners(): Loaded<OwnerOption[]> {
 export function ownerName(owners: readonly OwnerOption[] | null, id: number | null): string {
   if (id === null) return "—";
   return owners?.find((o) => o.id === id)?.name ?? `Owner #${id}`;
+}
+
+/** A route that will never take this request: a 4xx other than 401 (our wiring) and 429 (a passing overload). */
+export function isRefusal(e: unknown): e is HttpError {
+  return e instanceof HttpError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429;
 }
 
 export function when(iso: string | null | undefined): string {

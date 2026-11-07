@@ -114,16 +114,28 @@ describe("in-kind gift page", () => {
     expect(screen.getByText("The load for donation:4 failed: Not a provisional GTIN: 0011111111116")).toBeInTheDocument();
   });
 
-  it("keeps a failed retry's error up until dismissed", async () => {
+  it("keeps a failed retry's error up until dismissed, and lets it be tried again", async () => {
     mockGift = { ...manual, inventoryLoadedAt: null };
-    mockApi.mockRejectedValue(new HttpError("Catalog item 0011111111116 not found", 409));
+    mockApi.mockRejectedValue(new HttpError("Inventory is unavailable", 503));
     wrap(<ManualGiftPage />);
     fireEvent.click(screen.getByRole("button", { name: "Load again" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "Catalog item 0011111111116 not found", color: "red", autoClose: false }),
+        expect.objectContaining({ message: "Inventory is unavailable", color: "red", autoClose: false }),
       ),
     );
+    expect(mockReload).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Load again" })).toBeEnabled();
+  });
+
+  it("turns the button off with the server's reason when inventory refuses the load", async () => {
+    mockGift = { ...manual, inventoryLoadedAt: null };
+    mockApi.mockRejectedValue(new HttpError("This source was already applied with a different inventory delta.", 409));
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    expect(await screen.findByRole("button", { name: "Can't be loaded: adjust stock by hand" })).toBeDisabled();
+    expect(screen.getByText("This source was already applied with a different inventory delta.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load again" })).not.toBeInTheDocument();
     expect(mockReload).not.toHaveBeenCalled();
   });
 
