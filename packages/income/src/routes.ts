@@ -4,10 +4,11 @@
  * each value by the model the host classifies it as.
  */
 import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
+import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
-import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
+import { getIncomeConfig, getOrgId, getPrincipal, getQuickBooksAccounts } from "./runtime";
 import { runReconcile } from "./lib/reconcile";
 import { DEPOSIT_SOURCE } from "./lib/sources";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
@@ -120,6 +121,11 @@ function variantId(raw: string | undefined): string {
 export const setItemCategory: IncomeRouteHandler = async ({ req, params }) => {
   const variant = variantId(params.variantId);
   const { budgetOwnerId, quickBooksAccountId } = await parseBody(req, setCategoryBody);
+  if (typeof quickBooksAccountId === "string") {
+    const accounts = await mapServiceErrors(getQuickBooksAccounts());
+    const refusal = accountTypeRefusal(accounts, quickBooksAccountId, LINE_ACCOUNT_TYPES.storeSale, "An item's account");
+    if (refusal) throw httpError(400, refusal);
+  }
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {
     IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.setCategory(orgId, variant, budgetOwnerId, who, quickBooksAccountId)),

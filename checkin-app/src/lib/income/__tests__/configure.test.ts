@@ -24,6 +24,8 @@ jest.mock("../appItems", () => ({ withAppItems: (sold: unknown) => withAppItems(
 const getQuickBooks = jest.fn();
 const buildQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
+const listQuickBooksAccounts = jest.fn();
+jest.mock("@/lib/finance/booksMap", () => ({ listQuickBooksAccounts: () => listQuickBooksAccounts() }));
 
 async function config(): Promise<IncomeConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -129,5 +131,13 @@ describe("Benevity posting readiness", () => {
     delete process.env.QBO_REALM_ID;
     roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1" });
     await expect(benevityPostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)"]);
+  });
+});
+
+describe("income QuickBooks account list binding", () => {
+  it("reads the books map's live account list", async () => {
+    const accounts = [{ id: "4001", name: "Sales", accountType: "Income" }];
+    listQuickBooksAccounts.mockResolvedValue(accounts);
+    await expect((await config()).quickBooksAccounts!()).resolves.toEqual(accounts);
   });
 });
