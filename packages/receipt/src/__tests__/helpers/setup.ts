@@ -1,3 +1,4 @@
+import { KindedError } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { db } from "../../db";
 import type { InKindDonor, OcrProvider, ReceiptConfig, ReceiptPrincipal } from "../../contract";
@@ -16,21 +17,22 @@ export function actAs(p: ReceiptPrincipal | null): void {
   current = p;
 }
 
-/** Records what reaches each port; succeeds unless told to fail. */
+/** Records what reaches each port; succeeds unless told to fail. `fail.push = true` is an outage; an Error is thrown as given. */
 export function recordingPorts() {
   const calls = {
     pushes: [] as CompletedReceipt[],
     donors: [] as Array<{ orgId: string; receiptId: string; donor: InKindDonor; seq: number }>,
     withdrawals: [] as Array<{ orgId: string; receiptId: string; seq: number }>,
   };
-  const fail = { push: false, donor: false };
+  const fail: { push: boolean | Error; donor: boolean } = { push: false, donor: false };
   return {
     calls,
     fail,
     receiptSink: {
       ingestReceipt: async (r: CompletedReceipt) => {
         calls.pushes.push(r);
-        if (fail.push) throw new Error("workflow-mapping down");
+        if (fail.push instanceof Error) throw fail.push;
+        if (fail.push) throw new KindedError("system", "workflow-mapping down");
         return { id: calls.pushes.length, state: "pending_review", created: true };
       },
     },
