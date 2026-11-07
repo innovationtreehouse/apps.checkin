@@ -7,7 +7,7 @@ const HIDE_ARCHIVED: PolicyRow = {
     permissive: "PERMISSIVE",
     roles: ["public"],
     cmd: "SELECT",
-    qual: `(("archivedAt" IS NULL) OR (current_setting('app.include_archived'::text, true) = 'on'::text))`,
+    qual: '("archivedAt" IS NULL)',
     withCheck: null,
 };
 const HOUSEHOLD_UPDATE: PolicyRow = {
