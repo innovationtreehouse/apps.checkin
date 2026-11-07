@@ -139,6 +139,21 @@ function receiptMailboxCheck(): ConfigCheck {
     };
 }
 
+const READ_TIMEOUT_MS = 5_000;
+
+/** A live System Status read that gives up after five seconds, so an outage cannot hang the page. */
+export function withTimeout<T>(work: Promise<T>, what: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} did not answer within ${READ_TIMEOUT_MS / 1000} seconds`)), READ_TIMEOUT_MS);
+    });
+    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+export function message(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
 /** The alert address row: unset until a person enters it on Settings → Email. */
 export function alertAddressCheck(address: string | null | undefined): ConfigCheck {
     return {

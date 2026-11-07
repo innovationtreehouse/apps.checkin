@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { alertAddressCheck, getConfigHealth } from "@/lib/configHealth";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import { getQuickBooksHealth } from "@/lib/quickbooks/health";
+import { getReceiptMailboxHealth } from "@/lib/receipt/mailboxHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +16,9 @@ export const dynamic = "force-dynamic";
  *
  * Two halves, both feeding the same red nav badge via /api/nav/todo-counts (which reads
  * only the counts; this is the detail view):
- *   - `checks`   — static env/config presence (lib/configHealth.ts), the alert address, then the QuickBooks
- *                  rows (lib/quickbooks/health.ts), which read live and so stay off the badge.
+ *   - `checks`   — static env/config presence (lib/configHealth.ts), the alert address, then
+ *                  the receipt mailbox and QuickBooks rows (lib/receipt/mailboxHealth.ts,
+ *                  lib/quickbooks/health.ts), which read live and so stay off the badge.
  *   - `cronJobs` — last successful run per cron sweep (lib/cronRuns.ts). Rides on this
  *                  route rather than its own: same page, same gate, same question, and a
  *                  new registered route would need its registry entry landed separately.
@@ -24,10 +26,11 @@ export const dynamic = "force-dynamic";
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     if (!(auth.user.isSysadmin || auth.user.isBoardMember)) return apiError("Forbidden", 403);
-    const [settings, quickBooks, cronJobs] = await Promise.all([
+    const [settings, quickBooks, mailbox, cronJobs] = await Promise.all([
         prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } }),
         getQuickBooksHealth(),
+        getReceiptMailboxHealth(),
         getCronJobStatuses(),
     ]);
-    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...quickBooks], cronJobs });
+    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks], cronJobs });
 });

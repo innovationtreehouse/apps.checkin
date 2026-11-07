@@ -10,9 +10,7 @@
  * acknowledged by email (mailReply.ts). A receipt finance rejects is emailed to its uploader and
  * the person reimbursed (purchaseOutcomeMail.ts).
  */
-import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
-import { z } from "zod";
 import { expenseOutcomes, reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
@@ -35,6 +33,7 @@ import { householdWithMembership, IN_LIVE_HOUSEHOLD } from "@/lib/household/arch
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
+import { gmailAccessToken } from "@/lib/receipt/gmailToken";
 import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
@@ -162,30 +161,6 @@ async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
   return addNonMemberAdult(prisma, name);
 }
 
-/** Re-ask the refresher this long before the token it handed out expires. */
-const TOKEN_MARGIN_MS = 5 * 60_000;
-
-const RefresherAnswer = z.object({ accessToken: z.string().min(1), expiresAt: z.number(), mailbox: z.string() });
-
-/**
- * The access token the Infra refresher Lambda publishes, kept until near expiry. The refresher
- * alone holds the refresh token; its answer must name our mailbox, or no token is handed out.
- */
-function refresherAccessToken(functionName: string, mailboxAddress: string): () => Promise<string> {
-  let cached: z.infer<typeof RefresherAnswer> | null = null;
-  return async () => {
-    if (cached && Date.now() < cached.expiresAt - TOKEN_MARGIN_MS) return cached.accessToken;
-    const lambda = new LambdaClient({ region: config.awsRegion() });
-    const res = await lambda.send(new InvokeCommand({ FunctionName: functionName, Payload: JSON.stringify({ action: "current" }) }));
-    // The error payload can echo token-endpoint detail; name only the function.
-    if (res.FunctionError) throw new Error(`Gmail token refresher ${functionName} failed`);
-    const answer = RefresherAnswer.parse(JSON.parse(new TextDecoder().decode(res.Payload)));
-    if (answer.mailbox.toLowerCase() !== mailboxAddress.toLowerCase()) throw new Error("Gmail token refresher holds a different mailbox");
-    cached = answer;
-    return answer.accessToken;
-  };
-}
-
 /** The Gmail reader when mail intake binds (mailboxConfig.ts); otherwise intake reports "unbound". */
 function receiptMailbox(): MailboxReader | undefined {
   const mailbox = receiptMailboxConfig();
@@ -193,7 +168,7 @@ function receiptMailbox(): MailboxReader | undefined {
     if (mailbox.refused) console.error(`[receipt] mail intake unbound: ${mailbox.refused}`);
     return undefined;
   }
-  return createGmailReader(mailbox.mailboxAddress, refresherAccessToken(mailbox.functionName, mailbox.mailboxAddress));
+  return createGmailReader(mailbox.mailboxAddress, gmailAccessToken(mailbox));
 }
 
 const alerts: ReceiptAlerts = {
