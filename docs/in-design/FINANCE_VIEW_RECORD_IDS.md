@@ -5,9 +5,10 @@ Design for making the finance view record (the finance-view rule in
 showed: who looked, on which page, which records, and which sensitive fields
 of them. No code changes with this doc.
 
-**Status: one question is open, Q17's second half.** Five routes logged today
-show no money or person, so "B11 is not narrowed" needs a way to keep them
-logged. Nothing is being built.
+**Status: every question is decided. Nothing is being built yet.** B11 narrows
+slightly (Q17): five routes that show no money and no person stop being logged.
+That changes a Board ruling, so the boundary PR waits for the Board's
+confirmation.
 
 ## The problem
 
@@ -50,8 +51,8 @@ on each route is no longer what decides logging: a new route that sends a
 marked field is logged with nothing to remember.
 
 A route that shows finance records but sends no marked field is not logged.
-Nine routes audited today are in that position; see "Routes the marks alone
-would stop logging" and Q17.
+The routes audited today that this affects are listed in "Routes no longer
+logged".
 
 - **Where the mark lives.** A schema annotation beside `@sensitivity` on each
   field, for example `/// @moneyLink` (the name is settled in the boundary
@@ -84,8 +85,8 @@ model and `id`. A route declares its records only where that default is wrong:
 - **The row is a view model.** `FinanceQueueRow.expenseId` names an `Expense`.
   A view model is not a stored model, so the declaration names the model the id
   belongs to.
-- **The row points at another record (Q4, decided).** A QuickBooks exclusion
-  names `QuickBooks.Transaction` `qbTxnId`, not its own `id`.
+- **The row points at another record (Q4, decided).** A disbursement hold
+  names `Benevity.Disbursement` `disbursementId`, not its own `id`.
 - **The id is several fields.** A payment plan is `programId` + `personId`.
 - **The row's table depends on a field.** An in-kind row is `InKindDonation` or
   `ManualInKindDonation` by its `source`.
@@ -178,7 +179,7 @@ never which records were seen:
 
   | Page | Routes it may fold |
   |---|---|
-  | `/expense/expenses/[id]` | expense detail, signoffs, line-item approvals, reimbursee-vendor, qb-candidates |
+  | `/expense/expenses/[id]` | expense detail, reimbursee-vendor, qb-candidates |
   | `/finance/review` | finance-queue |
 
   A call from a route not on its claimed page's list writes its own row. So
@@ -253,7 +254,6 @@ marked fields it sends.
 | `GET /api/expense/expenses/[id]` and its panels | `Expense` ← param `id`, not its lines (decided) |
 | `GET /api/expense/expense-events` | `Expense` ← `ExpenseEvent.expenseId` |
 | `GET /api/expense/received-expense-payloads` | `Receipt` ← `receiptId` (Q4) |
-| `GET /api/expense/qb-exclusions`, `GET /api/income/qb-exclusions` | `QuickBooks.Transaction` ← `qbTxnId` (Q4) |
 | `GET /api/expense/expenses/[id]/qb-candidates`, `GET /api/income/reconciliation/[id]/candidates` | `QuickBooks.Transaction` ← the candidate's `id` |
 | `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` (a view model) |
 | `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) |
@@ -269,32 +269,34 @@ marked fields it sends.
 | `GET /api/finance-ops/payment-plans` | `ProgramParticipant` ← `['programId','personId']` (decided) |
 | file routes (receipt file, mail-item file, donation upload) | the file's record ← param `id` |
 
-Not logged, by decision: `GET /api/income/items` (an item-to-bucket mapping)
-and `GET /api/expense/provisional-items` (catalog), whatever marks they carry.
+Routes no longer logged are listed in the next section.
 
 The finance-queue's intake rows need a response change. A row for a receipt
 with no expense yet carries neither `expenseId` nor the receipt id (`rowsOf` in
 `packages/expense/src/services/financeQueueService.ts`), so `receiptId` is added
 to `FinanceQueueRow`, with its classification.
 
-## Routes the marks alone would stop logging
+## Routes no longer logged
 
-Checked against the generated and synthetic classifications: these routes are
-audited today, and no model they return carries a marked field. Two more,
-`GET /api/income/items` and `GET /api/expense/provisional-items`, stop by
-decision and are not listed.
+All of these are audited today.
 
-| Route | What a row holds | Where money or a person can appear |
-|---|---|---|
-| `GET /api/expense/received-expense-payloads` | `ReceivedExpensePayload`: `receiptId`, `payloadJson`, `status` | `payloadJson` is the stored expense payload, with its amounts and the submitter |
-| `GET /api/donations/disbursement-events` | `DisbursementEvent`: `disbursementId`, `payload` | `payload` is the stored Benevity disbursement |
-| `GET /api/receipts/[id]/audit-logs` | `ReceiptAuditLog`: `fieldChanged`, `valueBefore`, `valueAfter` | the before and after values, e.g. `totalCents` 4210 → 4120 |
-| `GET /api/workflow-mapping/audit-log` | `WorkflowAuditLog`: `eventType`, `fromState`, `toState`, `details` | `details`, free text on the event |
-| `GET /api/expense/qb-exclusions` | `ExpenseQbMatchExclusion`: `qbTxnId`, `reason`, who excluded it | none: no amount, no payer or payee |
-| `GET /api/income/qb-exclusions` | `IncomeQbMatchExclusion`: `qbTxnId`, `reason` | none |
-| `GET /api/receipts/ignored-files` | `ReceiptIgnoredFileView`: `fileHash`, `reason` | none: mailbox configuration |
-| `GET /api/expense/expenses/[id]/signoffs` | `ExpenseLineSignoffStatus`: per-line seat status | none; a panel of the expense page |
-| `GET /api/expense/expenses/[id]/line-item-approvals` | `LineItemOwnerApproval`: bucket, status, who decided | none; a panel of the expense page |
+| Route | Why it stops |
+|---|---|
+| `GET /api/income/items` | maps Shopify variants to buckets: inventory, not finance (decided) |
+| `GET /api/expense/provisional-items` | catalog items and mappings (decided) |
+| `GET /api/expense/qb-exclusions` | `qbTxnId`, `reason` and who excluded it: no amount, no person (Q17) |
+| `GET /api/income/qb-exclusions` | `qbTxnId` and `reason`: no amount, no person (Q17) |
+| `GET /api/receipts/ignored-files` | a file hash and a reason: mailbox configuration (Q17) |
+| `GET /api/expense/expenses/[id]/signoffs` | per-line seat status, no money or person (Q17) |
+| `GET /api/expense/expenses/[id]/line-item-approvals` | bucket, status, who decided: no money or person (Q17) |
+
+Signoffs and line-item approvals lose little: they are panels of the expense
+page, and the page's entry names the expense from the expense detail call.
+
+Four more routes send no marked field under the original list, but stay logged
+because their stored text is marked (Q17): received expense payloads
+(`payloadJson`), disbursement events (`payload`), and the receipt and workflow
+change histories (`valueBefore`/`valueAfter`, `details`).
 
 `GET /api/donations/comment-rules` stays logged: `TransactionCommentRule.comment`
 is a donor's comment text, which is marked (decided), so that field carries the
@@ -317,8 +319,8 @@ mark.
    and the page allowlist map. `receiptId` in `FinanceQueueRow`'s
    classification. Retiring the `auditedRead` flag and its guard test, which
    the start-up checks replace. The reworded `docs/rules/revenue.md` register
-   line, reworded only (B11's scope is unchanged, so the Board has nothing to
-   confirm).
+   line, which narrows B11 (Q17). **It waits for the Board's confirmation** of
+   that narrowing.
 3. **App code: the browser and the tab.** The app-shell wrapper that tags each
    `/api` call; `receiptId` in the finance-queue rows; `financeViewKinds.ts` as
    the model-to-page link map; the tab's new entry.
@@ -378,15 +380,16 @@ as today but with exact records and fields.
   `boardAuthorizedByUserId`). They name who acted on a record, not who paid or
   was paid.  [Decision — owner]
 - **Rows that point at a finance record name that record (Q4),** not the row's
-  own id. Example: Income → QuickBooks exclusions lists `id 7, qbTxnId "4412"`,
-  and the log names transaction 4412, not 7. The six screens: income and
-  expense QuickBooks exclusions (`qbTxnId`), received expense payloads
+  own id. Example: Donations → disbursement holds lists `id 3, disbursementId
+  "BEN-889"`, and the log names `Benevity.Disbursement:BEN-889`, not 3. The
+  screens: received
+  expense payloads
   (`receiptId`), disbursement holds (`disbursementId` and `transactionId`),
   disbursement events (`disbursementId`), and income reconciliation
   (`payoutGid`).  [Decision — owner]
 - **Payment plans name `programId:personId`;** the duplicate review names
-  everything it displays; signoffs and expense detail name the expense, not its
-  lines.  [Decision — owner]
+  everything it displays; expense detail names the expense, not its lines.
+  [Decision — owner]
 - **Not logged:** `GET /api/income/items` (variants mapped to buckets) and
   catalog items and mappings such as `GET /api/expense/provisional-items`. They
   are inventory, not finance information.  [Decision — owner]
@@ -409,44 +412,28 @@ as today but with exact records and fields.
   goods shown to operations or inventory managers without the donor, and a
   bucket approver's expense lines stay logged, as they are today.
   [Decision — owner]
-- **B11 is not narrowed (Q12, reversed by Q15).** The finance-view rule keeps
-  the scope the Board ruled: every view of finance records other than a
-  person's own. There is nothing for the Board to confirm.  [Decision — owner]
-  Q17 decides how the five routes with no money or person keep to that.
+- **B11 narrows to views that show money or a person (Q17 (b)).** Five routes
+  that show neither stop being logged: both QuickBooks exclusion lists, ignored
+  files, signoffs and line-item approvals. Amounts on their own still log a
+  view (Q15), so the payouts list and a bucket approver's expense lines stay
+  logged. The Q4 entries for the two exclusion lists are dropped.
+  [Decision — owner, pending Board confirmation]
 
-  The register line in `docs/rules/revenue.md` changes in wording only, to say
-  what the record now holds. Draft for review; `revenue.md` is unchanged until
-  the boundary PR:
+  Draft wording for the `docs/rules/revenue.md` register line, for review.
+  `revenue.md` is unchanged until the boundary PR:
 
-  > - Every view of finance records other than a person's own is recorded, each
-  >   look at a donor included: who looked, on which page, which records and
-  >   which of their sensitive fields, and when, never what the records said.
-  >   A person looking at their own receipts is not recorded, and neither is a
-  >   count. Only the Board reads the record.  [Decision — owner]
+  > - Every view of finance records that shows money or a person tied to it is
+  >   recorded, other than a person's view of their own, each look at a donor
+  >   included: who looked, on which page, which records and which of their
+  >   sensitive fields, and when, never what the records said. A view that
+  >   shows neither, such as a list of QuickBooks transactions excluded from
+  >   matching, is not recorded. A person looking at their own receipts is not
+  >   recorded, and neither is a count. Only the Board reads the record.
+  >   [Decision — owner; Board ruling B11, narrowed]
 
 ## Open questions for @thpr
 
-Q1 to Q16 are settled or retired; their numbers stay retired.
-
-- **Q17. The routes the marks alone would stop logging.** The four with stored
-  payloads and change values are decided (see Decided). Left:
-  - **Rows with no money or person** (both QuickBooks exclusion lists, ignored
-    files, signoffs, line-item approvals). Two options:
-    - (a) a per-route flag, `alwaysLogged`, on these five registry entries. A
-      flagged route is logged whatever it sends, and names records as declared.
-      B11 stays unnarrowed, and the Q4 entries for the exclusion lists stand.
-      The cost is one small exception to "marks decide".
-    - (b) let them stop being logged, and say so: the `revenue.md` line then
-      narrows to views that show money or a person, and since B11 is a Board
-      ruling, the Board confirms it. The Q4 entries for the two exclusion lists
-      are dropped. Signoffs and line-item approvals lose little: they are panels
-      of the expense page, whose entry already names the expense when the
-      browser tags the call.
-
-    Recommended: (a), because it keeps your decision that B11 is not narrowed,
-    with nothing for the Board.
-
-  (a) or (b) for the five?
+None. Q1 to Q17 are settled or retired; their numbers stay retired.
 
 ## Follow-ups outside this design
 
