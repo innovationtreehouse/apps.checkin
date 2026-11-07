@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/membership-ops/applications/refund — board records a membership refund
- * already made in Shopify. Body: { processId, reason }. A paid application waiting on
- * its background check returns to PENDING_PAYMENT; a paid BLOCKED one stays BLOCKED.
+ * already made in Shopify. Body: { processId, reason }. The application lands in the
+ * step `REFUND_LANDS_IN` names (lib/membership/lifecycle.ts), unpaid.
  * Responds with the application's id and new status only.
  */
 export const POST = handler("POST /api/membership-ops/applications/refund", async ({ req, auth }) => {

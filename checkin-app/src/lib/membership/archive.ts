@@ -2,7 +2,7 @@ import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold } from "@/lib/membership/review";
-import { ARCHIVABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
+import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
@@ -22,7 +22,7 @@ function closeRefusal(process: OrgMembershipProcess): string | null {
     if (process.status === "ACTIVE") return "A completed membership cannot be closed.";
     if (process.status === "BLOCKED") return "A blocked application cannot be closed. Reset it for re-review, or clear it with a board override.";
     if (process.paidAt) return "This application has a payment recorded. Refund it in Shopify and record the refund first, then close it.";
-    if (!(ARCHIVABLE_STATUSES as readonly string[]).includes(process.status)) return "This application cannot be closed from its current step.";
+    if (!(CLOSABLE_STATUSES as readonly string[]).includes(process.status)) return "This application cannot be closed from its current step.";
     return null;
 }
 

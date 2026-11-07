@@ -13,7 +13,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { ARCHIVABLE_STATUSES, awaitingBgReview, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessStatus } from "@/lib/membership/lifecycle";
 import { clearingApprovals } from "@/lib/membership/approvals";
 
 interface Person {
@@ -77,9 +77,9 @@ const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : stat
 const awaitingBg = (r: ProcessRow) =>
   awaitingBgReview.has({ status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
 
-// Mirrors archiveApplication's gate; the server re-checks.
-const closable = (r: ProcessRow) => !r.paidAt && (ARCHIVABLE_STATUSES as readonly string[]).includes(r.status);
-const refundable = (r: ProcessRow) => !!r.paidAt && (r.status === "PENDING_BG_CLEARANCE" || r.status === "BLOCKED");
+// Mirror archiveApplication's and recordRefund's gates; the server re-checks.
+const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
+const refundable = (r: ProcessRow) => !!r.paidAt && refundLandsIn(r.status as ProcessStatus) != null;
 
 export default function AdminMembershipPage() {
   return (
