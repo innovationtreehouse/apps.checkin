@@ -7,7 +7,7 @@ import { z } from "zod";
 import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { CatalogItemSummarySchema, InKindDonorSchema, type CatalogItemSummary, type InKindDonor } from "./contract";
 import { db } from "./db";
-import { getCatalogLookup, getOrgId, getPrincipal } from "./runtime";
+import { catalogNotConnected, getCatalogLookup, getOrgId, getPrincipal } from "./runtime";
 import { inKindService } from "./services/inKindService";
 import { manualInKindService, type ManualInKindInput } from "./services/manualInKindService";
 
@@ -65,12 +65,12 @@ export async function withdrawInKind(orgId: string, receiptId: string, seq: numb
 
 /** X10 caller: catalog search for the no-receipt picker. */
 export async function searchCatalog(query: string): Promise<CatalogItemSummary[]> {
-  return CatalogItemSummarySchema.array().parse(await getCatalogLookup().search(query));
+  return CatalogItemSummarySchema.array().parse(await getCatalogLookup().search(query).catch(catalogNotConnected));
 }
 
 /** X10 caller: one catalog item by GTIN. */
 export async function getCatalogItem(gtin13: string): Promise<CatalogItemSummary | null> {
-  return CatalogItemSummarySchema.nullable().parse(await getCatalogLookup().getItem(gtin13));
+  return CatalogItemSummarySchema.nullable().parse(await getCatalogLookup().getItem(gtin13).catch(catalogNotConnected));
 }
 
 /** No-receipt entry: record an in-kind donation picked from the catalog, then load its goods. */

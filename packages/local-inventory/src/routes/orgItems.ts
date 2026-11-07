@@ -5,7 +5,7 @@
  * provisional parts, whose names are.
  */
 import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
-import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
+import { httpError, kindOf, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
@@ -103,6 +103,7 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
   if (provisional) return `${id} was rejected by the catalog`;
   const active = await catalogHasActiveItem(gtin13).catch((err: unknown) => {
+    if (kindOf(err) === "settings") throw httpError(503, "No catalog is connected");
     console.error("[local-inventory] catalog check failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");
   });

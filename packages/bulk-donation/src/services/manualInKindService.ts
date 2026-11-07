@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { db } from "../db";
 import { InKindDonorSchema, inventorySourceKey } from "../contract";
-import { getCatalogLookup, getInventoryApply } from "../runtime";
+import { catalogNotConnected, getCatalogLookup, getInventoryApply } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { kindOf, ServiceError } from "@checkin/component-kit";
@@ -78,7 +78,7 @@ export const manualInKindService = {
     for (const gtin13 of new Set(lines.map((l) => l.gtin13))) {
       const item = await catalog.getItem(gtin13).catch((err: unknown) => {
         if (kindOf(err) === "system") throw new ServiceError(503, "The catalog is unavailable; try again");
-        throw err;
+        return catalogNotConnected(err);
       });
       if (!item) throw new ServiceError(400, `Catalog item ${formatGtinDisplay(gtin13)} not found`);
     }

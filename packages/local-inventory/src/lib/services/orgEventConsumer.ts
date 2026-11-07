@@ -117,7 +117,7 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
  * row, so it alerts on every run until it applies. The host's daily reconcile cron step calls it.
  * Capped; counts only.
  */
-export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean }> {
+export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean; notConnected?: true }> {
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
   const failed = await repo.findPending(orgId);
@@ -136,5 +136,12 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   if (sweep.needsAlert || stuck.length > 0) {
     await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, stuckProvisionals: stuck });
   }
-  return { ...sweep.counts, reconciled, reconcileFailed: stuck.length, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
+  return {
+    ...sweep.counts,
+    reconciled,
+    reconcileFailed: stuck.length,
+    unprocessed: sweep.unprocessed,
+    unreadable: sweep.unreadable,
+    ...(sweep.notConnected && { notConnected: true }),
+  };
 }

@@ -1,4 +1,4 @@
-import { defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { defineRuntime, kindOf, NotWiredError, ServiceError } from "@checkin/component-kit";
 import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
@@ -14,7 +14,15 @@ import type {
 } from "./contract";
 
 const INERT_OWNERS: OwnerDirectory = { list: async () => [] };
-const INERT_CATALOG: CatalogLookup = { search: async () => [], getItem: async () => null };
+/** An unbound catalog says so rather than answer "no item". */
+const INERT_CATALOG: CatalogLookup = {
+  search: async () => {
+    throw new NotWiredError("CatalogLookup.search");
+  },
+  getItem: async () => {
+    throw new NotWiredError("CatalogLookup.getItem");
+  },
+};
 const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");
@@ -52,6 +60,12 @@ export const getPrincipal = bulkDonationRuntime.getPrincipal;
 export const getOrgId = bulkDonationRuntime.getOrgId;
 
 export const assertOrg = bulkDonationRuntime.assertOrg;
+
+/** An unbound catalog as the 503 a person reads; any other failure is rethrown. */
+export function catalogNotConnected(err: unknown): never {
+  if (kindOf(err) === "settings") throw new ServiceError(503, "No catalog is connected");
+  throw err;
+}
 
 export function getOwnerDirectory(): OwnerDirectory {
   return requireRuntime().owners ?? INERT_OWNERS;

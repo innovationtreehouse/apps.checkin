@@ -3,6 +3,7 @@
  * configureLocalInventory() once at boot; the library reads the configured
  * runtime and never imports the host.
  */
+import { NotWiredError } from "@checkin/component-kit";
 
 /** The acting host user, projected to what inventory rows stamp. */
 export interface InventoryPrincipal {
@@ -69,7 +70,12 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
+/** An unbound event source says so rather than answer "no events". */
+export const inertCatalogEventSource: CatalogEventSource = {
+  eventsSince: async () => {
+    throw new NotWiredError("CatalogEventSource.eventsSince");
+  },
+};
 
 /** The slice of a route context a factory consumes: request + path params. */
 export interface InventoryRouteCtx {

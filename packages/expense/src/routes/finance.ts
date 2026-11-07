@@ -138,10 +138,11 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, princi
   return {};
 };
 
-/** Catalog category and subcategory names, through the CatalogReader port (empty until bound); 503 while the catalog is down. */
+/** Catalog category and subcategory names, through the CatalogReader port; 503 while the catalog is unbound or down. */
 export const mappingCatalog: ExpenseRouteHandler = async () => {
   const catalog = getExpenseRuntime().catalog;
   const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]).catch((err: unknown) => {
+    if (kindOf(err) === "settings") throw httpError(503, "No catalog is connected");
     if (kindOf(err) === "system") throw httpError(503, "Catalog categories are unavailable; try again");
     throw err;
   });
@@ -226,6 +227,7 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
   if (provisional) return `${id} was rejected by the catalog`;
   const active = await getActiveItem(gtin13).catch((err: unknown) => {
+    if (kindOf(err) === "settings") throw httpError(503, "No catalog is connected");
     console.error("[expense] catalog check failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");
   });
