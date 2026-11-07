@@ -186,7 +186,7 @@ model PersonMerge {
 
 On `main` every merge writes a `PersonMerge` row (#1729) and deletes the merged-away `Person` row
 in the same transaction (2b-3). A data migration deletes each existing tombstone that has an
-archive row and no remaining reference; any it keeps stay listed on the census page.
+archive row and no remaining reference.
 - **`AuditLog.affectedEntityId`** is a bare `Int` with no FK, so historical audit references survive
   a deleted `Person`.
 - `Person.mergedIntoId`, `mergedInto`, and `mergedFrom` are dropped.
