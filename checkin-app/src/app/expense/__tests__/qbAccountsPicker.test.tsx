@@ -41,6 +41,7 @@ const liveAccounts = [
   { id: "8007", name: "Interest paid", accountType: "Other Expense", active: true },
   { id: "8008", name: "Kit materials", accountType: "Cost of Goods Sold", active: true },
   { id: "8009", name: "Old supplies", accountType: "Expense", active: false },
+  { id: "8010", name: "Equipment", accountType: "Fixed Asset", active: true },
 ];
 
 function renderPage(live: { data: unknown; error: string | null }, saved: unknown[] = []) {
@@ -51,11 +52,11 @@ function renderPage(live: { data: unknown; error: string | null }, saved: unknow
 describe("QuickBooks accounts page", () => {
   beforeEach(() => mockSend.mockClear());
 
-  it("offers only active Expense, Other Expense and Cost of Goods Sold accounts from QuickBooks", () => {
+  it("offers only active Expense, Other Expense, Cost of Goods Sold and Fixed Asset accounts from QuickBooks", () => {
     renderPage({ data: liveAccounts, error: null });
     fireEvent.click(screen.getByRole("textbox", { name: "QuickBooks account" }));
     const offered = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(offered).toEqual(["Merchant fees", "Shop supplies", "Interest paid", "Kit materials"]);
+    expect(offered).toEqual(["Merchant fees", "Shop supplies", "Interest paid", "Kit materials", "Equipment"]);
   });
 
   it("saves the picked account's QuickBooks name and id", () => {

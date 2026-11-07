@@ -400,6 +400,19 @@ describeDb("capital register", () => {
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");
   });
 
+  it("capital review drops a hand-set account from a line whose capital designation it changes, audited, and keeps the rest", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    const flipped = await seedLineItem(id, { manualQbAccount: "5000" });
+    const kept = await seedLineItem(id, { manualQbAccount: "6000" });
+
+    await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: flipped, isCapital: true, capitalOwnerId: 100 }, { lineItemId: kept, isCapital: false }] });
+
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: flipped } })).toMatchObject({ isCapital: true, manualQbAccount: null });
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: kept } })).toMatchObject({ isCapital: false, manualQbAccount: "6000" });
+    const cleared = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "hold_account_cleared" } });
+    expect(cleared).toEqual([expect.objectContaining({ lineItemId: flipped, fieldChanged: "manualQbAccount", valueBefore: "5000", valueAfter: null })]);
+  });
+
   it("capital review and depreciation refuse an archived or unlisted bucket", async () => {
     const id = await seedExpense({ state: "capital_review" });
     const li = await seedLineItem(id);

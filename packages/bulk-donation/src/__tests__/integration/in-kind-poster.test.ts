@@ -142,6 +142,7 @@ function configure() {
     },
     capital,
     partAccounts: rules,
+    quickBooksAccounts: async () => QB_ACCOUNTS.map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "" })),
     inKindQb: {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
@@ -888,28 +889,31 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
   });
 
   it("holds a line whose account a live books-map role books to, without trying the write", async () => {
+    accounts = { ...ACCOUNTS, SHOPIFY_FEES: "610" };
     await switchOn();
     unruled.add(LATHE_GTIN);
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
     await runInKindQbPosting(orgId);
-    await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "290" });
+    await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "610" });
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, failed: 0 });
     expect(await posting(id)).toMatchObject({ matchState: "NEEDS_ACCOUNT", qbPostAttempts: 0, qbNote: expect.stringMatching(/Lathe: .*books-map role's account/) });
   });
 
-  it("holds donated equipment set by hand to an account that is not a fixed asset", async () => {
+  it("refuses to set donated equipment's account to one that is not a fixed asset", async () => {
     await switchOn();
     unruled.add(LATHE_GTIN);
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
     assets = [lathe];
     await runInKindQbPosting(orgId);
-    await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "600" });
 
-    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Lathe: Supplies is Expense; donated equipment takes Fixed Asset/) });
-    expect(qbo.posts).toHaveLength(0);
+    await expect(resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "600" })).rejects.toMatchObject({
+      status: 400,
+      message: "Donated equipment takes a Fixed Asset account; Supplies is Expense",
+    });
+    expect(await events("IN_KIND_LINE_ACCOUNT_SET")).toHaveLength(0);
   });
 
   it("sets a line's account only on a gift the drain handed to finance, and only a line of that gift", async () => {

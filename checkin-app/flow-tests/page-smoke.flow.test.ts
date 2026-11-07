@@ -121,7 +121,7 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
   },
   "/expense/expenses": expenseList,
   "/programs-i-lead/expense-approvals": expenseList,
-  "/expense/account-mapping": () => [paged("/api/expense/account-mapping"), "/api/expense/qb-accounts"],
+  "/expense/account-mapping": () => [paged("/api/expense/account-mapping"), "/api/expense/qb-accounts", "/api/books-map/quickbooks-accounts"],
   "/expense/qb-accounts": () => ["/api/expense/qb-accounts", "/api/books-map/quickbooks-accounts"],
   "/expense/ownership-map": () => [paged("/api/expense/ownership-map")],
   "/expense/settings": () => ["/api/expense/org-settings"],

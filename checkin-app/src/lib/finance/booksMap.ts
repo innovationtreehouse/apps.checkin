@@ -91,6 +91,7 @@ export const LOCAL_QUICKBOOKS_ACCOUNTS = [
     { id: "8006", name: "Shop supplies", accountType: "Expense", active: true },
     { id: "8007", name: "Equipment repairs", accountType: "Other Expense", active: true },
     { id: "8008", name: "Kit materials", accountType: "Cost of Goods Sold", active: true },
+    { id: "8009", name: "Equipment", accountType: "Fixed Asset", active: true },
 ];
 
 /** Every QuickBooks account by its full name, inactive ones flagged, for the role picker and expense's account list. */

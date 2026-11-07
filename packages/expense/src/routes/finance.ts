@@ -5,12 +5,13 @@
  */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
-import { LINE_ACCOUNT_TYPES, accountTypeRefusal, isQuickBooksId } from "@checkin/quickbooks";
+import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
+import { LISTED_TYPES, bookableTypes, refuseWrongType } from "../lib/account-types";
 import { writeOrgAudit } from "../lib/audit";
 import { getActiveItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
@@ -77,12 +78,10 @@ function checkRulePart(partNumber: string): void {
 }
 const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: qbAccountId });
 
-/** Refuses an account QuickBooks doesn't list, or lists under a type expense lines can't book to. Reads QuickBooks live. */
-async function refuseWrongType(qbAccount: string): Promise<void> {
-  const accounts = await mapServiceErrors(getExpenseRuntime().quickbooks.accounts);
-  const refusal = accountTypeRefusal(accounts, qbAccount, LINE_ACCOUNT_TYPES.donatedGoods, "An expense account");
-  if (refusal) throw httpError(400, refusal);
-}
+/** A rule marked capital books to a Fixed Asset account; any other rule to an expense type. */
+const refuseRuleType = (data: { qbAccount: string; isCapital: boolean | null }) =>
+  mapServiceErrors(() => refuseWrongType(data.qbAccount, bookableTypes(data.isCapital), data.isCapital ? "A capital rule's account" : "A rule's account"));
+const refuseListType = (qbAccount: string) => mapServiceErrors(() => refuseWrongType(qbAccount, LISTED_TYPES, "An expense account"));
 
 export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
   AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),
@@ -92,6 +91,7 @@ export const createAccountMapping: ExpenseRouteHandler = async ({ req, principal
   const data = await parseBody(req, mappingSchema);
   const actor = actorOf(await asFinance(principal));
   checkRulePart(data.partNumber);
+  await refuseRuleType(data);
   const orgId = await getOrgId();
   return {
     AccountMapping: await db.$transaction(async (tx) => {
@@ -115,6 +115,7 @@ export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params, p
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
   if (data.partNumber !== before.partNumber) checkRulePart(data.partNumber);
+  await refuseRuleType(data);
   return {
     AccountMapping: await db.$transaction(async (tx) => {
       const row = await tx.accountMapping.update({ where: { id }, data });
@@ -150,7 +151,7 @@ export const qbAccounts: ExpenseRouteHandler = async () => ({
 export const createQbAccount: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
-  await refuseWrongType(data.qbAccount);
+  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   return {
     ExpenseQbAccount: await db.$transaction(async (tx) => {
@@ -165,7 +166,7 @@ export const updateQbAccount: ExpenseRouteHandler = async ({ req, params, princi
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
-  await refuseWrongType(data.qbAccount);
+  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
   return {

@@ -187,9 +187,17 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
   return { id, name: `person-${id}`, isFinance: roles.isFinance ?? false, isBoard: roles.isBoard ?? false };
 }
 
-/** Rebinds the runtime with test ports (org stays ORG). */
+/** QuickBooks' account list as the integration tiers see it: each account id they save, typed Expense. */
+const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense" }));
+const standInAccounts = async () => STAND_IN_ACCOUNTS;
+
+/** Rebinds the runtime with test ports (org stays ORG); QuickBooks' account list is the stand-in unless a test binds one. */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, signoff: selfNamingDirectory, ...ports });
+  configureExpense({
+    org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, signoff: selfNamingDirectory,
+    ...ports,
+    quickbooks: { accounts: standInAccounts, ...ports.quickbooks },
+  });
 }
 
 /**

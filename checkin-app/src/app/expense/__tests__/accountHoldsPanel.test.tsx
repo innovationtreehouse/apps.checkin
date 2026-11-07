@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
@@ -33,7 +33,7 @@ beforeAll(() => {
   } as unknown as typeof ResizeObserver;
 });
 
-interface LineOpts { id: number; description: string; manualQbAccount?: string | null; nonInventory?: boolean }
+interface LineOpts { id: number; description: string; manualQbAccount?: string | null; nonInventory?: boolean; isCapital?: boolean }
 interface HoldOpts { lineItemId: number; reason: string; matchedRows?: unknown[]; status?: string }
 
 function renderWith(lines: LineOpts[], holds: HoldOpts[]) {
@@ -53,6 +53,12 @@ function renderWith(lines: LineOpts[], holds: HoldOpts[]) {
     "/qb-accounts": [
       { id: 1, name: "Supplies", qbAccount: "4000" },
       { id: 2, name: "Tools", qbAccount: "4100" },
+      { id: 3, name: "Equipment", qbAccount: "1500" },
+    ],
+    "/api/books-map/quickbooks-accounts": [
+      { id: "4000", name: "Supplies", accountType: "Expense", active: true },
+      { id: "4100", name: "Tools", accountType: "Cost of Goods Sold", active: true },
+      { id: "1500", name: "Equipment", accountType: "Fixed Asset", active: true },
     ],
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
@@ -123,6 +129,15 @@ describe("Account holds panel", () => {
     );
     expect(resubmit()).toBeEnabled();
     expect(screen.queryByText(/no account yet/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [false, ["Supplies (4000)", "Tools (4100)"]],
+    [true, ["Equipment (1500)"]],
+  ])("offers a held line with isCapital %s only the account types it books to", (isCapital, offered) => {
+    renderWith([{ id: 1, description: "Lathe", isCapital }], [{ lineItemId: 1, reason: "NO_MATCH" }]);
+    fireEvent.click(screen.getByRole("textbox", { name: "QuickBooks account" }));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(offered);
   });
 
   it("hides the panel when no hold is pending", () => {
