@@ -220,11 +220,11 @@ sends a `CompletedReceipt` from `@checkin/receipt-types` to `ingestReceipt`.
   is present only for an approved review.
 - A push never throws to its caller. A failure leaves `pushedAt` null with an audit
   row, for the catch-up step or the manual `push-to-inventory` route. A refusal (the
-  receipt's own payload check, or a 4xx from workflow-mapping) is `push_refused`, and
-  catch-up skips the receipt at once. Any other failure is `push_failed`, its kind in
-  `valueBefore`. Catch-up skips a receipt after five of its own failures in a row. A
-  manual push of it clears the skip; so does any delivery in the org, for outages but
-  not for bugs.
+  receipt's own payload check, or a 4xx from workflow-mapping other than 401, 403 or
+  429) is `push_refused`, and catch-up skips the receipt at once. Any other failure is
+  `push_failed`, its kind in `valueBefore`. Catch-up skips a receipt after five bug
+  failures in a row; a manual push of it clears the skip. An outage (system, connection
+  or settings) is never charged to the receipt, which stays due for the next run.
 - A receipt whose `donorSync` is still `pending` is held back with a `push_deferred`
   audit row, so donations has the final in-kind state before the money side arrives.
 
