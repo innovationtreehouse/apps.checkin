@@ -256,7 +256,11 @@ async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput },
   if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
 }
 
+/** Donations needs a first and last name, so "I am the donor" is refused when the profile lacks either. */
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
+  if ("self" in donor && (!actor.firstName.trim() || !actor.lastName.trim())) {
+    throw new ServiceError(400, "Your profile is missing a first or last name, so you can't be the donor. Add your full name to your profile, or enter the donor's name.");
+  }
   return "self" in donor
     ? { donorFirstName: actor.firstName, donorLastName: actor.lastName, donorCompanyName: null }
     : { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
