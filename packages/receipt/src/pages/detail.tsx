@@ -134,16 +134,19 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     compared.reload();
   };
   // A screen left open is usually current again before anyone clicks; the server still refuses a stale decision.
+  const { reload: reloadReceipt } = receipt;
+  const { reload: reloadGroup } = group;
+  const { reload: reloadCompared } = compared;
   useEffect(() => {
     if (!open) return;
     const refresh = () => {
-      receipt.reload();
-      group.reload();
-      compared.reload();
+      reloadReceipt();
+      reloadGroup();
+      reloadCompared();
     };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, [open, receipt.reload, group.reload, compared.reload]);
+  }, [open, reloadReceipt, reloadGroup, reloadCompared]);
   useEffect(() => {
     if (group.error) notifications.show({ title: "Couldn't load the possible copies", message: group.error, color: "red", autoClose: false });
   }, [group.error]);
