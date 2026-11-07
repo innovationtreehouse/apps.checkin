@@ -176,7 +176,8 @@ describeDb("going back clears every later step of the expense", () => {
     await reopen(id, li);
 
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
-    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null });
+    // The hand-set account was checked against the capital designation, so it goes with it.
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null, manualQbAccount: null });
     expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(0);
     expect(await db.capitalAsset.count({ where: { assetNumber: "ITFA01" } })).toBe(1);
     expect(await db.expenseHold.count({ where: { expenseId: id } })).toBe(0);
@@ -184,10 +185,11 @@ describeDb("going back clears every later step of the expense", () => {
     const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id }, orderBy: { id: "asc" } });
     expect(audit.map((a) => a.action)).toEqual([
       "approval_cleared", "signoff_voided",
-      "capital_designation_cleared", "capital_asset_cleared", "hold_cleared", "qb_outbox_cleared",
+      "capital_designation_cleared", "hold_account_cleared", "capital_asset_cleared", "hold_cleared", "qb_outbox_cleared",
       "state_transition",
     ]);
     expect(audit.find((a) => a.action === "capital_asset_cleared")).toMatchObject({ lineItemId: li, valueBefore: "ITFA90", notes: "finance changed the receipt" });
+    expect(audit.find((a) => a.action === "hold_account_cleared")).toMatchObject({ lineItemId: li, fieldChanged: "manualQbAccount", valueBefore: "5000", valueAfter: null });
 
     // Done again in order, with the same amounts: approval, capital review, depreciation.
     await approveLine(principal(2), id, approvalId);
