@@ -162,16 +162,12 @@ model Person {
   /// leads/household enforced at write, not in schema. @sensitivity:public
   isHouseholdLead Boolean @default(false)
 
-  /// Provenance: the surviving Person.id of a merged-away record. Null == a live
-  /// record. A merge sets it and then deletes the row, leaving a PersonMerge
-  /// archive; only older merged-away rows still carry it. Drives the double-merge
-  /// CAS guard and the live-person filter (lib/person/filters.ts). @sensitivity:internal
-  mergedIntoId Int?
-  // Label is "PersonTombstone" because "PersonMerge" would collide with the model
-  // of that name. Code-only: a named self-relation emits no SQL artifact — the
-  // constraint is Person_mergedIntoId_fkey either way.
-  mergedInto   Person?  @relation("PersonTombstone", fields: [mergedIntoId], references: [id])
-  mergedFrom   Person[] @relation("PersonTombstone")
+  /// Unused column awaiting its drop; null on every row. Hidden from the client so
+  /// no code reads or writes it before the column goes. @sensitivity:internal
+  mergedIntoId Int?     @ignore
+  // The constraint is Person_mergedIntoId_fkey; the relation name emits no SQL.
+  mergedInto   Person?  @relation("PersonTombstone", fields: [mergedIntoId], references: [id]) @ignore
+  mergedFrom   Person[] @relation("PersonTombstone") @ignore
 
   /// Archive rows naming this person as the merge survivor (see PersonMerge).
   mergedArchive PersonMerge[] @relation("PersonMergeArchive")
@@ -1750,8 +1746,8 @@ model LifecycleDriftReport {
 /// Permanent record of a participant merge, written by
 /// membership-ops/participants/merge in the merge transaction.
 ///
-/// It outlives the tombstone `Person` row, so a merged-away record stays answerable
-/// without it. Two readers depend on that — the kiosk scan path, which must still
+/// The merge deletes the merged-away `Person` row, so this archive is what keeps a
+/// merged-away record answerable. Two readers depend on that — the kiosk scan path, which must still
 /// resolve a badge that encodes a merged-away id, and membership-audit/compliance,
 /// which reports whose background check a survivor inherited.
 ///
@@ -1760,9 +1756,9 @@ model PersonMerge {
   /// @sensitivity:internal
   id       Int      @id @default(autoincrement())
   /// The merged-away person's original id. Deliberately no FK: the point of the
-  /// row is to outlive that Person. @unique because the merge CAS lets a person
-  /// be merged away exactly once, which is what makes the scan-path lookup a
-  /// findUnique. @sensitivity:internal
+  /// row is to outlive that Person. @unique because a person is merged away
+  /// exactly once (the merge deletes their row), which is what makes the
+  /// scan-path lookup a findUnique. @sensitivity:internal
   fromId   Int      @unique
   /// @sensitivity:internal
   toId     Int
