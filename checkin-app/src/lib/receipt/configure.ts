@@ -86,10 +86,10 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
  * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
  * holder who typed it.
  */
-/** Each live person's name; the library passes ids already resolved through merges. */
+/** Each person's name; the library passes ids already resolved through merges. */
 async function personNames(personIds: number[]): Promise<Map<number, string>> {
-  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  const people = await prisma.person.findMany({ where: { id: { in: personIds }, ...LIVE_PERSON }, select: { id: true, name: true } });
+  const { default: prisma } = await import("@/lib/prisma");
+  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
   return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
 }
 
