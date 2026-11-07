@@ -27,6 +27,7 @@ export const classifications = {
         applyClaimedAt: 'public',
         applySweepAttempts: 'public',
         inventoryUnconfirmedAt: 'public',
+        matchingPendingSince: 'internal',
         createdAt: 'public',
         updatedAt: 'public',
     },

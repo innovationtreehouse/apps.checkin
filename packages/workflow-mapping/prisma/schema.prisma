@@ -76,6 +76,9 @@ model ReceivedReceipt {
   // Set when inventory may have taken the delta without its stamp (a lost stamp, or a sweep give-up); never cleared, so lines stay locked.
   /// @sensitivity:public
   inventoryUnconfirmedAt DateTime? @map("inventory_unconfirmed_at")
+  // Set when matching was deferred because the catalog was unreachable; a daily step re-runs it.
+  /// @sensitivity:internal
+  matchingPendingSince   DateTime? @map("matching_pending_since")
   /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
   /// @sensitivity:public
