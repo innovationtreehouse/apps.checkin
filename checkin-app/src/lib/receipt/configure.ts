@@ -207,11 +207,13 @@ const alerts: ReceiptAlerts = {
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
     const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.receiptMailAgeing", {
+    // Throws when nothing was sent, so the library leaves the mail unstamped and alerts again next run.
+    const sent = await emailAlert("finance.receiptMailAgeing", {
       messages: String(messages),
       since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
       actionLink: `${config.baseUrl()}/receipts/mail`,
     });
+    if (!sent) throw new Error("Receipt mail ageing alert was not sent");
   },
   async mailListingFailed() {
     const { emailAlert } = await import("@/lib/emailRecipients");

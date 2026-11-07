@@ -765,7 +765,7 @@ model BoardSettings {
   /// this is configured).
   /// @sensitivity:internal
   scholarshipNotifyEmail     String?
-  /// Group address every system and QuickBooks alert goes to (lib/emailAlert.ts).
+  /// Group address finance and QuickBooks alerts go to (emailAlert in lib/emailRecipients.ts).
   /// NULL = alerts are not sent and System Status shows the gap; there is no fallback.
   /// @sensitivity:internal
   alertEmailAddress          String?

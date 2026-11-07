@@ -47,7 +47,10 @@ async function config(): Promise<BulkDonationConfig> {
 }
 
 const ENV = { ...process.env };
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  emailAlert.mockResolvedValue(true);
+});
 afterEach(() => {
   process.env = { ...ENV };
 });
@@ -179,6 +182,10 @@ describe("bulk-donation wiring", () => {
     await deposits!.handOverFailing([{ disbursementId: "D1", reason: "it has no disbursement date" }, { disbursementId: "D2", reason: "it nets to zero or less, so no deposit is due" }]);
     expect(emailAlert.mock.calls[0][0]).toBe("finance.donationDepositHandOver");
     expect(emailAlert.mock.calls[0][1].batches).toBe("D1: it has no disbursement date; D2: it nets to zero or less, so no deposit is due");
+
+    // Nothing sent (alert address unset): the hand-over rejects, so the library records no raise.
+    emailAlert.mockResolvedValue(false);
+    await expect(deposits!.handOverFailing([{ disbursementId: "D3", reason: "it nets to zero or less, so no deposit is due" }])).rejects.toThrow("not sent");
   });
 
   it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {

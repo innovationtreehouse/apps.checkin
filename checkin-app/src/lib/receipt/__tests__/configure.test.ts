@@ -169,10 +169,16 @@ describe('receipt runtime: mail intake bindings', () => {
     });
 
     it('alerts finance when mail is about to leave the window unread', async () => {
+        jest.mocked(emailAlert).mockResolvedValue(true);
         await boundConfig().alerts?.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: new Date('2026-10-25T09:00:00Z') });
         const [key, values] = jest.mocked(emailAlert).mock.calls[0];
         expect(key).toBe('finance.receiptMailAgeing');
         expect(values).toMatchObject({ messages: '4', since: expect.stringContaining('25 Oct 2026'), actionLink: expect.stringContaining('/receipts/mail') });
+    });
+
+    it('rejects when the ageing alert was not sent, so the mail stays unstamped and alerts again', async () => {
+        jest.mocked(emailAlert).mockResolvedValue(false);
+        await expect(boundConfig().alerts!.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: null })).rejects.toThrow('not sent');
     });
 
     it('alerts finance when the mailbox cannot be listed', async () => {

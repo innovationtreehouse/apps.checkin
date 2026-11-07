@@ -201,7 +201,7 @@ export default function EmailSettingsPage() {
             />
             <TextInput
               label="Alert address"
-              description="A group address. Every system and QuickBooks alert goes here. Blank = alerts are not sent."
+              description="A group address. Finance and QuickBooks alerts go here. Blank = those alerts are not sent."
               placeholder="alerts@example.com"
               w={440}
               value={alertAddress}
