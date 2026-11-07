@@ -4,17 +4,12 @@ Design for making the finance view record (the finance-view rule in
 `docs/rules/revenue.md`) name the records each view showed and the screen it
 came through. No code changes with this doc.
 
-**Status: under discussion, nothing is being built.** Two framing questions
-come first and may change everything below:
+**Status: under discussion, nothing is being built.** The log records one
+entry per page view (Q10 and Q11, decided). Which fields make a view a finance
+view is mostly decided (Q9); Q12, whether that narrows Board ruling B11, is open
+and may change the route-by-route design below.
 
-- **Q10. One log entry per page view, not per API route call** (next section),
-  with **Q11**, which routes a page may fold into its entry.
-- **Q9. Which fields make a view a finance view**, and **Q12**, whether that
-  narrows Board ruling B11 (at the end).
-
-The route-by-route design below stands only until both are settled.
-
-## Q10. The unit of logging: a page view
+## The unit of logging: a page view (Q10 and Q11, decided)
 
 **The problem.** A page in the app loads its data from several API routes. The
 expense page for e_123 calls the expense detail route, then signoffs, line-item
@@ -48,7 +43,8 @@ directly, about 200 times across `checkin-app/src`.
   breaks the rule that a view whose record cannot be written is refused, so it
   cannot stand alone.
 
-Proposed: (a).
+**Decided: (a).** This follows from Q11: a per-page allowlist only makes sense
+when the browser tags each call with its page view.
 
 ### Can it be fooled?
 
@@ -85,9 +81,9 @@ Three server-side limits, proposed:
 
 With these, a lie can only merge one person's own calls, made within 30 seconds,
 under one page name. What it can still do is put the wrong page name on that
-entry. Q11 asks whether to close that too.
+entry. The Q11 allowlist closes that.
 
-**Q11. A per-page allowlist of routes.** You suggested the server keep a map
+**Q11. A per-page allowlist of routes.** @thpr suggested the server keep a map
 from each page to the API routes that page may fold into its entry. A call
 from a route not on its claimed page's list writes its own row. Example:
 
@@ -113,17 +109,17 @@ the expense entry.
   dynamic pages. The map decides what gets merged in the log, so it is a
   boundary file either way.
 
-Should the server keep this allowlist, or are the three limits enough?
+**Decided: keep the allowlist,** as a boundary declaration beside the page
+registry, together with the three limits.
 
 **Effect on the other questions.** Under (a), the panels on a record's page fold
 into that page's single entry:
 
-- Q3 (a receipt's change-history panel) goes away. The receipt page's entry
+- Q3 (a receipt's change-history panel) is retired. The receipt page's entry
   already names r_9.
-- Q6 (an empty reimbursee panel) goes away. The expense page's entry already
+- Q6 (an empty reimbursee panel) is retired. The expense page's entry already
   names e_123.
 
-Is one entry per page view what you want, and is (a) the way to get it?
 
 ## The problem
 
@@ -280,7 +276,7 @@ is Q1.
 | `GET /api/receipts/confirmations` | receipt ← `id`, minus own (§5) | ✓ ids, but logs own |
 | `GET /api/receipts/[id]` | receipt ← param `id` | ✓ |
 | `GET /api/receipts/[id]/file` (file) | receipt ← param `id` | ✓ |
-| `GET /api/receipts/[id]/audit-logs` | receipt ← param `id` (Q3) | ✗ history-entry ids |
+| `GET /api/receipts/[id]/audit-logs` | receipt ← param `id`; folds into the receipt page's entry | ✗ history-entry ids |
 | `GET /api/receipts/[id]/duplicate-group` | receipt ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) | ✗ none |
 | `GET /api/receipts/duplicate-queue` | registered, but no route or handler exists | — |
 | `GET /api/receipts/mail-items` | mail-item ← `id` | ✓ |
@@ -288,7 +284,7 @@ is Q1.
 | `GET /api/receipts/ignored-files` | depends on Q9: an ignore-list entry (file hash and reason) | ✗ |
 | `GET /api/workflow-mapping/receipts` | workflow-mapping ← `id`; query `state`, `receiptId` | ✓ |
 | `GET /api/workflow-mapping/receipts/[id]` | workflow-mapping ← param `id` | ✓ id; helper and line rows inflate |
-| `GET /api/workflow-mapping/audit-log` | workflow-mapping ← `receivedReceiptId` (Q3); query `receiptId` | ✗ history-entry ids |
+| `GET /api/workflow-mapping/audit-log` | workflow-mapping ← `receivedReceiptId`; query `receiptId`; folds into its page's entry | ✗ history-entry ids |
 | `GET /api/donations/transactions` | donation ← `id`; query `assigned` | ✓ |
 | `GET /api/donations/transactions/unassigned` | donation ← `id` | ✓ |
 | `GET /api/donations/transactions/[id]` | donation ← param `id` | ✓ |
@@ -358,12 +354,44 @@ B11's first PR (#2659) did. The order is:
 - **The starting list of fields that link a person to money stands:** every
   `…Cents` amount; a donor's name, email, address and comment text; and the
   person reimbursed and the vendor on an expense.  [Decision — owner]
+- **One log entry per page view (Q10 (a)).** The browser tags each API call
+  with a page-view id and the page path; the server merges one person's calls
+  carrying that id into one row, within 30 seconds and under one path.
+  Untagged calls write their own rows.  [Decision — owner]
+- **A per-page allowlist of routes (Q11).** A boundary declaration beside the
+  page registry lists the routes each page may fold into its entry. A call from
+  a route not on its claimed page's list writes its own row.  [Decision — owner]
+- **Fields that link a person to money carry a mark,** and a view is logged
+  when the response sent contains a marked field on a record that is not the
+  viewer's own (Q9). The marked fields beyond the starting list:  [Decision — owner]
+  - **The submitter:** `Receipt.uploadedByUserId` and `Expense.submitterId`.
+  - **The cardholder:** no field names one today; the submitter of a
+    card-charge expense covers it. Any cardholder field added later carries the
+    mark.
+  - **The Shopify buyer:** `ShopOrder.customerName` and `customerEmail`, and
+    `PaymentQueueRow.familyName` and `familyEmail` as the same buyer.
+  - **Refunds, as purchases:** a refund links to a person through its order,
+    so a refund view that shows the buyer is logged the same way as the
+    purchase.
+  - **Every payment plan,** including membership payment plans, which carry no
+    amount. On a plan or request record the request fields themselves carry the
+    mark: `isPaymentPlanRequested` and `scholarshipRequestKind` on both
+    `ProgramParticipant` and `OrgMembershipProcess`.
+  - **Scholarships and financial aid:** on `ProgramParticipant`, the
+    scholarship hold-ledger fields as well: `inventoryHeldAt` (a seat held for
+    a request), `paymentPlanDeniedAt` and `seatTakenWithoutSaleAt` (a seat
+    given without a sale), per `docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md`.
+  - **Matched gifts, employer names included:** `Transaction.companyName` and
+    `matchAmountCents`.
+  - **Every image and stored receipt:** the file fields of a receipt and of a
+    mail item carry the mark, so serving one to anyone other than its owner is
+    always logged.
 - **Log rows written before the change stay as they are.** Nothing converts
   them, and the search does not match their bare ids.  [Decision — owner]
 
 ## Open questions for @thpr
 
-Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
+Q2, Q3, Q5, Q6, Q7, Q8, Q10 and Q11 are settled or retired; their numbers stay retired.
 
 - **Q1. The kind list.** Each kind is the noun on the Board's tab. For example,
   a row reads "Pat Lee (Finance) viewed 3 **expenses** on the finance queue" or
@@ -372,26 +400,6 @@ Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
   line, donation, donation file, disbursement, gift of goods (from a receipt),
   gift of goods (entered by hand), payout, payment exception, payment plan,
   membership payment plan. Are these the right nouns? Q9 may shorten the list.
-
-- **Q3. A receipt's change history.** *(Goes away if Q10 is (a).)* This is not about the view log itself:
-  the view log is only shown on System status → Finance Views.
-  Receipts have a separate **change history**: who uploaded a receipt, who
-  approved it, and each edited field with its value before and after. Finance
-  and the Board read it in a panel on the receipt's page, through
-  `GET /api/receipts/[id]/audit-logs`. A row of that history looks like:
-
-  > id 101, receipt r_9, Pat Lee, 3 Oct, changed `totalCents` from 4210 to 4120
-
-  That panel shows dollars and names, so reading it is a finance view. When
-  Finance opens receipt r_9's history panel with 3 entries, the view log
-  records today: "viewed 3 receipts", ids `101, 102, 103` (the history entries'
-  ids, which name no receipt). The options:
-  - (a) record "viewed receipt r_9", the receipt whose history was read;
-  - (b) record nothing, because the history panel is not itself a finance
-    record.
-
-  `GET /api/workflow-mapping/audit-log` is the same panel for a receipt's
-  QuickBooks mapping. Which of (a) or (b)?
 
 - **Q4. Rows that point at a finance record.** Some screens list rows whose
   own id is just a list entry, and the finance record sits in another field.
@@ -416,64 +424,19 @@ Q2, Q5, Q7 and Q8 are settled or withdrawn; their numbers stay retired.
 
   Log the record each row points at, as proposed?
 
-- **Q6. A detail panel with nothing in it.** *(Goes away if Q10 is (a).)* Expense e_123 has no reimbursee set.
-  Finance opens its reimbursee panel
-  (`GET /api/expense/expenses/[id]/reimbursee-vendor`), which comes back empty.
-  Today nothing is logged, because nothing was returned. The panel sits on
-  expense e_123's page and shows no dollars or names. Log "viewed expense
-  e_123", or log nothing?
-
-- **Q9. Which fields make a view a finance view.** You said what matters is the
-  fields shown, not the screens: the sensitive part is linking people to money,
-  and the views follow from that. Deriving the views from fields would work like
-  this: fields carry a mark, and a view is logged when the response sent
-  contains a marked field on a record that is not the viewer's own. The
-  records named are the rows carrying those fields.
-
-  The starting list is decided (see Decided). Searching the schemas of checkin,
-  expense, receipt, income, bulk-donation, workflow-mapping, and the Shopify
-  mirror (`packages/s-ingest-core`) for other fields that tie a person to money
-  turned up these. Please confirm or cut each:
-
-  | Field | Model | Example | Why it ties a person to money |
-  |---|---|---|---|
-  | `uploadedByUserId` | `Receipt` (receipt) | Sam uploaded a $42.10 receipt | The submitter, who may not be the reimbursee: the person who spent or handed in the money. |
-  | `submitterId` | `Expense` (expense) | Sam submitted a $42.10 expense | The same person, on the expense. |
-  | `customerName`, `customerEmail` | `ShopOrder` (s-ingest-core) | Jo Diaz paid $180 for a program seat | A buyer and the amount they paid or were refunded (`totalCents`, `totalRefundedCents`). |
-  | `familyName`, `familyEmail` | `PaymentQueueRow` (view, shopify read) | The Diaz family's $180 order is short | The same buyer, on Finance Ops → Payments. |
-  | `personId` with `isPaymentPlanRequested` / `scholarshipRequestKind` | `ProgramParticipant` (checkin) | Jo asked for a scholarship for a $180 program | A person asking for help to pay. The price is on `Program`, public. |
-  | `donorCompanyName` | `InKindDonation` (bulk-donation) and `Receipt` (receipt) | Acme gave goods worth $300 | A donor that is a company, beside the gift's value. |
-  | `companyName` | `Transaction` (bulk-donation) | Gift through Acme's matching programme | The donor's employer on a Benevity gift: names who matched, beside `matchAmountCents`. |
-
-  Checked and **not** found:
-  - **Cardholder:** no field names the cardholder on a card charge. The
-    submitter of a card-charge expense is the nearest thing, so `submitterId`
-    covers it.
-  - **Donor email and address:** no schema stores them. A Benevity gift and a
-    gift of goods carry only the donor's first and last name, company and
-    comment.
-  - **Refunds:** `ShopRefund` holds amounts but no person. It links to a person
-    only through its order, so `ShopOrder`'s customer fields cover it.
-  - **Membership payment plans:** `OrgMembershipProcess` carries no amount.
-    The dues are `BoardSettings` fees, which are public. The plan links a
-    household to dues only by implication.
+- **Q9. Which fields make a view a finance view: what is left.** The rule and
+  most of the list are decided (see Decided). Three items are left to confirm:
+  - **Company donors.** `donorCompanyName` on `InKindDonation` (bulk-donation)
+    and on `Receipt` (receipt). Example: "Acme gave goods worth $300". It names
+    a donor beside a gift's value. Marked?
+  - **Donation upload files.** The Benevity CSV files
+    (`GET /api/donations/uploaded-files/[id]/blob`) carry donor names and
+    amounts, but they are not images or receipts. Is the file field marked,
+    like receipt files?
   - **Approvers and reviewers** (`approvedByUserId`, `decidedByUserId`,
-    `reviewedByUserId`, `boardAuthorizedByUserId`): these name who acted on a
-    record, not who paid or was paid. They are left off unless you want them.
-
-  **Stored files.** A receipt image (`Receipt` file), a mail item's file and a
-  donation upload file carry names and amounts inside their bytes, where no
-  field mark can see. Proposed: the file field itself carries the mark, so
-  serving such a file to anyone other than its owner is always logged.
-
-  **Where the mark lives.** A schema annotation beside `@sensitivity` on each
-  field (for example `/// @moneyLink`, name to be settled), in each library's
-  `schema.prisma`. For a view model, it goes in the hand-authored synthetic
-  classification files. `checkin-app/scripts/security-generator.js` carries it
-  into the generated classifications the handler reads. Schema annotations and
-  the generated files are boundary companions, so the mark lands in the
-  boundary PR. `packages/s-ingest-core` already runs the same `security`
-  generator, so `ShopOrder` is marked the same way.
+    `reviewedByUserId`, `boardAuthorizedByUserId`). These name who acted on a
+    record, not who paid or was paid. Example: "Lee approved Sam's $42.10
+    expense". Marked, or left off?
 
 - **Q12. Does this narrow Board ruling B11?** "Linking people to money" means a
   view that shows amounts with no person is not logged. Today these are logged,
