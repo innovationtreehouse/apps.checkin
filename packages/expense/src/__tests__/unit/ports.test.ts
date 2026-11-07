@@ -1,11 +1,13 @@
 /** Crossing guards and inert adapters — no database. */
 import { describe, it, expect, vi } from "vitest";
-import { isServiceError } from "@checkin/component-kit";
+import { isServiceError, kindOf } from "@checkin/component-kit";
 import { callerId } from "../../lib/caller";
 import { assertOrg, getExpenseRuntime } from "../../runtime";
 import { inertOutbound, inertOwnerDirectory, QuickBooksNotConnectedError } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
+import { resolveDonatedPartAccounts } from "../../services/donatedPartAccounts";
+import { lookupCatalogInfo } from "../../lib/expense-qb-processor";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { ORG } from "../helpers/seed";
 
@@ -26,7 +28,6 @@ describe("callerId", () => {
 describe("runtime", () => {
   it("binds inert adapters for every unbound port", async () => {
     const rt = getExpenseRuntime();
-    expect(await rt.catalog.listCategories()).toEqual([]);
     expect(await rt.catalogEvents.eventsSince("org", 0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
@@ -35,6 +36,27 @@ describe("runtime", () => {
     // Branded, so a route in another chunk still answers 503.
     expect(isServiceError(notConnected) && notConnected.status).toBe(503);
     await expect(rt.quickbooks.posting()).resolves.toBeNull();
+  });
+
+  it("an unbound catalog says it is not wired, never \"no match\"", async () => {
+    const { catalog } = getExpenseRuntime();
+    const calls = [
+      catalog.listCategories(),
+      catalog.listSubcategories(),
+      catalog.getItem("0000000000017"),
+      catalog.getActiveItem("0000000000017"),
+      catalog.getItemNames(["0000000000017"]),
+      catalog.lookupItems("Acme", [{ index: 1, partNumber: "P1" }]),
+    ];
+    for (const call of calls) expect(kindOf(await call.catch((err: unknown) => err))).toBe("settings");
+  });
+
+  it("matching carries on without the catalog and records that it is not connected", async () => {
+    const line = { id: 1, partNumber: "P1", manufacturer: null, description: "drill", nonInventory: false };
+    expect(await lookupCatalogInfo([line], "Acme")).toEqual({ gtin13ByItemId: new Map(), info: new Map(), catalogNotConnected: true });
+    expect(await resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).toEqual([
+      { lineId: 7, reason: "catalog not connected" },
+    ]);
   });
 
   it("the inert outbound gateway sends nothing", async () => {

@@ -1,8 +1,9 @@
 /**
  * Workflow-mapping's InventorySink bound in-process to
- * local-inventory's apply and its receive-queue backorder count. Apply is idempotent per source (`receipt:<receiptId>`),
- * and a key replayed with a different delta throws its 409; that error is left
- * to propagate so the receipt's inventory leg lands in apply_failed.
+ * local-inventory's apply and its receive-queue backorder count. Apply is idempotent per source (`receipt:<receiptId>`).
+ * Its 4xx or validation error (bad input, or a key replayed with a different delta: 409) means
+ * refused for good; anything else means try again. A wrong org is a plain error: a wiring bug,
+ * retried to the limit. Every error propagates, so the receipt's inventory leg lands in apply_failed.
  */
 import { ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
 import type { InventorySink, OrgIdentity } from "@checkin/workflow-mapping";

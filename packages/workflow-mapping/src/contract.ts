@@ -4,6 +4,7 @@
  * sibling library. Every crossing is one port; flipping a crossing swaps one
  * binding. Unbound ports fall back to the inert adapters below.
  */
+import { NotWiredError } from "@checkin/component-kit";
 import { z } from "zod";
 import type {
   CatalogCheckReferences,
@@ -133,8 +134,11 @@ function notWired(port: string): never {
   throw new Error(`${port} not wired`);
 }
 
+// An unbound catalog says so rather than answer "no match".
 export const inertCatalogReader: CatalogReader = {
-  lookupItems: async () => [],
+  lookupItems: async () => {
+    throw new NotWiredError("CatalogReader.lookupItems");
+  },
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
   getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
 };

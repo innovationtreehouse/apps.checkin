@@ -37,6 +37,10 @@ describe("donated capital — guards", () => {
     await expect(reviewDonatedLine(principal(9), 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
     await expect(reviewDonatedLine(BOARD, 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
   });
+
+  it("refuses lines sent for another org", async () => {
+    await expect(submitDonatedLines("other-org", [line(1, 250_000)])).rejects.toThrow(/not this org/);
+  });
 });
 
 describe("unitCosts", () => {

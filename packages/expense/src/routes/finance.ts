@@ -3,7 +3,7 @@
  * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
-import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { httpError, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
@@ -200,7 +200,12 @@ export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView
 
 export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
-  return { PartOwnerMap: rows, Item: await getItemNames(rows.map((r) => r.gtin13)), ExpenseBucketView: await buckets() };
+  // An unbound catalog shows the map without names.
+  const names = await getItemNames(rows.map((r) => r.gtin13)).catch((err: unknown) => {
+    if (kindOf(err) === "settings") return [];
+    throw err;
+  });
+  return { PartOwnerMap: rows, Item: names, ExpenseBucketView: await buckets() };
 };
 
 /**

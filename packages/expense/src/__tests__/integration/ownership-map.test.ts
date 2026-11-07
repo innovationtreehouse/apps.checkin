@@ -40,4 +40,12 @@ describeDb("GET ownership-map", () => {
     expect(await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) })).toMatchObject({ PartOwnerMap: [], Item: [] });
     expect(getItemNames).not.toHaveBeenCalled();
   });
+
+  it("shows the map without names when no catalog is connected", async () => {
+    await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
+
+    const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
+
+    expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
+  });
 });

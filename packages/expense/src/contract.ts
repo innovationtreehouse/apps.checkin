@@ -2,7 +2,7 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
-import { ServiceError } from "@checkin/component-kit";
+import { NotWiredError, ServiceError } from "@checkin/component-kit";
 import type { QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
@@ -129,14 +129,18 @@ export interface CatalogReader {
   lookupItems(retailer: string, lookups: LookupEntry[]): Promise<unknown>;
 }
 
-/** An empty catalog: every part-numbered line raises a NO_MATCH hold. */
+const catalogNotWired = (method: string) => async (): Promise<never> => {
+  throw new NotWiredError(`CatalogReader.${method}`);
+};
+
+/** An unbound catalog says so rather than answer "no match"; its callers record "catalog not connected". */
 export const inertCatalogReader: CatalogReader = {
-  listCategories: async () => [],
-  listSubcategories: async () => [],
-  getItem: async () => null,
-  getActiveItem: async () => null,
-  getItemNames: async () => [],
-  lookupItems: async () => [],
+  listCategories: catalogNotWired("listCategories"),
+  listSubcategories: catalogNotWired("listSubcategories"),
+  getItem: catalogNotWired("getItem"),
+  getActiveItem: catalogNotWired("getActiveItem"),
+  getItemNames: catalogNotWired("getItemNames"),
+  lookupItems: catalogNotWired("lookupItems"),
 };
 
 // ── S5: catalog org events ────────────────────────────────────────────────────
