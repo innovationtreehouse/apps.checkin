@@ -31,6 +31,9 @@ import {
     ALL_STATUSES,
     ALL_KINDS,
     ARCHIVABLE_STATUSES,
+    CLOSABLE_STATUSES,
+    RESTORE_CLOSABLE_STATUSES,
+    refundLandsIn,
     RESTORABLE_STATUSES,
     LEGACY_REOPEN_STATUSES,
     openProcess,
@@ -252,6 +255,25 @@ describe('isLegalTransition covers the declared edges', () => {
 
     test('record refund returns a paid clearance wait to payment', () => {
         expect(TRANSITIONS.some((t) => t.from === 'PENDING_BG_CLEARANCE' && t.to === 'PENDING_PAYMENT' && t.event === 'recordRefund')).toBe(true);
+    });
+
+    // Owner ruling 2026-11-07: a refund applies at every paid step that never became a
+    // membership, and lands in that step unpaid; a rejection is never erased.
+    test('record refund applies to every open step, keeps each in place but a clearance wait, and never unblocks', () => {
+        for (const st of openProcess.statuses as readonly ProcessStatus[]) {
+            expect(refundLandsIn(st)).toBe(st === 'PENDING_BG_CLEARANCE' ? 'PENDING_PAYMENT' : st);
+        }
+        expect(refundLandsIn('ACTIVE')).toBeNull();
+        expect(refundLandsIn('ARCHIVED')).toBeNull();
+        expect(TRANSITIONS.filter((t) => t.event === 'recordRefund').map((t) => [t.from, t.to])).toEqual([['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT']]);
+        expect(TRANSITIONS.some((t) => t.from === 'BLOCKED' && t.event === 'recordRefund')).toBe(false);
+    });
+
+    test('close takes the legacy RENEWAL_PENDING_BG too, and a restore closes it, without a reopen edge back', () => {
+        expect([...CLOSABLE_STATUSES].sort()).toEqual([...ARCHIVABLE_STATUSES, 'RENEWAL_PENDING_BG'].sort());
+        expect([...RESTORE_CLOSABLE_STATUSES].sort()).toEqual([...CLOSABLE_STATUSES, 'BLOCKED'].sort());
+        expect(TRANSITIONS.some((t) => t.from === 'RENEWAL_PENDING_BG' && t.to === 'ARCHIVED' && t.legacy)).toBe(true);
+        expect(isLegalTransition('ARCHIVED', 'RENEWAL_PENDING_BG')).toBe(false);
     });
 
     // GUARD: the restore set and the transition table differ by one status on purpose.
