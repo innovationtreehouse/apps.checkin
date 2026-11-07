@@ -7,13 +7,8 @@ of them. No code changes with this doc.
 
 **Status: under discussion, nothing is being built.** Decided except for:
 
-- **Q12:** narrowing Board ruling B11 to views that link people to money is
-  decided for now, but waits for the Board's confirmation at its next meeting.
-  The boundary PR waits for it.
 - **Q14:** how to name the records that live outside the app (QuickBooks,
   Benevity).
-- **Q15:** two decisions conflict. The field marks (Q9) cover every amount,
-  and Q12 says views of amounts with no person stop being logged.
 - **Q16:** whether a reload may write a new entry.
 
 ## The problem
@@ -292,9 +287,8 @@ to `FinanceQueueRow`, with its classification.
    and the page allowlist map. `receiptId` in `FinanceQueueRow`'s
    classification. Retiring the `auditedRead` flag and its guard test, which
    the start-up checks replace. The reworded `docs/rules/revenue.md` register
-   line. **It waits for the Board's confirmation of Q12.** If the Board says
-   no, the marks stay, and views of amounts with no person keep being logged;
-   Q15 then needs answering again.
+   line, reworded only (B11's scope is unchanged, so the Board has nothing to
+   confirm).
 3. **App code: the browser and the tab.** The app-shell wrapper that tags each
    `/api` call; `receiptId` in the finance-queue rows; `financeViewKinds.ts` as
    the model-to-page link map; the tab's new entry.
@@ -321,10 +315,10 @@ as today but with exact records and fields.
 - **Fields that link a person to money carry a mark (Q9),** and a view is logged
   when the response sent carries a marked field on a record that is not the
   viewer's own.  [Decision — owner] The marked fields:
-  - every `…Cents` amount (but see Q15);
+  - every `…Cents` amount, which logs a view on its own (Q15);
   - a donor's name and comment text (no schema stores a donor's email or
     address);
-  - the person reimbursed and the vendor on an expense (but see Q15);
+  - the person reimbursed and the vendor on an expense;
   - **the submitter:** `Receipt.uploadedByUserId` and `Expense.submitterId`;
   - **the cardholder:** no field names one today, and the submitter of a
     card-charge expense covers it. Any cardholder field added later carries the
@@ -369,27 +363,28 @@ as today but with exact records and fields.
 - **"Payout record" means a payout from Shopify, and nothing else.**
   [Decision — owner]
 - **Log rows written before the change stay as they are.**  [Decision — owner]
-- **B11 narrows to views that link people to money (Q12).** A view of amounts
-  with no person in it stops being logged: the payouts list, gifts of goods
-  shown to operations or inventory managers without the donor, and a bucket
-  approver's expense lines without the submitter or reimbursee.
-  [Decision — owner, pending Board confirmation at its next meeting]
+- **Any marked field logs the view, an amount on its own included (Q15).** One
+  mark, with no pairing of a person with money. So the payouts list, gifts of
+  goods shown to operations or inventory managers without the donor, and a
+  bucket approver's expense lines stay logged, as they are today.
+  [Decision — owner]
+- **B11 is not narrowed (Q12, reversed by Q15).** The finance-view rule keeps
+  the scope the Board ruled: every view of finance records other than a
+  person's own. There is nothing for the Board to confirm.  [Decision — owner]
 
-  Draft wording for the `docs/rules/revenue.md` register line, for review only.
-  `revenue.md` is unchanged until the boundary PR:
+  The register line in `docs/rules/revenue.md` changes in wording only, to say
+  what the record now holds. Draft for review; `revenue.md` is unchanged until
+  the boundary PR:
 
-  > - Every view that links a person to money is recorded, other than a person's
-  >   view of their own: a donor, a buyer, a submitter, a person reimbursed, or
-  >   a person asking for a payment plan or a scholarship, seen beside a gift,
-  >   an amount or the request. The record holds who looked, which records and
-  >   which of their sensitive fields, on which page, and when, never what the
-  >   records said. A view of amounts with no person in it is not recorded, and
-  >   neither is a count. Only the Board reads the record.  [Decision — owner;
-  >   Board ruling B11, narrowed]
+  > - Every view of finance records other than a person's own is recorded, each
+  >   look at a donor included: who looked, on which page, which records and
+  >   which of their sensitive fields, and when, never what the records said.
+  >   A person looking at their own receipts is not recorded, and neither is a
+  >   count. Only the Board reads the record.  [Decision — owner]
 
 ## Open questions for @thpr
 
-Q1 to Q13 are settled or retired; their numbers stay retired.
+Q1 to Q13 and Q15 are settled or retired; their numbers stay retired.
 
 - **Q14. Records with no model in the app.** Some ids name records that live
   only in another system: a QuickBooks transaction (`qbTxnId` on both QuickBooks
@@ -406,71 +401,6 @@ Q1 to Q13 are settled or retired; their numbers stay retired.
     to keep: two today.
 
   Which?
-
-- **Q15. Amounts alone, and the vendor.** Two decisions conflict:
-  - Q9 marks every `…Cents` amount and the vendor, and logs a view that carries
-    **any** marked field.
-  - Q12 says a view of amounts with no person stops being logged.
-
-  Examples:
-  - The payouts list sends `IncomePayoutView.netCents`. That is an amount,
-    marked under Q9, so it would be logged, but Q12 says it is not.
-  - A bucket approver's expense list sends `Expense.receiptTotalCents` and
-    `Expense.vendorName`, both marked under Q9, so it would be logged, but Q12
-    lists it as not logged.
-
-  Options. None is decided.
-
-  - **(a) Two marks: `who` and `money`.** A view is logged when one record
-    carries both. `who` covers the submitter, the reimbursee, a donor's name
-    and comment, a company donor, and the Shopify buyer. `money` covers every
-    `…Cents` amount. This breaks three of @thpr's decisions:
-    - **Payment plans and scholarship requests.** A
-      `ProgramParticipant` or `OrgMembershipProcess` request names a person,
-      but the price is on `Program` and is public, so there is no `money`
-      field on the record. Yet "payment plans are all sensitive" and
-      "scholarships, financial aid are sensitive".
-    - **Benevity company names.** `Transaction.companyName` and
-      `donorCompanyName` are sensitive even with no amount beside them,
-      because Benevity's rules forbid saying publicly which company gave.
-    - **Stored files.** The contents of a receipt file, a mail-item file or a
-      donation upload CSV cannot be seen by any field mark.
-  - **(b) Three marks: `who`, `money` and `standalone`.** A view is logged when
-    one record carries both `who` and `money`, **or** carries any `standalone`
-    field. `who` and `money` are as in (a). `standalone` covers:
-    - the payment-plan and aid fields: `isPaymentPlanRequested` and
-      `scholarshipRequestKind` on both `ProgramParticipant` and
-      `OrgMembershipProcess`, and `inventoryHeldAt`, `paymentPlanDeniedAt`
-      and `seatTakenWithoutSaleAt` on `ProgramParticipant`;
-    - company names: `Transaction.companyName`,
-      `InKindDonation.donorCompanyName` and `Receipt.donorCompanyName`;
-    - the file fields of a receipt, a mail item and an uploaded donation file.
-
-    Examples under (b):
-    - The payouts list sends `IncomePayoutView.netCents`, which is `money` only:
-      **not logged**, as Q12 says.
-    - A bucket approver's expense list sends `Expense.receiptTotalCents`
-      (`money`) and `Expense.vendorName`. With the vendor not a `who` (below),
-      the list is **not logged**, as Q12 says.
-    - The payment-plan queue sends `ProgramParticipant.isPaymentPlanRequested`,
-      a `standalone` field: **logged**.
-    - A Benevity gift shown without its amount still sends
-      `Transaction.companyName`, a `standalone` field: **logged**.
-    - Serving a receipt image to Finance: **logged**.
-
-    One consequence to know about. `ProgramParticipant.isPaymentPlanRequested`
-    and `paymentPlanDeniedAt` are `personal`, and program lead mentors hold
-    `their_program_participants:personal`. So any program-lead screen that sends
-    those fields would be logged as a finance view.
-
-  **Recommended: (b).** It is the only option that keeps every decision.
-
-  **The vendor.** Recommended: the vendor is **not** a `who`. A vendor is usually
-  a business, and @thpr's test is linking *people* to money. The case where the
-  vendor is a person (the reimbursee shown as vendor) is already covered by the
-  reimbursee's own mark.
-
-  Which option, and is the vendor a `who`?
 
 - **Q16. Reloads.** A page-view row is keyed by person and page-view id. A
   reload is a new page load with a new id, so it writes a new row: three
