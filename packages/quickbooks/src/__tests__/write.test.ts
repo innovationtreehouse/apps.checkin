@@ -416,12 +416,14 @@ describe("findOrCreate", () => {
       .mockResolvedValueOnce(rows("Deposit", []))
       .mockResolvedValueOnce(prefs())
       .mockResolvedValueOnce(json({ Fault: { Error: [{ code: "6000" }] } }, 400));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/), failure: "data" });
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/failed 400.*codes 6000/), failure: "data", onCreate: true });
   });
 
   it("failed: a read error never falls through to a create", async () => {
     fetchMock.mockResolvedValueOnce(new Response("expired", { status: 401 }));
-    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/401/), failure: "connection" });
+    const result = await findOrCreate(client(), req());
+    expect(result).toMatchObject({ kind: "failed", error: expect.stringMatching(/401/), failure: "connection" });
+    expect(result).not.toHaveProperty("onCreate");
     expect(posts()).toEqual([]);
   });
 

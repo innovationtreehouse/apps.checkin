@@ -181,7 +181,7 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
   try {
     read = await run.client.createdSince("JournalEntry", since);
   } catch (err) {
-    const failure = kindOf(err);
+    const failure = readKind(kindOf(err));
     // Nothing is created while the read fails, so an outage or a lost connection can wait for the next run's read.
     if (failure === "system" || failure === "connection") {
       return { state: QB_MATCH_STATE.POST_FAILED, note: `The QuickBooks read for this gift's earlier entry failed; the next run reads again (${message(err).slice(0, 200)})`, entries: [], failure };
@@ -200,6 +200,8 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
 
 const needsFinance = (note: string): Settlement => ({ state: QB_MATCH_STATE.NEEDS_FINANCE, note, entries: [] });
 const heldNoCall = (note: string): Settlement => ({ ...needsFinance(note), noCall: true });
+/** Only a refused create is about the gift; a read every gift shares, refused, is the app's fault. */
+const readKind = (failure: FailureKind): FailureKind => (failure === "data" ? "bug" : failure);
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
@@ -292,7 +294,7 @@ function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): 
     case "needs-finance":
       return { state: QB_MATCH_STATE.UNBOOKED, note: null, entries: [] };
     case "failed":
-      return failedPost(r.failure, r.error);
+      return failedPost(r.onCreate ? r.failure : readKind(r.failure), r.error);
   }
 }
 
@@ -330,7 +332,7 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
     // QuickBooks answered this post's reads, so a system failure on the create is about the gift.
     return s.failure === "system" ? { ...s, failure: "bug" } : s;
   } catch (err) {
-    return failedPost(kindOf(err), message(err));
+    return failedPost(readKind(kindOf(err)), message(err));
   }
 }
 
@@ -437,6 +439,8 @@ const ANSWERED: readonly InKindPostOutcome[] = ["posted", "matched", "unbooked",
 function outcomeOf(saved: Settlement): InKindPostOutcome {
   if (saved.exhausted) return "exhausted";
   if (saved.noCall) return "held";
+  // A bug sent to finance, such as a broken read for the gift's own entry, still counts toward the stop.
+  if (saved.failure === "bug") return "failed";
   switch (saved.state) {
     case QB_MATCH_STATE.CREATED:
       return "posted";
