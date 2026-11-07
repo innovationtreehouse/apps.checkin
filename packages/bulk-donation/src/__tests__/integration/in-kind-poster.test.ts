@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import { KindedError } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
@@ -133,7 +133,7 @@ let assets: number[];
 /** The expense account rules: supplies for any part, equipment for an asset; a GTIN here has no rule. */
 let unruled: Set<string>;
 let alerts: number;
-let drainStops: { failures: number; remaining: number; cause: string }[];
+let drainStops: { failures: number; remaining: number; cause: string; code?: string }[];
 /** The expense account rules port throws this, standing in for a fault in the app's own code. */
 let rulesThrow: Error | null;
 let drainStopAlertFails: boolean;
@@ -166,9 +166,9 @@ function configure() {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
       sweepIncomplete: async () => void alerts++,
-      drainStopped: async ({ failures, remaining, cause }) => {
+      drainStopped: async ({ failures, remaining, cause, code }) => {
         if (drainStopAlertFails) throw new Error("SES down");
-        drainStops.push({ failures, remaining, cause });
+        drainStops.push({ failures, remaining, cause, ...(code ? { code } : {}) });
       },
     },
   });
@@ -585,15 +585,46 @@ describeDb("in-kind drain", () => {
       await switchOn();
       const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
       const next = await acceptedGift({ totalCents: 4400 });
-      qbo.createAnswer = (n) => (n < 3 ? { status: 400, codes: ["6000"] } : null);
+      const codes = ["6000", "6190", "6000"];
+      qbo.createAnswer = (n) => (n < 3 ? { status: 400, codes: [codes[n]] } : null);
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, posted: 1, failed: 0, stoppedAfterFailures: false });
-      for (const id of refused) {
-        expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data", qbNote: expect.stringMatching(/QuickBooks refused this gift: .*intuit_tid=tid.*codes 6000/) });
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, posted: 1, failed: 0, stoppedAfterFailures: false, refusalStop: null });
+      for (const [i, id] of refused.entries()) {
+        expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data", qbNote: expect.stringMatching(new RegExp(`QuickBooks refused this gift: .*intuit_tid=tid.*codes ${codes[i]}`)) });
       }
+      expect(drainStops).toEqual([]);
       expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 0 });
       expect(qbo.posts).toHaveLength(1);
+    });
+
+    it("data: two refusals with one code hold both for finance and the run goes on", async () => {
+      await switchOn();
+      const refused = [await acceptedGift(), await acceptedGift()];
+      await acceptedGift({ totalCents: 4400 });
+      qbo.createAnswer = (n) => (n < 2 ? { status: 400, codes: ["6000"] } : null);
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 2, posted: 1, refusalStop: null });
+      for (const id of refused) expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
+      expect(drainStops).toEqual([]);
+    });
+
+    it("data: a third refusal with one code reads as a setting: the run stops, all three go back uncharged, and finance is told the code once", async () => {
+      expect(MAX_SAME_CODE_REFUSALS).toBe(3);
+      await switchOn();
+      const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      const rest = await acceptedGift({ totalCents: 4400 });
+      qbo.createAnswer = () => ({ status: 400, codes: ["6000"] });
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, posted: 0, stoppedAfterFailures: true, stopKind: "settings", refusalStop: { code: "6000", returned: 3 } });
+      for (const id of refused) {
+        expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "settings", qbNote: expect.stringMatching(/code 6000 in one run; likely a books-map setting/) });
+      }
+      await expect(posting(rest)).rejects.toThrow();
+      expect(drainStops).toEqual([{ failures: 3, remaining: 1, cause: "settings", code: "6000" }]);
+
+      qbo.createAnswer = null;
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 4, refusalStop: null });
     });
 
     it("a failed read for the gift's own earlier entry on an outage leaves it to try again, uncharged; nothing is created", async () => {

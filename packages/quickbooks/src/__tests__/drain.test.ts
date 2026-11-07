@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, qbGate, runDrain } from "../drain";
+import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_SAME_CODE_REFUSALS, qbGate, runDrain, type Posted } from "../drain";
 
 type Outcome = "posted" | "failed" | "skipped";
 
@@ -68,6 +68,50 @@ describe("runDrain", () => {
       throw new Error("boom");
     };
     await expect(runDrain<number, Outcome>(rows(1), { counts: fresh(), failures: [], post })).rejects.toThrow("boom");
+  });
+});
+
+describe("runDrain on repeated refusal codes", () => {
+  const refusing = (codes: (string | null)[]) => {
+    const q = [...codes];
+    return async (): Promise<Posted<Outcome>> => {
+      const code = q.shift();
+      return code ? { outcome: "skipped", refusedCode: code } : "posted";
+    };
+  };
+  const lane = (codes: (string | null)[], returned: number[][]) => ({
+    counts: fresh(),
+    failures: ["failed"] as Outcome[],
+    post: refusing(codes),
+    unrefuse: async (rs: readonly number[]) => {
+      returned.push([...rs]);
+    },
+  });
+
+  it("keeps going after two refusals with one code, returning nothing", async () => {
+    const returned: number[][] = [];
+    const l = lane(["6000", "6000", null], returned);
+    expect(await runDrain<number, Outcome>(rows(3), l)).toBeNull();
+    expect(returned).toEqual([]);
+    expect(l.counts).toEqual({ posted: 1, failed: 0, skipped: 2 });
+  });
+
+  it("stops on the third refusal with one code and returns all three", async () => {
+    expect(MAX_SAME_CODE_REFUSALS).toBe(3);
+    const returned: number[][] = [];
+    const l = lane(["6000", null, "6000", "6000", null], returned);
+    expect(await runDrain<number, Outcome>(rows(5), l)).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 1 });
+    expect(returned).toEqual([[0, 2, 3]]);
+  });
+
+  it("does not stop on three refusals with mixed codes", async () => {
+    const returned: number[][] = [];
+    expect(await runDrain<number, Outcome>(rows(4), lane(["6000", "6190", "6000", "2020"], returned))).toBeNull();
+    expect(returned).toEqual([]);
+  });
+
+  it("never stops on refusals for a lane that cannot return them", async () => {
+    expect(await runDrain<number, Outcome>(rows(3), { counts: fresh(), failures: ["failed"], post: refusing(["6000", "6000", "6000"]) })).toBeNull();
   });
 });
 

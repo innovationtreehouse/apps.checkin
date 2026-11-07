@@ -61,11 +61,12 @@ export async function inKindPostingMissing(): Promise<string[]> {
   ];
 }
 
-/** What the in-kind stop alert tells finance, by the stop's kind. */
-const DRAIN_STOP_CAUSES: Record<InKindStopKind, string> = {
-  system: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.",
-  connection: "QuickBooks refused the app's connection. Reconnect QuickBooks; until then no gift books.",
-  bug: "The gifts failed on their own while QuickBooks was answering. Each failure counts against its gift, and a gift that keeps failing comes to you.",
+/** What the in-kind stop alert tells finance, by the stop's kind; a settings stop names QuickBooks' fault code. */
+const DRAIN_STOP_CAUSES: Record<InKindStopKind, (code?: string) => string> = {
+  system: () => "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.",
+  connection: () => "QuickBooks refused the app's connection. Reconnect QuickBooks; until then no gift books.",
+  bug: () => "The gifts failed on their own while QuickBooks was answering. Each failure counts against its gift, and a gift that keeps failing comes to you.",
+  settings: (code) => `QuickBooks refuses entries with code ${code ?? "unknown"}; likely a books-map setting, such as an inactive account or class. These gifts were not charged a try, and the next run tries them again.`,
 };
 
 /** Loaded on first use; the books map is read per run. */
@@ -81,12 +82,12 @@ function inKindQbPosting(): InKindQbPosting | undefined {
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       }, "In-kind sweep alert failed:");
     },
-    async drainStopped({ failures, remaining, cause }) {
+    async drainStopped({ failures, remaining, cause, code }) {
       const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
       await notifyFinanceAlert("finance.inKindDrainStopped", {
         failures: String(failures),
         remaining: String(remaining),
-        cause: DRAIN_STOP_CAUSES[cause],
+        cause: DRAIN_STOP_CAUSES[cause](code),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       }, "In-kind drain alert failed:");
     },
