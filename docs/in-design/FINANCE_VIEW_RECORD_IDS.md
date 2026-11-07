@@ -382,11 +382,10 @@ as today but with exact records and fields.
 - **Rows that point at a finance record name that record (Q4),** not the row's
   own id. Example: Donations → disbursement holds lists `id 3, disbursementId
   "BEN-889"`, and the log names `Benevity.Disbursement:BEN-889`, not 3. The
-  screens: received
-  expense payloads
-  (`receiptId`), disbursement holds (`disbursementId` and `transactionId`),
-  disbursement events (`disbursementId`), and income reconciliation
-  (`payoutGid`).  [Decision — owner]
+  screens: received expense payloads (`receiptId`), disbursement holds
+  (`disbursementId` and `transactionId`), disbursement events
+  (`disbursementId`), and income reconciliation (`payoutGid`).
+  [Decision — owner]
 - **Payment plans name `programId:personId`;** the duplicate review names
   everything it displays; expense detail names the expense, not its lines.
   [Decision — owner]
