@@ -6,7 +6,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
 import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
-import { deleteAndReleaseHold, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
+import { deleteAndReleaseHold, type ExitOptions, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
 import { householdLeadship } from "@/lib/household/leads";
@@ -399,12 +399,28 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         // A seat taken out of Shopify without a payment — a scholarship hold, or
         // a comped/approved place — goes back on sale (+1) with the exit, exactly
-        // once (see deleteAndReleaseHold / withdrawParticipant).
+        // once (see deleteAndReleaseHold / withdrawParticipant). The audit commits
+        // with the exit: a removal's audit is the only record that its order spent a seat.
+        const exitOptions: ExitOptions = {
+            inRequest: true,
+            audit: (tx, enrollment) => tx.auditLog.create({
+                data: {
+                    actorId: currentUserId,
+                    action: mode === 'withdraw' ? 'EDIT' : 'DELETE',
+                    tableName: 'ProgramParticipant',
+                    affectedEntityId: participantId,
+                    secondaryAffectedEntity: programId,
+                    ...(mode === 'withdraw'
+                        ? { newData: { ...enrollment, ...(reason && { reason }) } }
+                        : { oldData: enrollment, ...(reason && { newData: { reason } }) }),
+                },
+            }),
+        };
         let exit: Awaited<ReturnType<typeof withdrawParticipant>>;
         try {
             exit = mode === 'withdraw'
-                ? await withdrawParticipant(programId, participantId, currentProgram, only, { inRequest: true })
-                : await deleteAndReleaseHold(programId, participantId, currentProgram, only, { inRequest: true });
+                ? await withdrawParticipant(programId, participantId, currentProgram, only, exitOptions)
+                : await deleteAndReleaseHold(programId, participantId, currentProgram, only, exitOptions);
         } catch (error) {
             if (!isPrismaError(error, 'P2025')) throw error;
             exit = null;
@@ -433,20 +449,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
             return NextResponse.json({ success: true, idempotent: true });
         }
-        const { enrollment, released, shopifyOk } = exit;
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
-                action: mode === 'withdraw' ? 'EDIT' : 'DELETE',
-                tableName: 'ProgramParticipant',
-                affectedEntityId: participantId,
-                secondaryAffectedEntity: programId,
-                ...(mode === 'withdraw'
-                    ? { newData: { ...enrollment, ...(reason && { reason }) } }
-                    : { oldData: enrollment, ...(reason && { newData: { reason } }) }),
-            }
-        });
+        const { released, shopifyOk } = exit;
 
         // Nothing here may reveal whether a scholarship hold existed: this route
         // is reachable by the program's lead mentor, who must never see
