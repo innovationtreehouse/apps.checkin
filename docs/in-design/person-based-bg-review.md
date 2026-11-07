@@ -590,30 +590,29 @@ IDs are stable. A decided question keeps its number.
 
 ### Open
 
-**PBR-1. A rejected adult in a member household (Policy, Membership Art. IX).**
-Today an adult whose own check was rejected stays in a member household, and the
-household renews on another lead's still-valid check with no new review (§2).
-Options: (a) a rejection of any adult in the household blocks its open
-application; (b) only a lead's rejection does. *Recommendation: (a).* Art. IX bars
-anyone whose check fails from membership, and membership comes from being in the
-family, so any adult's failure blocks. No interim fix is needed: no review in
-production is rejected.
+**PBR-13. Between a rejection and the Board's denial, does the system hold the
+household's application?** The owner's intent for PBR-1 is that a rejected adult
+leads to the Board denying the family, a human act. The question is what the app
+does in the meantime. Options:
+- **(a) Hold and raise.** The household's open application can't clear or
+  activate while an adult is disputed (clause 2 of §3.2). The Board gets the
+  queue item and the email, and decides whether to deny. Nothing is taken from a
+  membership already active.
+- **(b) Raise only.** Clause 2 goes. The application can still clear on another
+  lead's check, so a renewal can complete before the Board acts, and the Board
+  denies afterwards.
 
-**PBR-11. Naming a person who already has a review open.** Options: (a) refuse the
-first decision when that review has attestations or is blocked, and close it with
-an audit row when it has none; (b) merge the two reviews. *Recommendation: (a).*
-Merging would move attestations between reviews, which seats reviewers past the
-own-household and already-attested checks. Rule (a) also removes the double review
-in live data with no cutover code (§5.4).
-
-**PBR-12. A reviewer who thinks the named person is wrong.** Today they reject. Once
-a rejection names a person, rejecting would mark that person's check as failed.
-Options: (a) they ask the Board to reset, which clears the subject; (b) a new
-"wrong person" action. *Recommendation: (a).* Review volume is low, and the reset
-already exists.
+*Recommendation: (a).* Holding a request that hasn't become standing is what the
+principles allow automation to do ("a held operation is late, not lost"); only
+removing standing is a person's act. Option (b) leaves today's Art. IX gap open
+until someone clicks. The cost is the same either way: (a) is the clause 2 already
+in §3.2, and both options use the existing Board queue item.
 
 ### Decided (owner, 2026-11-07)
 
+- **PBR-1.** (a): a rejection of any adult in the household counts against the
+  household. The intended outcome is that the Board denies the family; the app
+  raises the case and doesn't decide it (PBR-13).
 - **PBR-2.** A rejection mid-year in an ACTIVE household triggers nothing
   automatic. It goes to the Board's queue with an email.
 - **PBR-3.** One cleared lead is the household's gate. Other adults stay warn-only
@@ -624,6 +623,10 @@ already exists.
   facts (§6).
 - **PBR-6.** In-flight household reviews restart and are reviewed again. There is
   no drain path (§5).
+- **PBR-11.** (a): naming a person whose own review has attestations or is blocked
+  is refused; an empty one is closed with an audit row.
+- **PBR-12.** (a): a reviewer who thinks the wrong person was named asks the Board
+  to reset, which clears the subject.
 - **PBR-7.** The first reviewer's decision sets whose check the review is about.
   Consent never names a person (§3.1).
 - **PBR-8.** Legacy blanket-stamped clearances are left as they are.
