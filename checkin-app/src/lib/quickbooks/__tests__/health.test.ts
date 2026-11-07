@@ -92,6 +92,13 @@ describe("QuickBooks connection row", () => {
         expect(r["quickbooks-connection"].detail).not.toMatch(/token refresher failed/);
     });
 
+    it("says what finance must check when the refresher points at the wrong company", async () => {
+        const wrong = new KindedError("settings", "QuickBooks settings are wrong: the token refresher holds a different QuickBooks company than this instance's QBO_REALM_ID. Finance checks which company the consent was run for.");
+        tryBuildQuickBooks.mockReturnValue(connected(jest.fn(), jest.fn().mockRejectedValue(wrong)));
+        const r = await rows();
+        expect(r["quickbooks-connection"]).toMatchObject({ ok: false, detail: wrong.message });
+    });
+
     it("times out a refresher that never answers", async () => {
         jest.useFakeTimers();
         tryBuildQuickBooks.mockReturnValue(connected(jest.fn(), jest.fn(() => new Promise(() => {}))));
