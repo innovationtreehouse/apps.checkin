@@ -445,6 +445,11 @@ the declared records, and does not replace them.
 - **The donation upload file carries the mark.** The stored Benevity CSV behind
   `GET /api/donations/uploaded-files/[id]/blob` holds employers and donor names,
   so serving it is always logged.  [Decision — owner]
+- **Company donors carry the mark:** `InKindDonation.donorCompanyName` and
+  `Receipt.donorCompanyName`, beside `Transaction.companyName` (the Benevity
+  employer, already marked). Benevity's rules forbid the organisation from
+  saying publicly which company gave or matched, so a view that shows it is
+  logged.  [Decision — owner]
 - **Log rows written before the change stay as they are.** Nothing converts
   them, and the search does not match their bare ids.  [Decision — owner]
 
@@ -453,10 +458,7 @@ the declared records, and does not replace them.
 Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
 
 - **Q9. Which fields make a view a finance view: what is left.** The rule and
-  most of the list are decided (see Decided). Two items are left to confirm:
-  - **Company donors.** `donorCompanyName` on `InKindDonation` (bulk-donation)
-    and on `Receipt` (receipt). Example: "Acme gave goods worth $300". It names
-    a donor beside a gift's value. Marked?
+  most of the list are decided (see Decided). One item is left to confirm:
   - **Approvers and reviewers** (`approvedByUserId`, `decidedByUserId`,
     `reviewedByUserId`, `boardAuthorizedByUserId`). These name who acted on a
     record, not who paid or was paid. Example: "Lee approved Sam's $42.10
@@ -493,6 +495,11 @@ Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their n
   Which?
 
 ## Follow-ups outside this design
+
+- A candidate register line for `docs/rules/revenue.md`, for @thpr to word. The
+  register has nothing on Benevity today: "Which company gave or matched
+  through Benevity is not said publicly (Benevity's rules)." Not edited in
+  this design PR.
 
 - `GET /api/receipts/duplicate-queue` is registered and audited but has no route
   or handler. Removing the entry is a boundary decommission of its own.
