@@ -5,11 +5,8 @@ Design for making the finance view record (the finance-view rule in
 showed: who looked, on which page, which records, and which sensitive fields
 of them. No code changes with this doc.
 
-**Status: under discussion, nothing is being built.** Decided except for:
-
-- **Q14:** how to name the records that live outside the app (QuickBooks,
-  Benevity).
-- **Q16:** whether a reload may write a new entry.
+**Status: under discussion, nothing is being built.** Everything is decided
+except **Q16**: whether a reload may write a new entry.
 
 ## The problem
 
@@ -82,7 +79,7 @@ model and `id`. A route declares its records only where that default is wrong:
   A view model is not a stored model, so the declaration names the model the id
   belongs to.
 - **The row points at another record (Q4, decided).** A QuickBooks exclusion
-  names QuickBooks transaction `qbTxnId`, not its own `id`.
+  names `QuickBooks.Transaction` `qbTxnId`, not its own `id`.
 - **The id is several fields.** A payment plan is `programId` + `personId`.
 - **The row's table depends on a field.** An in-kind row is `InKindDonation` or
   `ManualInKindDonation` by its `source`.
@@ -105,15 +102,15 @@ financeView: {
 - `key` is the bag key whose rows hold the records.
 - `id` is a field, a nested path (`members[].id`), a list of fields joined into
   one id (`['programId', 'personId']`), or a path param (`{ param: 'id' }`).
-- `model` names the model the id belongs to. It must be a model in the
-  classifications.
+- `model` names the model the id belongs to: a model in the classifications,
+  or one of the outside names below.
 - `query` lists the query parameters that pick the screen (§4).
 
 **Checked when the server starts.** Registration throws when:
 
 - a route can send a marked field on rows with no `id` and has no declaration;
 - a declared field is not classified on its model;
-- a declared `model` is not in the classifications;
+- a declared `model` is neither in the classifications nor on the list of outside names;
 - a declared id is not visible to every role in the route's `orderedView` that
   can see the marked field. If it were not, that role's views would name no
   record, silently.
@@ -121,8 +118,12 @@ financeView: {
 Ids are read from the stripped response, so the log names only what left the
 server.
 
-Records with no model in the app, a QuickBooks transaction or a Benevity
-disbursement, are Q14.
+Records that live only in another system are named by that system and the
+record's type (Q14, decided): `QuickBooks.Transaction:4412` and
+`Benevity.Disbursement:BEN-889`. A transaction has one name on every screen, so
+a search for it finds every view. These outside names are a short fixed list
+(two today) beside the declaration grammar, and a declared `model` may name one
+of them as well as a schema model.
 
 ### 3. Which marked fields were sent
 
@@ -246,18 +247,18 @@ marked fields it sends.
 | `GET /api/expense/expenses/[id]` and its panels | `Expense` ← param `id`, not its lines (decided) |
 | `GET /api/expense/expense-events` | `Expense` ← `ExpenseEvent.expenseId` |
 | `GET /api/expense/received-expense-payloads` | `Receipt` ← `receiptId` (Q4) |
-| `GET /api/expense/qb-exclusions`, `GET /api/income/qb-exclusions` | QuickBooks transaction ← `qbTxnId` (Q4, Q14) |
-| `GET /api/expense/expenses/[id]/qb-candidates`, `GET /api/income/reconciliation/[id]/candidates` | QuickBooks transaction ← the candidate's `id` (Q14) |
+| `GET /api/expense/qb-exclusions`, `GET /api/income/qb-exclusions` | `QuickBooks.Transaction` ← `qbTxnId` (Q4) |
+| `GET /api/expense/expenses/[id]/qb-candidates`, `GET /api/income/reconciliation/[id]/candidates` | `QuickBooks.Transaction` ← the candidate's `id` |
 | `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` (a view model) |
 | `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) |
 | `GET /api/receipts`, needs-attention, confirmations, `[id]` | `Receipt` ← `id` (view models of `Receipt`) |
 | `GET /api/workflow-mapping/receipts`, `[id]`, audit-log | `ReceivedReceipt` ← `id`, or ← `receivedReceiptId` on the audit log |
-| `GET /api/donations/disbursement-holds` | Benevity disbursement ← `disbursementId` (Q14); `Transaction` ← `transactionId` (Q4) |
-| `GET /api/donations/disbursement-events` | Benevity disbursement ← `disbursementId` (Q4, Q14) |
+| `GET /api/donations/disbursement-holds` | `Benevity.Disbursement` ← `disbursementId`; `Transaction` ← `transactionId` (Q4) |
+| `GET /api/donations/disbursement-events` | `Benevity.Disbursement` ← `disbursementId` (Q4) |
 | `GET /api/donations/in-kind/queue`, by-bucket | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` |
 | `GET /api/donations/in-kind/receipt/[id]`, `manual/[id]` | `InKindDonation` / `ManualInKindDonation` ← param `id` |
 | `GET /api/income/payouts`, `payouts/[gid]` | `ShopPayout` ← `payoutGid`, or ← param `gid` |
-| `GET /api/income/reconciliation` | `ShopPayout`, or a Benevity disbursement (Q14), by `source` ← `payoutGid` (Q4) |
+| `GET /api/income/reconciliation` | `ShopPayout` or `Benevity.Disbursement` by `source` ← `payoutGid` (Q4) |
 | `GET /api/finance-ops/payments` | `PaymentException` ← `id` (a view model) |
 | `GET /api/finance-ops/payment-plans` | `ProgramParticipant` ← `['programId','personId']` (decided) |
 | file routes (receipt file, mail-item file, donation upload) | the file's record ← param `id` |
@@ -362,6 +363,9 @@ as today but with exact records and fields.
   are inventory, not finance information.  [Decision — owner]
 - **"Payout record" means a payout from Shopify, and nothing else.**
   [Decision — owner]
+- **Records outside the app are named by system and type (Q14 (b)):**
+  `QuickBooks.Transaction:4412`, `Benevity.Disbursement:BEN-889`. One name on
+  every screen, from a fixed list of outside names, two today.  [Decision — owner]
 - **Log rows written before the change stay as they are.**  [Decision — owner]
 - **Any marked field logs the view, an amount on its own included (Q15).** One
   mark, with no pairing of a person with money. So the payouts list, gifts of
@@ -384,23 +388,7 @@ as today but with exact records and fields.
 
 ## Open questions for @thpr
 
-Q1 to Q13 and Q15 are settled or retired; their numbers stay retired.
-
-- **Q14. Records with no model in the app.** Some ids name records that live
-  only in another system: a QuickBooks transaction (`qbTxnId` on both QuickBooks
-  exclusion lists, and the ids on the two QuickBooks candidate lists), and a
-  Benevity disbursement (`disbursementId` on disbursement holds and events, and
-  Benevity rows in income reconciliation). No schema model names them. Options:
-  - (a) name them by the field they came from, for example
-    `IncomeQbMatchExclusion.qbTxnId:4412`. It is exact and needs no list, but
-    one QuickBooks transaction has a different name on each screen, so "who
-    looked at transaction 4412" searches several names;
-  - (b) name them by the outside system and its record type, for example
-    `QuickBooks.Transaction:4412` and `Benevity.Disbursement:BEN-889`. The same
-    transaction has one name everywhere, at the cost of a list of outside names
-    to keep: two today.
-
-  Which?
+Q1 to Q15 are settled or retired; their numbers stay retired.
 
 - **Q16. Reloads.** A page-view row is keyed by person and page-view id. A
   reload is a new page load with a new id, so it writes a new row: three
