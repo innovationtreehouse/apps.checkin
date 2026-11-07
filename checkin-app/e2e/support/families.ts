@@ -102,3 +102,18 @@ export async function asViewer(browser: Browser, email: string, steps: (page: Pa
   expect(expected ? problems.filter((p) => !expected.test(p)) : problems).toEqual([]);
   await context.close();
 }
+
+/**
+ * Signs the agreement through the dev Zoho mock from the membership page. The mock page renders
+ * its button on the server, and a click that lands before hydration does nothing, so the click
+ * waits for the page to settle and for the completion route to answer.
+ */
+export async function signAgreement(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Sign your membership agreement →" }).click();
+  await page.waitForURL(/\/dev\/zoho-sign\?rid=/);
+  await page.waitForLoadState("networkidle");
+  const completed = page.waitForResponse((res) => new URL(res.url()).pathname === "/api/dev/zoho-sign/complete");
+  await page.getByRole("button", { name: "Complete signing (DEV)" }).click();
+  expect((await completed).status()).toBe(200);
+  await expect(page.getByText(/^Signed/)).toBeVisible();
+}
