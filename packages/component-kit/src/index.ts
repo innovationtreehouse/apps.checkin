@@ -173,13 +173,23 @@ export function isKindedError(err: unknown): err is KindedError {
   return err instanceof Error && KINDED_ERROR in err && "kind" in err && typeof err.kind === "string";
 }
 
-/** The kind of any error. Anything unrecognised is a bug, which keeps today's retry-then-hold. */
+/**
+ * The kind of any error. A library's 4xx is data, except 401 (our wiring lost the caller: bug)
+ * and 429 (a passing overload: system). Anything unrecognised is a bug, which keeps today's
+ * retry-then-hold.
+ */
 export function kindOf(err: unknown): FailureKind {
   if (isKindedError(err)) return err.kind;
-  if (isServiceError(err) || isComponentHttpError(err)) return err.status >= 500 ? "system" : "data";
+  if (isServiceError(err) || isComponentHttpError(err)) return statusKind(err.status);
   if (isZodError(err)) return "data";
   if (isDbUnavailableError(err)) return "system";
   return "bug";
+}
+
+function statusKind(status: number): FailureKind {
+  if (status === 401) return "bug";
+  if (status === 429 || status >= 500) return "system";
+  return "data";
 }
 
 /** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
