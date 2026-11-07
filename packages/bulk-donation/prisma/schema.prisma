@@ -121,6 +121,13 @@ model Transaction {
   ownerAssignedByUserId  Int?      @map("owner_assigned_by_user_id")
   /// @sensitivity:internal
   isOrganizationalLevel  Boolean   @default(false) @map("is_organizational_level")
+  /// When finance released this fees-only row, its fee booked by hand in QuickBooks; null while unreleased.
+  /// @sensitivity:internal
+  feeReleasedAt          DateTime? @map("fee_released_at")
+  /// @sensitivity:internal
+  feeReleasedByUserId    Int?      @map("fee_released_by_user_id")
+  /// @sensitivity:internal
+  feeReleasedByName      String?   @map("fee_released_by_name")
 
   disbursementHolds DisbursementHold[]
 
