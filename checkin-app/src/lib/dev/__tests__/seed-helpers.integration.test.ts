@@ -6,6 +6,9 @@ import {
     createEvent,
     createCheckins,
 } from "@/lib/dev/seed-helpers";
+import { classify, effectiveOffSaleAt, enrollmentClosedBy } from "@/lib/programs/saleState";
+import { membershipYearOf, nextBoundary } from "@/lib/programYear";
+import { orgCalendarDay } from "@/lib/time";
 
 /**
  * Integration coverage for the dev seed/macro helpers + the reset truncate-and-reseed flow
@@ -49,6 +52,103 @@ describe("dev seed-helpers (integration)", () => {
         expect(personas).toBeGreaterThanOrEqual(9);
         expect(await prisma.program.count()).toBeGreaterThanOrEqual(1);
         expect(await prisma.person.findUnique({ where: { email: "boardmember@example.com" } })).not.toBeNull();
+    });
+
+    describe("seeded program spread", () => {
+        const DAY = 24 * 60 * 60 * 1000;
+        const today = orgCalendarDay();
+        const byName = (name: string) =>
+            prisma.program.findFirstOrThrow({
+                where: { name },
+                include: { participants: true, events: { include: { visits: true } } },
+            });
+
+        it("keeps Woodworking 101 for the flow tests", async () => {
+            const program = await byName("Woodworking 101");
+            expect(classify(program)).toBe("ON_SALE");
+        });
+
+        it.each([
+            ["Seed: finished", "FINISHED"],
+            ["Seed: running now", "SALE_ENDED"],
+            ["Seed: upcoming", "ON_SALE"],
+            ["Seed: near off sale", "ON_SALE"],
+            ["Seed: off sale", "SALE_ENDED"],
+            ["Seed: full", "ON_SALE"],
+            ["Seed: next membership year", "ON_SALE"],
+            ["Seed: members only", "ON_SALE"],
+            ["Seed: ages 12-17", "ON_SALE"],
+        ])("%s is in sale state %s with a lead and an event", async (name, state) => {
+            const program = await byName(name);
+            expect(classify(program)).toBe(state);
+            expect(program.leadMentorId).not.toBeNull();
+            expect(program.events.length).toBeGreaterThanOrEqual(1);
+        });
+
+        it("dates sit where each name says, relative to today", async () => {
+            const finished = await byName("Seed: finished");
+            expect(finished.endAt.getTime()).toBeLessThan(today.getTime());
+
+            const running = await byName("Seed: running now");
+            expect(running.phase).toBe("RUNNING");
+            expect(running.startAt.getTime()).toBeLessThan(today.getTime());
+            expect(running.endAt.getTime()).toBeGreaterThan(today.getTime());
+
+            const upcoming = await byName("Seed: upcoming");
+            expect(upcoming.phase).toBe("UPCOMING");
+            expect(upcoming.startAt.getTime()).toBeGreaterThan(today.getTime());
+
+            const nearOffSale = await byName("Seed: near off sale");
+            const offSaleIn = effectiveOffSaleAt(nearOffSale).getTime() - today.getTime();
+            expect(offSaleIn).toBeGreaterThan(0);
+            expect(offSaleIn).toBeLessThanOrEqual(2 * DAY);
+
+            const offSale = await byName("Seed: off sale");
+            expect(offSale.phase).toBe("UPCOMING");
+            expect(offSale.startAt.getTime()).toBeGreaterThan(today.getTime());
+        });
+
+        it("the full program is at capacity, so enrollment reads as full", async () => {
+            const full = await byName("Seed: full");
+            const active = full.participants.filter((p) => p.status === "ACTIVE").length;
+            expect(active).toBe(full.maxParticipants);
+            expect(enrollmentClosedBy(full, active)).toBe("FULL");
+        });
+
+        it("the next-year program runs in the membership year after this one", async () => {
+            const settings = await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
+            const boundary = settings.orgMembershipYearBoundary!;
+            const program = await byName("Seed: next membership year");
+            expect(program.appliesToYear).toBe(membershipYearOf(boundary, today) + 1);
+            expect(program.startAt.getTime()).toBeGreaterThanOrEqual(nextBoundary(boundary, today).getTime());
+        });
+
+        it("members-only and age-range programs carry their limits", async () => {
+            expect((await byName("Seed: members only")).orgMemberOnly).toBe(true);
+            const ages = await byName("Seed: ages 12-17");
+            expect([ages.minAge, ages.maxAge]).toEqual([12, 17]);
+        });
+
+        it("finished and running programs have participants and attended events", async () => {
+            for (const name of ["Seed: finished", "Seed: running now"]) {
+                const program = await byName(name);
+                expect(program.participants.length).toBeGreaterThan(0);
+                const visits = program.events.flatMap((e) => e.visits);
+                expect(visits.length).toBeGreaterThan(0);
+                expect(visits.every((v) => v.departedAt !== null)).toBe(true);
+            }
+        });
+
+        it("reseeding creates no duplicates", async () => {
+            await seedBaseline(prisma);
+            const seeded = await prisma.program.groupBy({
+                by: ["name"],
+                where: { OR: [{ name: { startsWith: "Seed: " } }, { name: "Woodworking 101" }] },
+                _count: true,
+            });
+            expect(seeded).toHaveLength(10);
+            expect(seeded.every((g) => g._count === 1)).toBe(true);
+        });
     });
 
     it("+ Family adds a household with a lead, a partner, and a youth", async () => {
