@@ -54,6 +54,8 @@ beforeEach(() => {
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
 
+const BANNER = "Item names couldn't be loaded from the catalog. Showing part numbers.";
+
 /** The Mapping cell of the line whose row matches `name`. */
 const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).getAllByRole("cell")[6];
 
@@ -85,6 +87,7 @@ describe("the receiving page's Mapping column", () => {
     wrap();
     await act(async () => {});
     expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Wood glue ×2");
+    expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
   });
 
   it("shows a provisional part by its provisional name", async () => {
@@ -118,13 +121,33 @@ describe("the receiving page's Mapping column", () => {
     expect(mockApi).toHaveBeenCalledWith("/api/catalog/items/0200030200429");
   });
 
-  it("still shows the ID when the catalog name fails to load", async () => {
-    mockApi.mockRejectedValue(new Error("nope"));
+  it("says Name unavailable and shows the banner when the catalog read fails", async () => {
+    mockApi.mockRejectedValue(new HttpError("Server error", 500));
     mapped({ assignedGtin13: "4006381333931" });
     wrap();
     expect(mappingCell(/Wood glue/)).toHaveTextContent("4006381333931 ×2");
-    await act(async () => {});
-    expect(mappingCell(/Wood glue/)).toHaveTextContent("4006381333931 ×2");
+    expect(await screen.findByText(BANNER)).toBeInTheDocument();
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("4006381333931 · Name unavailable ×2");
+  });
+
+  it("says Not in catalog for an assigned part neither the catalog nor org-items names, with no banner", async () => {
+    serve({}, {});
+    mapped({ assignedGtin13: "4006381333931" });
+    wrap();
+    expect(await within(screen.getByRole("row", { name: /Wood glue/ })).findByText("4006381333931 · Not in catalog ×2")).toBeInTheDocument();
+    expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("names a provisional part by its provisional name even when the catalog read fails", async () => {
+    mockApi.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/inventory/org-items/")) {
+        return { InventoryProvisionalItem: [{ provisionalGtin13: "0200002701237", name: "Titebond II glue" }] };
+      }
+      throw new HttpError("Server error", 500);
+    });
+    mapped({ assignedGtin13: "0200002701237" });
+    wrap();
+    expect(await within(screen.getByRole("row", { name: /Wood glue/ })).findByText("P000123 · Titebond II glue ×2")).toBeInTheDocument();
   });
 });
 

@@ -8,7 +8,7 @@ import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import {
-  api, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
+  api, CatalogNamesUnavailable, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
 } from "../components/api";
 import { CatalogPicker, LoadError } from "@checkin/component-ui";
 
@@ -76,7 +76,8 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const count = useLoad<{ total: number }>(`/org-items/count?${filter}`, { keepPrevious: true });
   const locations = useLoad<LocationRef[]>("/locations");
   const items = rows.data?.OrgItem ?? null;
-  const names = withProvisionalNames(useCatalogNames((items ?? []).map((r) => r.gtin13)), rows.data?.InventoryProvisionalItem);
+  const catalogNames = useCatalogNames((items ?? []).map((r) => r.gtin13));
+  const names = withProvisionalNames(catalogNames, rows.data?.InventoryProvisionalItem);
 
   const [form, setForm] = useState<ItemForm | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -192,6 +193,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         )}
       </Group>
       {rows.error && <LoadError what="inventory" message={rows.error} onRetry={reload} />}
+      <CatalogNamesUnavailable lookup={catalogNames} />
       <Table striped highlightOnHover withTableBorder>
         <Table.Thead>
           <Table.Tr>

@@ -5,7 +5,10 @@ import { useParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { MIN_CATALOG_SEARCH_LENGTH, catalogItemLabel, catalogSearchTerm, useCatalogSearch, type CatalogItem } from "@checkin/component-ui";
+import {
+  CatalogNamesUnavailable, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames,
+  type CatalogItem, type CatalogNames,
+} from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
@@ -73,27 +76,27 @@ interface SubcategoryOption {
 /** The provisional names GET /api/inventory/org-items/{gtin13} returns beside the row. */
 interface OrgItemNames { InventoryProvisionalItem?: { provisionalGtin13: string; name: string }[] }
 
-/** A part's catalog name, else its provisional name from org-items; null when neither loads. */
-async function partName(gtin13: string): Promise<string | null> {
-  const item = await api<CatalogItem>(`/api/catalog/items/${gtin13}`).catch(() => null);
-  if (item?.name) return item.name;
+/** A part's catalog name, else its provisional name from org-items, else the error the catalog read threw. */
+async function partName(gtin13: string): Promise<unknown> {
+  const catalog = await api<CatalogItem>(`/api/catalog/items/${gtin13}`).then((item): unknown => item.name, (e: unknown) => e);
+  if (typeof catalog === "string") return catalog;
   const row = await api<OrgItemNames>(`/api/inventory/org-items/${gtin13}`).catch(() => null);
-  return row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13)?.name ?? null;
+  return row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13)?.name ?? catalog;
 }
 
-/** Part names by GTIN, one lookup per distinct GTIN; a part with no name is left out and still shows its ID. */
-function usePartNames(gtins: string[]): Map<string, string> {
-  const [names, setNames] = useState<Map<string, string>>(new Map());
+/** Part names by GTIN, one lookup per distinct GTIN, with the GTINs the catalog lacks or failed to answer for. */
+function usePartNames(gtins: string[]): CatalogNames {
+  const [lookup, setLookup] = useState<CatalogNames>(NO_CATALOG_NAMES);
   const key = [...new Set(gtins)].sort().join(",");
   useEffect(() => {
     if (!key) return;
     let live = true;
     const ids = key.split(",");
     Promise.all(ids.map(partName))
-      .then((found) => { if (live) setNames(new Map(ids.flatMap((gtin13, i) => (found[i] ? [[gtin13, found[i]] as const] : [])))); });
+      .then((found) => { if (live) setLookup(ids.reduce((acc, gtin13, i) => withLookup(acc, gtin13, found[i]), NO_CATALOG_NAMES)); });
     return () => { live = false; };
   }, [key]);
-  return names;
+  return lookup;
 }
 
 /**
@@ -104,7 +107,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { id } = useParams<{ id: string }>();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
-  const partNames = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
+  const partLookup = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
   const [busy, setBusy] = useState(false);
   const [openLineId, setOpenLineId] = useState<number | null>(null);
 
@@ -137,6 +140,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const editable = canManage && !lockReason;
   const base = `/receipts/${receipt.id}`;
   const items = new Map(parsed.lineItems.map((li) => [li.receiptLineItemId, li]));
+  const partLabels = withProvisionalNames(partLookup);
 
   return (
     <>
@@ -194,6 +198,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           )}
         </Group>
       )}
+      <CatalogNamesUnavailable lookup={partLookup} />
       <Table withTableBorder>
         <Table.Thead>
           <Table.Tr>
@@ -214,7 +219,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
             const isOpen = editable && openLineId === ls.id;
             const mappedGtin = ls.assignedGtin13 ?? ls.provisionalItemGtin13;
             // A provisional part has no row until the receipt applies, and then takes the line's description as its name.
-            const mappedName = (mappedGtin && partNames.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : li?.description);
+            const mappedName = (mappedGtin && partLookup.names.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : li?.description) ?? (mappedGtin && partLabels.get(mappedGtin));
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>
