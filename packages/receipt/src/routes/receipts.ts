@@ -165,6 +165,8 @@ export const file: ReceiptFileRouteHandler = async ({ params, access }) => {
 
 export const duplicateGroup: ReceiptRouteHandler = async ({ params }) => ({ ReceiptDuplicateGroup: await receiptService.duplicateGroup(params.id) });
 
+export const duplicateQueue: ReceiptRouteHandler = async () => ({ ReceiptDuplicateQueueRow: await receiptService.duplicateQueue() });
+
 const NotThisOneBody = z.object({ otherId: z.string().min(1) }).strict();
 
 export const notThisOne: ReceiptRouteHandler = async ({ req, params }) => {
