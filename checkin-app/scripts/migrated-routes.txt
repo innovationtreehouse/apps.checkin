@@ -90,7 +90,6 @@ GET /api/donations/disbursement-holds
 POST /api/donations/disbursement-holds/[disbursementId]/resubmit
 POST /api/donations/disbursement-holds/[disbursementId]/release
 GET /api/donations/disbursement-events
-GET /api/donations/nav-counts
 GET /api/donations/in-kind/queue
 GET /api/donations/in-kind/manual
 POST /api/donations/in-kind/manual
