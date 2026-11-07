@@ -115,34 +115,38 @@ export const manualInKindService = {
       return row;
     });
 
-    let inventoryLoaded = true;
-    try {
-      await this.loadInventory(orgId, donation.id);
-    } catch (err) {
-      console.warn(`[bulk-donation] in-kind donation ${donation.id} recorded; inventory load failed`, err);
-      inventoryLoaded = false;
-    }
+    // loadInventory logs its own failure.
+    const inventoryLoaded = await this.loadInventory(orgId, donation.id).then(() => true, () => false);
     return { id: donation.id, inventoryLoaded };
   },
 
-  /** Load a recorded donation's goods. Safe to repeat: the callee is idempotent on `donation:<id>`. */
+  /**
+   * Load a recorded donation's goods. Safe to repeat: the callee is idempotent on `donation:<id>`.
+   * A failure is logged with its kind; a `data` one is inventory refusing it for good, and passes
+   * through so the inventory manager is told to adjust stock by hand.
+   */
   async loadInventory(orgId: string, id: number): Promise<void> {
     const donation = await db.manualInKindDonation.findFirst({ where: { id, orgId }, include: { lines: true } });
     if (!donation) throw new ServiceError(404, "In-kind donation not found");
-    await getInventoryApply().apply({
-      receiptId: inventorySourceKey(donation.id),
-      orgId,
-      retailer: null,
-      lineItems: donation.lines.map((l) => ({
-        lineItemId: l.id,
-        gtin13: l.gtin13,
-        provisionalName: l.description ?? l.gtin13,
-        quantityDelta: l.quantity,
-        isDelayed: false,
-        conversionFactor: 1,
-        conversionVersion: 1,
-      })),
-    });
+    try {
+      await getInventoryApply().apply({
+        receiptId: inventorySourceKey(donation.id),
+        orgId,
+        retailer: null,
+        lineItems: donation.lines.map((l) => ({
+          lineItemId: l.id,
+          gtin13: l.gtin13,
+          provisionalName: l.description ?? l.gtin13,
+          quantityDelta: l.quantity,
+          isDelayed: false,
+          conversionFactor: 1,
+          conversionVersion: 1,
+        })),
+      });
+    } catch (err) {
+      console.warn(`[bulk-donation] in-kind donation ${id} inventory load failed (${kindOf(err)})`, err);
+      throw err;
+    }
     if (!donation.inventoryLoadedAt) {
       await db.manualInKindDonation.updateMany({ where: { id, inventoryLoadedAt: null }, data: { inventoryLoadedAt: new Date() } });
     }

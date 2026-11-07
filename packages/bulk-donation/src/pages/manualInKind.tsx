@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { act, api, errorMessage, paged, useLoad, when } from "../components/api";
+import { act, api, errorMessage, isRefusal, paged, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError, Pager } from "@checkin/component-ui";
@@ -67,6 +67,16 @@ export default function ManualInKindPage() {
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const [saving, setSaving] = useState(false);
+  const [refused, setRefused] = useState<ReadonlySet<number>>(new Set());
+
+  function retryLoad(id: number) {
+    const load = () =>
+      api(`/in-kind/manual/${id}/load-inventory`, { method: "POST" }).catch((e: unknown) => {
+        if (isRefusal(e)) setRefused((ids) => new Set(ids).add(id));
+        throw e;
+      });
+    return act(load, "Loaded into inventory", rows.reload);
+  }
 
   const showDonor = (rows.data ?? []).some((r) => r.donorLastName !== undefined);
   const ready = firstName.trim() !== "" && lastName.trim() !== "" && lines.length > 0 && !!donationDate;
@@ -216,13 +226,10 @@ export default function ManualInKindPage() {
               <Table.Td>
                 {r.inventoryLoadedAt ? (
                   <Badge color="green" variant="light">Loaded</Badge>
+                ) : canRecord && refused.has(r.id) ? (
+                  <Button size="xs" variant="light" color="red" disabled>Can&apos;t be loaded: adjust stock by hand</Button>
                 ) : canRecord ? (
-                  <Button
-                    size="xs"
-                    variant="light"
-                    color="red"
-                    onClick={() => act(() => api(`/in-kind/manual/${r.id}/load-inventory`, { method: "POST" }), "Loaded into inventory", rows.reload)}
-                  >
+                  <Button size="xs" variant="light" color="red" onClick={() => void retryLoad(r.id)}>
                     Retry load
                   </Button>
                 ) : (
