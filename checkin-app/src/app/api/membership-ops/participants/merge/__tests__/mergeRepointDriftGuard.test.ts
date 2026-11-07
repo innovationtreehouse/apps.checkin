@@ -91,7 +91,6 @@ const DISPOSITIONS: Record<string, string> = {
     'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg leaves the survivor exactly one open PERSON_BG.',
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
     'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would block the delete.',
-    'Person.mergedIntoId': 'repointed (SET NULL) — a legacy tombstone row naming this record as its survivor. Left in place, the delete would null its pointer and turn it back into a live person. The step-1 CAS also writes this column on the merged-away row itself, as the concurrency guard; the row is then deleted.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
     'BudgetOwner.ownerId': 'repointed (RESTRICT) — step 5 updateMany. The bucket owner approves its lines; the same human keeps approving as the survivor.',
     'Program.leadMentorId': 'repointed (SET NULL) — step 5 updateMany.',
@@ -116,6 +115,7 @@ const DISPOSITIONS: Record<string, string> = {
     'ToolStatus.personId': 'pre-refused (RESTRICT) — two certification levels for one human is a decision an operator makes, not a merge.',
 
     // ── deliberately left ─────────────────────────────────────────────────────
+    'Person.mergedIntoId': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and no Person row sets it: a merged-away record is archived in PersonMerge and deleted. The column awaits its drop.',
     'Session.userId': 'deliberately-left (CASCADE) — deleted, not moved: a session is an auth artifact, and there is no reason for the survivor to inherit the merged-away login.',
 };
 

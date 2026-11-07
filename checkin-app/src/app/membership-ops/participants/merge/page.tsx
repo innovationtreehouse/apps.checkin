@@ -6,7 +6,6 @@ import { Alert, Anchor, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid
 import Link from "next/link";
 import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
-import { MergedBadge } from "@/components/ui/MergedBadge";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -22,7 +21,6 @@ interface ParticipantMergeView {
   googleId?: string;
   emailVerified?: string | null;
   dateOfBirth?: string | null;
-  mergedIntoId?: number | null;
   _count: { visits: number, rawBadgeLogs: number, programParticipants: number, programVolunteers: number };
   household?: { id: number, name: string, _count?: { householdMembers: number }, householdMembers: Record<string, unknown>[] } | null;
   [key: string]: unknown;
@@ -315,7 +313,6 @@ export default function MergeParticipants() {
         <Title order={4} c={isKept ? "green" : "red"}>
           {isKept ? "Keep and augment" : "Merge and delete"}
         </Title>
-        <MergedBadge person={p} />
       </Group>
 
       <Box mb="md">

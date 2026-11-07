@@ -7,7 +7,6 @@
  */
 import { POST } from "../route";
 import { GET as analyzeGET } from "../analyze/route";
-import { GET as searchGET } from "@/app/api/people/search/route";
 import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
@@ -53,6 +52,12 @@ function mergeReq(keepId: number, mergeId: number, fieldChoices: Record<string, 
 
 function analyzeReq(a: number, b: number) {
     return new Request(`http://localhost/api/membership-ops/participants/merge/analyze?a=${a}&b=${b}`) as unknown as import("next/server").NextRequest;
+}
+
+/** The merge was refused: the Person row is still there and no archive row names it. */
+async function expectNotMerged(id: number): Promise<void> {
+    expect(await prisma.person.findUnique({ where: { id }, select: { id: true } })).not.toBeNull();
+    expect(await prisma.personMerge.findUnique({ where: { fromId: id } })).toBeNull();
 }
 
 /** The merged-away Person row is gone and the archive names its survivor. */
@@ -179,17 +184,16 @@ describe("Merge Participants API", () => {
         extraPersonIds.push(other.id);
         const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
         const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
-            await prisma.person.update({ where: { id: pKeepId }, data: { mergedIntoId: other.id } });
+            await prisma.personMerge.create({ data: { fromId: pKeepId, toId: other.id, snapshot: {} } });
+            await prisma.person.delete({ where: { id: pKeepId } });
             return realTransaction(fn);
         }) as unknown as typeof prisma.$transaction);
         try {
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(409);
         } finally {
             spy.mockRestore();
-            await prisma.person.update({ where: { id: pKeepId }, data: { mergedIntoId: null } });
         }
-        const merged = await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } });
-        expect(merged?.mergedIntoId).toBeNull();
+        await expectNotMerged(pMergeId);
     });
 
     it("refuses with 400 when the merged-away record's household is denied between the pre-check and the transaction", async () => {
@@ -207,9 +211,8 @@ describe("Merge Participants API", () => {
         } finally {
             spy.mockRestore();
         }
-        const merged = await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true, email: true } });
-        expect(merged?.mergedIntoId).toBeNull();
-        expect(merged?.email).toBe("merge@example.com");
+        await expectNotMerged(pMergeId);
+        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { email: true } }))?.email).toBe("merge@example.com");
     });
 
     it("refuses with 409 when the merged-away record changes household between the pre-check and the transaction", async () => {
@@ -226,7 +229,7 @@ describe("Merge Participants API", () => {
         } finally {
             spy.mockRestore();
         }
-        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
+        await expectNotMerged(pMergeId);
     });
 
     it("waits on a deny holding the merged-away household's membership row, then refuses", async () => {
@@ -255,7 +258,7 @@ describe("Merge Participants API", () => {
         const res = await merge;
         expect(res.status).toBe(400);
         expect((await res.json()).error).toContain("DENIED");
-        expect((await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } }))?.mergedIntoId).toBeNull();
+        await expectNotMerged(pMergeId);
     });
 
     it("takes an application row before the household row, so a payment holding the application does not deadlock it", async () => {
@@ -365,19 +368,6 @@ describe("Merge Participants API", () => {
             expect(resolved.kind === "live" && resolved.person.id).toBe(pKeepId);
         });
 
-        // A tombstone pointing at the record being merged away: its
-        // mergedIntoId is SET NULL, so leaving it would resurrect it as a live
-        // person when the row it points at is deleted.
-        it("repoints a legacy tombstone's mergedIntoId before deleting the row it names", async () => {
-            const legacy = await prisma.person.create({ data: { name: "Legacy Tombstone", householdId, mergedIntoId: pMergeId } });
-            extraPersonIds.push(legacy.id);
-
-            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
-
-            expect((await prisma.person.findUnique({ where: { id: legacy.id } }))?.mergedIntoId).toBe(pKeepId);
-            await expectMergedAway(pMergeId, pKeepId);
-        });
-
         // A row that lands on the merged-away record after the moves read their
         // sources would block the delete; the merge refuses and rolls back.
         it("refuses with 409 and rolls back when a RESTRICT reference arrives after the moves", async () => {
@@ -411,7 +401,7 @@ describe("Merge Participants API", () => {
             } finally {
                 spy.mockRestore();
             }
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
             expect(await prisma.personMerge.findUnique({ where: { fromId: pMergeId } })).toBeNull();
             expect(await prisma.rawBadgeLog.count({ where: { personId: pMergeId } })).toBe(0);
         });
@@ -551,7 +541,7 @@ describe("Merge Participants API", () => {
         expect(data.error).toContain("Future Event");
 
         // Nothing moved — pre-transaction refusal.
-        expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+        await expectNotMerged(pMergeId);
     });
 
     // Bare-join collisions auto-dedupe — merge succeeds, duplicates deleted.
@@ -732,8 +722,8 @@ describe("Merge Participants API", () => {
 
             // Refused before the transaction: the ACTIVE membership still has a live
             // member, and the surviving human isn't sitting in the NONE household.
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
-            expect(await prisma.person.count({ where: { householdId: memberHh, mergedIntoId: null } })).toBe(1);
+            await expectNotMerged(pMergeId);
+            expect(await prisma.person.count({ where: { householdId: memberHh } })).toBe(1);
         });
 
         it("400s on ACTIVE keeper vs ACTIVE merged-away when the merged-away side is its household's last live member", async () => {
@@ -746,7 +736,7 @@ describe("Merge Participants API", () => {
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(400);
             expect((await res.json()).error).toContain("last live member");
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
         });
 
         it("allows an ACTIVE household merge when another live member remains", async () => {
@@ -774,7 +764,7 @@ describe("Merge Participants API", () => {
             // so had the merge run, the surviving record would simply not be denied.
             const merged = await prisma.person.findUnique({ where: { id: pMergeId }, include: { household: { include: { orgMembership: true } } } });
             const kept = await prisma.person.findUnique({ where: { id: pKeepId }, include: { household: { include: { orgMembership: true } } } });
-            expect(merged?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
             expect(orgMembershipStatusBlocksLogin(merged?.household?.orgMembership?.status)).toBe(true);
             expect(orgMembershipStatusBlocksLogin(kept?.household?.orgMembership?.status)).toBe(false);
         });
@@ -860,7 +850,7 @@ describe("Merge Participants API", () => {
             expect((await res.json()).error).toContain("your own household");
 
             // Refused before the transaction — nothing moved.
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.email).toBe("merge@example.com");
             // Scoped to this merge: an earlier suite's refusal row can carry an actor id that minting has since reissued.
             const refusals = await prisma.auditLog.findMany({
@@ -876,7 +866,7 @@ describe("Merge Participants API", () => {
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(403);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
         });
 
         it("403s a sysadmin too — no role bypasses the rule", async () => {
@@ -887,7 +877,7 @@ describe("Merge Participants API", () => {
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(403);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
         });
 
         it("403s an actor who resolves to nobody before anything moves (fail closed)", async () => {
@@ -897,7 +887,7 @@ describe("Merge Participants API", () => {
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(403);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
         });
 
         it("allows the merge when the actor is outside both households", async () => {
@@ -912,7 +902,7 @@ describe("Merge Participants API", () => {
 
     // Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27.
     describe("a trusted person's sign-in email", () => {
-        const stillLive = async (id: number) => (await prisma.person.findUnique({ where: { id } }))?.mergedIntoId === null;
+        const stillLive = async (id: number) => (await prisma.person.findUnique({ where: { id }, select: { id: true } })) !== null;
 
         it("refuses a sysadmin when the merged-away record is trusted, reason or not", async () => {
             await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
@@ -1061,7 +1051,7 @@ describe("Merge Participants API", () => {
         expect(data.collisions[0].message).toBeTruthy();
     });
 
-    it("concurrent double-merge: exactly one CAS wins, the other 409s and rolls back", async () => {
+    it("concurrent double-merge: exactly one wins the row lock, the other 409s and rolls back", async () => {
         const keep2 = await prisma.person.create({ data: { name: "Keep Two", householdId } });
         extraPersonIds.push(keep2.id);
 
@@ -1076,6 +1066,19 @@ describe("Merge Participants API", () => {
         const winnerId = resA.status === 200 ? pKeepId : keep2.id;
         await expectMergedAway(pMergeId, winnerId);
         expect(await prisma.personMerge.count({ where: { fromId: pMergeId } })).toBe(1);
+    });
+
+    // A→B and B→A at once: both lock the pair in id order, so neither deadlocks and one wins.
+    it("concurrent opposite-direction merges of one pair: exactly one wins, the other 409s", async () => {
+        const [resA, resB] = await Promise.all([
+            POST(mergeReq(pKeepId, pMergeId)),
+            POST(mergeReq(pMergeId, pKeepId)),
+        ]);
+
+        expect([resA.status, resB.status].sort()).toEqual([200, 409]);
+        const [winner, loser] = resA.status === 200 ? [pKeepId, pMergeId] : [pMergeId, pKeepId];
+        await expectMergedAway(loser, winner);
+        expect(await prisma.personMerge.count({ where: { fromId: winner } })).toBe(0);
     });
 
     it("merge chain A→B→C: provenance and moved rows both follow to the terminal record", async () => {
@@ -1323,7 +1326,7 @@ describe("Merge Participants API", () => {
             expect(res.status).toBe(409);
             expect((await res.json()).error).toContain("changed while merging");
             expect((await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } })).phone).toBe("555-000-1111");
-            expect((await prisma.person.findUniqueOrThrow({ where: { id: pMergeId } })).mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
         });
 
         it("applies the admin's choice of side to the side's live value", async () => {
@@ -1668,7 +1671,7 @@ describe("Merge Participants API", () => {
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(403);
 
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
             expect(await prisma.personRole.count({ where: { personId: pMergeId, role: "BOARD" } })).toBe(1);
             expect(await prisma.personRole.count({ where: { personId: pKeepId } })).toBe(0);
         });
@@ -1680,7 +1683,7 @@ describe("Merge Participants API", () => {
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(409);
 
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
             expect(await prisma.personRole.count({ where: { personId: pKeepId, role: "BOARD" } })).toBe(0);
         });
 
@@ -1726,7 +1729,7 @@ describe("Merge Participants API", () => {
             expect((data.collisions as { type: string }[]).map(c => c.type)).toEqual(['bgAttestationSubject']);
             expect(data.error).toContain("subject of the same background check");
 
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
             expect(await prisma.backgroundCheckAttestation.count({ where: { subjectPersonId: pMergeId } })).toBe(1);
         });
 
@@ -1765,7 +1768,7 @@ describe("Merge Participants API", () => {
             const after = await prisma.backgroundCheckAttestation.findUnique({ where: { id: att.id } });
             expect(after?.subjectPersonId).toBe(pMergeId);
             expect(after?.reviewerId).not.toBe(after?.subjectPersonId);
-            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            await expectNotMerged(pMergeId);
         });
 
         it("409s in the other direction too — merged-away record as reviewer, keeper as subject", async () => {
@@ -2188,7 +2191,7 @@ describe("Merge Participants API", () => {
         expect(res.status).toBe(409);
         const data = await res.json();
         expect((data.collisions as { type: string }[]).some(c => c.type === 'openVisit')).toBe(true);
-        expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+        await expectNotMerged(pMergeId);
     });
 
     // Merge-side-only open visit migrates successfully.
@@ -2223,30 +2226,17 @@ describe("Merge Participants API", () => {
         expect(byOriginalEmail).toBeNull();
     });
 
-    describe("consumer exclusion (LIVE_PERSON)", () => {
-        it("people/search omits a merged-away tombstone even when the query matches its (unchanged) name", async () => {
-            const res = await POST(mergeReq(pKeepId, pMergeId));
-            expect(res.status).toBe(200);
+    // A ProgramParticipant collision refuses the merge entirely.
+    it("enrollment collision refuses instead of leaving a seat on the merged-away record", async () => {
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
+        createdProgramId = program.id;
+        await prisma.programParticipant.create({ data: { programId: program.id, personId: pKeepId } });
+        await prisma.programParticipant.create({ data: { programId: program.id, personId: pMergeId } });
 
-            mockGetServerSession.mockResolvedValue({ user: { id: actorId, isBoardMember: true } });
-            const searchRes = await searchGET(new Request(`http://localhost/api/people/search?q=${encodeURIComponent("Merge User")}`) as unknown as import("next/server").NextRequest);
-            expect(searchRes.status).toBe(200);
-            const data = await searchRes.json();
-            expect((data.people as { id: number }[]).some(p => p.id === pMergeId)).toBe(false);
-        });
-
-        // A ProgramParticipant collision refuses the merge entirely.
-        it("enrollment collision refuses instead of leaving a tombstone seat", async () => {
-            const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Cap Gate Program", maxParticipants: 5 } });
-            createdProgramId = program.id;
-            await prisma.programParticipant.create({ data: { programId: program.id, personId: pKeepId } });
-            await prisma.programParticipant.create({ data: { programId: program.id, personId: pMergeId } });
-
-            const res = await POST(mergeReq(pKeepId, pMergeId));
-            expect(res.status).toBe(409);
-            const data = await res.json();
-            expect(data.error).toContain("Cap Gate Program");
-        });
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(409);
+        const data = await res.json();
+        expect(data.error).toContain("Cap Gate Program");
     });
 
     // A non-colliding enrollment moves to the keeper, leaving no tombstone residue to audit.
