@@ -57,6 +57,11 @@ export async function lockProgramAndCheckCapacity(
 
 type Only = ProgramParticipantStatus | Prisma.ProgramParticipantWhereInput;
 
+/** How an exit runs: `audit` writes the exit's audit row inside its transaction, so neither commits without the other. */
+export interface ExitOptions extends StockWriteOptions {
+    audit?: (tx: TxClient, enrollment: ProgramParticipant) => Promise<unknown>;
+}
+
 function onlyWhere(only?: Only): Prisma.ProgramParticipantWhereInput {
     return typeof only === "string" ? { status: only } : only ?? {};
 }
@@ -102,13 +107,14 @@ export async function deleteAndReleaseHold(
     personId: number,
     program: { shopifyVariantId?: string | null },
     only?: Only,
-    stockOptions: StockWriteOptions = {},
+    { audit, ...stockOptions }: ExitOptions = {},
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program.shopifyVariantId }, "hold-release", async (tx) => {
         const enrollment = await tx.programParticipant.delete({
             where: { programId_personId: { programId, personId }, ...onlyWhere(only) },
         });
         await clearFutureRsvps(tx, programId, personId);
+        await audit?.(tx, enrollment);
         const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;
         const released = !!enrollment.inventoryHeldAt || unsoldPlace;
         return { result: { enrollment, released }, delta: await seatReturnDelta(tx, programId, released) };
@@ -132,7 +138,7 @@ export async function withdrawParticipant(
     personId: number,
     program: { shopifyVariantId?: string | null },
     only?: Only,
-    stockOptions: StockWriteOptions = {},
+    { audit, ...stockOptions }: ExitOptions = {},
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean } | null> {
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program.shopifyVariantId }, "hold-release", async (tx) => {
         const { count: won } = await tx.programParticipant.updateMany({
@@ -146,6 +152,7 @@ export async function withdrawParticipant(
             data: ENROLLMENT_WRITES.releaseWithdrawnHold.data(),
         });
         const enrollment = await tx.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId } } });
+        await audit?.(tx, enrollment);
         const released = heldReleased === 1 || enrollment.seatTakenWithoutSaleAt !== null;
         return { result: { enrollment, released }, delta: await seatReturnDelta(tx, programId, released) };
     }, stockOptions);
