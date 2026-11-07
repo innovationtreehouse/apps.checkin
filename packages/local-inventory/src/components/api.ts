@@ -54,3 +54,14 @@ export function useCatalogNames(gtins: readonly string[]): ReadonlyMap<string, s
   }, [key]);
   return names;
 }
+
+/** A provisional part's name, which the stock and receiving reads return beside their rows. */
+export interface ProvisionalName { provisionalGtin13: string; name: string }
+
+/** Part names by GTIN: the catalog's, else the provisional part's. */
+export function withProvisionalNames(
+  catalog: ReadonlyMap<string, string>,
+  provisionals: readonly ProvisionalName[] = [],
+): ReadonlyMap<string, string> {
+  return new Map([...provisionals.map((p) => [p.provisionalGtin13, p.name] as const), ...catalog]);
+}

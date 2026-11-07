@@ -30,8 +30,8 @@ function useProvisionalStock(rows: ConflictRow[] | null): ReadonlyMap<string, nu
     let live = true;
     Promise.all(
       gtins.map((g) =>
-        api<{ gtin13: string; existingQuantity: number }[]>(`/org-items?q=${g}`).then(
-          (items) => [g, items.find((i) => i.gtin13 === g)?.existingQuantity ?? 0] as const,
+        api<{ OrgItem: { gtin13: string; existingQuantity: number }[] }>(`/org-items?q=${g}`).then(
+          ({ OrgItem: items }) => [g, items.find((i) => i.gtin13 === g)?.existingQuantity ?? 0] as const,
           () => null,
         ),
       ),

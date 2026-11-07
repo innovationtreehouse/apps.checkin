@@ -15,7 +15,7 @@ jest.mock("@checkin/local-inventory/components/api", () => ({
   useCanManage: () => true,
   useCatalogNames: () => new Map(),
   useLoad: (path: string) => ({
-    data: path.startsWith("/org-items/count") ? { total: 1 } : path === "/locations" ? [{ id: 7, name: "Bin" }] : [LOADED],
+    data: path.startsWith("/org-items/count") ? { total: 1 } : path === "/locations" ? [{ id: 7, name: "Bin" }] : { OrgItem: [LOADED], InventoryProvisionalItem: [] },
     error: null,
     reload: jest.fn(),
   }),
@@ -56,7 +56,7 @@ describe("Org item edit form", () => {
 
   it("after a refused save shows the other manager's value and checks against it", async () => {
     mockApi.mockRejectedValueOnce(new HttpError("This item changed since you loaded it", 409));
-    mockApi.mockResolvedValue({ ...LOADED, desiredQuantity: 6 });
+    mockApi.mockResolvedValue({ OrgItem: { ...LOADED, desiredQuantity: 6 } });
     openEdit();
     fireEvent.change(await desired(), { target: { value: "9" } });
     save();

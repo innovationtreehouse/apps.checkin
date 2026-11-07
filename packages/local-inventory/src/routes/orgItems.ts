@@ -1,7 +1,8 @@
 /**
  * Org-item route factories. Rows carry their `location` / `backstockLocation`
  * relations, which the host stripper recurses into. Catalog item names are not
- * here — they live in the catalog's database.
+ * here — they live in the catalog's database — so reads carry the rows'
+ * provisional parts, whose names are.
  */
 import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
 import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
@@ -10,7 +11,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
 import { catalogHasActiveItem, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
-import { pageArgs } from "./_shared";
+import { pageArgs, provisionalNames } from "./_shared";
 
 const include = { location: true, backstockLocation: true } as const;
 
@@ -72,14 +73,13 @@ async function findItem(gtin13: string) {
 
 export const list: InventoryRouteHandler = async ({ req }) => {
   const sp = query(req);
-  return {
-    OrgItem: await db.orgItem.findMany({
-      where: await itemWhere(sp),
-      orderBy: itemOrderBy(sp),
-      include,
-      ...pageArgs(sp),
-    }),
-  };
+  const items = await db.orgItem.findMany({
+    where: await itemWhere(sp),
+    orderBy: itemOrderBy(sp),
+    include,
+    ...pageArgs(sp),
+  });
+  return { OrgItem: items, InventoryProvisionalItem: await provisionalNames(await getOrgId(), items.map((i) => i.gtin13)) };
 };
 
 export const count: InventoryRouteHandler = async ({ req }) => ({
@@ -89,7 +89,7 @@ export const count: InventoryRouteHandler = async ({ req }) => ({
 export const get: InventoryRouteHandler = async ({ params }) => {
   const item = await findItem(params.gtin13);
   if (!item) throw httpError(404, "Organization item not found");
-  return { OrgItem: item };
+  return { OrgItem: item, InventoryProvisionalItem: await provisionalNames(item.orgId, [item.gtin13]) };
 };
 
 /**
