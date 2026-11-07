@@ -12,6 +12,7 @@ import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/
 import { updateExpenseSettings } from "../../services/settingsService";
 import { storedTaxNeedsFinance } from "../../services/flagService";
 import { financeQueueRows } from "../../services/financeQueueService";
+import { ServiceError } from "@checkin/component-kit";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -288,5 +289,50 @@ describeDb("S2 intake — applied is written only after processing commits", () 
     expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
 
     expect((await snapshot(allRecognized.receiptId)).expenses).toBe(0);
+  });
+});
+
+describeDb("S2 intake — expense owns a payload once it is stored", () => {
+  const failingLookup = (err: Error) => bindPorts({ signoff: { ...directory({}), personExists: async () => { throw err; } } });
+  const withReimbursee = { ...allRecognized, needsReimbursement: true, reimburseePersonId: 7 };
+
+  it("records a build failure as failed and answers accepted, for the replay to retry", async () => {
+    failingLookup(new Error("directory down"));
+
+    expect(await receiveCompletedReceipt(withReimbursee)).toEqual({ receiptId: allRecognized.receiptId, status: "accepted" });
+
+    const s = await snapshot(allRecognized.receiptId);
+    expect(s.expenses).toBe(0);
+    expect(s.payloads).toEqual([expect.objectContaining({ status: "failed", failureReason: "directory down" })]);
+
+    bindPorts({ signoff: directory({}) });
+    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
+    expect((await snapshot(allRecognized.receiptId)).expenses).toBe(1);
+  });
+
+  it("records a build failure the payload can never pass as refused: the replay skips it and finance sees it", async () => {
+    failingLookup(new ServiceError(422, "reimbursee cannot be read"));
+
+    expect((await receiveCompletedReceipt(withReimbursee)).status).toBe("accepted");
+
+    expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "refused", failureReason: "reimbursee cannot be read" })]);
+    expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 0 });
+    const [row] = await financeQueueRows(principal(3, { isFinance: true }), "expenses");
+    expect(row).toMatchObject({ expenseId: null, reasons: [expect.objectContaining({ code: "INTAKE_FAILED" })] });
+  });
+
+  it("the replay counts a payload that fails to build again as failed", async () => {
+    failingLookup(new Error("directory down"));
+    await receiveCompletedReceipt(withReimbursee);
+
+    expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
+  });
+
+  it("still throws a changed payload for an expense already built, and stores nothing new", async () => {
+    await receiveCompletedReceipt(allRecognized);
+    await db.receivedExpensePayload.updateMany({ data: { status: "received" } });
+
+    await expect(receiveCompletedReceipt({ ...allRecognized, taxCents: allRecognized.taxCents + 1 })).rejects.toMatchObject({ status: 409 });
+    expect(JSON.parse((await snapshot(allRecognized.receiptId)).payloads[0].payloadJson).taxCents).toBe(allRecognized.taxCents);
   });
 });

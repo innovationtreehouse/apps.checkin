@@ -145,13 +145,13 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
     }
   }
 
-  const payloads = await db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, payloadJson: true, receivedAt: true } });
+  const payloads = await db.receivedExpensePayload.findMany({ where: { orgId, status: { in: ["failed", "refused"] } }, select: { receiptId: true, payloadJson: true, receivedAt: true } });
   for (const p of payloads) {
     items.push({
       tab: "expenses",
       expense: null,
       intake: { receiptId: p.receiptId, ...payloadFacts(p.payloadJson) },
-      reason: { code: "INTAKE_FAILED", text: FINANCE_QUEUE_REASONS.INTAKE_FAILED, href: "/inventory/receiving?queue=failed" },
+      reason: { code: "INTAKE_FAILED", text: FINANCE_QUEUE_REASONS.INTAKE_FAILED, href: `/receipts/${encodeURIComponent(p.receiptId)}` },
       waitingSince: p.receivedAt,
       actionable: principal.isFinance,
       units: 1,
