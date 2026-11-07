@@ -24,7 +24,7 @@ import {
   type QuickBooksClient,
 } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type DbOrTx } from "../db";
-import { getInKindCapital, getInKindQbPosting } from "../runtime";
+import { getInKindAccounts, getInKindCapital, getInKindQbPosting } from "../runtime";
 import type { InKindQbPosting } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import { readDonationSettings, type DonationSettings } from "../services/settingsService";
@@ -32,9 +32,10 @@ import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
 import { checkInKindQbDrift, type InKindDriftCounts } from "./in-kind-drift";
 import { QB_MATCH_STATE } from "./qb-match";
+import { lineAccounts } from "./in-kind-accounts";
 
-/** Every books-map role the lane needs before it runs; clearing is only for matching finance's hand bookings. */
-export const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_EXPENSE", "FIXED_ASSETS", "INKIND_CLEARING"] as const satisfies readonly BooksMapRole[];
+/** Every books-map role the lane needs before it runs; clearing is only for matching finance's hand bookings. Each line's debit account comes from its part. */
+export const IN_KIND_ROLES = ["INKIND_INCOME", "INKIND_CLEARING"] as const satisfies readonly BooksMapRole[];
 /** The accounts other lanes match and book through; the clearing account may be none of them. */
 const LANE_ACCOUNT_ROLES: readonly BooksMapRole[] = ["SHOPIFY_BANK", "BENEVITY_BANK", "EXPENSE_PAYMENT"];
 const KEY_LANE = "in-kind";
@@ -220,15 +221,27 @@ function inWindow(date: string, around: string, days: number): boolean {
   return date >= w.from && date <= w.to;
 }
 
-/** The gift's one journal entry: its total credited to in-kind income, each line debited to in-kind expense or, once an asset, fixed assets. */
+/**
+ * The gift's one journal entry: its total credited to in-kind income, each line debited to finance's
+ * hand-set account or its part's expense account rule, an asset line through a rule marked capital.
+ * Any line without a usable account holds the gift for finance.
+ */
 async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLine[] | string> {
   const classId = run.classes.get(gift.budgetOwnerId);
   if (!classId) return "The gift's bucket has no QuickBooks Class in the books map";
+  const income = run.accounts.INKIND_INCOME;
+  if (!income) return "The books map has no in-kind income account";
+  const lines = gift.lines.filter((l) => l.valueCents > 0);
   const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
-  const debits = gift.lines
-    .filter((l) => l.valueCents > 0)
-    .map((l): InKindJournalLine => ({ postingType: "Debit", role: assets.has(l.id) ? "FIXED_ASSETS" : "INKIND_EXPENSE", amountCents: l.valueCents, classId, description: l.description.slice(0, 4000) }));
-  return [{ postingType: "Credit", role: "INKIND_INCOME", amountCents: gift.totalCents, classId, description: "In-kind contribution" }, ...debits];
+  const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
+  const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.client.accounts()]);
+  const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb);
+  if (typeof accounts === "string") return accounts;
+  const debits = lines.flatMap((l): InKindJournalLine[] => {
+    const accountId = accounts.get(l.id);
+    return accountId ? [{ postingType: "Debit", accountId, amountCents: l.valueCents, classId, description: l.description.slice(0, 4000) }] : [];
+  });
+  return [{ postingType: "Credit", accountId: income, amountCents: gift.totalCents, classId, description: "In-kind contribution" }, ...debits];
 }
 
 function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): Settlement {

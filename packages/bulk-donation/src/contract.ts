@@ -162,8 +162,20 @@ export interface InKindCapital {
   submit(orgId: string, lines: CapitalReviewLine[]): Promise<void>;
   /** The gifts with a line still waiting on capital review. */
   awaitingReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]>;
-  /** The gift's lines capital review made assets; they book to fixed assets. */
+  /** The gift's lines capital review made assets; each books to a fixed-asset account. */
   assetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]>;
+}
+
+/** One donated part to resolve: the gift line, its GTIN-13, and whether capital review made it an asset. */
+export interface DonatedPart {
+  lineId: number;
+  gtin13: string;
+  isCapital: boolean;
+}
+
+/** Donations → the expense library's account rules: each part's account, or why none resolves. */
+export interface InKindAccounts {
+  resolve(orgId: string, parts: DonatedPart[]): Promise<({ lineId: number } & ({ accountId: string } | { reason: string }))[]>;
 }
 
 export interface BulkDonationConfig {
@@ -179,6 +191,8 @@ export interface BulkDonationConfig {
   capital?: InKindCapital;
   /** QuickBooks' live account list, read when an account rule saves an account. */
   quickBooksAccounts?: QboAccountList;
+  /** Each gift line's account from the expense account rules. */
+  partAccounts?: InKindAccounts;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */

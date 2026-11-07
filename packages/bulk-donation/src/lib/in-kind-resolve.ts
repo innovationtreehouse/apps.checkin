@@ -1,6 +1,7 @@
 // Finance's QuickBooks actions on an in-kind gift the drain handed over (docs/rules/revenue.md, Donations):
 // book it, skip it with a reason, or match it by id to entries finance booked by hand. Skip and
 // match look first for the app's own entry when a create may have landed. Clear answers a note.
+// Set-account names a held line's account by hand, which the next book uses over every rule.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
 import { appKeyOf, readCloseDate } from "@checkin/quickbooks";
@@ -12,7 +13,7 @@ import { getInKindQbPosting } from "../runtime";
 import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSource } from "../services/inKindAcceptService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import {
-  IN_KIND_HELD_STATES, IN_KIND_NOTE_CLEARED, IN_KIND_ROLES, answeredEntryRef, claimedDepositIds, inKindAccountsReady, inKindKey, inKindPostingOnAt,
+  IN_KIND_HELD_STATES, IN_KIND_NOTE_CLEARED, answeredEntryRef, claimedDepositIds, inKindAccountsReady, inKindKey, inKindPostingOnAt,
   lockPosting, lookupOwnJournal, postGift, strayEntriesOf, writeSettlement, type Run, type Settlement,
 } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
@@ -27,6 +28,7 @@ export const InKindQbResolveInputSchema = z.union([
   z.object({ action: z.literal("match"), journalEntryId: qbId }).strict(),
   z.object({ action: z.literal("match"), depositId: qbId, purchaseId: qbId }).strict(),
   z.object({ action: z.literal("clear"), reason: z.string().trim().min(1, "A reason is required to clear a note").max(500) }).strict(),
+  z.object({ action: z.literal("set-account"), lineId: z.number().int().positive(), quickBooksAccountId: z.string().trim().regex(/^\d{1,64}$/, "A QuickBooks account id is digits") }).strict(),
 ]);
 export type InKindQbResolveInput = z.infer<typeof InKindQbResolveInputSchema>;
 
@@ -112,17 +114,23 @@ async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, act
   return true;
 }
 
-/** Finance's pick, checked: a JournalEntry on in-kind accounts only, or a clearing-account pair, each for the gift's value. */
+/** Finance's pick, checked: a JournalEntry crediting in-kind income and debiting no books-map role's account, or a clearing-account pair, each for the gift's value. */
 async function readMatch(run: Run, gift: GiftToBook, input: Extract<InKindQbResolveInput, { action: "match" }>): Promise<Settlement> {
   const key = inKindKey(run.orgId, gift.source, gift.id);
   if ("journalEntryId" in input) {
     const [je] = await run.client.journalEntriesByIds([input.journalEntryId]);
     if (!je) throw new ServiceError(422, `QuickBooks has no JournalEntry ${input.journalEntryId}`);
     if (dollarsToCents(je.TotalAmt) !== gift.totalCents) throw new ServiceError(422, `JournalEntry ${je.Id} is not for the gift's value`);
-    const inKindAccounts = new Set(IN_KIND_ROLES.map((r) => run.accounts[r]));
+    const roleAccounts = new Set(Object.values(run.accounts));
+    const fits = (l: NonNullable<typeof je.Line>[number]) => {
+      const detail = l.JournalEntryLineDetail;
+      const account = detail?.AccountRef?.value;
+      if (detail?.PostingType === "Credit") return account === run.accounts.INKIND_INCOME;
+      return detail?.PostingType === "Debit" && !!account && !roleAccounts.has(account);
+    };
     const lines = je.Line ?? [];
-    if (lines.length === 0 || lines.some((l) => !inKindAccounts.has(l.JournalEntryLineDetail?.AccountRef?.value))) {
-      throw new ServiceError(422, `JournalEntry ${je.Id} books to an account outside the in-kind accounts`);
+    if (!lines.some((l) => l.JournalEntryLineDetail?.PostingType === "Credit") || !lines.every(fits)) {
+      throw new ServiceError(422, `JournalEntry ${je.Id} must credit only in-kind income and debit no books-map account`);
     }
     const appKey = appKeyOf(je);
     if (appKey !== undefined && appKey !== key) throw new ServiceError(409, `JournalEntry ${je.Id} was created for another record`);
@@ -233,7 +241,32 @@ async function clearNote(orgId: string, source: InKindSource, id: number, reason
   });
 }
 
-/** Book, skip, match or clear the note of one gift, then reply with its queue row. */
+/** Finance names a held line's account; finance's next "book it" uses it over every rule. */
+async function setLineAccount(orgId: string, source: InKindSource, id: number, lineId: number, quickBooksAccountId: string, actor: Actor): Promise<void> {
+  const ref = await giftRef(orgId, source, id);
+  await db.$transaction(async (tx) => {
+    const posting = await lockPosting(tx, orgId, source, id);
+    if (!posting || !IN_KIND_HELD_STATES.includes(posting.matchState)) throw new ServiceError(409, "Only a gift the QuickBooks drain handed to finance can have a line's account set");
+    const where = { id: lineId, donationId: id };
+    const line = source === "receipt"
+      ? await tx.inKindDonationLine.findFirst({ where, select: { quickBooksAccountId: true } })
+      : await tx.manualInKindDonationLine.findFirst({ where, select: { quickBooksAccountId: true } });
+    if (!line) throw new ServiceError(404, "This gift has no such line");
+    const data = { quickBooksAccountId };
+    if (source === "receipt") await tx.inKindDonationLine.update({ where: { id: lineId }, data });
+    else await tx.manualInKindDonationLine.update({ where: { id: lineId }, data });
+    await recordEvent(tx, {
+      orgId,
+      entityType: ref.entityType,
+      entityId: ref.entityId,
+      eventType: "IN_KIND_LINE_ACCOUNT_SET",
+      ...actor,
+      payload: { lineId, from: line.quickBooksAccountId, to: quickBooksAccountId },
+    });
+  });
+}
+
+/** Book, skip, match, clear the note of, or set a line's account on one gift, then reply with its queue row. */
 export async function resolveInKindQb(orgId: string, source: InKindSource, id: number, input: InKindQbResolveInput, actor: Actor) {
   switch (input.action) {
     case "book":
@@ -247,6 +280,9 @@ export async function resolveInKindQb(orgId: string, source: InKindSource, id: n
       break;
     case "clear":
       await clearNote(orgId, source, id, input.reason, actor);
+      break;
+    case "set-account":
+      await setLineAccount(orgId, source, id, input.lineId, input.quickBooksAccountId, actor);
       break;
   }
   return inKindAcceptService.queueItem(orgId, actor.actorUserId, source, id);

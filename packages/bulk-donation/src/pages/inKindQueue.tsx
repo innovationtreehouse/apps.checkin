@@ -5,6 +5,7 @@ import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Sele
 import { act, api, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
@@ -15,7 +16,20 @@ interface QueueLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The account finance set on the line by hand; null until then. */
+  quickBooksAccountId: string | null;
 }
+
+/** One account from QuickBooks' live list, as the host's books-map route returns it. */
+interface LiveAccount {
+  id: string;
+  name: string;
+  accountType: string;
+  active: boolean;
+}
+
+// A donated item takes an expense account, donated equipment a fixed-asset one; the drain checks which each line needs.
+const DONATED_TYPES = new Set<string>([...LINE_ACCOUNT_TYPES.donatedGoods, ...LINE_ACCOUNT_TYPES.donatedCapital]);
 
 interface QueueItem {
   id: number;
@@ -176,6 +190,7 @@ const isDrifted = (q: QueueItem) => q.qbState === "DRIFT";
  * Finance's QuickBooks actions on one gift: book it, skip it with a reason, or match entries
  * booked by hand by id, while the drain holds it for finance; and clear its note once answered.
  * A gift whose entry changed in QuickBooks can be matched again or skipped, never booked.
+ * A held gift's lines can each be given an account by hand, which wins over the account rules.
  */
 function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
   const [reason, setReason] = useState("");
@@ -184,8 +199,12 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
   const [depositId, setDepositId] = useState("");
   const [purchaseId, setPurchaseId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [lineAccount, setLineAccount] = useState<Record<number, string | null>>({});
+  const live = useLoad<LiveAccount[]>(isHeld(item) ? "/api/books-map/quickbooks-accounts" : null);
+  const nameOf = new Map((live.data ?? []).map((a) => [a.id, a.name]));
+  const options = (live.data ?? []).filter((a) => a.active && DONATED_TYPES.has(a.accountType)).map((a) => ({ value: a.id, label: `${a.name} (${a.accountType})` }));
 
-  async function send(body: Record<string, string>, label: string) {
+  async function send(body: Record<string, string | number>, label: string) {
     setBusy(true);
     await act(() => api(`/in-kind/${item.source}/${item.id}/qb-resolve`, { method: "POST", body: JSON.stringify(body) }), label, onDone);
     setBusy(false);
@@ -201,6 +220,30 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
               Clear note
             </Button>
           </Group>
+        )}
+        {isHeld(item) && (
+          <>
+            {live.error && <LoadError what="QuickBooks' account list" message={live.error} onRetry={live.reload} />}
+            {item.lines.map((l) => (
+              <Group key={l.id} align="end">
+                <Text size="sm" w={240}>
+                  {l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "Donated item")}
+                  <Text span size="xs" c="dimmed" display="block">
+                    {l.quickBooksAccountId ? `Set by hand: ${nameOf.get(l.quickBooksAccountId) ?? l.quickBooksAccountId}` : "From the account rules"}
+                  </Text>
+                </Text>
+                <Select label="Account" searchable data={options} value={lineAccount[l.id] ?? null} onChange={(v) => setLineAccount({ ...lineAccount, [l.id]: v })} w={280} />
+                <Button
+                  variant="light"
+                  onClick={() => send({ action: "set-account", lineId: l.id, quickBooksAccountId: lineAccount[l.id] ?? "" }, "Account set")}
+                  disabled={!lineAccount[l.id]}
+                  loading={busy}
+                >
+                  Set account
+                </Button>
+              </Group>
+            ))}
+          </>
         )}
         {isHeld(item) && (
           <Group align="end">

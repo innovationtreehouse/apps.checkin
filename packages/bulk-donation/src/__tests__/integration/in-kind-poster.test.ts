@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db, getPrisma } from "../../db";
@@ -15,13 +15,22 @@ import { inKindAcceptService, type InKindDecisionInput } from "../../services/in
 import { inKindKey, inKindPostingOnAt, runInKindQbPosting } from "../../lib/in-kind-poster";
 import { InKindQbResolveInputSchema, resolveInKindQb, type InKindQbResolveInput } from "../../lib/in-kind-resolve";
 import { DEFAULT_DONATION_SETTINGS, readDonationSettings, updateDonationSettings } from "../../services/settingsService";
-import type { InKindCapital, OwnerInfo } from "../../contract";
+import type { InKindAccounts, InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
 const FINANCE = 10;
 const UPLOADER = 7;
-const ACCOUNTS: Partial<Record<BooksMapRole, string>> = { INKIND_INCOME: "400", INKIND_EXPENSE: "600", FIXED_ASSETS: "150", INKIND_CLEARING: "290", BENEVITY_BANK: "35" };
+const ACCOUNTS: Partial<Record<BooksMapRole, string>> = { INKIND_INCOME: "400", INKIND_CLEARING: "290", BENEVITY_BANK: "35" };
+/** QuickBooks' chart of accounts: supplies and equipment for donated goods, plus a second expense account finance may pick. */
+const QB_ACCOUNTS: QboAccount[] = [
+  { Id: "400", Name: "In-kind income", FullyQualifiedName: "In-kind income", AccountType: "Other Income", Active: true },
+  { Id: "600", Name: "Supplies", FullyQualifiedName: "Supplies", AccountType: "Expense", Active: true },
+  { Id: "610", Name: "Materials", FullyQualifiedName: "Materials", AccountType: "Cost of Goods Sold", Active: true },
+  { Id: "150", Name: "Equipment", FullyQualifiedName: "Equipment", AccountType: "Fixed Asset", Active: true },
+];
+const PAPER_GTIN = "0012345678905";
+const LATHE_GTIN = "0011111111116";
 const BUCKETS: OwnerInfo[] = [
   { id: 1, name: "Robotics", archivedAt: null, quickBooksClassId: "C1" },
   { id: 2, name: "Shop", archivedAt: null, quickBooksClassId: "C2" },
@@ -63,6 +72,7 @@ class FakeQbo {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
+      if (query.startsWith("SELECT * FROM Account STARTPOSITION")) return json({ QueryResponse: { Account: QB_ACCOUNTS } });
       if (query === "SELECT * FROM Preferences" && this.refuseCloseRead) throw new Error("connection refused");
       if (query === "SELECT * FROM Preferences") return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       const since = /FROM JournalEntry WHERE MetaData\.CreateTime >= '([^']+)'/.exec(query);
@@ -104,6 +114,8 @@ let qbo: FakeQbo;
 let accounts: Partial<Record<BooksMapRole, string>>;
 let awaiting: { giftSource: string; giftId: number }[];
 let assets: number[];
+/** The expense account rules: supplies for any part, equipment for an asset; a GTIN here has no rule. */
+let unruled: Set<string>;
 let alerts: number;
 let drainStops: { failures: number; remaining: number }[];
 let drainStopAlertFails: boolean;
@@ -111,6 +123,10 @@ let drainStopAlertFails: boolean;
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
   const capital: InKindCapital = { submit: async () => {}, awaitingReview: async () => awaiting, assetLineIds: async () => assets };
+  const rules: InKindAccounts = {
+    resolve: async (_org, parts) =>
+      parts.map((p) => (unruled.has(p.gtin13) ? { lineId: p.lineId, reason: "No account rule covers this part" } : { lineId: p.lineId, accountId: p.isCapital ? "150" : "600" })),
+  };
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: FINANCE, name: "finance" }) },
     org: async () => ({ id: orgId, name: "Test Org" }),
@@ -124,6 +140,7 @@ function configure() {
       largeValueCents: async () => 50_000,
     },
     capital,
+    partAccounts: rules,
     inKindQb: {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
@@ -159,8 +176,8 @@ async function acceptedGift(opts: { totalCents?: number; date?: string } = {}): 
     backfill: false,
     isInKind: true,
     lineItems: [
-      { receiptLineItemId: 1, lineNumber: 1, description: "Paper", partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isDelayed: false },
-      { receiptLineItemId: 2, lineNumber: 2, description: "Lathe", partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 2000, totalPriceCents: 2000, isDelayed: false },
+      { receiptLineItemId: 1, lineNumber: 1, description: "Paper", gtin13: PAPER_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isDelayed: false },
+      { receiptLineItemId: 2, lineNumber: 2, description: "Lathe", gtin13: LATHE_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 2000, totalPriceCents: 2000, isDelayed: false },
     ],
   };
   await ingestInKind(receipt);
@@ -191,6 +208,7 @@ beforeEach(async () => {
   accounts = { ...ACCOUNTS };
   awaiting = [];
   assets = [];
+  unruled = new Set();
   alerts = 0;
   drainStops = [];
   drainStopAlertFails = false;
@@ -199,7 +217,7 @@ beforeEach(async () => {
 
 describeDb("in-kind drain", () => {
   it("does nothing, and stays switched off, until every in-kind role is in the books map", async () => {
-    delete accounts.FIXED_ASSETS;
+    delete accounts.INKIND_INCOME;
     await expect(runInKindQbPosting(orgId)).resolves.toEqual({ unconfigured: true, waiting: 0 });
     accounts = { ...ACCOUNTS, INKIND_CLEARING: "35" };
     await expect(runInKindQbPosting(orgId)).resolves.toEqual({ unconfigured: true, waiting: 0 });
@@ -208,12 +226,12 @@ describeDb("in-kind drain", () => {
 
   it("counts the gifts waiting while an in-kind role is missing", async () => {
     await acceptedGift();
-    delete accounts.FIXED_ASSETS;
+    delete accounts.INKIND_INCOME;
 
     await expect(runInKindQbPosting(orgId)).resolves.toEqual({ unconfigured: true, waiting: 1 });
   });
 
-  it("books a gift recorded after switch-on as one balanced journal entry, an asset line to fixed assets", async () => {
+  it("books a gift recorded after switch-on as one balanced journal entry, each line on its part's rule account", async () => {
     await switchOn();
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
@@ -801,6 +819,56 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000", matchState: "CREATED" }]);
     expect(qbo.posts).toHaveLength(1);
   });
+  it("holds a gift with a line no rule resolves, naming the line; finance sets its account and books it", async () => {
+    await switchOn();
+    unruled.add(LATHE_GTIN);
+    const id = await acceptedGift();
+    const [paper, lathe] = await lineIds(id);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: expect.stringMatching(/Lathe: No account rule covers this part/) });
+
+    const row = await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "610" });
+    expect(row.lines).toEqual([expect.objectContaining({ id: paper, quickBooksAccountId: null }), expect.objectContaining({ id: lathe, quickBooksAccountId: "610" })]);
+    expect(JSON.parse((await events("IN_KIND_LINE_ACCOUNT_SET")).at(-1)?.payload ?? "{}")).toMatchObject({ lineId: lathe, from: null, to: "610" });
+
+    await expect(resolve(id, { action: "book" })).resolves.toMatchObject({ qbState: "CREATED" });
+    expect(qbo.posts[0].body.Line.map((l) => [l.JournalEntryLineDetail.PostingType, l.JournalEntryLineDetail.AccountRef.value, l.Amount])).toEqual([
+      ["Credit", "400", 33],
+      ["Debit", "600", 11],
+      ["Debit", "610", 22],
+    ]);
+  });
+
+  it("holds donated equipment set by hand to an account that is not a fixed asset", async () => {
+    await switchOn();
+    unruled.add(LATHE_GTIN);
+    const id = await acceptedGift();
+    const [, lathe] = await lineIds(id);
+    assets = [lathe];
+    await runInKindQbPosting(orgId);
+    await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "600" });
+
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/Lathe: Supplies is Expense; donated equipment takes Fixed Asset/) });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("sets a line's account only on a gift the drain handed to finance, and only a line of that gift", async () => {
+    const ok = (v: unknown) => InKindQbResolveInputSchema.safeParse(v).success;
+    expect(ok({ action: "set-account", lineId: 1, quickBooksAccountId: "610" })).toBe(true);
+    expect(ok({ action: "set-account", lineId: 1, quickBooksAccountId: "Supplies" })).toBe(false);
+    await switchOn();
+    const waiting = await acceptedGift();
+    const [line] = await lineIds(waiting);
+    await expect(resolve(waiting, { action: "set-account", lineId: line, quickBooksAccountId: "610" })).rejects.toMatchObject({ status: 409 });
+
+    unruled.add(LATHE_GTIN);
+    await runInKindQbPosting(orgId);
+    const held = await acceptedGift();
+    await runInKindQbPosting(orgId);
+    await expect(resolve(held, { action: "set-account", lineId: line, quickBooksAccountId: "610" })).rejects.toMatchObject({ status: 404 });
+  });
 });
 
 describeDb("in-kind drain settings", () => {
@@ -973,7 +1041,7 @@ describeDb("in-kind QuickBooks drift", () => {
     qbo.journals[0].TxnDate = "2026-10-25";
     await runInKindQbPosting(orgId);
     const entry = qbo.journals[0];
-    entry.Line = [{ JournalEntryLineDetail: { AccountRef: { value: "400" } } }];
+    entry.Line = [{ JournalEntryLineDetail: { PostingType: "Credit", AccountRef: { value: "400" } } }];
     await expect(resolve(id, { action: "match", journalEntryId: entry.Id })).resolves.toMatchObject({ qbState: "CREATED", revenueBooking: "CREATED", qbNote: null });
     expect(await bookings(id)).toMatchObject([{ side: "journal", matchState: "CREATED", qbTxnId: entry.Id, bookedTxnDate: "2026-10-25" }]);
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 0 } });

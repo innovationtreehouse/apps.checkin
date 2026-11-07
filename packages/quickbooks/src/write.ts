@@ -120,14 +120,10 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
   }
 }
 
-/** The books-map roles an in-kind journal entry may credit, and those it may debit. */
-export const IN_KIND_CREDIT_ROLES: readonly BooksMapRole[] = ["INKIND_INCOME"];
-export const IN_KIND_DEBIT_ROLES: readonly BooksMapRole[] = ["INKIND_EXPENSE", "FIXED_ASSETS"];
-
-/** One line of an in-kind gift's journal entry, by books-map role; the role's account is resolved here. */
+/** One line of an in-kind gift's journal entry, on the QuickBooks account it books to. */
 export interface InKindJournalLine {
   postingType: "Debit" | "Credit";
-  role: BooksMapRole;
+  accountId: string;
   amountCents: number;
   classId?: string;
   description?: string;
@@ -140,13 +136,13 @@ export interface InKindJournalRequest extends Pick<MatchRequest, "window" | "cla
   key: string;
   closedThrough: string;
   mayCreate: boolean;
-  /** The books map's role → account ids, as read for this run. */
+  /** The books map's role → account ids, as read for this run: credits go to in-kind income, and no debit to any role's account. */
   accounts: Partial<Record<BooksMapRole, string>>;
 }
 
 /**
  * The only way the app creates a JournalEntry: one in-kind gift. Credits go only to in-kind
- * income and debits only to in-kind expense or fixed assets, every amount positive and the entry
+ * income and debits to no books-map role's account, every amount positive and the entry
  * balanced, or it throws before reading QuickBooks. Matching is by the app's key alone: a hand
  * entry of the same amount is never taken as the gift's.
  */
@@ -171,11 +167,12 @@ export async function findOrCreateInKindJournal(client: QuickBooksClient, req: I
 }
 
 function inKindLine(l: InKindJournalLine, accounts: InKindJournalRequest["accounts"]): JournalLine {
-  const allowed = l.postingType === "Credit" ? IN_KIND_CREDIT_ROLES : l.postingType === "Debit" ? IN_KIND_DEBIT_ROLES : [];
-  if (!allowed.includes(l.role)) throw new Error(`An in-kind journal entry may not ${String(l.postingType).toLowerCase()} ${l.role}`);
-  const accountId = accounts[l.role];
-  if (!accountId) throw new KindedError("settings", `The books map has no account for ${l.role}`);
-  return { postingType: l.postingType, amountCents: l.amountCents, accountId, classId: l.classId, description: l.description };
+  const income = accounts.INKIND_INCOME;
+  if (!income) throw new KindedError("settings", "The books map has no account for INKIND_INCOME");
+  if (l.postingType === "Credit" && l.accountId !== income) throw new Error("An in-kind journal entry may credit only in-kind income");
+  if (l.postingType === "Debit" && Object.values(accounts).includes(l.accountId)) throw new Error(`An in-kind journal entry may not debit account ${l.accountId}, a books-map role's`);
+  if (l.postingType !== "Credit" && l.postingType !== "Debit") throw new Error(`An in-kind journal line must be a Debit or a Credit`);
+  return { postingType: l.postingType, amountCents: l.amountCents, accountId: l.accountId, classId: l.classId, description: l.description };
 }
 
 /**

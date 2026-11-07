@@ -558,7 +558,7 @@ export class QuickBooksClient {
     return { Id: created.Id };
   }
 
-  /** Creates one balanced JournalEntry; only findOrCreateInKindJournal calls it, after checking every account is an in-kind role's. */
+  /** Creates one balanced JournalEntry; only findOrCreateInKindJournal calls it, after checking it credits in-kind income and debits no books-map role's account. */
   async [CREATE_JOURNAL](fields: JournalEntryFields, key: string): Promise<{ Id: string }> {
     assertAppKey(key);
     assertRealmAllowed(this.realm);

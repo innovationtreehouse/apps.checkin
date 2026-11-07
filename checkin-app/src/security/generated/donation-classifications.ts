@@ -179,6 +179,7 @@ export const classifications = {
         description: 'internal',
         valueCents: 'internal',
         suggestedValueCents: 'internal',
+        quickBooksAccountId: 'internal',
     },
     InKindDonationLine: {
         id: 'internal',
@@ -189,6 +190,7 @@ export const classifications = {
         gtin13: 'internal',
         quantity: 'internal',
         valueCents: 'internal',
+        quickBooksAccountId: 'internal',
     },
     InKindBooking: {
         id: 'internal',
