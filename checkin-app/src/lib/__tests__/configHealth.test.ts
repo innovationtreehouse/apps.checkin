@@ -1,4 +1,4 @@
-import { getConfigHealth, openConfigIssues, type ConfigCheck } from "@/lib/configHealth";
+import { alertAddressCheck, getConfigHealth, openConfigIssues, type ConfigCheck } from "@/lib/configHealth";
 
 // config.ts reads process.env live through getters, so these tests just set/clear
 // env vars — no module mocking needed. CHECKIN_ENV is the single fuse for the
@@ -161,5 +161,21 @@ describe("getConfigHealth — receipt OCR", () => {
         expect(check().ok).toBe(false);
         process.env.ANTHROPIC_API_KEY = "sk-key";
         expect(check().ok).toBe(true);
+    });
+});
+
+describe("alertAddressCheck", () => {
+    it("fails when the alert address is unset, naming where to set it", () => {
+        for (const unset of [null, undefined, ""]) {
+            const check = alertAddressCheck(unset);
+            expect(check.ok).toBe(false);
+            expect(check.detail).toContain("Settings → Email");
+        }
+    });
+
+    it("passes when set, without echoing the address", () => {
+        const check = alertAddressCheck("finance@example.org");
+        expect(check.ok).toBe(true);
+        expect(check.detail).not.toContain("finance@example.org");
     });
 });
