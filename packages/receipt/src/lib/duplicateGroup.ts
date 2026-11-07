@@ -139,7 +139,7 @@ export async function liveGroup(orgId: string, id: string, client: Client = db):
 }
 
 /**
- * The duplicate group of a receipt, computed from the data on every read (design §5.1): every
+ * The duplicate group of a receipt, computed from the data on every read: every
  * receipt joined to it by matches, symmetric and transitive, in upload order. A discarded
  * receipt raises no flag, so it shows only beside two live members that match. Members
  * dismissed against the viewed receipt are left out of its view and listed in `dismissed`.

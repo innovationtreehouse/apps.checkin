@@ -37,7 +37,7 @@ const flagged = {
   id: "r1", uploadedAt: "2026-10-02T00:00:00Z", uploadedByUserId: 1, fileHash: "aaaaaaaaaaaaffff", mimeType: "application/pdf",
   retailer: "Acme", receiptDate: "2026-10-01", receiptNumber: "R-9", orderNumber: null, currency: "USD",
   receiptTotalCents: 1000, taxCents: 80, shippingCents: 0, discountCents: 0, state: "duplicate_flagged",
-  needsReimbursement: false, isInKind: false, duplicateSuspectReceiptId: null, financialReviewReasons: [],
+  needsReimbursement: false, isInKind: false, financialReviewReasons: [],
   lineItems: [{ id: 1, lineNumber: 1, description: "Arduino", partNumber: "A-1", quantity: 1, unitPriceCents: 920, totalPriceCents: 920, isDelayed: false }],
 };
 const earlier = {
@@ -313,13 +313,12 @@ describe("the badge and the submitter's message", () => {
   });
 });
 
-describe("a receipt with an old flag", () => {
-  it("links the original once the flag is cleared", async () => {
-    mockLoads["/r1"] = { ...flagged, state: "submitter_review", duplicateSuspectReceiptId: "r0", duplicateFlagClearedAt: "2026-10-03T00:00:00Z" };
-    mockLoads["/r1/duplicate-group"] = group([{ ...r1, state: "submitter_review" }]);
+describe("a decided receipt", () => {
+  it("links the receipt kept in place of one rejected as a copy", async () => {
+    mockLoads["/r1"] = { ...flagged, state: "rejected", copyOfId: "r0", copyOfLabel: "Acme, uploaded 3 Oct" };
     await wrap();
-    expect(screen.getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
-    expect(screen.getByText(/and cleared as not a duplicate/)).toBeInTheDocument();
+    expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Acme, uploaded 3 Oct" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
   });
 
   it("badges a receipt discarded while flagged as discarded as a duplicate", async () => {

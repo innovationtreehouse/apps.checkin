@@ -14,7 +14,7 @@ import { formatCents } from "@checkin/money";
 import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 import { useReceipts } from "../components/useReceipts";
-import { day } from "../lib/describeReceipt";
+import { day, REJECTED_AS_COPY } from "../lib/describeReceipt";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { missingDetails } from "../lib/missingDetails";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
@@ -41,9 +41,6 @@ interface Receipt extends ReceiptListRow {
   receiptNumber?: string | null;
   orderNumber?: string | null;
   currency?: string;
-  /** Finance and board views only. */
-  duplicateSuspectReceiptId?: string | null;
-  duplicateFlagClearedAt?: string | null;
   financialReviewReasons: string[];
   lineItems: ServerLine[];
   /** The viewer's own other copy of this receipt; never another person's. */
@@ -114,7 +111,6 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const liveIds = group.data?.members.filter((m) => m.state !== "discarded").map((m) => m.id) ?? [];
   const comparing = open && liveIds.some((m) => m !== id);
   const compared = useReceipts<CompareReceipt>([...otherMembers.map((m) => m.id), ...(group.data?.dismissed ?? [])]);
-  const suspectId = receipt.data?.duplicateSuspectReceiptId ?? null;
   const memberKey = group.data ? group.data.members.map((m) => m.id).join(",") : null;
   const seen = useRef<Set<string> | null>(null);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set<string>());
@@ -225,7 +221,6 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     redrawCompare();
   };
   const hrefOf = (other: string) => reviewDetailHref(other, returnQueue(queueParam, r.state));
-  const originalHref = suspectId ? hrefOf(suspectId) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
   const totalsOff = r.state === "validation_failed";
@@ -378,10 +373,9 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           onRejectAsCopy={(reason) => void act("/reject", "POST", { reason }, "Rejected", "Couldn't reject this receipt", true).then(redrawCompare)}
         />
       )}
-      {!comparing && suspectId && (
+      {!comparing && r.copyOfId && r.copyOfLabel && (
         <Text size="sm">
-          This receipt was flagged as a possible duplicate of <Anchor component={Link} href={originalHref}>another receipt</Anchor>
-          {r.duplicateFlagClearedAt ? " and cleared as not a duplicate." : "."}
+          {REJECTED_AS_COPY}<Anchor component={Link} href={hrefOf(r.copyOfId)}>{r.copyOfLabel}</Anchor>
         </Text>
       )}
 

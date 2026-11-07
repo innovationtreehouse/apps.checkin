@@ -69,10 +69,7 @@ export interface ReceiptListRow {
   lastPushFailedAt?: string | null;
   lastPushFailure?: string | null;
   duplicateFlaggedAt?: string | null;
-  duplicateFlagClearedAt?: string | null;
-  /** The receipt this one was flagged against; finance views only. */
-  duplicateSuspectReceiptId?: string | null;
-  /** On a receipt rejected as a copy, in finance's list: the receipt kept in its place. */
+  /** On a receipt rejected as a copy, in finance's views: the receipt kept in its place. */
   copyOfId?: string | null;
   copyOfLabel?: string | null;
   /** In the uploader's views: a rejected receipt they have not yet acknowledged. */

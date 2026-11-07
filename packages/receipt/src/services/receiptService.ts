@@ -603,7 +603,7 @@ async function rejectAsFinance(row: ReceiptRow, note: string, actor: ReceiptPrin
   await oweOutcomeNotice(tx, row.orgId, row.id, "receipt_rejected");
 }
 
-// ── Duplicate groups (2516_RECEIPT_DUPLICATES.md §5.5, §6) ─────────────────────
+// ── Duplicate groups ───────────────────────────────────────────────────────────
 
 const ENDED: ReadonlySet<string> = new Set(["receipt_finalized", "rejected", "discarded"]);
 
@@ -630,7 +630,7 @@ async function lockReceipts(tx: Prisma.TransactionClient, orgId: string, ids: st
   await tx.$queryRaw`SELECT id FROM receipt_details WHERE org_id = ${orgId} AND id = ANY(${[...new Set(ids)].sort()}) ORDER BY id FOR UPDATE`;
 }
 
-/** Nobody decides a group in which they are conflicted on any member, the viewed receipt first (§6.1). */
+/** Nobody decides a group in which they are conflicted on any member, the viewed receipt first. */
 async function refuseConflictedMember(row: ReceiptRow, memberIds: string[], actor: ReceiptPrincipal, attempted: string): Promise<void> {
   await refuseSelfDecision(row, actor, attempted);
   for (const member of await receiptRepo.list({ orgId: row.orgId, id: { in: memberIds.filter((m) => m !== row.id) } })) {
@@ -652,7 +652,7 @@ async function staleGroup(tx: Prisma.TransactionClient, shown: string[], current
 const DECIDED_SINCE = "This receipt was decided after you opened it";
 
 /**
- * Re-runs each held receipt left with no undecided match (§6.4); one still matching stays held.
+ * Re-runs each held receipt left with no undecided match; one still matching stays held.
  * A receipt another request moved meanwhile is left to that request. A null actor is a system
  * re-check, for a change that was not a decision on the group.
  */
@@ -661,7 +661,7 @@ async function recheck(orgId: string, ids: string[], actor: Actor | null): Promi
     const row = await receiptRepo.find(id, orgId);
     if (row?.state !== "duplicate_flagged" || (await checkDuplicate(row))) continue;
     try {
-      await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
+      await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlaggedAt: null } }, actor, "duplicate_cleared");
     } catch (e) {
       if (isServiceError(e) && e.status === 409) continue;
       throw e;
@@ -676,7 +676,7 @@ async function memberIds(orgId: string, id: string): Promise<string[]> {
 }
 
 /**
- * A decision that settles the whole group (§5.5). The group is recomputed under row locks in the
+ * A decision that settles the whole group. The group is recomputed under row locks in the
  * transaction and must still be exactly the live members the panel showed, with the viewed
  * receipt still open; otherwise nothing is written and the answer is 409. Every member is
  * re-checked once it commits. A viewed receipt still held after the re-check answers 409 naming
@@ -1005,8 +1005,8 @@ export const receiptService = {
   },
 
   /**
-   * Finance refuses an open receipt, with a reason. Rejecting a suspected original decides each
-   * duplicate flagged against it, so a party to any of those is refused, and each one's log records it.
+   * Finance refuses an open receipt, with a reason. Rejecting a member of a duplicate group decides
+   * for each member held in it, so a party to any of those is refused, and each one's log records it.
    */
   async rejectFinancial(id: string, reason: string) {
     const note = reason.trim();
@@ -1014,7 +1014,8 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "reject");
-    const flaggedAgainst = await receiptRepo.list({ orgId: row.orgId, details: { duplicateSuspectReceiptId: row.id, state: "duplicate_flagged" } });
+    const held = ((await computeGroup(row.orgId, id))?.members ?? []).filter((m) => m.id !== id && m.state === "duplicate_flagged").map((m) => m.id);
+    const flaggedAgainst = held.length > 0 ? await receiptRepo.list({ orgId: row.orgId, id: { in: held } }) : [];
     for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "reject the suspected original");
     await db.$transaction((tx) => rejectAsFinance(row, note, actor, tx));
     await sendOutcomeNotices([id]);
@@ -1023,7 +1024,7 @@ export const receiptService = {
   },
 
   /**
-   * Not this one (§5.3): the viewed receipt and one match are different purchases. A newcomer to
+   * Not this one: the viewed receipt and one match are different purchases. A newcomer to
    * the group doesn't refuse it; the match having left the group, or the viewed receipt having
    * been decided, does (409). Answers with the fresh group.
    */
@@ -1047,7 +1048,7 @@ export const receiptService = {
   },
 
   /**
-   * Undo of Not this one: deletes that pair decision while the viewed receipt is still held (§5.3).
+   * Undo of Not this one: deletes that pair decision while the viewed receipt is still held.
    * Refused once the dismissal released the match from its own hold, since the match may have
    * finalized on it.
    */
@@ -1072,7 +1073,7 @@ export const receiptService = {
   },
 
   /**
-   * Different purchases (§6.2): every pair of the group's live members, as shown on the panel,
+   * Different purchases: every pair of the group's live members, as shown on the panel,
    * is recorded as different purchases, and every held member re-runs the pipeline.
    */
   async differentPurchases(id: string, shownIds: string[]) {
@@ -1093,7 +1094,7 @@ export const receiptService = {
   },
 
   /**
-   * Keep this one (§6.2): rejects every other open member as a copy of the viewed receipt, and
+   * Keep this one: rejects every other open member as a copy of the viewed receipt, and
    * records each as a copy of it. A member already rejected keeps its state and is recorded as a
    * copy too, so the kept receipt leaves the hold. Beside a finalized member it is refused: that
    * copy is the one to keep, and this receipt is rejected instead.
@@ -1293,7 +1294,7 @@ export const receiptService = {
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
-  /** The receipt's duplicate group (design §5.1). Org-wide: the host route admits finance only. */
+  /** The receipt's duplicate group. Org-wide: the host route admits finance only. */
   async duplicateGroup(id: string): Promise<DuplicateGroup> {
     await requireActor();
     const group = await computeGroup(await getOrgId(), id);
@@ -1301,7 +1302,7 @@ export const receiptService = {
     return readableGroup(await getOrgId(), group);
   },
 
-  /** One row per group waiting on finance, for Finance review's Duplicates tab (§5.4). */
+  /** One row per group waiting on finance, for Finance review's Duplicates tab. */
   async duplicateQueue() {
     await requireActor();
     const groups = await waitingGroups(await getOrgId());
@@ -1324,7 +1325,8 @@ export const receiptService = {
     const receipt = access === "finance" ? { ...row, rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
     const purchaseOutcome = outcomeOf(row, await purchaseOutcomes([row]));
     const duplicateNotice = row.uploadedByUserId === actor.id ? await ownCopyNotice(row, actor) : null;
-    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome, duplicateNotice };
+    const copyOf = access === "finance" ? (await copiesOf(row.orgId, [row])).get(row.id) : undefined;
+    return { ...receipt, ...copyOf, lineItems, financialReviewReasons: reasons, purchaseOutcome, duplicateNotice };
   },
 
   /**

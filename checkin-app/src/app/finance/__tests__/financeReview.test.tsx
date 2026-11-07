@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import FinanceReview from "@/components/finance/FinanceReview";
 
@@ -164,20 +164,19 @@ describe("the receipt tabs", () => {
     expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
   });
 
-  it("names a duplicate discard on the Discarded tab and links the receipt it duplicates, carrying the queue", () => {
+  it("names a duplicate discard on the Discarded tab", () => {
     mockSearch = new URLSearchParams("queue=discarded");
     const base = { uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, receiptDate: null, receiptTotalCents: 1000, state: "discarded", needsReimbursement: false, isInKind: false };
     mockReceiptLoads["?state=discarded"] = {
       data: [
-        { ...base, id: "r1", retailer: "Acme", duplicateFlaggedAt: "2026-10-02T00:00:00Z", duplicateSuspectReceiptId: "r0" },
+        { ...base, id: "r1", retailer: "Acme", duplicateFlaggedAt: "2026-10-02T00:00:00Z" },
         { ...base, id: "r2", retailer: "Bolt" },
       ],
       error: null,
     };
     wrap();
     const [acme, bolt] = ["Acme", "Bolt"].map((name) => screen.getByText(name).closest("tr") as HTMLElement);
-    expect(acme).toHaveTextContent("Discarded as a duplicate of another receipt");
-    expect(within(acme).getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=discarded");
+    expect(acme).toHaveTextContent("Discarded as a duplicate");
     expect(bolt).not.toHaveTextContent("as a duplicate");
   });
 

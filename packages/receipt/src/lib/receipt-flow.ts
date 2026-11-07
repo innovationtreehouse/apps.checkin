@@ -302,7 +302,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
     switch (nextState) {
       case "duplicate_flagged":
         await transition(
-          { state: "duplicate_flagged", duplicateFlaggedAt: new Date(), duplicateSuspectReceiptId: dupId, validationNotes: null },
+          { state: "duplicate_flagged", duplicateFlaggedAt: new Date(), validationNotes: null },
           `duplicate_flagged (suspect: ${dupId})`,
         );
         return;
