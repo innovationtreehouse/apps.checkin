@@ -33,8 +33,8 @@ the crossing names the code comments use.
 
 | Step | Owner and file | Host connection | When it fails |
 |---|---|---|---|
-| Upload | receipt, `services/receiptService.ts` | `app/api/receipts/upload` | OCR failure lands in `ocr_failed`; the uploader retries or types the details. A process that dies mid-OCR is swept there. |
-| Mail | receipt, `services/mailIntake.ts` | `receiptMailbox()` in `lib/receipt/configure.ts`; `readMailbox` runs from `app/api/cron/reconcile-shopify` | An unverified sender or non-submitter is held for finance. A file over the daily limit is deferred to a later run. |
+| Upload | receipt, `services/receiptService.ts` | `app/api/receipts/upload` | OCR failure lands in `ocr_failed`, audited as `ocr_failed:<kind>`; the uploader presses "Read it again" or types the details. An outage, a refused key or a missing key gives the call back to the daily allowance. A process that dies mid-OCR is swept there. |
+| Mail | receipt, `services/mailIntake.ts` | `receiptMailbox()` in `lib/receipt/configure.ts`; `readMailbox` runs from `app/api/cron/reconcile-shopify` | An unverified sender or non-submitter is held for finance. A file over the daily limit is deferred to a later run. A mailbox that can't be listed alerts finance with its cause: lost access, Gmail not answering, no such mailbox, or an unexpected failure. |
 | Check and finalize | receipt, `lib/receipt-flow.ts`, `workflows/receipt.machine.ts` | None | Holds for the submitter or finance. An error, or a receipt stuck in `uploaded`, moves to `flow_error`, which finance can restart. |
 | Deliver (S1) | receipt `pushReceipt`; workflow-mapping `services/receiptIntakeService.ts` | `receiptSink` in `lib/receipt/configure.ts` | Never throws; `pushedAt` stays null. The daily cron resends until it gives up, then finance resends by hand. A gift's unsent donor (X13) holds the push back. |
 | Resolve lines | workflow-mapping, `services/lineItemService.ts` | `catalogReader` in `lib/workflowMapping/configure.ts` | A failed catalog lookup leaves lines unrecognized. The receipt waits in `pending_review` until a person resolves them; the last one starts the push. |

@@ -26,7 +26,7 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
       .$transaction(async (tx) => {
         const moved = await tx.receiptDetail.updateMany({
           where: { id, state: "auto_upload" },
-          data: { state: "ocr_failed", validationNotes: "OCR failed: interrupted" },
+          data: { state: "ocr_failed", validationNotes: 'Automatic reading was interrupted. Press "Read it again", or type the details.' },
         });
         if (moved.count === 0) return;
         await audit(tx, id, null, { action: "ocr_failed", valueAfter: "interrupted" });

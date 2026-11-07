@@ -5,6 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
+import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
@@ -179,7 +180,8 @@ export const OcrDataSchema = z.object({
 export type OcrLineItem = z.infer<typeof OcrLineItemSchema>;
 export type OcrData = z.infer<typeof OcrDataSchema>;
 
-export type OcrResult = { success: true; data: OcrData } | { success: false; error: string };
+/** A failure carries its kind and a short reason in plain words, never the service's own text. */
+export type OcrResult = { success: true; data: OcrData } | { success: false; kind: FailureKind; error: string };
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
@@ -262,6 +264,8 @@ export interface MailAgingOutEvent {
 
 export interface MailListingFailedEvent {
   orgId: string;
+  /** Why the listing failed, which decides the alert's wording. */
+  kind: FailureKind;
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */

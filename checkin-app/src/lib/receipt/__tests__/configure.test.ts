@@ -175,10 +175,16 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(values).toMatchObject({ messages: '4', since: expect.stringContaining('25 Oct 2026'), actionLink: expect.stringContaining('/receipts/mail') });
     });
 
-    it('alerts finance when the mailbox cannot be listed', async () => {
-        await boundConfig().alerts?.mailListingFailed({ orgId: 'org' });
+    it.each([
+        ['connection', 'finance.receiptMailboxUnreadable'],
+        ['system', 'finance.receiptMailboxUnanswered'],
+        ['settings', 'finance.receiptMailboxNotFound'],
+        ['data', 'finance.receiptMailboxFailed'],
+        ['bug', 'finance.receiptMailboxFailed'],
+    ] as const)('alerts finance with the cause when the mailbox cannot be listed (%s)', async (kind, template) => {
+        await boundConfig().alerts?.mailListingFailed({ orgId: 'org', kind });
         const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
-        expect(key).toBe('finance.receiptMailboxUnreadable');
+        expect(key).toBe(template);
         expect(values).toMatchObject({ actionLink: expect.stringContaining('/receipts/mail') });
     });
 

@@ -1,5 +1,6 @@
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { db } from "../../db";
+import type { FailureKind } from "@checkin/component-kit";
 import type { InKindDonor, OcrProvider, ReceiptConfig, ReceiptPrincipal } from "../../contract";
 import { configureReceipt } from "../../runtime";
 
@@ -85,6 +86,11 @@ export function manualDetails(over: Record<string, unknown> = {}) {
     ...over,
   };
 }
+
+/** A reader that always fails with this kind. */
+export const failingOcr = (kind: FailureKind, error = "test failure"): OcrProvider => ({
+  extract: async () => ({ success: false, kind, error }),
+});
 
 export const okOcr = (over: Record<string, unknown> = {}): OcrProvider => ({
   extract: async () => ({

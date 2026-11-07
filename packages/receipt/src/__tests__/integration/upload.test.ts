@@ -13,6 +13,7 @@ import {
   actions,
   clearAll,
   configure,
+  failingOcr,
   manualDetails,
   okOcr,
   recordingPorts,
@@ -250,7 +251,33 @@ describeDb("auto upload (OCR at intake)", () => {
   it("lands in ocr_failed with the reason when OCR is not configured", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("ocr_failed");
-    expect(r.validationNotes).toMatch(/not configured/);
+    expect(r.validationNotes).toMatch(/isn't set up/);
+    expect(await actions(r.id)).toContain("ocr_failed:settings");
+  });
+
+  it("after an outage, tells the submitter to read it again later and spends no allowance", async () => {
+    configure({ receiptSink: ports.receiptSink, ocr: failingOcr("system", "the reading service did not answer") });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    expect(r.state).toBe("ocr_failed");
+    expect(r.validationNotes).toBe(
+      'Automatic reading is unavailable right now: the reading service did not answer. Press "Read it again" later, or type the details. This didn\'t count against your daily reading allowance.',
+    );
+    expect(await actions(r.id)).toEqual(expect.arrayContaining(["ocr_call_refunded", "ocr_failed:system"]));
+  });
+
+  it("says when the reading service needs reconnecting", async () => {
+    configure({ receiptSink: ports.receiptSink, ocr: failingOcr("connection", "the reading service refused our key") });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    expect(r.validationNotes).toMatch(/until an administrator reconnects it: the reading service refused our key/);
+    expect(await actions(r.id)).toContain("ocr_failed:connection");
+  });
+
+  it("names what was wrong with a receipt that can't be read, and keeps the call spent", async () => {
+    configure({ receiptSink: ports.receiptSink, ocr: failingOcr("data", "no line items were found") });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    expect(r.validationNotes).toBe("This receipt couldn't be read automatically: no line items were found. Type the details.");
+    expect(await actions(r.id)).toContain("ocr_failed:data");
+    expect(await actions(r.id)).not.toContain("ocr_call_refunded");
   });
 
   it("OCR output never sets reimbursement, reimbursee or vendor", async () => {

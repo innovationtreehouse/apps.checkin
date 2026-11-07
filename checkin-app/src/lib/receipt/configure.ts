@@ -11,6 +11,7 @@
  * the person reimbursed (purchaseOutcomeMail.ts).
  */
 import type { JWT } from "next-auth/jwt";
+import type { FailureKind } from "@checkin/component-kit";
 import { expenseOutcomes, reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
@@ -171,6 +172,15 @@ function receiptMailbox(): MailboxReader | undefined {
   return createGmailReader(mailbox.mailboxAddress, gmailAccessToken(mailbox));
 }
 
+/** The mail-run alert that names the cause of a failed mailbox listing. */
+const MAILBOX_LISTING_ALERT = {
+  connection: "finance.receiptMailboxUnreadable",
+  system: "finance.receiptMailboxUnanswered",
+  settings: "finance.receiptMailboxNotFound",
+  data: "finance.receiptMailboxFailed",
+  bug: "finance.receiptMailboxFailed",
+} as const satisfies Record<FailureKind, string>;
+
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
@@ -188,9 +198,9 @@ const alerts: ReceiptAlerts = {
       actionLink: `${config.baseUrl()}/receipts/mail`,
     }, "Receipt mail ageing alert failed:");
   },
-  async mailListingFailed() {
+  async mailListingFailed({ kind }) {
     const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailboxUnreadable", {
+    await notifyFinanceAlert(MAILBOX_LISTING_ALERT[kind], {
       actionLink: `${config.baseUrl()}/receipts/mail`,
     }, "Receipt mailbox listing alert failed:");
   },

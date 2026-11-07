@@ -2,7 +2,7 @@
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
-import { isServiceError, ServiceError } from "@checkin/component-kit";
+import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipal } from "../contract";
@@ -693,10 +693,11 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   try {
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
-    console.error("[receipt] mailbox listing failed:", err);
+    const kind = kindOf(err);
+    console.error(`[receipt] mailbox listing failed (${kind}):`, err);
     // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
     try {
-      await ports().alerts.mailListingFailed({ orgId });
+      await ports().alerts.mailListingFailed({ orgId, kind });
     } catch (alertErr) {
       console.error("[receipt] mailbox listing alert failed:", alertErr);
     }

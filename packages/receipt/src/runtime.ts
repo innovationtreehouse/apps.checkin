@@ -97,7 +97,7 @@ export const inertAlerts: ReceiptAlerts = {
 };
 
 export const inertOcr: OcrProvider = {
-  extract: async () => ({ success: false, error: "OCR is not configured" }),
+  extract: async () => ({ success: false, kind: "settings", error: "OCR is not configured" }),
 };
 
 export const inertFileStore: ReceiptFileStore = {
