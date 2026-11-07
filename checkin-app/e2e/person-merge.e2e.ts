@@ -49,8 +49,8 @@ async function clearedFamily(): Promise<string> {
 
 /** The Board's view of one application. */
 async function application(processId: number): Promise<Application> {
-  const { json } = await api<{ OrgMembershipProcess: Application[] }>(await loginAs(BOARD), "/api/membership-ops/applications");
-  const found = json.OrgMembershipProcess.find((p) => p.id === processId);
+  const { json } = await api<{ processes: Application[] }>(await loginAs(BOARD), "/api/membership-ops/applications");
+  const found = json.processes.find((p) => p.id === processId);
   if (!found) throw new Error(`application ${processId} not in the Board's list`);
   return found;
 }
