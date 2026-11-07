@@ -15,7 +15,6 @@ import type { NavGate, NavSection, SubLink } from "@/lib/nav/types";
 import { anyRole, firstVisibleHref, signedIn } from "@/lib/nav/gates";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { libraryCount, type NavBadge } from "@/components/navBadges";
-import { RECEIPT_FLOW_LINK } from "@/lib/nav/sections/finance";
 import { canSeeCatalog } from "@/lib/volunteer";
 
 const catalogViewer: NavGate = (u) => canSeeCatalog(u);
@@ -30,12 +29,6 @@ function openBackorders(c: TodoCounts | null): NavBadge | null {
   return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} ${n === 1 ? "backorder waits" : "backorders wait"} to be received` } : null;
 }
 
-/** Green pill: catalog proposals waiting for review. Its count reaches an INVENTORY_MANAGER alone. */
-function pendingProposals(c: TodoCounts | null): NavBadge | null {
-  const n = libraryCount(c, "catalog", "pendingProvisionalItems") + libraryCount(c, "catalog", "pendingItemReferences");
-  return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} catalog ${n === 1 ? "proposal" : "proposals"} to review` } : null;
-}
-
 /** A green pill for one INVENTORY_MANAGER-only count; absent at zero. */
 function managerQueue(key: string, label: (n: number) => string, lib: LibraryKey): (c: TodoCounts | null) => NavBadge | null {
   return (c) => {
@@ -45,8 +38,9 @@ function managerQueue(key: string, label: (n: number) => string, lib: LibraryKey
 }
 
 const CATALOG_SUB_BADGES: Record<string, (c: TodoCounts | null) => NavBadge | null> = {
-  "/catalog/items": managerQueue("unresolvedConflicts", (n) => `${n} reference ${n === 1 ? "conflict" : "conflicts"} to resolve`, "catalog"),
-  "/catalog/proposals": pendingProposals,
+  "/catalog/provisional-items": managerQueue("pendingProvisionalItems", (n) => `${n} provisional ${n === 1 ? "item" : "items"} to review`, "catalog"),
+  "/catalog/item-reference-proposals": managerQueue("pendingItemReferences", (n) => `${n} item reference ${n === 1 ? "proposal" : "proposals"} to review`, "catalog"),
+  "/catalog/reference-conflicts": managerQueue("unresolvedConflicts", (n) => `${n} reference ${n === 1 ? "conflict" : "conflicts"} to resolve`, "catalog"),
   "/catalog/conversion-challenges": managerQueue("pendingChallenges", (n) => `${n} conversion ${n === 1 ? "challenge" : "challenges"} to review`, "catalog"),
 };
 
@@ -75,10 +69,15 @@ export const INVENTORY: NavSection = {
       ...l,
       library: "catalog" as const,
       visible: catalogViewer,
-      subLinks: l.subLinks?.map((s) => ({ ...s, badge: CATALOG_SUB_BADGES[s.href] })),
+      subLinks: l.subLinks?.map(({ managerOnly, ...s }) => ({
+        ...s,
+        ...(managerOnly ? { visible: inventoryManager } : {}),
+        badge: CATALOG_SUB_BADGES[s.href],
+      })),
     })),
+    // A group shares its first screen's href, so its pill comes from its sub-links alone.
     ...INVENTORY_NAV_LINKS.map(({ subLinks, ...l }) =>
-      subLinks ? { ...inventoryLink(l), subLinks: subLinks.map(inventoryLink) } : inventoryLink(l)),
+      subLinks ? { ...l, library: "local-inventory" as const, visible: catalogViewer, subLinks: subLinks.map(inventoryLink) } : inventoryLink(l)),
     {
       ...RECEIVING_NAV,
       library: "workflow-mapping",
@@ -91,8 +90,6 @@ export const INVENTORY: NavSection = {
           : null;
       },
     },
-    // FINANCE and BOARD reach the flow status page from Finance.
-    { ...RECEIPT_FLOW_LINK, library: "workflow-mapping", visible: inventoryManager },
   ],
   visible: signedIn,
   hrefFor: (u, c) => firstVisibleHref(INVENTORY, u, c),

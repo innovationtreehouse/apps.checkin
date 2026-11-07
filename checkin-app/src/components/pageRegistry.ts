@@ -33,6 +33,7 @@ const SHOP = SHOP_OPS.visible;
 const CATALOG = linkGate(INVENTORY, '/catalog/items');
 const ORG_INVENTORY = linkGate(INVENTORY, '/inventory/org-items');
 const INVENTORY_MANAGER = linkGate(INVENTORY, '/inventory/merge-conflicts');
+const CATALOG_MANAGER = linkGate(INVENTORY, '/catalog/reference-conflicts');
 const INVENTORY_RECEIVING = linkGate(INVENTORY, '/inventory/receive-queue');
 const INVENTORY_UNLOCATED = linkGate(INVENTORY, '/inventory/unlocated');
 const INVENTORY_LOG = linkGate(INVENTORY, '/inventory/inventory-log');
@@ -46,8 +47,8 @@ const EXPENSES = linkGate(FINANCE, '/expense/expenses');
 const BUDGETS = linkGate(FINANCE, '/budgets');
 const BOOKS_MAP = linkGate(FINANCE, '/books-map');
 const FINANCE_REVIEW = linkGate(FINANCE, FINANCE_REVIEW_PATH);
-// FINANCE and BOARD reach it from Finance, an inventory manager from Inventory.
-const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || linkGate(INVENTORY, '/receipt-flow')(u, c);
+// FINANCE and BOARD reach it from Finance's tabs; the route also admits an inventory manager.
+const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || (linkGate(INVENTORY, '/inventory/receiving')(u, c) && u?.isInventoryManager === true);
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
 const SYSTEM = SYSTEM_STATUS.visible;
@@ -104,12 +105,16 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/live') },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/manage') },
 
-  // Inventory (global catalog) — any catalog viewer. The index redirects
-  // to the Global Catalog. Write controls within each screen are INVENTORY_MANAGER-gated.
+  // Inventory (global catalog) — any catalog viewer; Learned References and Reference
+  // Conflicts INVENTORY_MANAGER alone. The index redirects to the Global Catalog.
+  // Write controls within each screen are INVENTORY_MANAGER-gated.
   { href: '/catalog', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
   { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
-  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
+  { href: '/catalog/learned-references', label: 'Learned References', section: 'Inventory', keywords: 'item reference part mapping archive', visible: CATALOG_MANAGER },
+  { href: '/catalog/provisional-items', label: 'Provisional Items', section: 'Inventory', keywords: 'proposals provisional item review approve', visible: CATALOG },
+  { href: '/catalog/item-reference-proposals', label: 'Item Reference Proposals', section: 'Inventory', keywords: 'proposals item reference review approve', visible: CATALOG },
+  { href: '/catalog/reference-conflicts', label: 'Reference Conflicts', section: 'Inventory', keywords: 'item reference conflict resolve', visible: CATALOG_MANAGER },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
   // Org inventory — same viewer gate; the receiving screens are
   // INVENTORY_MANAGER, FINANCE or BOARD and the work-queue screens

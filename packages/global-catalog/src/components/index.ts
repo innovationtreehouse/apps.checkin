@@ -2,6 +2,8 @@
  *  ../pages; these components are the client screens they render. */
 export { default as CategoriesClient } from "./CategoriesClient";
 export { default as GlobalInventoryClient } from "./GlobalInventoryClient";
+export { default as LearnedReferencesClient } from "./LearnedReferencesClient";
+export { default as ReferenceConflictsClient } from "./ReferenceConflictsClient";
 export { default as ItemReferencesModal } from "./ItemReferencesModal";
 export { default as ItemReferenceProposalsClient } from "./ItemReferenceProposalsClient";
 export { default as ConversionChallengesClient } from "./ConversionChallengesClient";

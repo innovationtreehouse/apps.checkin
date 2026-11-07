@@ -64,7 +64,7 @@ describe("Inventory Part mapping tab", () => {
   });
 
   it("badges pending merge conflicts", () => {
-    const tab = INVENTORY.links.find((l) => l.href === "/inventory/merge-conflicts");
+    const tab = INVENTORY.links.flatMap((l) => l.subLinks ?? []).find((l) => l.href === "/inventory/merge-conflicts");
     const c = counts([...LIBRARY_KEYS], { "local-inventory": { pendingMergeConflicts: 2 } });
     expect(tab?.badge?.(c)).toEqual({ count: 2, color: "treehouseGreen", label: "2 merge conflicts to resolve" });
     expect(tab?.badge?.(released)).toBeNull();
