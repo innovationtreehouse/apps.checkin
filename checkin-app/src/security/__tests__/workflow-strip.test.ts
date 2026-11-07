@@ -12,8 +12,8 @@
  *      drops the blob and any submitter/reimbursement key a projection grows,
  *      and keeps the nested line items.
  *   4. Admission: INVENTORY_MANAGER, FINANCE and BOARD read; only
- *      INVENTORY_MANAGER writes; an id-less session is 401 on every route through
- *      the real authenticateRequest (only next-auth is mocked) and is denied the
+ *      INVENTORY_MANAGER writes, except close-out, which BOARD may also call; an
+ *      id-less session is 401 on every route through the real authenticateRequest (only next-auth is mocked) and is denied the
  *      reads at the resolveAccess layer too; no route view-selects a sysadmin.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
@@ -127,7 +127,8 @@ describe('workflow-mapping admission', () => {
     const PREFIX = 'GET /api/workflow-mapping/';
     const routes = [...allRoutes()].filter(([e]) => e.includes(' /api/workflow-mapping/'));
     const reads = routes.filter(([e]) => e.startsWith(PREFIX)).map(([e]) => e);
-    const writes = routes.filter(([e]) => !e.startsWith(PREFIX)).map(([e]) => e);
+    const CLOSE_OUT = 'POST /api/workflow-mapping/receipts/[id]/close-out';
+    const writes = routes.filter(([e]) => !e.startsWith(PREFIX) && e !== CLOSE_OUT).map(([e]) => e);
 
     const noFlags: AuthenticatedUser = {
         id: 1,
@@ -158,9 +159,10 @@ describe('workflow-mapping admission', () => {
 
     beforeEach(() => mockSession.mockReset());
 
-    it('registers the 4 reads and 6 writes', () => {
+    it('registers the 4 reads, 6 manager writes and close-out', () => {
         expect(reads).toHaveLength(4);
         expect(writes).toHaveLength(6);
+        expect(getRoute(CLOSE_OUT)).toBeDefined();
     });
 
     it.each(reads)('%s admits INVENTORY_MANAGER, FINANCE and BOARD', async (endpoint) => {
@@ -176,14 +178,25 @@ describe('workflow-mapping admission', () => {
         for (const user of [finance, board, sysadmin]) expect(await call(endpoint, user)).toEqual({ status: 403, ran: false });
     });
 
-    it.each([...reads, ...writes])('%s 401s anonymous and id-less sessions without running the body', async (endpoint) => {
+    it(`${CLOSE_OUT} admits INVENTORY_MANAGER and BOARD only`, async () => {
+        for (const user of [manager, board]) expect(await call(CLOSE_OUT, user)).toEqual({ status: 200, ran: true });
+        for (const user of [finance, sysadmin]) expect(await call(CLOSE_OUT, user)).toEqual({ status: 403, ran: false });
+    });
+
+    it(`${CLOSE_OUT} gives BOARD the same view as INVENTORY_MANAGER`, () => {
+        const views = new Map(getRoute(CLOSE_OUT)!.orderedView);
+        expect(views.get('isBoardMember')).toEqual(views.get('isInventoryManager'));
+        expect(views.get('isInventoryManager')).toEqual(getRoute('POST /api/workflow-mapping/receipts/[id]/retry-apply')!.orderedView[0][1]);
+    });
+
+    it.each([...reads, ...writes, CLOSE_OUT])('%s 401s anonymous and id-less sessions without running the body', async (endpoint) => {
         expect(await call(endpoint, null)).toEqual({ status: 401, ran: false });
         expect(await call(endpoint, idless)).toEqual({ status: 401, ran: false });
     });
 
-    // Reads only: the writes' inventory-manager resolver checks the role flag, so
-    // authenticateRequest's 401 above is what denies them an id-less session.
-    it.each(reads)('%s denies an id-less session at the resolveAccess layer', async (endpoint) => {
+    // Reads and close-out (anyRole): the writes' inventory-manager resolver checks
+    // the role flag, so authenticateRequest's 401 above is what denies them an id-less session.
+    it.each([...reads, CLOSE_OUT])('%s denies an id-less session at the resolveAccess layer', async (endpoint) => {
         const { allowed } = await resolveAccess(getRoute(endpoint)!.authorize, {
             auth: { type: 'session', user: idless },
             params: {},
