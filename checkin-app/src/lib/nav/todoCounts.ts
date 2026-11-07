@@ -6,7 +6,7 @@ import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/r
 import { openProcess } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
-import { openConfigIssues } from "@/lib/configHealth";
+import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
@@ -507,7 +507,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true },
+            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
@@ -522,8 +522,8 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
         admin: { membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
-        // Env-var/deploy gaps (synchronous presence checks) plus cron sweeps that
+        // Env-var/deploy gaps and the alert address (presence checks) plus cron sweeps that
         // stopped running or stopped working — both fold into the single red System Status pill.
-        configHealth: { openIssues: openConfigIssues(), unhealthyCronJobs },
+        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), alertAddressCheck(boardSettings?.alertEmailAddress)]), unhealthyCronJobs },
     };
 }
