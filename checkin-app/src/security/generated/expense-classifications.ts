@@ -61,6 +61,7 @@ export const classifications = {
         qbTxnEntity: 'internal',
         qbVendorId: 'internal',
         qbPostAttempts: 'internal',
+        qbFailureKind: 'internal',
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
         qbCreateAttemptedAt: 'internal',

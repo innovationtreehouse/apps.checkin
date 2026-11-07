@@ -478,7 +478,7 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     for (const r of resolved) {
       await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: null } });
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;
   });

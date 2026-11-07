@@ -202,7 +202,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
       }
       const linked = await tx.expense.updateMany({
         where: { id: expense.id, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "CREATED", qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
+        data: { qbMatchState: "CREATED", qbFailureKind: null, qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, expense.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
@@ -253,7 +253,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       }
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "MATCHED", qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
+        data: { qbMatchState: "MATCHED", qbFailureKind: null, qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, current.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
@@ -313,7 +313,7 @@ export async function skipExpenseQb(principal: ExpensePrincipal, expenseId: stri
     ) {
       throw new ServiceError(409, "The app may have tried to book this expense meanwhile; reload and try again");
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED" } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED", qbFailureKind: null } });
     await checkOffHeldOnPost(tx, expenseId, SKIPPED_CHECK_OFF);
     await writeAudit(tx, actorOf(principal), {
       expenseId,
