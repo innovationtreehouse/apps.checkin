@@ -59,6 +59,7 @@ describe("composeWrite", () => {
     ["no receipt date", { ...bag(), Expense: { ...bag().Expense, receiptDate: null } }, /no receipt date/],
     ["no lines", { ...bag(), ExpenseLineItem: [] }, /no lines/],
     ["a line with no resolved account", { ...bag(), ExpenseLineItem: [{ ...bag().ExpenseLineItem[0], resolvedQbAccount: null }, bag().ExpenseLineItem[1]] }, /"Plywood" has no resolved QuickBooks account/],
+    ["a line whose account is not a QuickBooks id", { ...bag(), ExpenseLineItem: [{ ...bag().ExpenseLineItem[0], resolvedQbAccount: "6010 Supplies" }, bag().ExpenseLineItem[1]] }, /"Plywood" has account "6010 Supplies", not a QuickBooks id/],
   ])("an expense with %s waits for finance, not a retry", (_case, rows, reason) => {
     expect(composeWrite(rows, POSTING)).toEqual({ unpostable: expect.stringMatching(reason) });
   });

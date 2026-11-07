@@ -1,6 +1,6 @@
 // The QuickBooks entry an expense posts, composed from the rows the outbound gateway passed. No
 // database: the poster reads the rows and the host's gateway strips them before this runs.
-import type { TxnWrite } from "@checkin/quickbooks";
+import { isQuickBooksId, type TxnWrite } from "@checkin/quickbooks";
 import type { ExpensePosting, OutboundBag } from "./contract";
 import type { ExpenseLineItem } from "./db/schema";
 
@@ -103,6 +103,9 @@ export function composeWrite(stripped: OutboundBag, posting: Pick<ExpensePosting
   }
   const unresolved = lines.find((l) => !l.account);
   if (unresolved) return { unpostable: `line "${unresolved.description}" has no resolved QuickBooks account` };
+  // Refused here, before any QuickBooks call, so the drain counts it as no call made.
+  const notAnId = lines.find((l) => !isQuickBooksId(l.account!));
+  if (notAnId) return { unpostable: `line "${notAnId.description}" has account "${notAnId.account}", not a QuickBooks id` };
   const accounts = new Map(lines.map((l) => [l.id, l.account!]));
   const classes = lineClasses(stripped, lines);
   if ("noClass" in classes) return classes;

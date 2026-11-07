@@ -5,7 +5,7 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
-import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, LIVE_BOOKS_MAP_ROLES, isBooksMapRole, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, LIVE_BOOKS_MAP_ROLES, isBooksMapRole, isQuickBooksId, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 // The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
@@ -33,8 +33,8 @@ function readQuickBooksId(value: unknown, field: string): string | null {
     if (value === null) return null;
     if (typeof value !== "string") throw badRequest(`${field} must be a string or null`);
     const id = value.trim();
-    // QuickBooks ref ids are numeric; the posters refuse anything else.
-    if (id && !/^\d+$/.test(id)) throw badRequest(`${field} must be a QuickBooks id (digits only)`);
+    // The posters refuse a ref id QuickBooks cannot hold.
+    if (id && !isQuickBooksId(id)) throw badRequest(`${field} must be a QuickBooks id (digits only)`);
     return id || null;
 }
 

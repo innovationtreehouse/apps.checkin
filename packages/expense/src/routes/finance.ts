@@ -5,6 +5,7 @@
  */
 import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
+import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
@@ -31,6 +32,9 @@ async function asFinance(principal: ExpensePrincipal) {
   return principal;
 }
 
+/** A QuickBooks account id, as the posters accept it. */
+const qbAccountId = z.string().trim().refine(isQuickBooksId, "qbAccount must be a QuickBooks id (digits only)");
+
 // ── Holds ─────────────────────────────────────────────────────────────────────
 
 export const holds: ExpenseRouteHandler = async ({ req }) => {
@@ -46,7 +50,7 @@ export const holds: ExpenseRouteHandler = async ({ req }) => {
 
 export const holdLineAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");
-  const { qbAccount } = await parseBody(req, z.object({ qbAccount: z.string().trim().min(1, "qbAccount is required") }));
+  const { qbAccount } = await parseBody(req, z.object({ qbAccount: qbAccountId }));
   await mapServiceErrors(() => setHeldLineAccount(principal, params.expenseId, lineItemId, qbAccount));
   return { ExpenseLineItem: await db.expenseLineItem.findFirst({ where: { id: lineItemId } }) };
 };
@@ -65,13 +69,13 @@ const mappingSchema = z.object({
   partNumber: z.string().min(1),
   isDelayed: triBool,
   isCapital: triBool,
-  qbAccount: z.string().min(1),
+  qbAccount: qbAccountId,
 });
 /** A rule's part is `*` or a GTIN-13: the processor matches it against the line's catalog GTIN. */
 function checkRulePart(partNumber: string): void {
   if (partNumber !== "*" && !isValidGtin13(partNumber)) throw httpError(400, "A rule's part must be * or a 13-digit GTIN with a valid check digit");
 }
-const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: z.string().trim().min(1) });
+const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: qbAccountId });
 
 export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
   AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),

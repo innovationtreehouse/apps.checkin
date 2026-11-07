@@ -22,6 +22,8 @@ import { runExpenseQbPosting } from "../../services/sweeps";
 
 const PAYMENT_ACCOUNT = "41";
 const VENDOR = "77";
+/** An account id QuickBooks does not hold: a create naming it is refused. */
+const UNKNOWN_ACCOUNT = "999";
 
 interface PostedLine {
   Amount: number;
@@ -71,6 +73,7 @@ class FakeQbo {
     if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const entity = url.pathname.endsWith("/bill") ? "Bill" : "Purchase";
     const body = JSON.parse(String(init?.body)) as PostedTxn;
+    if (body.Line.some((l) => l.AccountBasedExpenseLineDetail.AccountRef.value === UNKNOWN_ACCOUNT)) return json({ Fault: { Error: [{ code: "2500" }] } }, 400);
     this.posts.push({ entity, key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);
     const TotalAmt = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0) / 100;
@@ -502,7 +505,7 @@ describeDb("QB-2 posting — bounded retry", () => {
   }
 
   it("a permanent rejection stops at NEEDS_FINANCE after the attempt limit, raising no flag, and the drain stops calling QuickBooks", async () => {
-    const { id } = await outboxedManual("not-an-account");
+    const { id } = await outboxedManual(UNKNOWN_ACCOUNT);
     expect((await expenseRow(id)).qbMatchState).toBe("POST_FAILED");
 
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
@@ -519,7 +522,7 @@ describeDb("QB-2 posting — bounded retry", () => {
   });
 
   it("finance fixes the account and retries: the account is re-resolved, the expense posts and the posting reason clears", async () => {
-    const { id, line } = await outboxedManual("not-an-account");
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
 
@@ -552,7 +555,7 @@ describeDb("QB-2 posting — bounded retry", () => {
   });
 
   it("a retry that fails again goes back to retrying, raising no flag", async () => {
-    const { id } = await outboxedManual("not-an-account");
+    const { id } = await outboxedManual(UNKNOWN_ACCOUNT);
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({
       status: 503,
@@ -564,7 +567,7 @@ describeDb("QB-2 posting — bounded retry", () => {
   });
 
   it("a retry while QuickBooks is not connected answers 503 and changes nothing", async () => {
-    const { id, line } = await outboxedManual("not-an-account");
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     const finance = principal(500, { isFinance: true });
     await setHeldLineAccount(finance, id, line, "60");
@@ -578,7 +581,7 @@ describeDb("QB-2 posting — bounded retry", () => {
   });
 
   it("a refused retry answers 409 and records no retry", async () => {
-    const { id, line } = await outboxedManual("not-an-account");
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     await db.expenseLineItem.update({ where: { id: line }, data: { manualQbAccount: null } });
 
@@ -589,7 +592,7 @@ describeDb("QB-2 posting — bounded retry", () => {
   });
 
   it("an accepted retry records who asked", async () => {
-    const { id, line } = await outboxedManual("not-an-account");
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
     const finance = principal(500, { isFinance: true });
     await setHeldLineAccount(finance, id, line, "60");
