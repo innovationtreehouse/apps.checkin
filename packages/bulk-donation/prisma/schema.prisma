@@ -525,6 +525,9 @@ model InKindPosting {
   qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
   /// @sensitivity:internal
   qbPostAttempts      Int       @default(0) @map("qb_post_attempts")
+  // The kind of the last failed post (system, connection, settings, data, bug); null when the last post did not fail.
+  /// @sensitivity:internal
+  qbFailureKind       String?   @map("qb_failure_kind")
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
   /// @sensitivity:internal

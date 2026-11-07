@@ -23,7 +23,8 @@ export type FindOrCreateResult =
   | { kind: "found"; id: string; via: "key" | "amount"; txnDate: string }
   | { kind: "ambiguous"; ids: string[] }
   | { kind: "created"; id: string }
-  | { kind: "failed"; error: string; failure: FailureKind }
+  /** `onCreate`: the create itself failed, after every read answered. */
+  | { kind: "failed"; error: string; failure: FailureKind; onCreate?: true }
   /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6210): never created. */
   | { kind: "closed" }
   /** Not found and the lane may not create it on its own: finance books it or skips it. */
@@ -87,7 +88,7 @@ async function matchThenCreate(
     return { kind: "created", id: (await create()).Id };
   } catch (e) {
     if (e instanceof QboRequestError && e.codes.includes(CLOSED_PERIOD_FAULT)) return { kind: "closed" };
-    throw e;
+    return { kind: "failed", error: e instanceof Error ? e.message : String(e), failure: kindOf(e), onCreate: true };
   }
 }
 

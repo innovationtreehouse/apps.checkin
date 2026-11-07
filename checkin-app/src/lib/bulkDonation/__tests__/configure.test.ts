@@ -198,9 +198,11 @@ describe("bulk-donation wiring", () => {
     await inKindQb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
     expect(notifyFinanceAlert.mock.calls[0][0]).toBe("finance.inKindSweepIncomplete");
     expect(notifyFinanceAlert.mock.calls[0][1].since).toBe("2026-10-01");
-    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 3, remaining: 12 });
+    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 3, remaining: 12, cause: "system" });
     expect(notifyFinanceAlert.mock.calls[1][0]).toBe("finance.inKindDrainStopped");
-    expect(notifyFinanceAlert.mock.calls[1][1]).toMatchObject({ failures: "3", remaining: "12" });
+    expect(notifyFinanceAlert.mock.calls[1][1]).toMatchObject({ failures: "3", remaining: "12", cause: expect.stringMatching(/may be down/) });
+    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 1, remaining: 4, cause: "connection" });
+    expect(notifyFinanceAlert.mock.calls[2][1]).toMatchObject({ failures: "1", cause: expect.stringMatching(/Reconnect QuickBooks/) });
   });
 
   it("reads which donated lines became assets from the expense library's capital review", async () => {

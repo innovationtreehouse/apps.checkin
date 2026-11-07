@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { KindedError } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db, getPrisma } from "../../db";
@@ -57,6 +58,15 @@ class FakeQbo {
   dropAfterCreate = false;
   /** The create fails without reaching the books. */
   refuseCreate = false;
+  /** QuickBooks answers the nth create (from 0) with this status and fault codes. */
+  createAnswer: ((n: number) => { status: number; codes?: string[] } | null) | null = null;
+  private creates = 0;
+  /** QuickBooks is down: every request but the closing-date read answers 503. */
+  outage = false;
+  /** QuickBooks answers the dated Deposit read, which every gift's post makes, with this status. */
+  depositReadStatus: number | null = null;
+  /** QuickBooks answers the created-since read with this status. */
+  sinceReadStatus: number | null = null;
   createTimes = new Map<string, Date>();
   /** Runs inside a by-id read, standing in for a drain post that lands meanwhile. */
   duringByIdRead: (() => Promise<void>) | null = null;
@@ -71,6 +81,7 @@ class FakeQbo {
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
+    if (this.outage && !(url.searchParams.get("query") ?? "").startsWith("SELECT * FROM Preferences")) return json({ Fault: { Error: [] } }, 503);
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
       if (query.startsWith("SELECT * FROM Account STARTPOSITION")) return json({ QueryResponse: { Account: QB_ACCOUNTS } });
@@ -78,6 +89,7 @@ class FakeQbo {
       if (query === "SELECT * FROM Preferences") return json({ QueryResponse: { Preferences: [{ AccountingInfoPrefs: this.closeDate ? { BookCloseDate: this.closeDate } : {} }] } });
       const since = /FROM JournalEntry WHERE MetaData\.CreateTime >= '([^']+)'/.exec(query);
       if (since) {
+        if (this.sinceReadStatus) return json({ Fault: { Error: [] } }, this.sinceReadStatus);
         const list = this.journals.filter((j) => (this.createTimes.get(j.Id)?.getTime() ?? 0) >= Date.parse(since[1]));
         await this.afterSinceRead?.();
         return json({ QueryResponse: list.length ? { JournalEntry: list } : {} });
@@ -92,6 +104,7 @@ class FakeQbo {
         return json({ QueryResponse: list.length ? { [byId[1]]: list } : {} });
       }
       if (!m) throw new Error(`unexpected query ${query}`);
+      if (m[1] === "Deposit" && this.depositReadStatus) return json({ Fault: { Error: [{ code: "4000" }] } }, this.depositReadStatus);
       const all: { TxnDate: string }[] = m[1] === "JournalEntry" ? this.journals : m[1] === "Deposit" ? this.deposits : this.purchases;
       const list = all.filter((e) => e.TxnDate >= m[2] && e.TxnDate <= m[3]);
       if (m[1] === "JournalEntry") await this.afterJournalRead?.();
@@ -99,6 +112,8 @@ class FakeQbo {
     }
     if (!url.pathname.endsWith("/journalentry")) throw new Error(`unexpected write ${url.pathname}`);
     if (this.refuseCreate) throw new Error("connection refused");
+    const answer = this.createAnswer?.(this.creates++);
+    if (answer) return json({ Fault: { Error: (answer.codes ?? []).map((code) => ({ code })) } }, answer.status);
     const body = JSON.parse(String(init?.body)) as PostedJournal;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);
@@ -118,15 +133,19 @@ let assets: number[];
 /** The expense account rules: supplies for any part, equipment for an asset; a GTIN here has no rule. */
 let unruled: Set<string>;
 let alerts: number;
-let drainStops: { failures: number; remaining: number }[];
+let drainStops: { failures: number; remaining: number; cause: string }[];
+/** The expense account rules port throws this, standing in for a fault in the app's own code. */
+let rulesThrow: Error | null;
 let drainStopAlertFails: boolean;
 
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
   const capital: InKindCapital = { submit: async () => {}, awaitingReview: async () => awaiting, assetLineIds: async () => assets };
   const rules: InKindAccounts = {
-    resolve: async (_org, parts) =>
-      parts.map((p) => (unruled.has(p.gtin13) ? { lineId: p.lineId, reason: "No account rule covers this part" } : { lineId: p.lineId, accountId: p.isCapital ? "150" : "600" })),
+    resolve: async (_org, parts) => {
+      if (rulesThrow) throw rulesThrow;
+      return parts.map((p) => (unruled.has(p.gtin13) ? { lineId: p.lineId, reason: "No account rule covers this part" } : { lineId: p.lineId, accountId: p.isCapital ? "150" : "600" }));
+    },
   };
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: FINANCE, name: "finance" }) },
@@ -147,9 +166,9 @@ function configure() {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
       sweepIncomplete: async () => void alerts++,
-      drainStopped: async ({ failures, remaining }) => {
+      drainStopped: async ({ failures, remaining, cause }) => {
         if (drainStopAlertFails) throw new Error("SES down");
-        drainStops.push({ failures, remaining });
+        drainStops.push({ failures, remaining, cause });
       },
     },
   });
@@ -189,6 +208,30 @@ async function acceptedGift(opts: { totalCents?: number; date?: string } = {}): 
   return id;
 }
 
+/** An accepted gift without a receipt, one of its lines valued at $0, which the drain holds for finance without calling QuickBooks. */
+async function zeroLineManualGift(): Promise<number> {
+  const now = new Date();
+  const { id } = await db.manualInKindDonation.create({
+    data: {
+      orgId,
+      donorFirstName: "Sam",
+      donorLastName: "Giver",
+      donationDate: "2026-10-20",
+      recordedByUserId: UPLOADER,
+      decisionOutcome: "ACCEPTED",
+      decidedByUserId: FINANCE,
+      decidedAt: now,
+      donorHouseholdAttestedAt: now,
+      budgetOwnerId: 1,
+      bucketAssignedByUserId: FINANCE,
+      bucketAssignedAt: now,
+      capitalSubmittedAt: now,
+      lines: { create: [{ gtin13: "0011111111116", quantity: 1, valueCents: 3000 }, { gtin13: "0011111111116", quantity: 1, valueCents: 0 }] },
+    },
+  });
+  return id;
+}
+
 const lineIds = async (id: number) => (await db.inKindDonationLine.findMany({ where: { donationId: id }, orderBy: { lineNumber: "asc" } })).map((l) => l.id);
 const posting = (id: number) => db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: id } } });
 const bookings = (id: number) => db.inKindBooking.findMany({ where: { orgId, giftId: id }, orderBy: { side: "asc" } });
@@ -214,6 +257,7 @@ beforeEach(async () => {
   alerts = 0;
   drainStops = [];
   drainStopAlertFails = false;
+  rulesThrow = null;
   configure();
 });
 
@@ -272,26 +316,8 @@ describeDb("in-kind drain", () => {
 
   it("a gift without a receipt accepted with a $0 line goes to finance, never booked", async () => {
     await switchOn();
-    const now = new Date();
-    const { id } = await db.manualInKindDonation.create({
-      data: {
-        orgId,
-        donorFirstName: "Sam",
-        donorLastName: "Giver",
-        donationDate: "2026-10-20",
-        recordedByUserId: UPLOADER,
-        decisionOutcome: "ACCEPTED",
-        decidedByUserId: FINANCE,
-        decidedAt: now,
-        donorHouseholdAttestedAt: now,
-        budgetOwnerId: 1,
-        bucketAssignedByUserId: FINANCE,
-        bucketAssignedAt: now,
-        capitalSubmittedAt: now,
-        lines: { create: [{ gtin13: "0011111111116", quantity: 1, valueCents: 3000 }, { gtin13: "0011111111116", quantity: 1, valueCents: 0 }] },
-      },
-    });
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 1 });
+    const id = await zeroLineManualGift();
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, held: 1 });
     expect(qbo.posts).toHaveLength(0);
     const held = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: id } } });
     expect(held).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: expect.stringContaining("no value") });
@@ -349,29 +375,29 @@ describeDb("in-kind drain", () => {
     expect((await posting(id)).qbNote).toMatch(/closed books/);
   });
 
-  it("hands gifts that always fail to finance at the limit, so a newer gift then posts, and alerts finance each run the streak stops", async () => {
+  it("hands gifts that always fail on a bug to finance at the limit, so a newer gift then posts, and alerts finance each run the streak stops", async () => {
     await switchOn();
     const stuck = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
     const newer = await acceptedGift();
-    qbo.refuseCreate = true;
+    rulesThrow = new Error("rules exploded");
 
     for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, exhausted: 0, stoppedAfterFailures: true });
       expect(await posting(stuck[0])).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: run });
     }
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 0, exhausted: 3, stoppedAfterFailures: true });
-    expect(drainStops).toEqual(Array(MAX_POST_ATTEMPTS).fill({ failures: 3, remaining: 1 }));
+    expect(drainStops).toEqual(Array(MAX_POST_ATTEMPTS).fill({ failures: 3, remaining: 1, cause: "bug" }));
     for (const id of stuck) {
-      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbNote: expect.stringMatching(/stopped trying after 5 failed attempts: .*connection refused/) });
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbNote: expect.stringMatching(/stopped trying after 5 failed attempts: .*rules exploded/) });
     }
     expect((await inKindAcceptService.listQueue(orgId, FINANCE)).filter((g) => g.qbState === "NEEDS_FINANCE").map((g) => g.id).sort()).toEqual([...stuck].sort());
     await expect(posting(newer)).rejects.toThrow();
 
-    // QuickBooks still refuses, but the newer gift gets its turn: its own failure now shows.
+    // The fault remains, but the newer gift gets its turn: its own failure now shows.
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, exhausted: 0, stoppedAfterFailures: false });
     expect(await posting(newer)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1 });
 
-    qbo.refuseCreate = false;
+    rulesThrow = null;
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
     expect(await posting(newer)).toMatchObject({ matchState: "CREATED" });
     expect(await posting(stuck[0])).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
@@ -382,18 +408,18 @@ describeDb("in-kind drain", () => {
   it("finance can still book a gift handed over at the limit", async () => {
     await switchOn();
     const id = await acceptedGift();
-    qbo.refuseCreate = true;
+    rulesThrow = new Error("rules exploded");
     for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
     expect((await posting(id)).matchState).toBe("NEEDS_FINANCE");
 
-    qbo.refuseCreate = false;
+    rulesThrow = null;
     expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
   });
 
   it("finance's failed book counts no attempt, and can always be asked again", async () => {
     await switchOn();
     const id = await acceptedGift();
-    qbo.refuseCreate = true;
+    rulesThrow = new Error("rules exploded");
     for (let run = 1; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
     expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
 
@@ -402,14 +428,14 @@ describeDb("in-kind drain", () => {
       expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
     }
 
-    qbo.refuseCreate = false;
+    rulesThrow = null;
     expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
   });
 
   it("a gift finance failed to book after the limit gets one more drain try, then returns to finance", async () => {
     await switchOn();
     const id = await acceptedGift();
-    qbo.refuseCreate = true;
+    rulesThrow = new Error("rules exploded");
     for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
     await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503 });
     expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS });
@@ -486,8 +512,144 @@ describeDb("in-kind drain", () => {
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, stoppedAfterFailures: true });
     transaction.mockRestore();
-    expect(drainStops).toEqual([{ failures: 3, remaining: 1 }]);
+    expect(drainStops).toEqual([{ failures: 3, remaining: 1, cause: "bug" }]);
     expect(qbo.posts).toHaveLength(0);
+  });
+
+  describe("the failure's kind decides what happens to the gift", () => {
+    it("system: QuickBooks down charges no gift, three in a row stop the run, and finance is told it may be down", async () => {
+      await switchOn();
+      const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      qbo.outage = true;
+
+      for (let run = 0; run < MAX_POST_ATTEMPTS + 1; run++) {
+        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, exhausted: 0, stoppedAfterFailures: true, stopKind: "system" });
+      }
+      for (const id of gifts.slice(0, 3)) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "system" });
+      expect(drainStops).toEqual(Array(MAX_POST_ATTEMPTS + 1).fill({ failures: 3, remaining: 1, cause: "system" }));
+
+      qbo.outage = false;
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 4 });
+      expect(await posting(gifts[0])).toMatchObject({ matchState: "CREATED", qbFailureKind: null });
+    });
+
+    it("system: a create failing after QuickBooks answered this post's reads is charged to the gift as a bug", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.createAnswer = () => ({ status: 500 });
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
+      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+    });
+
+    it("system: once QuickBooks answered an earlier gift this run, an outage on a later gift is charged to it as a bug", async () => {
+      await switchOn();
+      const first = await acceptedGift();
+      const second = await acceptedGift({ totalCents: 4400 });
+      qbo.afterCreate = async () => {
+        qbo.outage = true;
+      };
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, failed: 1 });
+      expect(await posting(first)).toMatchObject({ matchState: "CREATED" });
+      expect(await posting(second)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+    });
+
+    it("connection: the run stops at the first one, charges nothing, and tells finance to reconnect", async () => {
+      await switchOn();
+      const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      qbo.createAnswer = () => ({ status: 401 });
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ connection: 1, failed: 0, stoppedAfterFailures: true, stopKind: "connection" });
+      expect(await posting(gifts[0])).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "connection" });
+      await expect(posting(gifts[1])).rejects.toThrow();
+      expect(qbo.posts).toHaveLength(0);
+      expect(drainStops).toEqual([{ failures: 1, remaining: 2, cause: "connection" }]);
+    });
+
+    it("settings: the gift waits uncharged, is tried again each run, and the run carries on outside the stop count", async () => {
+      await switchOn();
+      const waiting = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      rulesThrow = new KindedError("settings", "in-kind account rules are not wired");
+      for (let run = 0; run < MAX_POST_ATTEMPTS + 1; run++) {
+        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ settings: 3, failed: 0, stoppedAfterFailures: false });
+      }
+      for (const id of waiting) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "settings" });
+      expect(drainStops).toEqual([]);
+
+      rulesThrow = null;
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 3 });
+    });
+
+    it("data: a refusal holds the gift for finance after one try, naming the fault code and request id, and resets the stop count", async () => {
+      await switchOn();
+      const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      const next = await acceptedGift({ totalCents: 4400 });
+      qbo.createAnswer = (n) => (n < 3 ? { status: 400, codes: ["6000"] } : null);
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, posted: 1, failed: 0, stoppedAfterFailures: false });
+      for (const id of refused) {
+        expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data", qbNote: expect.stringMatching(/QuickBooks refused this gift: .*intuit_tid=tid.*codes 6000/) });
+      }
+      expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 0 });
+      expect(qbo.posts).toHaveLength(1);
+    });
+
+    it("a failed read for the gift's own earlier entry on an outage leaves it to try again, uncharged; nothing is created", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.dropAfterCreate = true;
+      await runInKindQbPosting(orgId);
+      const { qbPostAttempts } = await posting(id);
+      qbo.dropAfterCreate = false;
+      qbo.sinceReadStatus = 503;
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
+      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts, qbFailureKind: "system" });
+      expect(qbo.posts).toHaveLength(1);
+      await expect(resolve(id, { action: "skip", reason: "looks unbooked" })).rejects.toMatchObject({ status: 503 });
+
+      qbo.sinceReadStatus = null;
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+      expect(qbo.posts).toHaveLength(1);
+      expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    });
+
+    it("a refused read for the gift's own earlier entry goes to finance, which may already have it booked, and counts toward the stop", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.dropAfterCreate = true;
+      await runInKindQbPosting(orgId);
+      qbo.dropAfterCreate = false;
+      qbo.sinceReadStatus = 400;
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, needs_finance: 0 });
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFailureKind: "bug", qbNote: expect.stringMatching(/may already have booked this gift/) });
+    });
+
+    it("a refused read every gift makes is the app's bug, not the gift's: tries are charged and the run stops, holding no gift at once", async () => {
+      await switchOn();
+      const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      qbo.depositReadStatus = 400;
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, needs_finance: 0, stoppedAfterFailures: true, stopKind: "bug" });
+      for (const id of gifts.slice(0, 3)) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+      expect(drainStops).toEqual([{ failures: 3, remaining: 1, cause: "bug" }]);
+    });
+
+    it("a gift held without calling QuickBooks leaves the stop count as it was", async () => {
+      await switchOn();
+      await acceptedGift();
+      await acceptedGift();
+      const noValue = await zeroLineManualGift();
+      await acceptedGift();
+      await acceptedGift();
+      qbo.outage = true;
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, held: 1, stoppedAfterFailures: true, stopKind: "system" });
+      expect(await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: noValue } } })).toMatchObject({ matchState: "NEEDS_FINANCE" });
+    });
   });
 
   describe("a post that loses its claim", () => {
