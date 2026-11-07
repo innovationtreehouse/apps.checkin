@@ -9,8 +9,8 @@ The most serious result of today's design is a gap against Policy. Membership
 Policy, Art. IX, says nobody whose check fails may be a member. In the app, an
 adult whose own check was rejected stays in a member household. The household
 then renews without any new review, as long as another lead's check is still
-valid. This is live behaviour, not a theory. PBR-1 asks the owner to close it and
-offers an interim guard that can ship before the redesign does (§8).
+valid. The code allows this today. As of 2026-11-07 no review in production is
+rejected, so no household is in that state yet. PBR-1 settles the rule.
 
 The cause is that the app reviews checks in two ways that store the same facts
 differently. A household application's review names one adult. A per-person
@@ -443,55 +443,29 @@ would fail closed in the wrong direction (`docs/rules/principles.md`, Fail close
 
 ### 5.4 What the three gaps mean for live data
 
-Each gap in §2 may already be present in the live database. Each needs counting
-before cutover, because the new rules will act on whatever is there.
+As of 2026-11-07, no review in production is rejected. Two of the three gaps
+therefore have no live rows to migrate:
 
-**Rejected adult in a member household (Art. IX).** Some ACTIVE households may
-already contain an adult with a `BLOCKED` `PERSON_BG`. Under the new rules that
-adult is `DISPUTED`. So once PR 5 ships, the household's next renewal blocks
-instead of renewing on the shortcut. Nothing happens to the membership before
-then (PBR-2). The Board should see the list before the change, not discover it at
-renewal time:
+- **Rejected adult in a member household (Art. IX).** No household contains a
+  disputed adult. The new rule applies only to rejections made after it ships.
+- **Rejections that name nobody.** No household row is `BLOCKED`. The
+  household-level block in §5.2, PBR-4, and the merge refusal's
+  "every lead is disputed" reading cover a rejection that lands before cutover
+  and nothing else. Re-check with the §5.1 query just before cutover; a `BLOCKED`
+  count of zero means none apply.
 
-```sql
-SELECT h.id AS household_id, p.id AS person_id, b.id AS blocked_review_id
-FROM "OrgMembershipProcess" b
-JOIN "Person" p ON p.id = b."subjectPersonId"
-JOIN "Household" h ON h.id = p."householdId"
-JOIN "OrgMembership" m ON m."householdId" = h.id
-WHERE b.kind = 'PERSON_BG' AND b.status = 'BLOCKED' AND m.status = 'ACTIVE';
-```
+**One lead, two reviews** can still exist live, with both reviews open or both
+cleared. Both cleared needs no action: the later date stands. Both open is the
+case to handle. The household row drains on today's path, and if it clears it
+stamps the lead's date and leaves the lead's own review open, which nothing
+closes today. The new code must not count it as a second open review. The drain
+closes it with an audit row naming the household clearance, or the Board closes
+it (PBR-10). Count these with the §5.1 query joined to open `PERSON_BG` rows on
+the household's leads.
 
-**One lead, two reviews.** Some leads may have both a household review naming them
-and a `PERSON_BG` of their own, open or decided. Three cases follow:
-
-- *Both open.* The household row drains on today's path. If it clears, it stamps
-  the lead's date and leaves their `PERSON_BG` open, and nothing closes that row
-  today. The new code must not count it as a second open review. The Board closes
-  it (close application, with a reason), or the drain closes it with an audit row
-  naming the household clearance (PBR-10).
-- *One cleared, one blocked.* The new derivation reads the person as `DISPUTED`,
-  because a blocked review outranks a clearance. That is the stricter reading,
-  and it is correct: two reviewers did reject. But it changes the household's
-  standing on the day PR 5 ships, so these rows go on the Board's list above.
-- *Both cleared.* No action. The later date already stands.
-
-Count the cases with the §5.1 query joined to `PERSON_BG` rows on the household's
-leads; nothing about them can be inferred.
-
-**Rejections that name nobody.** A live `BLOCKED` household row records no person.
-It stays a household-level block (PBR-4), and two consequences follow:
-
-- *Merges.* The PR 2 refusal must treat that row as disputing **every** lead of
-  its household, because the app can't tell which lead it was about. This is the
-  fail-closed reading, and it can refuse a merge of the lead who wasn't rejected.
-  The way out is the Board reset.
-- *Unnamed approvals.* A row carrying an approval that named nobody already needs a
-  Board reset under today's rules. It gets no new treatment, but it can only drain
-  through that reset, so it appears in the §5.1 `unnamed_approval` count until
-  then.
-
----
+Approvals that named nobody need a Board reset under today's rules and get no
+new treatment. They drain only through that reset, so they stay in the §5.1
+`unnamed_approval` count until then.
 
 ## 6. Person merges in the new model
 
@@ -530,7 +504,6 @@ Each PR is one kind and is based on `main`.
 
 | # | Kind | Contents | Depends on |
 |---|---|---|---|
-| 0 | Code, interim | PBR-1 (ii) renewal guard, only if the owner takes it; independent of 1-7 | none |
 | 1 | Code | Check standing + qualifies predicate + `settleHouseholdBg`, unused, with unit tests | none |
 | 2 | Code | Merge refusal on a disputed check (owner ruling), reading today's rows | 1 |
 | 3 | Security boundary, alone | Registry change for `GET /api/membership/reviews`, if its returned models or fields change. Re-check which other routes are registered first | none |
@@ -548,27 +521,11 @@ No schema PR and no migration PR.
 **PBR-1. A rejected adult in a member household (Policy, Membership Art. IX).**
 Today an adult whose own check was rejected stays in a member household, and the
 household renews on another lead's still-valid check with no new review (§2).
-This question has two parts.
-
-*Target rule (with the redesign).* Options: (a) a rejection of any adult in the
-household blocks its open application; (b) only a lead's rejection does.
-*Recommendation: (a).* Art. IX bars anyone whose check fails from membership, and
-membership comes from being in the family, so any adult's failure blocks.
-
-*Interim (before the redesign).* Options:
-- **(i) Report only.** The compliance view lists ACTIVE households with an adult
-  whose per-person review is blocked (the §5.4 query). Behaviour doesn't change;
-  the Board acts by hand.
-- **(ii) Renewal guard.** Renewal and intake treat a blocked per-person review on
-  any adult in the household as they treat a blocked household application. Renewal
-  is refused with today's "with the board" message, and the still-valid-check
-  shortcut is not taken. This is one small code PR in `renewal.ts` and `intake.ts`,
-  independent of every PR in §7.
-- **(iii) Nothing** until the redesign lands.
-
-*Recommendation: (i) now, then (ii).* The Board sees today's cases before any
-renewal changes under them, and (ii) stops new ones at the next renewal. Neither
-acts on a membership already active, so people still decide about people.
+Options: (a) a rejection of any adult in the household blocks its open
+application; (b) only a lead's rejection does. *Recommendation: (a).* Art. IX bars
+anyone whose check fails from membership, and membership comes from being in the
+family, so any adult's failure blocks. No interim fix is needed: no review in
+production is rejected.
 
 **PBR-2. A rejection mid-year in an ACTIVE household.** Should anything happen to
 the membership before the next renewal? *Recommendation: no automatic action.* It
