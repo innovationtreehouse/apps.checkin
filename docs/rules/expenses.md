@@ -264,6 +264,12 @@ Things the app takes as true because they are handled outside it.
   fills those in before any other check runs.
   [Decision]
 
+- A reading that fails because the reading service is down, refuses the app's
+  key, or is not set up does not count against the person's daily reading
+  allowance. The app never reads the receipt again by itself, because each
+  reading costs money: the submitter presses "Read it again".
+  [Decision — owner]
+
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
   needs no spending sign-off. It is a donation, not an expense record.
   [Decision]

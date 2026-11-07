@@ -1,4 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, {
+  APIConnectionError,
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  InternalServerError,
+  PermissionDeniedError,
+  RateLimitError,
+} from "@anthropic-ai/sdk";
+import type { FailureKind } from "@checkin/component-kit";
 import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { OcrDataSchema, type OcrData, type OcrProvider, type OcrResult } from "../contract";
 
@@ -105,9 +114,25 @@ function complete(data: OcrData): boolean {
   return data.lineItems.length > 0;
 }
 
+/** The kind of a failed model call, from the SDK's error classes. Rate limits arrive after the SDK's own retries. */
+export function ocrKind(err: unknown): FailureKind {
+  if (err instanceof AuthenticationError || err instanceof PermissionDeniedError) return "connection";
+  if (err instanceof RateLimitError || err instanceof InternalServerError || err instanceof APIConnectionError) return "system";
+  if (err instanceof BadRequestError || (err instanceof APIError && err.status === 413)) return "data";
+  return "bug";
+}
+
+const CALL_FAILED: Record<FailureKind, string> = {
+  system: "the reading service did not answer",
+  connection: "the reading service refused our key",
+  settings: "OCR is not configured",
+  data: "the reading service refused the file",
+  bug: "the call to the reading service failed unexpectedly",
+};
+
 /** The real provider. Without a key it fails closed into ocr_failed; manual entry keeps working. */
 export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
-  if (!apiKey) return { extract: async () => ({ success: false, error: "OCR is not configured" }) };
+  if (!apiKey) return { extract: async () => ({ success: false, kind: "settings", error: "OCR is not configured" }) };
   const client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 2 });
 
   return {
@@ -121,25 +146,29 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
           output_config: { effort: "medium", format: { type: "json_schema", schema: EXTRACT_SCHEMA } },
           messages: [{ role: "user", content: [...buildContent(file, mimeType), { type: "text", text: INSTRUCTION }] }],
         });
-        if (response.stop_reason === "refusal") return { success: false, error: "OCR refused the document" };
+        if (response.stop_reason === "refusal") return { success: false, kind: "data", error: "the reader refused it" };
 
         const text = response.content.find((b) => b.type === "text");
-        if (!text || text.type !== "text") return { success: false, error: "OCR returned no structured receipt data" };
+        if (!text || text.type !== "text") return { success: false, kind: "data", error: "the reader's answer could not be understood" };
         let raw: unknown;
         try {
           raw = JSON.parse(text.text);
         } catch {
-          return { success: false, error: "OCR returned unparseable receipt data" };
+          return { success: false, kind: "data", error: "the reader's answer could not be understood" };
         }
-        if (typeof raw !== "object" || raw === null) return { success: false, error: "OCR returned unparseable receipt data" };
+        if (typeof raw !== "object" || raw === null) return { success: false, kind: "data", error: "the reader's answer could not be understood" };
 
         const parsed = OcrDataSchema.safeParse(mapRawToOcrDataSafe(raw as Record<string, unknown>));
         if (!parsed.success || !complete(parsed.data)) {
-          return { success: false, error: "OCR returned no line items" };
+          return { success: false, kind: "data", error: "no line items were found" };
         }
         return { success: true, data: parsed.data };
       } catch (err) {
-        return { success: false, error: `OCR API error: ${err instanceof Error ? err.message : String(err)}` };
+        const kind = ocrKind(err);
+        // The API's message can echo the request; log only what identifies the call.
+        const id = err instanceof APIError ? { status: err.status, requestId: err.requestID } : { error: err instanceof Error ? err.name : typeof err };
+        console.error("[receipt] OCR call failed:", { kind, ...id });
+        return { success: false, kind, error: CALL_FAILED[kind] };
       }
     },
   };
