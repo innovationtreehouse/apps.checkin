@@ -165,6 +165,17 @@ describe("Naming who is reimbursed", () => {
     expect(data).not.toHaveProperty("reimburseePersonId");
   });
 
+  it("searches for no one until a name is typed", async () => {
+    apiMock.mockResolvedValue([{ id: 42, name: "Sam Lee" }]);
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(apiMock).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: /Reimburse/ }), { target: { value: "sa" } });
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reimbursee-options?q=sa"));
+    expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+
   it("sends the Person id of someone picked from the search", async () => {
     uploadMock.mockResolvedValue({ id: "r4" });
     apiMock.mockResolvedValue([{ id: 7, name: "Me Myself" }, { id: 42, name: "Sam Lee" }]);
