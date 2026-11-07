@@ -8,6 +8,8 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1
 let mockLoads: Record<string, unknown> = {};
 jest.mock("@checkin/workflow-mapping/components/api", () => ({
   ...jest.requireActual("@checkin/workflow-mapping/components/api"),
+  // Part-name lookups never settle; these tests read only the line lock.
+  api: () => new Promise(() => {}),
   useLoad: (path: string) => ({ data: mockLoads[path] ?? null, error: null, reload: jest.fn() }),
 }));
 

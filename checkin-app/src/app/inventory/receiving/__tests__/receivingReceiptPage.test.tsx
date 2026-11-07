@@ -68,11 +68,46 @@ describe("the receiving page's Mapping column", () => {
     };
   };
 
-  it("shows a provisional part by its short ID and the line's name", () => {
+  /** Answers the catalog and org-items reads; a GTIN missing from a map is a 404. */
+  const serve = (catalog: Record<string, string>, provisionals: Record<string, string>) =>
+    mockApi.mockImplementation(async (path: string) => {
+      const gtin13 = path.split("/").pop() ?? "";
+      if (path.startsWith("/api/catalog/items/") && catalog[gtin13]) return { gtin13, name: catalog[gtin13] };
+      if (path.startsWith("/api/inventory/org-items/") && provisionals[gtin13]) {
+        return { OrgItem: { gtin13 }, InventoryProvisionalItem: [{ provisionalGtin13: gtin13, name: provisionals[gtin13] }] };
+      }
+      throw new HttpError("Not found", 404);
+    });
+
+  it("shows a provisional part by its short ID and the line's name before it has a provisional row", async () => {
+    serve({}, {});
     mapped({ provisionalItemGtin13: "0200002701237" });
     wrap();
+    await act(async () => {});
     expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Wood glue ×2");
-    expect(mockApi).not.toHaveBeenCalled();
+  });
+
+  it("shows a provisional part by its provisional name", async () => {
+    serve({}, { "0200002701237": "Titebond II glue" });
+    mapped({ provisionalItemGtin13: "0200002701237" });
+    wrap();
+    expect(await within(screen.getByRole("row", { name: /Wood glue/ })).findByText("P000123 · Titebond II glue ×2")).toBeInTheDocument();
+    expect(mockApi).toHaveBeenCalledWith("/api/inventory/org-items/0200002701237");
+  });
+
+  it("names an assigned part the catalog lacks by its provisional name", async () => {
+    serve({}, { "0200002701237": "Titebond II glue" });
+    mapped({ assignedGtin13: "0200002701237" });
+    wrap();
+    expect(await within(screen.getByRole("row", { name: /Wood glue/ })).findByText("P000123 · Titebond II glue ×2")).toBeInTheDocument();
+  });
+
+  it("does not read org-items for a part the catalog names", async () => {
+    serve({ "0200030200429": "Titebond III" }, {});
+    mapped({ assignedGtin13: "0200030200429" });
+    wrap();
+    expect(await within(screen.getByRole("row", { name: /Wood glue/ })).findByText("03B0042 · Titebond III ×2")).toBeInTheDocument();
+    expect(mockApi).toHaveBeenCalledTimes(1);
   });
 
   it("shows a catalog part by its short ID and catalog name", async () => {
