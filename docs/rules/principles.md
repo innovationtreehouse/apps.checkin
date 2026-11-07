@@ -385,8 +385,8 @@ consistency follows risk*, and no double booking follows *apply once*.
   booked or matched changes or disappears afterwards, finance is told. The app
   never corrects it or matches it again on its own.
 
-- **Finance is told at the alert address.** Every system and QuickBooks alert
-  goes to one alert address, a group address set in the app's settings. It is
+- **Finance is told at the alert address.** Finance, system and QuickBooks
+  alerts go to the alert address, a group address set in app settings. It is
   not a person's address, so personal email opt-outs do not apply. With no
   address set, no alert is sent and System Status shows the gap; there is no
   fallback to anyone else.
