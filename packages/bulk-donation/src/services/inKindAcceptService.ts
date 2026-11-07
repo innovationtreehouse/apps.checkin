@@ -49,6 +49,8 @@ interface GiftLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The account finance set by hand on a held line; it wins over every account rule. */
+  quickBooksAccountId: string | null;
 }
 
 /** Both in-kind tables in one shape. `donorLastName` feeds the warnings and never leaves this file. */
@@ -100,7 +102,7 @@ const RECEIPT_SELECT = {
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true }, orderBy: { lineNumber: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
 } as const;
 
 const MANUAL_SELECT = {
@@ -110,7 +112,7 @@ const MANUAL_SELECT = {
   donorLastName: true,
   recordedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true }, orderBy: { id: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true, quickBooksAccountId: true }, orderBy: { id: "asc" } },
 } as const;
 
 type ReceiptRow = Awaited<ReturnType<typeof findReceipts>>[number];
@@ -692,7 +694,7 @@ export interface GiftToBook {
   createdAt: Date;
   totalCents: number;
   budgetOwnerId: number;
-  lines: { id: number; description: string; valueCents: number }[];
+  lines: { id: number; description: string; valueCents: number; gtin13: string | null; quickBooksAccountId: string | null }[];
 }
 
 function toBook(g: Gift): GiftToBook | null {
@@ -707,7 +709,13 @@ function toBook(g: Gift): GiftToBook | null {
     createdAt: g.moneyReceivedAt,
     totalCents: total,
     budgetOwnerId: g.budgetOwnerId,
-    lines: capitalReviewLines(g, g.budgetOwnerId).map((l) => ({ id: l.giftLineId, description: l.description, valueCents: l.costCents })),
+    lines: capitalReviewLines(g, g.budgetOwnerId).map((l, i) => ({
+      id: l.giftLineId,
+      description: l.description,
+      valueCents: l.costCents,
+      gtin13: g.lines[i].gtin13,
+      quickBooksAccountId: g.lines[i].quickBooksAccountId,
+    })),
   };
 }
 

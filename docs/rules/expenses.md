@@ -612,6 +612,19 @@ the parts specific to expenses.
   is kept, and its page shows that it never matches.
   [Decision]
 
+- A gift of goods' line books to the account the expense account rules give its
+  part, the same account a purchase of that part would use. A line no rule
+  resolves to exactly one account, or one without a GTIN-13, waits for finance to
+  set its account, and its gift waits with it. An account finance sets on a line
+  wins over every rule.
+  [Decision — owner]
+
+- Only a rule marked capital may give donated equipment its account, which must
+  be a fixed-asset account. Any other donated line takes an expense or cost of
+  goods sold account. A line whose account is of the wrong type, inactive or not
+  in QuickBooks waits for finance.
+  [Decision — owner]
+
 - A reimbursement counts as paid only when the accounting system shows it fully
   paid, on the date of the last payment.
   [Decision]

@@ -59,8 +59,8 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
 - `findOrCreateInKindJournal(client, request)` creates one in-kind gift as one balanced JournalEntry;
-  no other path creates a JournalEntry. Credits go only to in-kind income and debits only to in-kind
-  expense or fixed assets, by books-map role, and an unbalanced entry or a non-positive amount throws
+  no other path creates a JournalEntry. Each line names its account: credits go only to in-kind
+  income, debits to no books-map role's account, and an unbalanced entry or a non-positive amount throws
   before any read. It matches by the app's key alone, so a hand entry of the same amount is never taken
   for the gift, and a crash after QuickBooks accepts is found by key next run. Finance's own booking of a
   gift, a Deposit into and a Purchase out of the in-kind clearing account, is matched by the in-kind lane

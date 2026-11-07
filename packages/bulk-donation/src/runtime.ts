@@ -5,6 +5,7 @@ import type {
   BulkDonationPrincipal,
   CatalogLookup,
   IncomeDeposits,
+  InKindAccounts,
   InKindCapital,
   InKindDirectory,
   InKindQbPosting,
@@ -33,6 +34,9 @@ const INERT_IN_KIND: InKindDirectory = {
 
 /** Unbound, no line goes to capital review and none waits on it. */
 const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [], assetLineIds: async () => [] };
+
+/** Unbound, no part resolves, so every gift line waits for finance to set its account. */
+const INERT_ACCOUNTS: InKindAccounts = { resolve: async (_orgId, parts) => parts.map((p) => ({ lineId: p.lineId, reason: "The expense account rules are not connected" })) };
 
 export { NotWiredError };
 
@@ -63,6 +67,10 @@ export function getInKindDirectory(): InKindDirectory {
 
 export function getInKindCapital(): InKindCapital {
   return requireRuntime().capital ?? INERT_CAPITAL;
+}
+
+export function getInKindAccounts(): InKindAccounts {
+  return requireRuntime().partAccounts ?? INERT_ACCOUNTS;
 }
 
 export function getInventoryApply(): InventoryApply {

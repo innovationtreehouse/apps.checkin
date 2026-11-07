@@ -5,6 +5,7 @@ import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
+import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
@@ -37,18 +38,7 @@ type ConflictItem = {
   subcategory: string | null;
 };
 
-function matchesRule(rule: AccountMapping, category: string, subcategory: string, item: LineItemFields, gtin13: string): boolean {
-  if (rule.category !== "*" && rule.category !== category) return false;
-  if (rule.subcategory !== "*" && rule.subcategory !== subcategory) return false;
-  if (rule.partNumber !== "*" && rule.partNumber !== gtin13) return false;
-  if (rule.isDelayed !== null && rule.isDelayed !== item.isDelayed) return false;
-  if (rule.isCapital !== null && rule.isCapital !== item.isCapital) return false;
-  return true;
-}
-
 // ── Catalog inputs: live lookup and the sign-off snapshot ────────────────────
-
-export type CatalogInfo = { gtin13: string; category: string; subcategory: string };
 
 type CatalogLine = Pick<ExpenseLineItem, "id" | "partNumber" | "manufacturer" | "description" | "nonInventory">;
 
@@ -151,11 +141,7 @@ async function resolveAccountsForExpense(
     }
 
     const { category, subcategory } = info;
-    const gtin13 = gtin13ByItemId.get(li.id)!;
-    const matches = rules.filter((rule) => matchesRule(rule, category, subcategory, li, gtin13));
-
-    const exactMatches = matches.filter((r) => r.partNumber === gtin13);
-    const effectiveMatches = exactMatches.length > 0 ? exactMatches : matches;
+    const effectiveMatches = matchingRules(rules, info, li);
 
     if (effectiveMatches.length === 0) {
       conflicts.push({ lineItem: li, reason: HoldReason.NO_MATCH, matchedRows: [{ _lookupContext: { category, subcategory, partNumber: gtin13ByItemId.get(li.id) ?? null, isDelayed: li.isDelayed, isCapital: li.isCapital } }], category, subcategory });

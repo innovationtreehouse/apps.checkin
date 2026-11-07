@@ -13,10 +13,11 @@
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
  * An accepted gift's lines go to the expense library's capital review, which
- * keeps donated equipment at or over its thresholds. Boot stays DB-free.
+ * keeps donated equipment at or over its thresholds, and each gift line's account comes from the
+ * expense library's account rules. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
+import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/components/host";
 import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -114,6 +115,12 @@ const capital: InKindCapital = {
   },
 };
 
+const partAccounts: InKindAccounts = {
+  async resolve(orgId, parts) {
+    return (await import("@checkin/expense")).resolveDonatedPartAccounts(orgId, parts);
+  },
+};
+
 export function configureRuntime(): void {
   configureBulkDonation({
     auth: { getPrincipal },
@@ -126,5 +133,6 @@ export function configureRuntime(): void {
     inKind,
     capital,
     quickBooksAccounts,
+    partAccounts,
   });
 }

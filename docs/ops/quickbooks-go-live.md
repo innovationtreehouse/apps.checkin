@@ -173,7 +173,7 @@ stops the lane from posting, but the switch-on date stays.
 | Expenses | Organisation card | Must be a Bank or Credit Card account; any other type is refused and finance is alerted | QuickBooks posting: expenses |
 | Shopify income | Shopify payouts: bank account; Shopify: card remainder, fees, adjustments, custom items | The first four; a payout with a custom item holds until custom items has an account | QuickBooks posting: Shopify income |
 | Benevity | Benevity disbursements: bank account | It | QuickBooks posting: Benevity donations |
-| Gifts of goods | Gifts of goods: in-kind income, in-kind expense, fixed assets (donated equipment), clearing account (finance's past bookings) | All four, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
+| Gifts of goods | Gifts of goods: in-kind income, clearing account (finance's past bookings) | Both, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
 Each role takes only the QuickBooks account types below. The picker lists only
 those, and a save of any other type, or while QuickBooks can't be read, is
@@ -187,8 +187,6 @@ refused. A role already set to another type shows on the
 | Shopify: custom items; Gifts of goods: in-kind income | Income, Other Income |
 | Shopify: card remainder, adjustments | Income, Other Income, Other Current Liability |
 | Shopify: fees | Expense, Other Expense |
-| Gifts of goods: in-kind expense | Expense, Other Expense, Cost of Goods Sold |
-| Gifts of goods: fixed assets | Fixed Asset |
 | Gifts of goods: clearing account | Bank, Other Current Asset, Other Current Liability |
 
 Then give each budget bucket its QuickBooks Class on the same screen. On the income
@@ -203,6 +201,15 @@ not to a role. On the account map (`/donations/account-map`), pick a donation
 account and a match account for every rule; the picker reads QuickBooks live. A
 batch with a gift whose rule lacks the account it needs holds on the disbursement
 holds screen until finance picks one and resubmits.
+
+Each line of a gift of goods books where a purchase of the same part would: the
+expense account rules (`/expense/account-mapping`) give its account, and donated
+equipment takes its account only from a rule marked capital, which must name a
+Fixed Asset account. Other lines take Expense, Other Expense or Cost of Goods
+Sold. Review the `*` rules before this ships: they now decide gifts of goods too.
+A gift with a line no rule resolves, or whose account is of the wrong type, holds
+in the in-kind queue (`/donations/in-kind`) until finance sets that line's account
+under QuickBooks and books it.
 
 Benevity's fees need no account: each row's fees come out of its gift and match,
 so the deposit shows net income and no fee line. A row with fees but no gift or

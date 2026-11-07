@@ -507,13 +507,13 @@ describe("createVendor", () => {
 
 describe("findOrCreateInKindJournal", () => {
   const IN_KIND_KEY = qbKey("in-kind", "org-1:receipt:42");
-  const accounts = { INKIND_INCOME: "400", INKIND_EXPENSE: "600", FIXED_ASSETS: "150", SHOPIFY_BANK: "35" };
+  const accounts = { INKIND_INCOME: "400", INKIND_CLEARING: "290", SHOPIFY_BANK: "35" };
   const jreq = (over: Partial<InKindJournalRequest> = {}): InKindJournalRequest => ({
     txnDate: "2025-03-05",
     lines: [
-      { postingType: "Credit", role: "INKIND_INCOME", amountCents: 150_00, classId: "7" },
-      { postingType: "Debit", role: "INKIND_EXPENSE", amountCents: 50_00, classId: "7", description: "Paper" },
-      { postingType: "Debit", role: "FIXED_ASSETS", amountCents: 100_00, classId: "7", description: "Lathe" },
+      { postingType: "Credit", accountId: "400", amountCents: 150_00, classId: "7" },
+      { postingType: "Debit", accountId: "600", amountCents: 50_00, classId: "7", description: "Paper" },
+      { postingType: "Debit", accountId: "150", amountCents: 100_00, classId: "7", description: "Lathe" },
     ],
     memo: "In-kind gift receipt 42",
     key: IN_KIND_KEY,
@@ -526,23 +526,33 @@ describe("findOrCreateInKindJournal", () => {
   });
   const journal = (Id: string, TotalAmt: number, PrivateNote?: string) => ({ Id, TxnDate: "2025-03-05", TotalAmt, PrivateNote });
 
-  it("refuses a line booked to any account outside the in-kind roles, before reading QuickBooks", async () => {
-    const lines = jreq().lines.map((l) => (l.role === "INKIND_EXPENSE" ? { ...l, role: "SHOPIFY_BANK" as const } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/may not debit SHOPIFY_BANK/);
-    const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, role: "INKIND_EXPENSE" as const } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may not credit INKIND_EXPENSE/);
+  it("credits only in-kind income and debits no books-map account, before reading QuickBooks", async () => {
+    const bank = jreq().lines.map((l) => (l.accountId === "600" ? { ...l, accountId: "35" } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: bank }))).rejects.toThrow(/may not debit account 35/);
+    const income = jreq().lines.map((l) => (l.accountId === "600" ? { ...l, accountId: "400" } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: income }))).rejects.toThrow(/may not debit account 400/);
+    const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, accountId: "600" } : l));
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may credit only in-kind income/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("debits an account a retired role still holds in the books map", async () => {
+    fetchMock
+      .mockResolvedValueOnce(rows("JournalEntry", []))
+      .mockResolvedValueOnce(prefs("2025-02-28"))
+      .mockResolvedValueOnce(json({ JournalEntry: { Id: "89" } }));
+    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { ...accounts, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" } }))).resolves.toEqual({ kind: "created", id: "89" });
+  });
+
   it("refuses an unbalanced entry, before reading QuickBooks", async () => {
-    const lines = jreq().lines.map((l) => (l.role === "FIXED_ASSETS" ? { ...l, amountCents: 99_99 } : l));
+    const lines = jreq().lines.map((l) => (l.accountId === "150" ? { ...l, amountCents: 99_99 } : l));
     await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/not balanced/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a role the books map has no account for", async () => {
-    const err = await findOrCreateInKindJournal(client(), jreq({ accounts: { INKIND_INCOME: "400", INKIND_EXPENSE: "600" } })).catch((e: unknown) => e);
-    expect(String(err)).toMatch(/no account for FIXED_ASSETS/);
+  it("refuses while the books map has no in-kind income account", async () => {
+    const err = await findOrCreateInKindJournal(client(), jreq({ accounts: { SHOPIFY_BANK: "35" } })).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/no account for INKIND_INCOME/);
     expect(kindOf(err)).toBe("settings");
     expect(fetchMock).not.toHaveBeenCalled();
   });
