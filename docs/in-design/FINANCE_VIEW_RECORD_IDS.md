@@ -268,8 +268,8 @@ is Q1.
 | `GET /api/expense/expenses/[id]/qb-candidates` | expense ← param `id`; qb-transaction ← `ExpenseQbCandidateView.id` | ✗ expense missing; nothing when empty |
 | `GET /api/expense/finance-queue` | expense ← `expenseId`; receipt ← `receiptId` (§4); query `tab` | ✗ none |
 | `GET /api/expense/expense-events` | expense ← `ExpenseEvent.expenseId` | ✗ event and expense ids mixed |
-| `GET /api/expense/received-expense-payloads` | receipt ← `receiptId` (Q4) | ✗ payload ids |
-| `GET /api/expense/qb-exclusions` | qb-transaction ← `qbTxnId` (Q4) | ✗ exclusion ids |
+| `GET /api/expense/received-expense-payloads` | receipt ← `receiptId` (decided) | ✗ payload ids |
+| `GET /api/expense/qb-exclusions` | qb-transaction ← `qbTxnId` (decided) | ✗ exclusion ids |
 | `GET /api/expense/donated-capital` | donated-capital-line ← `id` | ✓ |
 | `GET /api/expense/provisional-items` | not logged: catalog, not finance (decided) | ✗ mixed |
 | `GET /api/receipts` | receipt ← `id`; query `state`, `pushed` | ✓ |
@@ -292,8 +292,8 @@ is Q1.
 | `GET /api/donations/uploaded-files` | donation-file ← `id` | ✓ |
 | `GET /api/donations/uploaded-files/[id]/blob` (file) | donation-file ← param `id` | ✓ |
 | `GET /api/donations/comment-rules` | depends on Q9: a matching rule that carries donor comment text | ✗ rule ids |
-| `GET /api/donations/disbursement-holds` | disbursement ← `disbursementId`; donation ← `transactionId` (Q4) | ✗ hold ids |
-| `GET /api/donations/disbursement-events` | disbursement ← `disbursementId` (Q4) | ✗ event ids |
+| `GET /api/donations/disbursement-holds` | disbursement ← `disbursementId`; donation ← `transactionId` (decided) | ✗ hold ids |
+| `GET /api/donations/disbursement-events` | disbursement ← `disbursementId` (decided) | ✗ event ids |
 | `GET /api/donations/in-kind/manual` | gift-of-goods-manual ← `id` | ✓ |
 | `GET /api/donations/in-kind/manual/[id]` | gift-of-goods-manual ← param `id` | ✓ |
 | `GET /api/donations/in-kind/receipt/[id]` | gift-of-goods-receipt ← param `id` | ✓ |
@@ -301,9 +301,9 @@ is Q1.
 | `GET /api/donations/in-kind/by-bucket` | gift of goods, kind by `source` ← `id` (§4) | ✗ ids collide |
 | `GET /api/income/payouts` | payout ← `payoutGid` | ✓ |
 | `GET /api/income/payouts/[gid]` | payout ← param `gid` | ✓ payout; reconciliation id and balance rows mixed in |
-| `GET /api/income/reconciliation` | payout or disbursement by `source` ← `payoutGid` (Q4) | ✗ reconciliation ids |
+| `GET /api/income/reconciliation` | payout or disbursement by `source` ← `payoutGid` (decided) | ✗ reconciliation ids |
 | `GET /api/income/reconciliation/[id]/candidates` | qb-transaction ← `IncomeQbDepositView.id` | ✓ deposits; the payout only in the path |
-| `GET /api/income/qb-exclusions` | qb-transaction ← `qbTxnId` (Q4) | ✗ exclusion ids |
+| `GET /api/income/qb-exclusions` | qb-transaction ← `qbTxnId` (decided) | ✗ exclusion ids |
 | `GET /api/income/items` | not audited (decided) | — |
 | `GET /api/finance-ops/payments` | payment-exception ← `id` | ✓ |
 | `GET /api/finance-ops/payment-plans` | payment-plan ← `['programId','personId']` (decided) | ✗ none; `BoardSettings` as `"1"` |
@@ -393,6 +393,18 @@ the declared records, and does not replace them.
   - **Every image and stored receipt:** the file fields of a receipt and of a
     mail item carry the mark, so serving one to anyone other than its owner is
     always logged.
+- **Rows that point at a finance record log that record (Q4),** not the row's
+  own id. Example: Income → QuickBooks exclusions lists `id 7, qbTxnId "4412"`;
+  the log names QuickBooks transaction 4412, not 7. The six screens:  [Decision — owner]
+
+  | Screen | Logs |
+  |---|---|
+  | Income QuickBooks exclusions | the QuickBooks transaction (`qbTxnId`) |
+  | Expense QuickBooks exclusions | the QuickBooks transaction (`qbTxnId`) |
+  | Received expense payloads | the receipt it came from (`receiptId`) |
+  | Disbursement holds | the disbursement (`disbursementId`) and the donation (`transactionId`) |
+  | Disbursement events | the disbursement (`disbursementId`) |
+  | Income reconciliation | the payout or disbursement (`payoutGid`) |
 - **B11 narrows to views that link people to money (Q12).** A view that shows
   amounts with no person in it stops being logged. That covers:
   - the payouts list (`GET /api/income/payouts`): amounts and dates, no people;
@@ -418,7 +430,7 @@ the declared records, and does not replace them.
 
 ## Open questions for @thpr
 
-Q2, Q3, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
+Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers stay retired.
 
 - **Q1. The kind list.** Each kind is the noun on the Board's tab. For example,
   a row reads "Pat Lee (Finance) viewed 3 **expenses** on the finance queue" or
@@ -427,29 +439,6 @@ Q2, Q3, Q5, Q6, Q7, Q8, Q10, Q11 and Q12 are settled or retired; their numbers s
   line, donation, donation file, disbursement, gift of goods (from a receipt),
   gift of goods (entered by hand), payout, payment exception, payment plan,
   membership payment plan. Are these the right nouns? Q9 may shorten the list.
-
-- **Q4. Rows that point at a finance record.** Some screens list rows whose
-  own id is just a list entry, and the finance record sits in another field.
-  Example, Income → QuickBooks exclusions (`GET /api/income/qb-exclusions`),
-  the list of QuickBooks deposits finance said never to match to a payout:
-
-  > id 7, qbTxnId "4412", reason "owner's personal deposit"
-
-  Today the log records `7`, the exclusion list's own row number. Nobody can
-  search for 7: finance and QuickBooks know the deposit as 4412. Proposed: record
-  QuickBooks transaction 4412.
-
-  The same shape on five more screens:
-
-  | Screen | Row today logs | Proposed to log |
-  |---|---|---|
-  | Expense QuickBooks exclusions | the exclusion's row id | the QuickBooks transaction (`qbTxnId`) |
-  | Received expense payloads | the payload's row id | the receipt it came from (`receiptId`) |
-  | Disbursement holds | the hold's row id | the disbursement (`disbursementId`) and the donation (`transactionId`) |
-  | Disbursement events | the event's row id | the disbursement (`disbursementId`) |
-  | Income reconciliation | the reconciliation's row id | the payout or disbursement (`payoutGid`) |
-
-  Log the record each row points at, as proposed?
 
 - **Q9. Which fields make a view a finance view: what is left.** The rule and
   most of the list are decided (see Decided). Three items are left to confirm:
