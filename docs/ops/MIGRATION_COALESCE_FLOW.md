@@ -90,6 +90,16 @@ Flags / env:
      re-validated from scratch. A same-named index with a *different*
      definition is a real divergence, not a diff-tool gap — the script fails
      loud instead of patching over it.
+   - **CHECK constraints**: Prisma's schema DSL cannot express a CHECK
+     constraint either (e.g. `Person_name_not_blank`), so `migrate diff
+     --from-empty` drops every one. The script diffs TRUTH's `pg_constraint`
+     rows with `contype = 'c'` (NOT NULL is a column property Prisma does
+     express, not one of these) against the candidate's, splices each missing
+     one back in verbatim from `pg_get_constraintdef` as an `ALTER TABLE ...
+     ADD CONSTRAINT` right after its table's `CREATE TABLE`, re-validates from
+     scratch, and prints the restored names. A same-named constraint with a
+     different definition, or one whose table has no `CREATE TABLE` in the
+     candidate, fails the run.
    - **No drift**: `prisma migrate diff --from-config-datasource
      --to-schema=prisma/schema.prisma --exit-code` against the candidate DB
      must be empty.
@@ -98,7 +108,8 @@ Flags / env:
    instructions (below). Temp DBs are always dropped, success or failure.
 
 Unit tests for the pure parts (`scripts/__tests__/schema-dump-compare.test.ts`,
-`scripts/__tests__/partial-indexes.test.ts`) cover normalization and
+`scripts/__tests__/partial-indexes.test.ts`,
+`scripts/__tests__/check-constraints.test.ts`) cover normalization and
 splicing without a database. The DB-orchestration path itself is proven by
 actually running the script — see "Dry-run evidence" in the PR that added
 this flow.

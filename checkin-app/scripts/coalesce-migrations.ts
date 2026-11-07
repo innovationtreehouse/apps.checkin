@@ -3,6 +3,7 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { findMissingCheckConstraints, spliceCheckConstraints, type CheckConstraintRow } from "./lib/check-constraints";
 import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "./lib/partial-indexes";
 
 /**
@@ -34,7 +35,10 @@ import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "
  *     index from, and drops it silently. Detected by diffing TRUTH's
  *     pg_indexes against the candidate's; missing ones are spliced back in
  *     verbatim and the candidate is re-validated from scratch.
- *  3. No drift: `prisma migrate diff --exit-code` from the candidate DB
+ *  3. CHECK constraints survive: Prisma's DSL can't express them either, so
+ *     the same diff-splice-revalidate runs over TRUTH's pg_constraint
+ *     (contype 'c'), placing each one after its table's CREATE TABLE.
+ *  4. No drift: `prisma migrate diff --exit-code` from the candidate DB
  *     against schema.prisma must be empty.
  */
 
@@ -146,6 +150,22 @@ function queryPartialIndexes(url: string): IndexRow[] {
         .map((line) => {
             const [indexname, indexdef] = line.split("\x1f");
             return { indexname, indexdef };
+        });
+}
+
+function queryCheckConstraints(url: string): CheckConstraintRow[] {
+    const sql =
+        `SELECT cl.relname || chr(31) || con.conname || chr(31) || pg_get_constraintdef(con.oid) ` +
+        `FROM pg_constraint con JOIN pg_class cl ON cl.oid = con.conrelid JOIN pg_namespace n ON n.oid = cl.relnamespace ` +
+        `WHERE con.contype = 'c' AND n.nspname = 'public' ORDER BY cl.relname, con.conname;`;
+    const out = execFileSync("psql", [url, "-t", "-A", "-c", sql], { encoding: "utf8" });
+    return out
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((line) => {
+            const [tablename, conname, condef] = line.split("\x1f");
+            return { tablename, conname, condef };
         });
 }
 
@@ -288,6 +308,8 @@ async function main() {
 
         let dumpDiff: { identical: boolean; report: string } | undefined;
         let truthPartialIndexes: IndexRow[] = [];
+        let truthChecks: CheckConstraintRow[] = [];
+        const restoredChecks: string[] = [];
         const maxAttempts = 2; // 1 initial + 1 splice-and-retry; a 2nd miss means something's really wrong
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             step(`Validate candidate (attempt ${attempt}/${maxAttempts})`);
@@ -301,32 +323,47 @@ async function main() {
             const candidatePartialIndexes = queryPartialIndexes(candidateUrl);
             const missing = findMissingPartialIndexes(truthPartialIndexes, candidatePartialIndexes);
 
-            if (dumpDiff.identical && missing.length === 0) {
+            truthChecks = queryCheckConstraints(truthUrl);
+            const missingChecks = findMissingCheckConstraints(truthChecks, queryCheckConstraints(candidateUrl));
+            const checkNames = missingChecks.map((c) => `${c.tablename}.${c.conname}`).join(", ");
+
+            if (dumpDiff.identical && missing.length === 0 && missingChecks.length === 0) {
                 checkNoDrift(candidateUrl);
                 console.log("No-drift check passed: candidate matches schema.prisma exactly.");
                 break;
             }
 
-            if (missing.length > 0 && attempt < maxAttempts) {
-                console.log(
-                    `Missing ${missing.length} partial unique index(es) in the candidate ` +
-                        `(${missing.map((m) => m.indexname).join(", ")}) — splicing from TRUTH and re-validating from scratch.`,
-                );
-                candidateSql = splicePartialIndexes(candidateSql, missing);
+            if ((missing.length > 0 || missingChecks.length > 0) && attempt < maxAttempts) {
+                if (missing.length > 0) {
+                    console.log(
+                        `Missing ${missing.length} partial unique index(es) in the candidate ` +
+                            `(${missing.map((m) => m.indexname).join(", ")}) — splicing from TRUTH.`,
+                    );
+                    candidateSql = splicePartialIndexes(candidateSql, missing);
+                }
+                if (missingChecks.length > 0) {
+                    console.log(`Missing ${missingChecks.length} CHECK constraint(s) in the candidate (${checkNames}) — splicing from TRUTH.`);
+                    candidateSql = spliceCheckConstraints(candidateSql, missingChecks);
+                    restoredChecks.push(...missingChecks.map((c) => `${c.tablename}.${c.conname}`));
+                }
+                console.log("Re-validating from scratch.");
                 continue;
             }
 
             throw new Error(
                 `Candidate baseline failed validation after ${attempt} attempt(s).\n` +
                     (dumpDiff.identical ? "" : "Schema dump comparison found real differences (see report above).\n") +
-                    (missing.length > 0 ? `Still missing partial index(es) after splicing: ${missing.map((m) => m.indexname).join(", ")}\n` : ""),
+                    (missing.length > 0 ? `Still missing partial index(es) after splicing: ${missing.map((m) => m.indexname).join(", ")}\n` : "") +
+                    (missingChecks.length > 0 ? `Still missing CHECK constraint(s) after splicing: ${checkNames}\n` : ""),
             );
         }
 
         console.log(
             `\nValidation verdict: candidate baseline is semantically identical to the full current chain ` +
-                `(${existingMigrations.length} migrations); ${truthPartialIndexes.length} partial unique index(es) verified; no drift vs schema.prisma.`,
+                `(${existingMigrations.length} migrations); ${truthPartialIndexes.length} partial unique index(es) and ` +
+                `${truthChecks.length} CHECK constraint(s) verified; no drift vs schema.prisma.`,
         );
+        console.log(`Restored CHECK constraint(s): ${restoredChecks.length > 0 ? restoredChecks.join(", ") : "none"}.`);
 
         if (!commit) {
             console.log("\nDRY RUN — no changes written. Re-run with --commit to replace prisma/migrations/ with this baseline.");
