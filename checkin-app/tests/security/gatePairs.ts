@@ -163,7 +163,6 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'sub-tab /income/reconciliation count route', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'counts:income', client: counts('income'), token: routeToken('POST /api/income/reconciliation/[id]/resolve') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
-    { name: 'page /donations nav-counts route', client: page('/donations'), token: routeToken('GET /api/donations/nav-counts') },
     {
         name: 'page /programs-i-lead/expense-approvals',
         client: page('/programs-i-lead/expense-approvals'),

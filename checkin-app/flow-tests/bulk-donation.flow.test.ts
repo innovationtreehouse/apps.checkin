@@ -7,6 +7,7 @@
  * server and the seeded bulk-donation DB (see docker-compose.flow.yml +
  * packages/bulk-donation/prisma/seed.ts).
  */
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { BASE, loginAs, api, type Session } from "./helpers";
 
 const FINANCE = "finance@example.com";
@@ -22,7 +23,6 @@ const READS = [
   "/api/donations/account-map",
   "/api/donations/disbursement-holds",
   "/api/donations/disbursement-events",
-  "/api/donations/nav-counts",
 ];
 const WRITES: Array<[string, string, unknown?]> = [
   ["POST", "/api/donations/uploaded-files"],
@@ -199,8 +199,8 @@ describe("bulk donation — finance journey", () => {
     const ours = held.json.filter((h) => h.disbursementId === disbursement);
     expect(ours.length).toBeGreaterThan(0);
     expect(ours[0].transaction?.companyName).toBe(company);
-    const counts = await api<{ unassignedQueue: number; disbursementHolds: number }>(f, "/api/donations/nav-counts");
-    expect(counts.json.disbursementHolds).toBeGreaterThan(0);
+    const counts = await api<TodoCounts>(f, "/api/nav/todo-counts");
+    expect(counts.json.libraries?.["bulk-donation"]?.disbursementHolds).toBeGreaterThan(0);
 
     // Add the rule, resubmit: the hold clears and a booking batch appears.
     const rule = await send(f, "POST", "/api/donations/account-map", {

@@ -36,7 +36,6 @@ const FINANCE_ENDPOINTS = new Set([
 ]);
 
 const EXEMPT: Record<string, string> = {
-    'GET /api/donations/nav-counts': 'count: numbers, no record',
     'GET /api/receipts/queue-counts': 'count: numbers, no record',
     'GET /api/expense/finance-queue/counts': 'count: numbers, no record',
     'GET /api/expense/counts': 'count: numbers, no record',
