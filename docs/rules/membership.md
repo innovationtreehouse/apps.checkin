@@ -269,18 +269,22 @@ Procedure below is built on them.
   requires documentation only for a disqualifying offence. An approval needs
   none.  [Decision — *Policy: Membership Policy, Art. IX*]
 
-- The board may close an unpaid application ("Close application"); there is no
-  minimum wait. It is never destroyed, and "Reopen" returns it to the step it
-  was closed from. A paid, blocked, clearance-waiting or active application
-  cannot be closed; the one exception is a restore, below, which also closes a
+- The board may close an unpaid application ("Close application"), at any open
+  step but blocked, older steps included; there is no minimum wait. It is never
+  destroyed, and "Reopen" returns it to the step it was closed from. A paid,
+  blocked or active application cannot be closed: a paid one only once its
+  refund is recorded. The one exception is a restore, below, which also closes a
   blocked application. Reopening refuses a denied household, or one with another
   open application. The word "archive" is reserved for archiving a household.  [Decision —
-  *Principle: decisions are reversible*]
+  *Principle: decisions are reversible*; owner ruling 2026-11-07]
 
 - A refund made in the online store is recorded by the board ("Record refund"),
-  with a reason, by someone outside the household. A paid application waiting on
-  its background check returns to awaiting payment, check untouched; a paid
-  blocked application stays blocked.  [Decision]
+  with a reason, by someone outside the household, on a paid application at any
+  step that never became a membership. It stays offered until it is recorded,
+  including after a denial. The application keeps its step, unpaid, and the
+  background check is untouched; a paid application waiting on its background
+  check returns to awaiting payment. A blocked application stays blocked: a
+  refund never unblocks it or erases the rejection.  [Decision — owner ruling 2026-11-07]
 
 - Pre-designating a household volunteer-only sets what it owes and nothing else
   — it does not skip review or open payment. The policy grants only the
