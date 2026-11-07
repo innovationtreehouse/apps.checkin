@@ -14,6 +14,7 @@ of them. No code changes with this doc.
   Benevity).
 - **Q15:** two decisions conflict. The field marks (Q9) cover every amount,
   and Q12 says views of amounts with no person stop being logged.
+- **Q16:** whether a reload may write a new entry.
 
 ## The problem
 
@@ -217,8 +218,7 @@ different fields.
 A page-view row is keyed by person and page-view id, and the merge adds to it.
 A reload is a new page load, with a new id, so it is a new row. Collapsing
 identical page loads within the window is not done, because a row is complete
-only after its 30 seconds have passed. *Proposed; say if reloads should
-collapse.*
+only after its 30 seconds have passed. This is Q16, for @thpr to confirm.
 
 Rows written before the change stay as they are (decided).
 
@@ -419,16 +419,66 @@ Q1 to Q13 are settled or retired; their numbers stay retired.
     `Expense.vendorName`, both marked under Q9, so it would be logged, but Q12
     lists it as not logged.
 
-  Proposed: two kinds of mark. A **who** mark (submitter, reimbursee, donor,
-  company donor, buyer, the person on a payment plan) and a **money** mark
-  (amounts, and the payment-plan and aid fields). A view is logged when one
-  record carries both. Stored files carry both. Under that:
-  - the payouts list (money only) is not logged;
-  - a payment-plan request (the person, and the request) is logged;
-  - an approver's expense list is logged only if the vendor is a **who**.
+  Options. None is decided.
 
-  Is the two-mark rule right? And is the vendor a **who** (an approver's list is
-  then logged) or not (it is not)?
+  - **(a) Two marks: `who` and `money`.** A view is logged when one record
+    carries both. `who` covers the submitter, the reimbursee, a donor's name
+    and comment, a company donor, and the Shopify buyer. `money` covers every
+    `…Cents` amount. This breaks three of @thpr's decisions:
+    - **Payment plans and scholarship requests.** A
+      `ProgramParticipant` or `OrgMembershipProcess` request names a person,
+      but the price is on `Program` and is public, so there is no `money`
+      field on the record. Yet "payment plans are all sensitive" and
+      "scholarships, financial aid are sensitive".
+    - **Benevity company names.** `Transaction.companyName` and
+      `donorCompanyName` are sensitive even with no amount beside them,
+      because Benevity's rules forbid saying publicly which company gave.
+    - **Stored files.** The contents of a receipt file, a mail-item file or a
+      donation upload CSV cannot be seen by any field mark.
+  - **(b) Three marks: `who`, `money` and `standalone`.** A view is logged when
+    one record carries both `who` and `money`, **or** carries any `standalone`
+    field. `who` and `money` are as in (a). `standalone` covers:
+    - the payment-plan and aid fields: `isPaymentPlanRequested` and
+      `scholarshipRequestKind` on both `ProgramParticipant` and
+      `OrgMembershipProcess`, and `inventoryHeldAt`, `paymentPlanDeniedAt`
+      and `seatTakenWithoutSaleAt` on `ProgramParticipant`;
+    - company names: `Transaction.companyName`,
+      `InKindDonation.donorCompanyName` and `Receipt.donorCompanyName`;
+    - the file fields of a receipt, a mail item and an uploaded donation file.
+
+    Examples under (b):
+    - The payouts list sends `IncomePayoutView.netCents`, which is `money` only:
+      **not logged**, as Q12 says.
+    - A bucket approver's expense list sends `Expense.receiptTotalCents`
+      (`money`) and `Expense.vendorName`. With the vendor not a `who` (below),
+      the list is **not logged**, as Q12 says.
+    - The payment-plan queue sends `ProgramParticipant.isPaymentPlanRequested`,
+      a `standalone` field: **logged**.
+    - A Benevity gift shown without its amount still sends
+      `Transaction.companyName`, a `standalone` field: **logged**.
+    - Serving a receipt image to Finance: **logged**.
+
+    One consequence to know about. `ProgramParticipant.isPaymentPlanRequested`
+    and `paymentPlanDeniedAt` are `personal`, and program lead mentors hold
+    `their_program_participants:personal`. So any program-lead screen that sends
+    those fields would be logged as a finance view.
+
+  **Recommended: (b).** It is the only option that keeps every decision.
+
+  **The vendor.** Recommended: the vendor is **not** a `who`. A vendor is usually
+  a business, and @thpr's test is linking *people* to money. The case where the
+  vendor is a person (the reimbursee shown as vendor) is already covered by the
+  reimbursee's own mark.
+
+  Which option, and is the vendor a `who`?
+
+- **Q16. Reloads.** A page-view row is keyed by person and page-view id. A
+  reload is a new page load with a new id, so it writes a new row: three
+  reloads of `/expense/expenses/e_123` within a minute are three entries.
+  Collapsing identical page loads within the fifteen-minute window is not
+  done, because a page-view row is complete only after its 30 seconds have
+  passed. Untagged rows still collapse as today. Is a new entry per reload
+  acceptable?
 
 ## Follow-ups outside this design
 
