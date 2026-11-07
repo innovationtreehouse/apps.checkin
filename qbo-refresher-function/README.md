@@ -25,7 +25,7 @@ function's role. JSON shape:
 Seed it once from the operator consent flow (`npm run consent -w @checkin/quickbooks`).
 Every refresh writes the rotated pair back before returning. Intuit invalidates the old
 refresh token on refresh, so a failed write is retried with short backoff; if it still
-fails, the function logs `QBO_INVALID_GRANT` and fails without returning a token.
+fails, the function logs `QBO_INVALID_GRANT` and fails with `ReconsentRequired`.
 
 ## Guards
 
@@ -33,8 +33,11 @@ fails, the function logs `QBO_INVALID_GRANT` and fails without returning a token
 - **Keys guard**: outside production (`QBO_ENVIRONMENT=sandbox`) the stored `clientId` must
   equal `QBO_DEV_CLIENT_ID` (Intuit development keys open only sandbox companies); in
   production that id is refused. Checked before any Intuit call.
-- **invalid_grant**: logs `QBO_INVALID_GRANT` at ERROR and fails without retrying. Recovery
-  is an operator re-running consent and reseeding the secret.
+- **invalid_grant**: logs `QBO_INVALID_GRANT` at ERROR and fails without retrying, with an
+  error named `ReconsentRequired`. Lambda reports that name as the failure's `errorType`, and
+  the app reads only that field: System Status then says QuickBooks needs reconnecting. Every
+  other failure keeps the name `Error`. Recovery is finance re-running consent and reseeding
+  the secret.
 
 ## Environment
 

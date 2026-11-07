@@ -6,11 +6,11 @@
  * presence check with no network read.
  */
 import type { QboAccount } from "@checkin/quickbooks";
-import type { ConfigCheck } from "@/lib/configHealth";
+import { kindOf } from "@checkin/component-kit";
+import { message, withTimeout, type ConfigCheck } from "@/lib/configHealth";
 import { tryBuildQuickBooks } from "@/lib/quickbooks/client";
 
 const CACHE_MS = 60_000;
-const READ_TIMEOUT_MS = 5_000;
 
 let cached: { at: number; checks: Promise<ConfigCheck[]> } | null = null;
 
@@ -20,17 +20,6 @@ export function getQuickBooksHealth(now: number = Date.now()): Promise<ConfigChe
     return cached.checks;
 }
 
-function withTimeout<T>(work: Promise<T>, what: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} did not answer within ${READ_TIMEOUT_MS / 1000} seconds`)), READ_TIMEOUT_MS);
-    });
-    return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
-
-function message(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
-}
 
 /** True only where the guard lets a client be built at all; elsewhere QuickBooks is off by design. */
 function quickBooksExpectedHere(): boolean {
@@ -48,7 +37,8 @@ async function connectionChecks(): Promise<ConfigCheck[]> {
     try {
         await withTimeout(built.tokens.current(), "The token refresher");
     } catch (err) {
-        return [{ id, label, ok: false, detail: `Off: the token refresher failed (${message(err)}).` }, ...notRead(false)];
+        const detail = kindOf(err) === "connection" ? message(err) : `Off: the token refresher failed (${message(err)}).`;
+        return [{ id, label, ok: false, detail }, ...notRead(false)];
     }
     const company = built.env === "production" ? "production" : "sandbox";
     const [closing, types] = await Promise.all([

@@ -16,6 +16,8 @@ jest.mock('@/lib/quickbooks/health', () => ({
     getQuickBooksHealth: async () => [{ id: 'quickbooks-connection', label: 'QuickBooks connection', ok: true, detail: 'Connected to the sandbox company.' }],
 }));
 
+jest.mock('@/lib/receipt/mailboxHealth', () => ({ getReceiptMailboxHealth: async () => [] }));
+
 import { GET } from '../route';
 import prisma from '@/lib/prisma';
 

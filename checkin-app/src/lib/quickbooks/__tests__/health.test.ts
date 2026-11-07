@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+import { KindedError } from "@checkin/component-kit";
 import type { ConfigCheck } from "@/lib/configHealth";
 
 const tryBuildQuickBooks = jest.fn();
@@ -81,6 +82,14 @@ describe("QuickBooks connection row", () => {
         const r = await rows();
         expect(r["quickbooks-connection"]).toMatchObject({ ok: false, detail: expect.stringMatching(/token refresher failed/) });
         expect(bookCloseDate).not.toHaveBeenCalled();
+    });
+
+    it("says QuickBooks needs reconnecting by finance when the refresher answers reconsent-required", async () => {
+        const reconnect = new KindedError("connection", "QuickBooks needs reconnecting: its login was revoked. Finance reconnects it by re-running the QuickBooks consent.");
+        tryBuildQuickBooks.mockReturnValue(connected(jest.fn(), jest.fn().mockRejectedValue(reconnect)));
+        const r = await rows();
+        expect(r["quickbooks-connection"]).toMatchObject({ ok: false, detail: expect.stringMatching(/needs reconnecting.*Finance reconnects/) });
+        expect(r["quickbooks-connection"].detail).not.toMatch(/token refresher failed/);
     });
 
     it("times out a refresher that never answers", async () => {
