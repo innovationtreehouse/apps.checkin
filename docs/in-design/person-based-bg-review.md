@@ -22,9 +22,13 @@ doesn't record whose check failed.
 The move is cheap because the per-person review already exists and already does
 everything a review needs: two independent approvals, rejection, reset, change to
 approve, undo, consent and the reviewer queue. The proposal makes it the only kind
-of review. A household application stops holding attestations and instead asks one
-derived question: *does at least one lead hold a valid clearance, and does no adult
-in the household hold a standing rejection?* No table is added or dropped. Live
+of review. The person who applies may not be the person whose report comes back.
+So a review opened by a household's consent starts without a person, and the first
+reviewer's decision names them, whether it approves or rejects. A household
+application stops holding attestations and instead asks one derived question:
+*does at least one lead hold a valid clearance, and does no adult in the household
+hold a standing rejection?* One nullable column is added; no table is added or
+dropped. Live
 household reviews still in progress finish on today's path, and the history they
 carry stays where it is.
 
@@ -65,13 +69,13 @@ is answered from that history and nothing else.
 
 | Who | What changes | What does not |
 |---|---|---|
-| Reviewers | Every queue card is a person, with their household named for context. No "which adult did you read" picker. | Two independent reviewers, the own-household bar, reject, change to approve, undo. |
-| Applying family | The lead who consents is the person whose check is reviewed. Payment and review still run in parallel. | Stepper, payment, agreement. |
+| Reviewers | Every queue card is a check review. One opened by a household's consent has no person yet, and its first reviewer names whose report they read, on a rejection as well as an approval. | Two independent reviewers, the own-household bar, reject, change to approve, undo. |
+| Applying family | Nothing visible. Consent opens a review for the household; nobody assumes the consenting lead is the person checked. | Stepper, payment, agreement, consent step. |
 | Board | Reset applies to a person's review. A rejection of any adult in a household blocks that household's open application (see PBR-1). | Deny, restore, grant, close, refund. |
 | Merges | Refused while either side has a disputed check that the merge would change (owner ruling 2026-11-07). The household-only carry-forward code goes away. | Newer date carried, archive kept, no un-merge. |
 | Data | No table added or dropped. In-flight household reviews finish on today's path. Legacy rejections keep blocking until reset. | Every attestation and audit row stays. |
 
-Cost: about six small PRs and no schema migration. The largest unknown is how many
+Cost: about eight small PRs and one additive column, no data migration. The largest unknown is how many
 household reviews are in flight or blocked on the live database (§5.1).
 
 ---
@@ -235,18 +239,41 @@ review kept its own copy of the judgment. That copy is the defect.
 
 ### 3.1 One review per person
 
-A **check review** is today's `PERSON_BG` process, unchanged in shape: one subject
-person, attestations from two independent reviewers, `BLOCKED` on rejection, reset
-and change-to-approve as now. It is the only place a reviewer's judgment is
-recorded. A person has at most one review that is open or blocked, which
-`personBgOpen` already enforces.
+A **check review** is today's `PERSON_BG` process: attestations from two
+independent reviewers, `BLOCKED` on rejection, reset and change-to-approve as now.
+It is the only place a reviewer's judgment is recorded. Once a review has a person,
+that person has at most one review open or blocked, as `personBgOpen` enforces
+today.
 
-Every way a check gets started opens or reuses the subject's check review:
+**Who the review is about is known only from the report.** The person who applies
+or consents may not be the person whose report comes back; a lead often consents
+for a check the other parent took. So a review opened by a household's consent
+starts with **no subject**. It carries the household it was requested for, and its
+subject is fixed by the **first reviewer decision**, approve or reject. That
+reviewer names the adult whose report they read, chosen from the household's leads
+as today. From then on it is that person's review, and the second reviewer confirms
+the same person. A rejection names its person too. That is new, and it is what lets
+a rejection make a *person* disputed instead of an application.
 
-- A lead consenting during a household application or renewal (new opener; today
-  that consent lands on the household row).
-- The Board recording an external check (`submitPersonBgForReview`, unchanged).
-- The yearly sweep and the new-member trigger (unchanged).
+Every way a check gets started:
+
+- A household application or renewal records consent → a review with no subject,
+  requested for that household. No code infers the subject from who consented.
+- The Board recording an external check for a named person
+  (`submitPersonBgForReview`, unchanged) → a review with that subject.
+- The yearly sweep and the new-member trigger → a review with that subject
+  (unchanged).
+
+**Naming a person who already has a review open.** If the named adult already has
+an open or blocked review of their own, the first decision is refused if that
+review has any attestation or is blocked: the reviewer reviews them there. If that
+review has no attestations, it is closed with an audit row naming the request that
+replaced it (PBR-11). No attestation ever moves between reviews.
+
+**A reviewer who thinks the named person is wrong** asks the Board to reset. A
+rejection now says that person's check failed, so it can't also mean "wrong
+person" (PBR-12). The reset returns the review to no subject, and the next first
+decision names again.
 
 A person's **check standing** is derived from their reviews and their date:
 
@@ -254,11 +281,12 @@ A person's **check standing** is derived from their reviews and their date:
 |---|---|
 | `CLEARED` | `lastBackgroundCheck` inside the window, and no review blocked or reset-and-waiting |
 | `DISPUTED` | a review is `BLOCKED`, or was Board-reset or changed-to-approve and has not cleared since |
-| `PENDING` | a review is open with consent, nothing disputed |
+| `PENDING` | a review naming them is open with consent, nothing disputed |
 | `NONE` | none of the above |
 
 `DISPUTED` beats `CLEARED`. A person who holds an old clearance and whose new review
-was just rejected is disputed.
+was just rejected is disputed. A review with no subject yet counts toward nobody's
+standing; it keeps its household's application waiting.
 
 ### 3.2 What "the household qualifies" means
 
@@ -316,7 +344,12 @@ No Policy wording changes. The Decision-tier wording that changes, in
   household's own review did not name is covered here rather than by that
   review…" is deleted, because there is no second track. The bullet "A household
   lead's attestation goes to the household's application…" becomes "a lead's
-  consent opens their own check review".
+  consent opens a review for the household, whose person the first reviewer
+  names".
+- "A reviewer who believes the named person is wrong rejects" becomes "asks the
+  Board to reset" (PBR-12). "A household review covers one adult. Whoever approves
+  first names the person…" becomes "whoever decides first, approving or rejecting,
+  names the person".
 - *Renewal*: "unless a lead's is still valid at the boundary" gains "and no adult in
   the household is disputed".
 
@@ -328,8 +361,10 @@ rewritten per §6.
 ## 4. What it changes
 
 **State machines** (`src/lib/membership/lifecycle.ts`).
-- `PERSON_BG`: one new entry edge, ∅ → `PENDING_BG_REVIEW` by applicant consent.
-  Its other edges are unchanged.
+- `PERSON_BG`: one new entry edge, ∅ → `PENDING_BG_REVIEW` by household consent,
+  with no subject. Naming the subject is a field write at the first decision, not
+  a status edge. A Board reset of a review opened by consent also clears its
+  subject. The other edges are unchanged.
 - Household kinds: the edges whose event is `attest REJECT`, `boardResetReview`,
   `attest change to APPROVE` and `clearBackgroundCheck` keep their from/to states,
   but their event becomes `settleHouseholdBg` (system actor, triggered by a person
@@ -337,39 +372,60 @@ rewritten per §6.
 - `awaitingBgReview` loses its household arm once the drain ends. The queue then
   lists only `PERSON_BG`.
 
-**Schema.** None required. `BackgroundCheckAttestation.subjectPersonId` stops being
-written on household rows and is kept: it is the record of whose report each
-historical approval read. `OrgMembershipProcess.bgConsentAt` on household rows is
-no longer written for new applications and is kept for history.
-(Skipped: a column linking an application to the review it waits on. The link can
-be derived from the household's leads, so a column would only add drift. Add one if
-the Board cards need a direct join.)
+**Schema.** One nullable column, expand-only:
+`OrgMembershipProcess.requestedForHouseholdId`, set on a `PERSON_BG` opened by
+household consent and never changed. It is the link from an application to the
+review it waits on while the review has no subject, and the candidate set the first
+reviewer names from. It needs an `@sensitivity` annotation and regenerated
+classifications. `subjectPersonId` on a `PERSON_BG` becomes nullable *in use* only:
+the column already is nullable, and today's comment and code assume it is set.
+Every reader of `kind: "PERSON_BG"` that dereferences the subject must handle null
+(the review route, `applicantHousehold`, the merge's duplicate archive, the
+attestation audit page).
+
+The alternative, reusing `orgMembershipId` on `PERSON_BG` rows, is rejected. Code
+in several places (`mergeBgAdvance.ts:17-21`, `payment.ts:71`,
+`finance/matchAudit.ts:258`) relies on `orgMembershipId` excluding `PERSON_BG`, and
+breaking that would turn those readers into membership readers.
+
+`BackgroundCheckAttestation.subjectPersonId` stops being written on household rows
+and is kept: it is the record of whose report each historical approval read.
+`OrgMembershipProcess.bgConsentAt` on household rows is no longer written for new
+applications and is kept for history.
 
 **Code.**
 - Add the standing derivation and `settleHouseholdBg` (`src/lib/membership/`).
 - Have `attest`, `boardResetReview`, `switchRejectionToApprove` and the merge call
   `settleHouseholdBg` after a `PERSON_BG` outcome.
-- Remove `namedSubject`, `establishedSubject`, `approvalsForSubject`, the household
-  branch of `clearingApprovals`, and `mergeBgAdvance.ts` entirely.
+- `namedSubject` moves to the `PERSON_BG` first decision. It validates against the
+  requested household's live leads and runs on a rejection as well as an approval.
+  `establishedSubject` and the household branch of `clearingApprovals` go, because
+  the subject lives on the review row once named. `mergeBgAdvance.ts` goes entirely.
 - `householdBgIsFresh` becomes the qualifies predicate, for every caller in §1.3.
 
 **Routes.**
-- `GET /api/membership/reviews`: every item is a person. The household leads'
-  selection for the picker goes. This is a response-shape change on a registered
-  route.
-- `POST /api/membership/reviews`: `subjectPersonIds` is ignored and then removed.
-- `review-override`: resets a person review. The household rows are reset only for
-  the legacy case.
-- `bg-consent` and the Board's external mark: consent names a person, and a Board
-  mark must name the lead (PBR-7).
+- `GET /api/membership/reviews`: every item is a check review. One with a subject
+  shows the person and their household; one without shows the requested household
+  and its leads to pick from, as today. This is a response-shape change on a
+  registered route.
+- `POST /api/membership/reviews`: `subjectPersonIds` is required on the first
+  decision of a review with no subject, for a rejection as well as an approval. It
+  is refused on a review that already has one.
+- `review-override`: resets a check review. On a review opened by consent, the
+  reset also clears its subject. Household rows are reset only for the legacy
+  case.
+- `bg-consent` and the Board's external mark: consent opens or reuses the
+  household's unnamed review. It names no person (PBR-7 withdrawn).
 - Merge analyze: `mergeBgNotice` is replaced by the dispute refusal preview (§6).
 
 **UI.**
-- Review page: the picker goes, and the card shows the person and their household.
+- Review page: the "whose report did you read" picker stays for a review with no
+  subject, and now shows on reject too. A review with a subject shows the person
+  and their household, with no picker.
 - Applications page: a blocked application shows whose review blocked it, and
-  progress counts the person review.
-- Applicant `/membership` page: the consent step names whose check is being
-  reviewed. The stepper is unchanged.
+  progress counts the check review.
+- Applicant `/membership` page: unchanged. The family is not asked whose check it
+  is.
 
 **Notifications.** No new templates. `membership.reviewNeeded` is unchanged. The
 `paymentOpen` / `paymentOpenExistingCheck` choice follows whether a review just
@@ -422,7 +478,7 @@ digits. This is unverified.
 |---|---|---|
 | Cleared (any era) | Nothing. Its named subject already carries `lastBackgroundCheck`. | Attestations stay on the row; audit unchanged. |
 | Cleared with blanket stamps (legacy, no subject) | Nothing. The compliance blanket-stamp bucket keeps reporting it (PBR-8). | Unchanged. |
-| In review, no attestations | Drains on today's path if consent was already recorded; otherwise, after PR 4, consent opens a person review instead. | Unchanged. |
+| In review, no attestations | Drains on today's path if consent was already recorded; otherwise, after PR 4, consent opens a check review with no subject instead. | Unchanged. |
 | In review with approvals, or reset and waiting | Drains on today's path: today's code stays live for these rows until they clear or block. | Unchanged. |
 | `BLOCKED` (standing rejection, no subject) | Stays a household-level block. It keeps blocking its household and keeps today's Board reset. A reset of it sends the application to the new path (PBR-4). | Unchanged. |
 
@@ -433,7 +489,7 @@ would fail closed in the wrong direction (`docs/rules/principles.md`, Fail close
 
 1. **Expand** (PRs 1-2): add the derivations and the merge refusal. They are
    additive and read today's data.
-2. **Cut over** (PRs 4-5): new consent opens person reviews, and the predicate
+2. **Cut over** (PRs 4-5): new consent opens check reviews with no subject, and the predicate
    replaces the shortcut. Old code serving during the drain window still writes
    only household rows that the new code also reads, so nothing old code writes is
    lost.
@@ -507,12 +563,13 @@ Each PR is one kind and is based on `main`.
 | 1 | Code | Check standing + qualifies predicate + `settleHouseholdBg`, unused, with unit tests | none |
 | 2 | Code | Merge refusal on a disputed check (owner ruling), reading today's rows | 1 |
 | 3 | Security boundary, alone | Registry change for `GET /api/membership/reviews`, if its returned models or fields change. Re-check which other routes are registered first | none |
-| 4 | Code | Consent opens person reviews, the queue lists person items, review outcomes call settle. Household attest path kept for drain | 1, 3 |
+| 3a | Schema | Add `requestedForHouseholdId` (nullable, `@sensitivity` annotation, regenerated classifications), unused | none |
+| 4 | Code | Consent opens a check review with no subject; first decision names the person (approve or reject); the queue lists check reviews; review outcomes call settle. Household attest path kept for drain | 1, 3, 3a |
 | 5 | Code | Intake, renewal and compliance switch to the predicate; merge calls settle; `BG_DISPUTED` bucket | 4 |
 | 6 | Docs | `docs/rules/membership.md` and `people-households.md` wording (§3.3); delete this file | 5 |
-| 7 | Code, contract | Remove `namedSubject` and friends, the picker, `mergeBgAdvance.ts`, the household arm of `awaitingBgReview`. Only after §5.1 shows no in-flight household reviews | 5, drain |
+| 7 | Code, contract | Remove the household attest path, `establishedSubject`, `mergeBgAdvance.ts`, the household arm of `awaitingBgReview`. Only after §5.1 shows no in-flight household reviews | 5, drain |
 
-No schema PR and no migration PR.
+One additive schema PR (3a); no data migration and no destructive change.
 
 ---
 
@@ -551,9 +608,10 @@ rejection stands could never be merged.
 them to person reviews at cutover. *Recommendation: drain.* No attestation is copied
 or rewritten, and the history keeps its original shape.
 
-**PBR-7. Who is checked when the Board marks consent for a household?**
-*Recommendation: the Board names the lead.* An unnamed consent is the gap that
-produced the named-adult machinery.
+**PBR-7. Withdrawn.** It asked who is checked when the Board marks consent for a
+household. Owner, 2026-11-07: the applicant or consenter may not be the person
+reviewed, so consent never names a person. The first reviewer decision does
+(§3.1).
 
 **PBR-8. Legacy blanket-stamped clearances.** Some old household clearances stamped
 every lead from one review. *Recommendation: leave them.* The compliance bucket
@@ -564,13 +622,25 @@ dispute follows the person, and also stays on the application that was open when
 was decided.* A lead can't clear their household by removing a rejected spouse, and
 the rejected adult can't join another household cleanly.
 
----
-
 **PBR-10. A lead's per-person review left open after their household review
 cleared.** Options: (a) the Board closes each one by hand; (b) the drain closes it
 automatically, with an audit row naming the clearance. *Recommendation: (b).* The
 same two-reviewer clearance of the same person already exists, so closing the
 duplicate decides nothing new. The audit row keeps the record.
+
+**PBR-11. Naming a person who already has a review open.** Options: (a) refuse the
+first decision when that review has attestations or is blocked, and close it with
+an audit row when it has none; (b) merge the two reviews. *Recommendation: (a).*
+Merging would move attestations between reviews, which seats reviewers past the
+own-household and already-attested checks.
+
+**PBR-12. A reviewer who thinks the named person is wrong.** Today they reject. Once
+a rejection names a person, rejecting would mark that person's check as failed.
+Options: (a) they ask the Board to reset, which clears the subject; (b) a new
+"wrong person" action. *Recommendation: (a).* Review volume is low, and the reset
+already exists.
+
+---
 
 ## Appendix: alternatives considered
 
