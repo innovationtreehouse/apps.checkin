@@ -403,7 +403,7 @@ async function applyOcr(id: string, actor: ReceiptPrincipal, callId: number): Pr
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
     await runFullFlow(id, actor);
   } else {
-    const failure = await asRefusalRun(id, result);
+    const failure = await asRefusalRun(id, actor, result);
     if (REPORTED.has(failure.kind)) receiptRuntime.failed("ocr", new KindedError(failure.kind, failure.error), `receipt ${id}`);
     const refunded = await refundsCall(id, failure.kind);
     await failOcr(id, actor, {
@@ -425,29 +425,38 @@ const failOcrSwitchedOff = (id: string, actor: ReceiptPrincipal) =>
   failOcr(id, actor, { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off", refundCallId: null });
 
 /**
- * Bad files are rare, so this many different receipts refused by the reading service within the
- * window means the fault is ours (a reworded account error, a broken request), and the next
- * refusal is reported and given back as `connection`.
+ * Bad files are rare, so this many different receipts from more than one submitter refused by the
+ * reading service, with no successful reading since and within the window, means the fault is ours
+ * (a reworded account error, a broken request); the next refusal is reported and given back as `connection`.
  */
-const REFUSAL_RUN = { receipts: 3, windowMs: 60 * 60 * 1000 };
+const REFUSAL_RUN = { receipts: 3, submitters: 2, windowMs: 60 * 60 * 1000 };
 const REFUSAL_RUN_REASON = "the reading service refused several receipts in a row";
 
 /** `failure`, or a `connection` failure when it continues a run of refusals across receipts. */
-async function asRefusalRun(id: string, failure: OcrFailure): Promise<OcrFailure> {
+async function asRefusalRun(id: string, actor: ReceiptPrincipal, failure: OcrFailure): Promise<OcrFailure> {
   if (failure.kind !== "data" || failure.error !== OCR_FILE_REFUSED) return failure;
-  // ponytail: scans audit rows by action; an (action, changedAt) index if refusals ever get frequent.
+  const orgId = await getOrgId();
+  // ponytail: both reads scan audit rows by action; an (action, changedAt) index if refusals ever get frequent.
+  const lastRead = await db.receiptAuditLog.findFirst({
+    where: { action: READING_APPLIED, receipt: { orgId } },
+    orderBy: { id: "desc" },
+    select: { changedAt: true },
+  });
+  const since = Math.max(Date.now() - REFUSAL_RUN.windowMs, lastRead?.changedAt.getTime() ?? 0);
   const prior = await db.receiptAuditLog.findMany({
     where: {
       receiptId: { not: id },
+      receipt: { orgId },
       action: { in: ["ocr_failed:data", "ocr_failed:connection"] },
       valueAfter: { in: [OCR_FILE_REFUSED, REFUSAL_RUN_REASON] },
-      changedAt: { gt: new Date(Date.now() - REFUSAL_RUN.windowMs) },
+      changedAt: { gt: new Date(since) },
     },
     distinct: ["receiptId"],
-    select: { receiptId: true },
-    take: REFUSAL_RUN.receipts,
+    select: { userId: true },
   });
-  return prior.length < REFUSAL_RUN.receipts ? failure : { success: false, kind: "connection", error: REFUSAL_RUN_REASON };
+  const submitters = new Set([actor.id, ...prior.map((p) => p.userId)]);
+  const inRun = prior.length >= REFUSAL_RUN.receipts && submitters.size >= REFUSAL_RUN.submitters;
+  return inRun ? { success: false, kind: "connection", error: REFUSAL_RUN_REASON } : failure;
 }
 
 /** Lands the receipt in `ocr_failed`, giving back `refundCallId`; the audit action names the failure's kind (`ocr_failed:<kind>`). */

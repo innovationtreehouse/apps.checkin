@@ -185,7 +185,9 @@ describeDb("a run of files the reading service refused", () => {
     const failures: FailureReport[] = [];
     vi.spyOn(console, "warn").mockImplementation(() => {});
     refusing(failures);
-    const first = [await refused(), await refused(), await refused()];
+    const first = [await refused(), await refused()];
+    actAs(BOB);
+    first.push(await refused());
     for (const r of first) expect(await actions(r.id)).toContain("ocr_failed:data");
     expect(failures).toEqual([]);
     expect(await db.receiptAuditLog.count({ where: { action: "ocr_call_refunded" } })).toBe(0);
@@ -199,11 +201,31 @@ describeDb("a run of files the reading service refused", () => {
     expect(await actions(after.id)).toContain("ocr_failed:connection");
   });
 
+  it("keeps one submitter's run of refused files as theirs", async () => {
+    const failures: FailureReport[] = [];
+    refusing(failures);
+    for (let i = 0; i < 4; i++) expect(await actions((await refused()).id)).toContain("ocr_failed:data");
+    expect(failures).toEqual([]);
+  });
+
+  it("ends the run at a successful reading", async () => {
+    refusing([]);
+    await refused();
+    actAs(BOB);
+    await refused();
+    await refused();
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: LOOSE });
+    await receiptService.upload(textFile(), "text/plain", {});
+    refusing([]);
+    expect(await actions((await refused()).id)).toContain("ocr_failed:data");
+  });
+
   it("counts one receipt refused again on retry once", async () => {
     refusing([]);
     const r = await refused();
     await receiptService.retryOcr(r.id, "submitter");
     await receiptService.retryOcr(r.id, "submitter");
+    actAs(BOB);
     await refused();
     expect(await actions((await refused()).id)).toContain("ocr_failed:data");
   });
@@ -216,6 +238,7 @@ describeDb("a run of files the reading service refused", () => {
     refusing([]);
     const old = [await refused(), await refused()];
     await db.receiptAuditLog.updateMany({ where: { receiptId: { in: old.map((r) => r.id) } }, data: { changedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) } });
+    actAs(BOB);
     await refused();
     expect(await actions((await refused()).id)).toContain("ocr_failed:data");
   });
