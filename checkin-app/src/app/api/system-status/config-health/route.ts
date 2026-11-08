@@ -26,8 +26,9 @@ export const dynamic = "force-dynamic";
  *                  new registered route would need its registry entry landed separately.
  *   - `incidents` — incidents not yet closed (lib/opsIncidentView.ts), for the Open problems
  *                  panel. Rides here for the same reason.
- *   - `problems` — the receipt flow's stuck items, oldest first, and any library whose
- *                  items could not be read (lib/problems.ts). Rides here for the same reason.
+ *   - `problems` — the receipt flow's stuck items, oldest first, the libraries' own lines
+ *                  (counts only), and any library whose items could not be read
+ *                  (lib/problems.ts). Rides here for the same reason.
  */
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);

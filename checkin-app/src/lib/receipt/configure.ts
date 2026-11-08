@@ -36,7 +36,6 @@ import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
 import { gmailAccessToken } from "@/lib/receipt/gmailToken";
 import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
-import { reportTo } from "@/lib/finishRun";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
 async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
@@ -165,9 +164,9 @@ async function reimburseeHasAccount(personId: number): Promise<boolean> {
   return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
-async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
+async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
   const [{ default: prisma }, { addNonMemberAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/ownHousehold")]);
-  return addNonMemberAdult(prisma, name);
+  return addNonMemberAdult(prisma, name, actorId);
 }
 
 /** The Gmail reader when mail intake binds (mailboxConfig.ts); otherwise intake reports "unbound". */
@@ -246,7 +245,6 @@ const outcomeMail: OutcomeMail = {
 
 export function configureRuntime(): void {
   configureReceipt({
-    onFailure: reportTo("receipt"),
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },

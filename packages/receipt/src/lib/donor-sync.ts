@@ -1,7 +1,7 @@
 import { kindOf } from "@checkin/component-kit";
 import { db } from "../db";
 import { InKindDonorSchema } from "../contract";
-import { audit, type Actor } from "../repositories/receipt";
+import { audit, recordFailure, type Actor } from "../repositories/receipt";
 import { getOrgId, ports } from "../runtime";
 
 const MAX_SENDS = 3;
@@ -12,8 +12,8 @@ const MAX_SENDS = 3;
  * `none` receipt (never in-kind) sends nothing. The receipt flips to `synced` only if what was
  * sent is still current; a change made during the call is sent again. Each call carries the
  * receipt's donorSyncSeq, and the callee drops one older than it has seen, so a slow send can
- * never overwrite a newer one. After MAX_SENDS it stays `pending` for the catch-up step. Never throws:
- * a failure is audited as `donor_sync_failed` with its kind in `valueBefore`.
+ * never overwrite a newer one. After MAX_SENDS it stays `pending`. Never throws: a failure is
+ * audited as `donor_sync_failed` with its kind in `valueBefore`, and the receipt is marked stuck.
  */
 export async function sendDonorSync(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
@@ -49,16 +49,17 @@ export async function sendDonorSync(receiptId: string, actor: Actor | null): Pro
       });
       if (settled.count === 1) return true;
     }
-    await audit(db, receiptId, actor, { action: "donor_sync_failed", valueAfter: "donor kept changing during send" });
+    const changing = "donor kept changing during send";
+    await audit(db, receiptId, actor, { action: "donor_sync_failed", valueAfter: changing });
+    await recordFailure(db, receiptId, changing);
     return false;
   } catch (err) {
-    // Donations checks the donor with the same rule as upload, so its refusal of a stored donor is a bug.
-    const kind = kindOf(err);
     await audit(db, receiptId, actor, {
       action: "donor_sync_failed",
-      valueBefore: kind === "data" ? "bug" : kind,
+      valueBefore: kindOf(err),
       valueAfter: err instanceof Error ? err.message : String(err),
     }).catch(() => undefined);
+    await recordFailure(db, receiptId, err).catch(() => undefined);
     return false;
   }
 }

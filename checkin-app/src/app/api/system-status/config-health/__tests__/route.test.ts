@@ -22,6 +22,7 @@ jest.mock('@/lib/problems', () => ({
     getProblems: async () => ({
         items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: new Date('2026-11-01T12:00:00.000Z') }],
         unread: ['gifts'],
+        notices: ['Receipt reading failed 3 times in the last day'],
     }),
 }));
 
@@ -103,12 +104,13 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         ]);
     });
 
-    it('carries the receipt flow problems and any library it could not read', async () => {
+    it('carries the receipt flow problems, the libraries\' own lines, and any library it could not read', async () => {
         const res = await call({ type: 'session', user: { isSysadmin: true, isBoardMember: false } });
         const body = await res.json();
         expect(body.problems).toEqual({
             items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: '2026-11-01T12:00:00.000Z' }],
             unread: ['gifts'],
+            notices: ['Receipt reading failed 3 times in the last day'],
         });
     });
 });

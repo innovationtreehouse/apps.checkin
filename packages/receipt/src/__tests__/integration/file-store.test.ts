@@ -89,7 +89,7 @@ describeDb("receipt file store", () => {
     expect(await actions(r.id)).toContain("ocr_failed:data");
   });
 
-  it("a store outage at OCR is an outage: the call is given back", async () => {
+  it("a store outage at OCR fails the reading as an outage", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const failing = createMemoryFileStore();
     const down = async () => {
@@ -98,7 +98,7 @@ describeDb("receipt file store", () => {
     configure({ ocr: okOcr(), storeNewFilesInBucket: true, fileStore: { ...failing, put: async () => {}, get: down } });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(await stateOf(r.id)).toBe("ocr_failed");
-    expect(await actions(r.id)).toEqual(expect.arrayContaining(["ocr_call_refunded", "ocr_failed:system"]));
+    expect(await actions(r.id)).toContain("ocr_failed:system");
   });
 
   it("a failed insert takes its object back", async () => {

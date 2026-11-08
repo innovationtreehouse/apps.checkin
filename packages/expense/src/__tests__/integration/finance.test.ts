@@ -315,9 +315,11 @@ describeDb("sign-off seats", () => {
     it("FINANCE adds a non-member by name, who becomes the reimbursee", async () => {
       const { id } = await unknownReimbursee();
       const added: string[] = [];
-      bindPorts({ signoff: directory({ finance: [3], nonMembers: [900], added }) });
+      const addedBy: number[] = [];
+      bindPorts({ signoff: directory({ finance: [3], nonMembers: [900], added, addedBy }) });
       await setReimbursee(ORG, id, { newPerson: { name: "  Dana Field " } }, FINANCE);
       expect(added).toEqual(["Dana Field"]);
+      expect(addedBy).toEqual([FINANCE.id]);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(900);
       expect(await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "reimbursee_set" } })).toMatchObject({ valueAfter: "900" });
     });

@@ -272,15 +272,10 @@ Things the app takes as true because they are handled outside it.
   fills those in before any other check runs.
   [Decision]
 
-- A reading that fails because the reading service is down, refuses the app's
-  key, has used up the app's credit, or is not set up, or because of a fault in
-  the app, does not count against the person's daily reading allowance. Each
-  receipt gets one such reading back; reading that receipt again counts after
-  that. A reading that fails only because the service is not set up is always
-  given back, since no reading was made. The app never reads the receipt again
-  by itself, because each reading costs money: the submitter presses "Read it
-  again".
-  [Decision — owner]
+- Every reading counts against the person's daily reading allowance, whether
+  it succeeds or fails. The app never reads the receipt again by itself,
+  because each reading costs money: the submitter presses "Read it again".
+  [Decision — owner, 2026-11-08]
 
 - Finance or the Board may reset one person's daily reading allowance when that
   person has a good reason, so they need not wait for the next day. The reset
@@ -288,10 +283,10 @@ Things the app takes as true because they are handled outside it.
   the audit log.
   [Decision — owner, 2026-11-08]
 
-- Every reading that fails for a cause other than the file (the service down,
-  a refused key, used-up credit, missing setup, or a fault in the app, such as a
-  retired model) is reported to the app's alerts.
-  [Decision — owner]
+- Three or more failed readings within a day put one line on the Problems
+  list, "Receipt reading failed N times in the last day", with no error text or
+  names, and that line sends the daily problems email to the alert address.
+  [Decision — owner, 2026-11-08]
 
 - Sysadmins, finance and the Board may turn automatic reading of receipts off
   and on, so reading can stop at once when a known problem needs a deploy.

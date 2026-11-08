@@ -57,4 +57,4 @@ export { sendDisbursementEvent, type AuditContext } from "./workflows/disburseme
 export { WorkflowTransitionError } from "@checkin/workflows";
 export * as routes from "./routes";
 
-export { stuckItems } from "./stuckItems";
+export { retryStuckItem, stuckItems } from "./stuckItems";

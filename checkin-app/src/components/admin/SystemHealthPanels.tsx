@@ -207,27 +207,32 @@ export function OpenProblemsBox() {
 
 // Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
 type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
-type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown }; cronJobs?: unknown };
+type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices?: unknown }; cronJobs?: unknown };
 
 /**
- * The receipt flow's Problems list: every stuck item, oldest first, with a link to its own page
- * (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
+ * The receipt flow's Problems list: each library's own lines, every stuck item, oldest first, with a
+ * link to its own page (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
  */
 export function ProblemsBox() {
-  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; staleJobs: CronJob[] } | null>(null);
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     fetch('/api/system-status/config-health')
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then(({ problems, cronJobs }: ProblemsPayload) => {
-        if (!Array.isArray(problems?.items) || !Array.isArray(problems?.unread) || !Array.isArray(cronJobs)) return setFailed(true);
-        setData({ items: problems.items as StuckItem[], unread: problems.unread as string[], staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale) });
+        if (!Array.isArray(problems?.items) || !Array.isArray(problems?.unread) || !Array.isArray(problems?.notices) || !Array.isArray(cronJobs)) return setFailed(true);
+        setData({
+          items: problems.items as StuckItem[],
+          unread: problems.unread as string[],
+          notices: problems.notices as string[],
+          staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
+        });
       })
       .catch(() => setFailed(true));
   }, []);
 
-  const total = data ? data.items.length + data.staleJobs.length + data.unread.length : 0;
+  const total = data ? data.items.length + data.staleJobs.length + data.unread.length + data.notices.length : 0;
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -247,6 +252,11 @@ export function ProblemsBox() {
           {data.unread.map((library) => (
             <List.Item key={`unread-${library}`}>
               <Text c="yellow">Could not read {library}&apos;s stuck items.</Text>
+            </List.Item>
+          ))}
+          {data.notices.map((notice) => (
+            <List.Item key={`notice-${notice}`}>
+              <Text c="red">{notice}</Text>
             </List.Item>
           ))}
           {data.items.map((i) => (

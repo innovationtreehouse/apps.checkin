@@ -471,6 +471,10 @@ Procedure below is built on them.
   only through another role they hold (a lead of that household, the Board, a
   reviewer).  [Decision]
 
+- Whether an application asked for a scholarship or payment plan, and which, is
+  read by the board and finance only. A sysadmin or background-check reviewer
+  works an application without it.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
+
 ### Compliance
 
 - Nobody is removed for falling out of compliance. The view reports and sends
