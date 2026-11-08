@@ -45,6 +45,7 @@ const ORACLES = [
     'finance-view-audit-guard.test.ts',
     'finance-view-audit.test.ts',
     'finance-views-route.test.ts',
+    'household-archive-routes.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
     'income-strip.test.ts',
