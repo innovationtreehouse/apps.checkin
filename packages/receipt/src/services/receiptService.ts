@@ -1,4 +1,4 @@
-import { isServiceError, ServiceError, type FailureKind } from "@checkin/component-kit";
+import { isServiceError, KindedError, ServiceError, type FailureKind } from "@checkin/component-kit";
 import { DEFAULT_CURRENCY, DONOR_NAME_MAX, InKindDonorSchema, type ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
@@ -37,7 +37,7 @@ import {
   type DonorInput,
 } from "../lib/schemas";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
-import { getOrgId, limits, ports, requireActor } from "../runtime";
+import { getOrgId, limits, ports, receiptRuntime, requireActor } from "../runtime";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
@@ -318,25 +318,49 @@ async function reserveOcrCall(actor: ReceiptPrincipal): Promise<number> {
   });
 }
 
+/** Gives back `callId` to its person's daily allowance; `receiptId` is null when no receipt was made. */
+async function refundOcrCall(tx: Pick<Prisma.TransactionClient, "receiptAuditLog">, receiptId: string | null, actor: ReceiptPrincipal, callId: number): Promise<void> {
+  await tx.receiptAuditLog.create({
+    data: { receiptId, userId: actor.id, username: actor.name, action: OCR_CALL_REFUNDED, fieldChanged: OCR_CALL, valueBefore: String(callId) },
+  });
+}
+
 type OcrFailure = Extract<OcrResult, { success: false }>;
 
 /** A failure that is not the receipt's fault gives the call back to the person's daily allowance. */
 const REFUNDED: ReadonlySet<FailureKind> = new Set(["system", "connection", "settings", "bug"]);
+/** A failure that is not the file's: an outage, a retired model, a used-up credit or a revoked key. Someone has to hear of it. */
+const REPORTED: ReadonlySet<FailureKind> = new Set(["system", "connection", "settings", "bug"]);
 const NOT_COUNTED = "This didn't count against your daily reading allowance.";
 
-/** What the submitter reads on a receipt OCR could not read, by the failure's kind. */
-export function ocrFailureNote({ kind, error }: OcrFailure): string {
+/**
+ * Kinds that give back one call per receipt between them; retrying a receipt after that counts
+ * again. A missing setup makes no model call, so it is given back every time.
+ */
+const REFUNDED_ONCE_PER_RECEIPT: ReadonlySet<FailureKind> = new Set(["system", "connection", "bug"]);
+const ONCE_PER_RECEIPT_ACTIONS = [...REFUNDED_ONCE_PER_RECEIPT].map((kind) => `ocr_failed:${kind}`);
+
+/** Whether this failure gives its call back. */
+async function refundsCall(id: string, kind: FailureKind): Promise<boolean> {
+  if (!REFUNDED.has(kind)) return false;
+  if (!REFUNDED_ONCE_PER_RECEIPT.has(kind)) return true;
+  return (await db.receiptAuditLog.count({ where: { receiptId: id, action: { in: ONCE_PER_RECEIPT_ACTIONS } } })) === 0;
+}
+
+/** What the submitter reads on a receipt OCR could not read, by the failure's kind and whether its call was given back. */
+export function ocrFailureNote({ kind, error }: OcrFailure, refunded: boolean): string {
+  const counted = refunded ? ` ${NOT_COUNTED}` : "";
   switch (kind) {
     case "system":
-      return `Automatic reading is unavailable right now: ${error}. Press "Read it again" later, or type the details. ${NOT_COUNTED}`;
+      return `Automatic reading is unavailable right now: ${error}. Press "Read it again" later, or type the details.${counted}`;
     case "connection":
-      return `Automatic reading is switched off until an administrator reconnects it: ${error}. Type the details, or press "Read it again" once it is back. ${NOT_COUNTED}`;
+      return `Automatic reading is switched off until an administrator reconnects it: ${error}. Type the details, or press "Read it again" once it is back.${counted}`;
     case "settings":
-      return `Automatic reading isn't set up, so type the details. ${NOT_COUNTED}`;
+      return `Automatic reading isn't set up, so type the details.${counted}`;
     case "data":
-      return `This receipt couldn't be read automatically: ${error}. Type the details.`;
+      return `This receipt couldn't be read automatically: ${error}. Type the details.${counted}`;
     case "bug":
-      return `Automatic reading failed unexpectedly, and it has been reported. Type the details, or press "Read it again". ${NOT_COUNTED}`;
+      return `Automatic reading failed unexpectedly, and it has been reported. Type the details, or press "Read it again".${counted}`;
   }
 }
 
@@ -377,11 +401,13 @@ async function applyOcr(id: string, actor: ReceiptPrincipal, callId: number): Pr
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
     await runFullFlow(id, actor);
   } else {
+    if (REPORTED.has(result.kind)) receiptRuntime.failed("ocr", new KindedError(result.kind, result.error), `receipt ${id}`);
+    const refunded = await refundsCall(id, result.kind);
     await failOcr(id, actor, {
-      notes: ocrFailureNote(result),
+      notes: ocrFailureNote(result, refunded),
       action: `ocr_failed:${result.kind}`,
       reason: result.error,
-      refundCallId: REFUNDED.has(result.kind) ? callId : null,
+      refundCallId: refunded ? callId : null,
     });
   }
 }
@@ -395,7 +421,7 @@ async function failOcr(
   assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
   await db.$transaction(async (tx) => {
     // The call was spent whether or not the receipt is still here to land.
-    if (refundCallId !== null) await audit(tx, id, actor, { action: OCR_CALL_REFUNDED, fieldChanged: OCR_CALL, valueBefore: String(refundCallId) });
+    if (refundCallId !== null) await refundOcrCall(tx, id, actor, refundCallId);
     const moved = await tx.receiptDetail.updateMany({
       where: { id, state: "auto_upload" },
       data: { state: "ocr_failed", validationNotes: notes },
@@ -808,7 +834,7 @@ export const receiptService = {
     const d = input.details;
     const callId = d ? null : await reserveOcrCall(actor);
 
-    const id = await insertReceipt({
+    const insert = insertReceipt({
       orgId: await getOrgId(),
       actor,
       file,
@@ -833,6 +859,10 @@ export const receiptService = {
         ? (tx, receiptId) =>
             audit(tx, receiptId, actor, { action: "reimbursee_named", fieldChanged: "reimburseePersonId", valueAfter: String(reimbursee.id) })
         : undefined,
+    });
+    const id = await insert.catch(async (err: unknown) => {
+      if (callId !== null) await refundOcrCall(db, null, actor, callId);
+      throw err;
     });
 
     if (input.isInKind) await sendDonorSync(id, actor);
@@ -978,7 +1008,13 @@ export const receiptService = {
       transitionError(e);
     }
     const callId = await reserveOcrCall(actor);
-    await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");
+    try {
+      await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");
+    } catch (err) {
+      // Another retry moved the receipt first; this one never read it.
+      await refundOcrCall(db, id, actor, callId);
+      throw err;
+    }
     await applyOcr(id, actor, callId);
     return load(id, access, actor);
   },

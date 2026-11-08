@@ -9,7 +9,7 @@ import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
-import type { CapitalReviewLine } from "../contract";
+import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
 import { ServiceError, kindOf, toHttpError } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { allocateCents } from "@checkin/money";
@@ -558,7 +558,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
  */
 async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
   try {
-    await getInKindCapital().submit(orgId, lines);
+    await getInKindCapital().submit(orgId, CapitalReviewLineSchema.array().parse(lines));
   } catch (err) {
     const kind = kindOf(err);
     const answered = toHttpError(err);

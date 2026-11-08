@@ -168,7 +168,35 @@ describe("createAnthropicOcr — failure kinds, from the SDK's error classes", (
       ),
       "connection",
     ],
+    [
+      "a used-up credit balance, as the API sends it",
+      APIError.generate(
+        400,
+        {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+          },
+          request_id: "req_011CSHoEeqs5C35K2UUqR7Fy",
+        },
+        undefined,
+        headers,
+      ),
+      "connection",
+    ],
+    [
+      "a bad request in the API's own words",
+      APIError.generate(
+        400,
+        { type: "error", error: { type: "invalid_request_error", message: "messages.0.content.0.image.source.base64: image exceeds 5 MB maximum" }, request_id: "req_1" },
+        undefined,
+        headers,
+      ),
+      "data",
+    ],
     ["a file too large", status(413), "data"],
+    ["a request the API cannot process", status(422), "data"],
     ["a model that is not found", status(404), "bug"],
     ["anything else", new TypeError("x is undefined"), "bug"],
   ])("sorts %s", async (_name, err, kind) => {

@@ -127,6 +127,20 @@ describeDb("finance queue — QuickBooks tab", () => {
     await db.expense.update({ where: { id }, data: { qbMatchState: "CREATED", qbFailureKind: "settings", qbTxnId: "77" } });
     expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
   });
+
+  it("drops the setting reason once a retry clears the failure kind", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: null } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+  });
+
+  it("shows no setting reason on the expense or in the queue for an expense with no outbox row", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+    expect(await codes(FINANCE, "quickbooks", id)).toEqual([]);
+  });
 });
 
 describeDb("finance queue — account holds tab", () => {

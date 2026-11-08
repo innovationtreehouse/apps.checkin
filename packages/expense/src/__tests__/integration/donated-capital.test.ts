@@ -10,13 +10,13 @@ import {
   reviewDonatedLine,
   submitDonatedLines,
   unitCosts,
-  type DonatedLine,
 } from "../../services/donatedCapitalService";
+import type { DonatedCapitalLine } from "@checkin/receipt-types";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
 
-const line = (giftLineId: number, costCents: number, quantity = 1): DonatedLine => ({
+const line = (giftLineId: number, costCents: number, quantity = 1): DonatedCapitalLine => ({
   giftSource: "receipt",
   giftId: 41,
   giftLineId,
