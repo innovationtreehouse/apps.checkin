@@ -107,6 +107,25 @@ export function fromAddress(headers: Headers | undefined): string | null {
   return ADDR_SPEC.test(spec) ? spec.toLowerCase() : null;
 }
 
+/** The lowercased addresses a To or Cc header lists; a header that cannot be read lists none. */
+function listedAddresses(headers: Headers | undefined, name: string): string[] {
+  return headerValues(headers, name).flatMap((value) => {
+    const bare = withoutCommentsAndQuotes(value);
+    if (bare === null) return [];
+    return bare.split(/[,;:]/).map((a) => (a.match(/<([^<>]*)>/)?.[1] ?? a).trim().toLowerCase());
+  });
+}
+
+/**
+ * A reply, or a copy on which the mailbox is only in Cc: talk between people that a "no receipt"
+ * notice would interrupt. Mail to an alias of the mailbox lists it nowhere, so it is not a side copy.
+ */
+export function isSideCopy(headers: Headers | undefined, mailboxAddress: string): boolean {
+  if (headerValues(headers, "In-Reply-To").length > 0) return true;
+  const mine = mailboxAddress.toLowerCase();
+  return listedAddresses(headers, "Cc").includes(mine) && !listedAddresses(headers, "To").includes(mine);
+}
+
 type AuthResToken = { word: string } | { sep: ";" | "=" };
 
 /**
@@ -445,8 +464,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored, refused } = mailFiles(msg, reader);
-    // Nothing to read and nothing refused: the sender is told on the refusal notice that no receipt was found.
-    if (files.length === 0 && refused.length === 0) refused.push({ file: "your email", reason: "no_receipt" });
+    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
+    if (files.length === 0 && refused.length === 0 && !isSideCopy(msg.payload.headers, reader.address)) {
+      refused.push({ file: "your email", reason: "no_receipt" });
+    }
     // Every file already in the ledger: nothing to download.
     const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
     const ledgered = files.length > 0 && rows.length >= files.length;

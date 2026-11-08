@@ -32,6 +32,7 @@ function fakeMailbox() {
   const attachments = new Map<string, string>();
   const downloads: string[] = [];
   const reader: MailboxReader = {
+    address: "receipts@example.org",
     listRecent: async () => [...messages.keys()],
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
     getAttachment: async (_messageId, attachmentId) => {

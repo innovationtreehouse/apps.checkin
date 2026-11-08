@@ -56,7 +56,8 @@ describe('refused files', () => {
 describe('a message with no receipt', () => {
     it('says no receipt was found and how to send one, naming no file', async () => {
         const html = await htmlFor({ receiptId: null, mine: false, creditedName: null, refused: [{ file: 'your email', reason: 'no_receipt' }] });
-        expect(html).toContain('We found no receipt in it');
+        expect(html).toContain('We found no receipt file or receipt text in it.');
+        expect(html).not.toContain('no amount');
         expect(html).toContain('https://app.example.org/receipts/upload');
         expect(html).not.toContain('We could not accept these files');
     });
