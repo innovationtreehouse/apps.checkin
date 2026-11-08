@@ -423,6 +423,10 @@ Things the app takes as true because they are handled outside it.
 - A program leader sees whether a participant has paid, never how. Method,
   scholarship, and payment plan are not theirs.  [Decision — *Principle: least privilege*]
 
+- An enrollment's scholarship or payment-plan request, its seat hold, approval or
+  refusal, and a comp, are read by the board and finance only. A sysadmin or a
+  program's staff sees whether the place is paid, not how.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
+
 - Only the board and sysadmins set a program's price or its store variant. A
   program leader cannot: a price change can make their own family's place
   free.  [Decision — *Principle: least privilege*]
