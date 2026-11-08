@@ -404,6 +404,7 @@ export const marks = {
     ExpenseReceiptReview: ['approvedTaxCents'],
     ExpenseTaxApproval: ['taxCents'],
     ExpenseLineItem: ['unitPriceCents', 'totalPriceCents', 'allocatedTaxCents', 'allocatedShippingCents', 'allocatedDiscountCents'],
+    ExpenseAuditLog: ['valueBefore', 'valueAfter'],
     ReceivedExpensePayload: ['payloadJson'],
     CapitalAsset: ['costCents'],
     DonatedCapitalLine: ['costCents'],

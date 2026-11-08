@@ -109,7 +109,7 @@ describe('handler — logging from marks', () => {
             endpoint: RECEIPTS,
             path: '/api/__test__/fv/receipts/r1',
             query: { tab: 'held' },
-            records: [{ ref: 'Receipt:r1', fields: ['receiptTotalCents', 'uploadedByUserId'] }],
+            records: [{ ref: 'Receipt:r1', fields: ['receiptTotalCents', 'retailer', 'uploadedByUserId'] }],
             pageView: null,
         });
     });
@@ -282,6 +282,13 @@ describe('record names', () => {
         expect(new Set(refs)).toEqual(new Set(['Receipt:r1', 'Receipt:r2', 'Receipt:r7']));
     });
 
+    it("names a receipt's change history as the receipt", () => {
+        const declarations = getRoute('GET /api/receipts/[id]/audit-logs')?.financeView?.records ?? [];
+        expect(rowRecords('ReceiptAuditLog', { id: 41, receiptId: 'r9', valueAfter: '1200' }, declarations, { id: 'r9' })).toEqual([
+            { ref: 'Receipt:r9', fields: ['valueAfter'] },
+        ]);
+    });
+
     it('keeps marked fields no record could take under unnamed:<key>', () => {
         expect(
             rowRecords('FinanceQueueRow', { expenseId: null, amountCents: 900 }, [
@@ -299,12 +306,16 @@ describe('the match audit (follow-up from #2683)', () => {
             MatchAuditReport: {
                 configured: true,
                 orders: [{ bucket: 'UNCLAIMED_PAID', orderLegacyId: '1001', name: '#1001', customerEmail: 'buyer@x', totalCents: 500, discountCodes: [] }],
-                memberships: [{ bucket: 'MANUAL_PAYMENT', processId: 9, householdName: 'Lee', manualPaymentByName: 'Pat' }],
+                memberships: [
+                    { bucket: 'MANUAL_PAYMENT', processId: 9, membershipId: null, householdName: 'Lee', manualPaymentByName: 'Pat' },
+                    { bucket: 'NO_PROCESS', processId: null, membershipId: 31, householdName: 'Kim' },
+                ],
                 enrollments: [{ bucket: 'ADMIN_COMPED', programId: 4, personId: 2, personName: 'Sam' }],
             },
         }, { params: {}, url: 'http://localhost/api/finance-ops/s-read/match-audit' });
         expect(res.status).toBe(200);
         expect(written().records).toEqual([
+            { ref: 'OrgMembership:31', fields: ['memberships.householdName'] },
             { ref: 'OrgMembershipProcess:9', fields: ['memberships.householdName', 'memberships.manualPaymentByName'] },
             { ref: 'ProgramParticipant:4:2', fields: ['enrollments.personName'] },
             { ref: 'ShopOrder:1001', fields: ['orders.customerEmail', 'orders.discountCodes', 'orders.totalCents'] },

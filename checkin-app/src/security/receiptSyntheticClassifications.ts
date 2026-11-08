@@ -264,11 +264,11 @@ export const relations = {
 
 // Finance marks: the fields whose presence in a response makes it a logged finance view.
 export const marks = {
-  ReceiptView: ["uploadedByUserId", "reimbursementFor", "reimburseePersonId", "donorFirstName", "donorLastName", "donorCompanyName", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
+  ReceiptView: ["retailer", "uploadedByUserId", "reimbursementFor", "reimburseePersonId", "donorFirstName", "donorLastName", "donorCompanyName", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
   ReceiptLineView: ["uploadedByUserId", "unitPriceCents", "totalPriceCents"],
-  ReceiptConfirmationView: ["reimburseePersonId", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
+  ReceiptConfirmationView: ["retailer", "reimburseePersonId", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
   ReceiptConfirmationLineView: ["reimburseePersonId", "unitPriceCents", "totalPriceCents"],
-  ReceiptReimbursedView: ["reimburseePersonId", "receiptTotalCents"],
-  ReceiptDuplicateQueueRow: ["receiptTotalCents"],
+  ReceiptReimbursedView: ["retailer", "reimburseePersonId", "receiptTotalCents"],
+  ReceiptDuplicateQueueRow: ["retailer", "receiptTotalCents"],
   ReceiptDuplicateMember: ["uploaderName"],
 } as const;

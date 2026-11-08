@@ -213,7 +213,7 @@ export const relations = {
 
 export const marks = {
     Receipt: ['uploadedByUserId', 'fileBlob', 'reimbursementFor', 'reimburseePersonId', 'donorFirstName', 'donorLastName', 'donorCompanyName'],
-    ReceiptDetail: ['shippingCents', 'taxCents', 'discountCents', 'receiptTotalCents'],
+    ReceiptDetail: ['retailer', 'shippingCents', 'taxCents', 'discountCents', 'receiptTotalCents'],
     ReceiptFinanceReview: ['taxCents'],
     ReceiptLineItem: ['unitPriceCents', 'totalPriceCents'],
     ReceiptAuditLog: ['valueBefore', 'valueAfter'],

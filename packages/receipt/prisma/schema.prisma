@@ -121,6 +121,7 @@ model ReceiptDetail {
   /// @sensitivity:internal
   orgId                      String    @map("org_id")
   /// @sensitivity:internal
+  /// @financeMark
   retailer                   String?
   /// @sensitivity:internal
   receiptNumber              String?   @map("receipt_number")

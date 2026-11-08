@@ -335,6 +335,7 @@ model InKindDonation {
   withdrawnAfterMoneyAt  DateTime? @map("withdrawn_after_money_at")
   // The receipt's uploader (CompletedReceipt.submitterId), who may not decide the gift.
   /// @sensitivity:internal
+  /// @financeMark
   uploadedByUserId           Int?       @map("uploaded_by_user_id")
   // Set when a later donor replaced a different one already recorded.
   /// @sensitivity:internal

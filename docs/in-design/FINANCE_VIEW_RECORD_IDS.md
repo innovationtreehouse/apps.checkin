@@ -336,9 +336,10 @@ marked fields it sends.
 | `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` (a view model) |
 | `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) |
 | `GET /api/receipts`, needs-attention, confirmations, `[id]` | `Receipt` ← `id` (view models of `Receipt`) |
+| `GET /api/receipts/[id]/audit-logs` | `Receipt` ← `receiptId` (B8) |
 | `GET /api/workflow-mapping/receipts`, audit-log | `ReceivedReceipt` ← `id`, or ← `receivedReceiptId` on the audit log |
 | `GET /api/workflow-mapping/receipts/[id]` | `Receipt` ← `WorkflowReceiptView.receiptId` (Q-P4b) |
-| `GET /api/finance-ops/s-read/match-audit` | `ShopOrder` ← `orders[].orderLegacyId`; `OrgMembershipProcess` ← `memberships[].processId`; `ProgramParticipant` ← `enrollments[]` `programId`:`personId` |
+| `GET /api/finance-ops/s-read/match-audit` | `ShopOrder` ← `orders[].orderLegacyId`; `OrgMembershipProcess` ← `memberships[].processId`, or `OrgMembership` ← `memberships[].membershipId` on a row with no application (B7); `ProgramParticipant` ← `enrollments[]` `programId`:`personId` |
 | `GET /api/donations/disbursement-holds` | `Benevity.Disbursement` ← `disbursementId`; `Transaction` ← `transactionId` (Q4) |
 | `GET /api/donations/disbursement-events` | `Benevity.Disbursement` ← `disbursementId` (Q4) |
 | `GET /api/donations/in-kind/queue`, by-bucket | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` |
@@ -579,6 +580,33 @@ as today but with exact records and fields.
   `MatchAuditMembershipRow.householdName` and `manualPaymentByName`, and
   `MatchAuditEnrollmentRow.personName` are the same buyers and people as the
   fields already marked.  [Decision — owner]
+
+- **A picklist is not a finance view (B1).** The reimbursee picker's
+  `ExpenseReimburseeView` (candidate people) is not marked. The expense's actual
+  reimbursee stays marked.  [Decision — owner]
+- **The vendor is marked everywhere it appears (B2):** `Expense.vendorName`,
+  `FinanceQueueRow.vendorName`, the receipt's `retailer` (stored and every view)
+  and the workflow `vendorName`. A catalog or inventory `retailer` is where an
+  item can be bought, not a purchase's vendor, and is not marked.
+  [Decision — owner]
+- **The in-kind submitter is the submitter (B3):** `InKindDonation.uploadedByUserId`
+  and `InKindQueueItemView.uploadedByUserId` are marked.  [Decision — owner]
+- **The stored copy of a whole receipt is marked (B4):**
+  `ReceivedReceipt.receiptJson`, like the payloads Q17 marked.  [Decision — owner]
+- **The expense history's values are marked (B5):** `ExpenseAuditLog.valueBefore`
+  and `valueAfter`. They copy a reimbursee id, a tax amount or a note into the
+  history.  [Decision — owner]
+- **An actor's name is not marked (B6):** `MatchAuditEnrollmentRow.compedByName`
+  names who comped an enrolment, like the unmarked approver ids.
+  [Decision — owner]
+- **A match-audit membership row names its application, else its membership
+  (B7):** `OrgMembershipProcess:<processId>`, or `OrgMembership:<membershipId>`
+  on a row with no application.  [Decision — owner]
+- **A receipt's change history names the receipt (B8):** `Receipt:<receiptId>`,
+  not each history entry.  [Decision — owner]
+- **The register line names the household (B9).** The `revenue.md` B11 line
+  says "other than a person's view of their own or their household's", so the
+  Board's confirmation of Q17 covers P7 too.  [Decision — owner]
 
 ## Open questions for @thpr
 

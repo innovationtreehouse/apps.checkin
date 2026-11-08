@@ -273,7 +273,7 @@ export const marks = {
     Transaction: ['companyName', 'donationAmountCents', 'matchAmountCents', 'causeSupportFeeCents', 'merchantFeeCents', 'checkFeeCents', 'donorFirstName', 'donorLastName', 'donorComment'],
     TransactionCommentRule: ['comment'],
     DisbursementEvent: ['payload'],
-    InKindDonation: ['receiptTotalCents', 'donorFirstName', 'donorLastName', 'donorCompanyName'],
+    InKindDonation: ['receiptTotalCents', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'uploadedByUserId'],
     ManualInKindDonation: ['donorFirstName', 'donorLastName', 'donorCompanyName'],
     ManualInKindDonationLine: ['valueCents', 'suggestedValueCents'],
     InKindDonationLine: ['valueCents'],

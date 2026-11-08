@@ -66,7 +66,7 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-
 // FINANCE reads (BOARD too).
 defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'GET /api/receipts/queue-counts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptQueueCounts'], orderedView: FINANCE_READ_VIEW });
-defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW, financeView: { records: [{ key: 'ReceiptAuditLog', id: 'receiptId', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 // A receipt's duplicate group: org-wide, since its members may be anyone's receipts.
 defineRoute({ endpoint: 'GET /api/receipts/[id]/duplicate-group', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_READ_VIEW, financeView: { records: [{ key: 'ReceiptDuplicateGroup', id: { param: 'id' }, model: 'Receipt' }, { key: 'ReceiptDuplicateGroup', id: 'members[].id', model: 'Receipt' }, { key: 'ReceiptDuplicateGroup', id: 'members[].copyOfId', model: 'Receipt' }, { key: 'ReceiptDuplicateGroup', id: 'dismissed[]', model: 'Receipt' }] } });

@@ -57,6 +57,7 @@ model ReceivedReceipt {
   /// @sensitivity:public
   state           String   @default("pending_review")
   /// @sensitivity:personal
+  /// @financeMark
   receiptJson     String   @map("receipt_json")
   /// @sensitivity:internal
   validationNotes String?  @map("validation_notes")

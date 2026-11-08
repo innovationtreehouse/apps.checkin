@@ -74,6 +74,7 @@ export const relations = {
 } as const;
 
 export const marks = {
+    ReceivedReceipt: ['receiptJson'],
     WorkflowAuditLog: ['details'],
 } as const;
 

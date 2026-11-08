@@ -73,7 +73,7 @@ export const relations = {
 
 // Finance marks: the fields whose presence in a response makes it a logged finance view.
 export const marks = {
-  WorkflowReceiptSummary: ["receiptTotalCents"],
-  WorkflowReceiptView: ["receiptTotalCents", "taxCents", "shippingCents", "discountCents"],
+  WorkflowReceiptSummary: ["vendorName", "receiptTotalCents"],
+  WorkflowReceiptView: ["vendorName", "receiptTotalCents", "taxCents", "shippingCents", "discountCents"],
   WorkflowReceiptLineView: ["unitPriceCents", "totalPriceCents"],
 } as const;

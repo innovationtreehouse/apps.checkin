@@ -205,7 +205,7 @@ export const relations = {
 
 // Finance marks: the fields whose presence in a response makes it a logged finance view.
 export const marks = {
-  InKindQueueItemView: ["receiptTotalCents", "totalValueCents"],
+  InKindQueueItemView: ["uploadedByUserId", "receiptTotalCents", "totalValueCents"],
   InKindQueueLineView: ["valueCents", "suggestedValueCents"],
   InKindDecisionView: ["totalValueCents"],
   InKindBucketGiftView: ["totalValueCents"],
