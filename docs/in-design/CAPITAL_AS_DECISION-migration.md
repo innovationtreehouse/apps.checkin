@@ -1,7 +1,7 @@
 # Cutover: capital as a decision
 
-The one-time part of `CAPITAL_AS_DECISION.md`: what happens to the records that
-exist, the order of the PRs, and what each must be safe against. Everything here
+The one-time part of `CAPITAL_AS_DECISION.md`: the order of the PRs and what
+each must be safe against. Everything here
 stops being true once the last PR merges. Its last step is "extract the rules,
 delete both files".
 
@@ -9,31 +9,19 @@ delete both files".
 
 - Designed, not built. Every owner question, CAD-1 to CAD-16, is settled.
   CAD-8's removal and the CAD-13 conventions are their own PRs, not steps here.
-- **Production holds no capital records**: no assets on the register, no copied
-  gift lines, no capital designations (@thpr). So there is nothing to carry
-  over, no number to protect, and no backfill. Dev and local are reset from the
-  seed instead.
-
-## Existing records
-
-| Environment | What happens |
-|---|---|
-| Production | Nothing to move. Step 1's migration counts `CapitalAsset` and `DonatedCapitalLine` rows and refuses to run if it finds any, so a capital record made since this was written is not silently left behind. |
-| Dev and local | Reset from the seed after step 6 deploys. No script moves their rows. |
-
-Each org's high-water mark starts at the highest number on its register, which
-in production is none. Seeding historical numbers later raises it (CAD-12).
+- **Production holds no financial data at all** (@thpr): no expenses, gifts,
+  assets or copied lines. There is nothing to carry over, so the migration only
+  creates the tables and columns the design needs.
 
 ## Order
 
-Old code keeps serving for the deploy drain, so a table is dropped only after
-no release reads it. With no data to move, the steps are only about code.
+With no data to move, the steps are only about code. Old code keeps serving
+for the deploy drain, so a table is dropped only after no release reads it.
 
 1. **Schema.** Gift-line capital columns and the gift's `capitalReviewNeeded`
    in bulk-donation; `sourceKind`, gift source columns and `unitIndex` on
    `CapitalAsset`, with the unique index on (org, source, unit index);
-   `CapitalAssetSequence`, set from the register. Refuses to run if production
-   holds capital rows (above).
+   `CapitalAssetSequence`.
 2. **Register and final expense capital.** Expense gains `register` and the
    high-water mark; both mint paths go through them. The capital steps do not
    open while the reimbursee is unknown, and the send-back edges out of them,
