@@ -35,3 +35,17 @@ export function receiptMath(lines: MathLine[], shippingCents: number, taxCents: 
   const differenceCents = lineSum + shippingCents + taxCents - discountCents - receiptTotalCents;
   return { differenceCents, allowedCents: fractional, balanced: Math.abs(differenceCents) <= fractional + NOISE };
 }
+
+export interface StoredLine extends MathLine {
+  totalPriceCents: number;
+}
+
+/**
+ * A line's total after an edit. The stored total, which may be the receipt's printed figure, stands
+ * unless the quantity or unit price changes; then it is that quantity × unit price, the cost the
+ * math check counts.
+ */
+export function lineTotalAfterEdit(before: StoredLine, after: MathLine): number {
+  if (after.quantity === before.quantity && after.unitPriceCents === before.unitPriceCents) return before.totalPriceCents;
+  return Math.round(after.quantity * after.unitPriceCents);
+}

@@ -22,6 +22,7 @@ import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptRec
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
+import { lineTotalAfterEdit } from "../lib/lineMath";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
@@ -1009,6 +1010,10 @@ export const receiptService = {
       ];
 
       const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
+      const totalPriceCents = lineTotalAfterEdit(li, { quantity, unitPriceCents });
+      if (totalPriceCents !== li.totalPriceCents) {
+        edited.push({ field: "totalPrice", before: li.totalPriceCents / 100, after: totalPriceCents / 100 });
+      }
       const updated = await tx.receiptLineItem.update({
         where: { id: lineItemId },
         data: {
@@ -1017,7 +1022,7 @@ export const receiptService = {
           manufacturer: edit.manufacturer === undefined ? li.manufacturer : edit.manufacturer || null,
           quantity,
           unitPriceCents,
-          totalPriceCents: Math.round(quantity * unitPriceCents),
+          totalPriceCents,
           isDelayed: edit.isDelayed ?? li.isDelayed,
         },
       });
