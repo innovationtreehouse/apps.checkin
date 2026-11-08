@@ -1,6 +1,6 @@
 /** The alert port a catalog-event consumer library binds: an email to the Board. */
 export function orgEventAlerts(
-  template: "board.expenseEventsStuck" | "board.receiptMappingEventsStuck",
+  template: "board.receiptMappingEventsStuck",
   errorLabel: string,
 ) {
   return {
