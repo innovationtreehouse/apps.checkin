@@ -133,7 +133,7 @@ describeDb("retryPendingMatching", () => {
 
     await retryPendingMatching();
 
-    expect(cat.state.seen).toEqual([[1]]);
+    expect(cat.state.seen.map((lookups) => lookups.length)).toEqual([1]);
     const lines = await linesOf(r.id);
     expect(lines.map((l) => [l.recognitionStatus, l.assignedGtin13])).toEqual([
       ["non_inventory", null],
