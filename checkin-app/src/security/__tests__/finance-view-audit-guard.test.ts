@@ -53,6 +53,7 @@ const EXEMPT: Record<string, string> = {
     'GET /api/expense/org-settings': 'set-up: expense settings',
     'GET /api/income/settings': 'set-up: income settings',
     'GET /api/receipts/settings': 'set-up: receipt settings',
+    'GET /api/receipts/settings/ocr': 'set-up: whether automatic reading is on',
     'GET /api/expense/expenses/[id]/reimbursee/options': 'picker: people finance may name as reimbursee, no money',
     'GET /api/expense/expenses/[id]/reimbursee-vendor/options': 'picker: QuickBooks vendors to link, no money',
     'GET /api/receipts/mine': "self-only: the caller's own receipts",

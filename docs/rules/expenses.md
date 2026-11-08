@@ -78,7 +78,7 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - Only finance approves and rejects receipts, imports old ones, and changes
-  receipt settings.
+  receipt settings, apart from the switch for automatic reading.
   [Decision — *Principle: least privilege*]
 
 - Only finance and the Board see every expense. A program's leader and
@@ -269,6 +269,13 @@ Things the app takes as true because they are handled outside it.
   allowance. The app never reads the receipt again by itself, because each
   reading costs money: the submitter presses "Read it again".
   [Decision — owner]
+
+- Sysadmins, finance and the Board may turn automatic reading of receipts off
+  and on, so reading can stop at once when a known problem needs a deploy.
+  While it is off, no receipt is read and submitters are not offered "Read it
+  again". The switch is apart from the other receipt settings, which stay
+  finance's.
+  [Decision — owner, 2026-11-08]
 
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
   needs no spending sign-off. It is a donation, not an expense record.

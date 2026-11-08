@@ -64,6 +64,10 @@
  * Person's `id` and `name`, both `public` on Person, so any receipt submitter
  * reads them.
  *
+ * ReceiptOcrSwitch — whether automatic reading of receipts is on (`ocrEnabled`).
+ * A submitter's page reads it to hide "Read it again" while reading is off, so
+ * it is `public`.
+ *
  * ReceiptDuplicateGroup — a receipt's duplicate group as finance compares it:
  * its members in upload order and the ids of the receipts dismissed against it.
  * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
@@ -207,6 +211,9 @@ export const classifications = {
   ReceiptReimburseeOption: {
     id: "public",
     name: "public",
+  },
+  ReceiptOcrSwitch: {
+    ocrEnabled: "public",
   },
   ReceiptDuplicateGroup: {
     dismissed: "pii",

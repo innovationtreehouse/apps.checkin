@@ -78,6 +78,8 @@ const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/recei
 /** What became of reimbursements someone else uploaded: any signed-in person is admitted, and sees their own. */
 const REIMBURSED_ROUTE = 'GET /api/receipts/reimbursements';
 const REIMBURSEE_ROUTES = [...CONFIRMATION_ROUTES, REIMBURSED_ROUTE];
+/** The automatic-reading switch: sysadmin, FINANCE and BOARD (expenses.md). */
+const OCR_SWITCH = 'PUT /api/receipts/settings/ocr';
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -96,10 +98,14 @@ describe('receipt routes are registered', () => {
     });
 
     it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s own routes', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e))) {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e) && e !== OCR_SWITCH)) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
+    });
+
+    it('opens only the automatic-reading switch to sysadmin, FINANCE and BOARD', () => {
+        expect(getRoute(OCR_SWITCH)?.authorize).toEqual({ anyRole: ['isSysadmin', 'isFinance', 'isBoardMember'] });
     });
 });
 
@@ -243,6 +249,7 @@ describe('receipt submitter admission', () => {
         'POST /api/receipts/[id]/acknowledge-rejection',
         'POST /api/receipts/[id]/discard',
         'POST /api/receipts/[id]/resubmit',
+        'GET /api/receipts/settings/ocr',
     ];
     const RECEIPT_FILE = 'GET /api/receipts/[id]/file';
     const status = async (endpoint: string, flags: Flags) => {
