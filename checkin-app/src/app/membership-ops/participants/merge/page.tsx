@@ -12,6 +12,7 @@ import { PageLoader } from "@/components/ui/PageLoader";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { searchId } from "@/lib/searchId";
+import { useLoad } from "@/lib/api";
 
 interface ParticipantMergeView {
   id: number;
@@ -83,22 +84,14 @@ function isSearchable(query: string) {
 }
 
 // Results for a picker that is still searching. They clear once a person is picked
-// or the query gets too short, and otherwise stay up until the next response lands.
+// or the query gets too short, and otherwise stay up until the current query's answer lands.
 function usePeopleSearch(query: string, picked: boolean) {
-  const [people, setPeople] = useState<ParticipantMergeView[]>([]);
   const active = !picked && isSearchable(query);
-  const [wasActive, setWasActive] = useState(active);
-  if (wasActive !== active) {
-    setWasActive(active);
-    if (!active) setPeople([]);
-  }
-  useEffect(() => {
-    if (!active) return;
-    fetch(`/api/people/search?q=${encodeURIComponent(query)}`)
-      .then(r => r.json())
-      .then(d => setPeople(d.people || []));
-  }, [query, active]);
-  return people;
+  const { data } = useLoad<{ people?: ParticipantMergeView[] }>(
+    active ? `/api/people/search?q=${encodeURIComponent(query)}` : null,
+    { keepPrevious: true },
+  );
+  return data?.people ?? [];
 }
 
 export default function MergeParticipants() {
