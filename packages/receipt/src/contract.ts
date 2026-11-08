@@ -295,6 +295,21 @@ export interface MailAcknowledgement {
   receivedAt: Date;
   /** The message's refused files; only ever on the sender's copy. */
   refused: MailRefusal[];
+  /** Unique to this notice; its Message-ID is built from it by `noticeMessageId`. */
+  noticeId: string;
+}
+
+const NOTICE_ID_PREFIX = "<receipt-notice.";
+
+/** The Message-ID a notice goes out with, on the receipt mailbox's domain, so intake can tell a reply to it. */
+export function noticeMessageId(noticeId: string, mailboxAddress: string): string {
+  return `${NOTICE_ID_PREFIX}${noticeId}@${mailboxAddress.slice(mailboxAddress.lastIndexOf("@") + 1).toLowerCase()}>`;
+}
+
+/** True when `messageId` is one `noticeMessageId` made for this mailbox. */
+export function isNoticeMessageId(messageId: string, mailboxAddress: string): boolean {
+  const id = messageId.trim().toLowerCase();
+  return id.startsWith(NOTICE_ID_PREFIX) && id.endsWith(noticeMessageId("", mailboxAddress).slice(NOTICE_ID_PREFIX.length));
 }
 
 /** The host's mail out, for acknowledging mailed receipts. */
