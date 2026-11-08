@@ -405,10 +405,9 @@ one row per org holding the highest number ever issued. Each mint takes the
 next number from it and raises it in the same transaction; the row lock also
 serialises concurrent mints, which the full-register scan in `nextItfaSeq`
 (`capital-register.ts:40`) does not. Seeding a historical number above the mark
-raises it too; `link` issues no number and leaves it alone. The mark is set
-once, at migration, from the highest number on the register and the highest
-in past clearings' audit rows. After that the audit log is history only, never
-an input.
+raises it too; `link` issues no number and leaves it alone. The mark starts at
+the highest number on the register; production holds none yet. The audit log is
+never an input.
 
 - The expense registers inside its period step's transaction: atomic.
 - The gift's period step commits on the gift's side; the in-kind drain then
@@ -516,12 +515,12 @@ number.
 | CAD-4 | After accept: the gift's capital decision is its own step, on the gift's page. | Accept stays one act. The capital step is bookkeeping, so any finance holder may take it, as classifying a signed-off purchase is; the accept's conflict rule does not carry over. |
 | CAD-5 | Like a purchase: two steps, designate, then period and owner. Reuse the purchase's review wholesale. | The review logic is lifted out of the expense services into one module both paths call (section 3, "Review"); the gift does not get its own. |
 | CAD-6 | No. A capital decision never changes after the record books; any mistake is cleaned up by hand. Leave it that way. | Same for both paths. The app never retires or re-registers. |
-| CAD-7 | Asset numbers are physical labels and are never reused, whatever the design. And capital is not decided before the record can no longer be withdrawn. | No number is ever issued twice: the next number comes from a stored high-water mark, set at migration above every number issued, including those past clearings deleted (B7). Under this design nothing is undone, so no number is freed. Capital steps open only once a gift is accepted or an expense can no longer be sent back; the expense loses its send-back edges out of the capital steps, and the asset deletion behind B7 goes. |
+| CAD-7 | Asset numbers are physical labels and are never reused, whatever the design. And capital is not decided before the record can no longer be withdrawn. | No number is ever issued twice: the next number comes from a stored high-water mark that only rises (B7). Under this design nothing is undone, so no number is freed. Capital steps open only once a gift is accepted or an expense can no longer be sent back; the expense loses its send-back edges out of the capital steps, and the asset deletion behind B7 goes. |
 | CAD-8 | Yes: remove the withdrawal-after-money state. | The flag, finance's settle action, the queue's `withdrawal` reason and the `revenue.md` rule behind them go, in a PR of their own outside this design. B1 and B13 go with them. |
 | CAD-9 | No separate library. | The register, thresholds and review module stay in the expense library; Option B is dropped. |
 | CAD-10 | A capital line needs its number before it goes to QuickBooks. | A gift does not book until each capital line's assets are registered and stamped, as a purchase's are minted before its entry. |
 | CAD-11 | Any capital is capital: its account is an asset, not an expense. | A capital line never books to an expense account. On both paths it takes only a rule marked capital, which holds only a fixed-asset account, and waits for finance when none covers it. B6 goes. The CNC router marked capital waits for finance instead of booking to "Tools expense". |
-| CAD-12 | For historical assets, the numbers in QuickBooks are the labels on the items and must not change. | The seeded numbers win. A backfilled expense never mints a new number for an asset already seeded: finance links the line to its seeded asset in the period step, and `register` attaches the line to that row instead of minting. Backfilled expenses store no QuickBooks entry id (`expense-qb-processor.ts:320` skips posting), so the link is finance's choice, not a match. The line with no seeded asset is CAD-16. Existing duplicates (B8) are listed for finance; the app changes neither number. |
+| CAD-12 | For historical assets, the numbers in QuickBooks are the labels on the items and must not change. | The seeded numbers win. A backfilled expense never mints a new number for an asset already seeded: finance links the line to its seeded asset in the period step, and `register` attaches the line to that row instead of minting. Backfilled expenses store no QuickBooks entry id (`expense-qb-processor.ts:320` skips posting), so the link is finance's choice, not a match. The line with no seeded asset is CAD-16. Production has no capital records, so there are no existing duplicates to sort out. |
 | CAD-13 | The two sections in 5.2, as worded. | They go into `docs/conventions.md` in their own PR. |
 | CAD-14 | Withdrawn: a gift cannot drop its donor. | The only place a gift loses its donor is settling a withdrawal after its money, which nothing reaches (B13). What remains is whether to remove that state, CAD-8. |
 | CAD-15 | Yes: the discount is included too. | An asset's cost is exactly what its line books at, price plus its share of tax and shipping less its share of discount, split across its units. The $1,000 table with $80 tax, $50 shipping and $100 off is registered at $1,030, bought or given, and the register agrees with the fixed-asset account to the cent. |
