@@ -19,8 +19,9 @@ import { createCatalogSubmissions } from "@/lib/catalog/submissions";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
 
 /**
- * The intake parses the receipt, asserts the org and dedupes on
- * receiptId itself; its errors propagate so the money leg lands in apply_failed.
+ * The intake parses the receipt, asserts the org and dedupes on receiptId itself.
+ * Only an arrival refusal throws, landing the money leg in apply_failed; once the
+ * payload is stored, expense retries a failed build itself.
  */
 export const expenseSink: ExpenseSink = {
   async pushReceipt(receipt) {

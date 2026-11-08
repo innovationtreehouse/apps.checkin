@@ -3,12 +3,12 @@
  * (@checkin/receipt-contract-fixtures, seam "S2-expense-receipt"). The "already
  * applied" check lives in the service, so a repeat in-process call changes nothing.
  */
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedExpense, ORG } from "../helpers/seed";
 import { db } from "../../db";
-import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
+import { MAX_REPLAY_ATTEMPTS, receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 import { updateExpenseSettings } from "../../services/settingsService";
 import { storedTaxNeedsFinance } from "../../services/flagService";
 import { financeQueueRows } from "../../services/financeQueueService";
@@ -30,6 +30,8 @@ async function snapshot(receiptId: string) {
     audit: await db.expenseAuditLog.count({ where: { expenseId: receiptId } }),
   };
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("S2 intake — contract guard", () => {
   it("rejects a payload for another org", async () => {
@@ -178,6 +180,22 @@ describeDb("S2 intake — has-provisional fixture", () => {
     expect(rows).toHaveLength(new Set(gtins).size);
     expect(rows.every((r) => r.status === "pending")).toBe(true);
   });
+
+  it.each([
+    ["approved", { realGtin13: "0001234500017" }],
+    ["mapped_to_existing", { realGtin13: "0001234500017" }],
+    ["rejected", { rejectionReason: "duplicate" }],
+  ])("a replay re-applying a provisional already resolved as %s builds the expense", async (kind, fact) => {
+    const gtin = hasProvisional.lineItems.find((l) => l.isProvisional && l.gtin13)!.gtin13!;
+    await db.expenseProvisionalResolution.create({ data: { orgId: hasProvisional.orgId, provisionalGtin13: gtin, kind, ...fact } });
+    await receiveCompletedReceipt(hasProvisional);
+    expect((await db.provisionalItemMap.findFirstOrThrow({ where: { provisionalGtin13: gtin } })).status).toBe(kind);
+    await db.receivedExpensePayload.updateMany({ data: { status: "failed" } });
+
+    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
+
+    expect((await snapshot(hasProvisional.receiptId)).payloads.map((p) => p.status)).toEqual(["applied"]);
+  });
 });
 
 describeDb("S2 intake — applied is written only after processing commits", () => {
@@ -281,14 +299,19 @@ describeDb("S2 intake — applied is written only after processing commits", () 
     expect((await snapshot(allRecognized.receiptId)).payloads.map((p) => p.status)).toEqual(["applied"]);
   });
 
-  it("the sweep leaves a stored currency that cannot be read as one failing", async () => {
+  it("the sweep gives up at once on a stored payload the contract refuses, and replays it no more", async () => {
     await db.receivedExpensePayload.create({
       data: { orgId: allRecognized.orgId, receiptId: allRecognized.receiptId, payloadJson: JSON.stringify({ ...allRecognized, currency: "$" }), status: "failed" },
     });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
 
     expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
+    expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 0 });
 
-    expect((await snapshot(allRecognized.receiptId)).expenses).toBe(0);
+    const s = await snapshot(allRecognized.receiptId);
+    expect(s.expenses).toBe(0);
+    expect(s.payloads).toEqual([expect.objectContaining({ status: "failed", replayAttempts: MAX_REPLAY_ATTEMPTS, failureReason: expect.stringMatching(/^The stored payload no longer passes the receipt contract/) })]);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"intake_replay_given_up"'));
   });
 });
 
@@ -310,13 +333,25 @@ describeDb("S2 intake — expense owns a payload once it is stored", () => {
     expect((await snapshot(allRecognized.receiptId)).expenses).toBe(1);
   });
 
-  it("records a build failure the payload can never pass as refused: the replay skips it and finance sees it", async () => {
+  it("records a build failure a callee refuses as failed too, for the replay to retry", async () => {
     failingLookup(new ServiceError(422, "reimbursee cannot be read"));
 
     expect((await receiveCompletedReceipt(withReimbursee)).status).toBe("accepted");
 
-    expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "refused", failureReason: "reimbursee cannot be read" })]);
+    expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "failed", failureReason: "reimbursee cannot be read" })]);
+    expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
+  });
+
+  it("the replay gives a payload up after its last attempt: finance still sees it, and it is replayed no more", async () => {
+    failingLookup(new Error("directory down"));
+    await receiveCompletedReceipt(withReimbursee);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    for (let i = 0; i < MAX_REPLAY_ATTEMPTS; i++) expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
     expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 0 });
+
+    expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "failed", replayAttempts: MAX_REPLAY_ATTEMPTS })]);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"intake_replay_given_up","receiptId":"' + allRecognized.receiptId + '","attempts":5'));
     const [row] = await financeQueueRows(principal(3, { isFinance: true }), "expenses");
     expect(row).toMatchObject({ expenseId: null, reasons: [expect.objectContaining({ code: "INTAKE_FAILED" })] });
   });
