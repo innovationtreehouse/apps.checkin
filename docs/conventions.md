@@ -231,6 +231,56 @@ missed a row stored at a different time of day.
 
 ---
 
+## One process, one implementation
+
+- **A step that happens in two places is one piece of code both call.** When
+  the same decision, check or sequence of steps is needed by two libraries, two
+  kinds of record or two routes, it is written once and both call it. A copy, a
+  near-copy or a second implementation "for our side" is a fork: the two drift,
+  and each fix lands in only one of them.
+- **A record crosses into another library only to change owner.** Handing a
+  record to the library that takes the next step is fine when nothing flows
+  back and the hand-over is audited and either atomic or retried. Copying it so
+  another library can run the same steps on its own copy is the fork above.
+- **Where the domain says two things are treated the same, they run the same
+  code.** "The same rule" kept true by two implementations is a rule waiting to
+  diverge.
+
+The failure is slow. Each copy is correct the day it is written; the defect is
+the later fix that reaches one of them.
+
+---
+
+## A simple machine with a known risk beats a complete one nobody can read
+
+- **Whether a step can be undone depends on what undoing it costs, and where.**
+  - **A bad state that lives entirely in the app, the app must give a way out
+    of.** Nobody can repair it by hand without editing the database, so the
+    software owes a path back: an undo, or a reset that returns the record to a
+    known starting point and has it go through again.
+  - **A decision whose effects are outside the app may be declared
+    irreversible.** Once it has reached the books, a physical label or another
+    party, unwinding it in the app would mean modelling every outside effect
+    to keep them in step. Past that point the app says the decision is final,
+    and a mistake is cleaned up by hand. That costs a person some work, and it
+    keeps the machine readable. The point is chosen, stated and the same
+    everywhere the decision is taken.
+- **Take a decision as late as it can be taken, after the things that could
+  reverse it.** A decision taken before its record settles needs machinery to
+  unwind it when the record moves; one taken after needs none.
+- **An edge case the design does not handle is an accepted, written-down risk,
+  not a branch.** Record how it could happen, what it costs when it does, and
+  how it is cleaned up by hand. Do not add a state, flag or route whose only
+  purpose is a case that rarely or never happens.
+- **A state nothing can reach is removed.** Code for an unreachable case is not
+  insurance; it is a second account of the system that every reader has to
+  disprove.
+
+The failure is unreadability. A machine that covers everything is one nobody
+can hold in their head, and the bugs live in the transitions nobody traced.
+
+---
+
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never
