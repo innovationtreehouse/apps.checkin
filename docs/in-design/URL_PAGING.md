@@ -14,8 +14,10 @@ It also blurs the finance view log. That log is designed to write one entry per
 page view, and a page view starts on each in-app navigation, a change of URL
 query included. Moving to the next page is meant to be a new page view. Where
 the page lives only in memory, the browser cannot tell "next page" apart from
-the rest of the same page view, so the design for the log's browser half leaves
-it as an open point.
+the rest of the same page view. The log's design leaves that case as an open
+point for its browser half. The open point is added by the design's first build
+PR (innovationtreehouse/apps.checkin#3093, still open), not by the design on
+`main`, so this doc depends on that PR merging.
 
 ## Objective
 
@@ -26,8 +28,9 @@ page view in the finance view log. The rule is written down as a convention in
 
 ## Executive summary
 
-- **18 paged lists across 16 files.** Two already keep the page in the URL. The
-  other 16 keep it in local state. No list is cursor-based or infinite-scroll,
+- **18 paged lists across 16 files.** One, the expense list, already keeps the
+  page in the URL. The other 17 keep it in local state; two of those, the
+  inventory log's views, keep their view and filter in the URL but not the page. No list is cursor-based or infinite-scroll,
   and none pages inside a modal or side panel.
 - **Every list route already reads `page` from the query**, so the change is
   in the browser only.
@@ -38,7 +41,8 @@ page view in the finance view log. The rule is written down as a convention in
   entries).
 - **Nothing is built until the questions are settled.** The build is one PR:
   the shared helper in `@checkin/component-ui`, every list moved onto it, the
-  convention, and the finance view log design's open point closed.
+  convention, and the finance view log design's open point closed once #3093
+  has added it.
 
 ## Rules this relies on or changes
 
@@ -46,8 +50,10 @@ page view in the finance view log. The rule is written down as a convention in
   take `Pager` and paging from `@checkin/component-ui`. The new helper lives
   there, so this extends that rule rather than adding a second paging kit.
 - The finance view log design (`docs/in-design/FINANCE_VIEW_RECORD_IDS.md`, with
-  its build PR): a URL query change mints a new page-view id. Not yet a
-  standing rule; this doc depends on it only for the motivation.
+  the requirement and open point that innovationtreehouse/apps.checkin#3093
+  adds to it): a URL query change mints a new page-view id. Not yet a standing
+  rule, and not on `main` until #3093 merges; this doc depends on it only for
+  the motivation and for build step 4.
 - New: the convention this work adds (draft wording under "Proposed
   convention").
 
@@ -133,13 +139,16 @@ URL, the page number stops meaning one thing. Example, the gift list (L6):
 The same on the finance view log (L17): filter to one person, page to 2, reload,
 and you see page 2 of everyone's views.
 
-The two lists that already use the URL (L11, L14–L15) put their filters there
-too, which is why back works on them today.
+The lists that already use the URL put their filters there. The expense list
+(L11) keeps view, filter and page there, which is why back works on it today.
+The inventory log (L14–L15) keeps view and filter there but not the page, so
+back from a log entry keeps the filter and returns to page 1.
 
 Recommendation: the convention covers **everything that decides which rows the
 list shows**: the page, filters, view tabs and sort. A filter change drops
 `page` from the URL (back to page 1), as every list already does in memory.
-That widens the build from 16 lists to 16 lists plus about 15 filter and sort controls.
+That widens the build from the 17 lists' pages to those plus about 15 filter
+and sort controls.
 
 ### Q2. Does typed search text go in the URL?
 
@@ -164,8 +173,9 @@ on page 1 of the whole catalog.
 
 ### Q3. Push or replace?
 
-Today L11 and L14–L15 change view, filter and page with `router.replace`, so
-back leaves the list entirely.
+Today L11 changes view, filter and page with `router.replace`, and L14–L15
+change view and filter with it (their page is local state). Back leaves the
+list entirely on all three.
 
 - **Page with push.** "Next page" is a new page view in the log, and back
   should return to the page before. Example: on expenses, page 1 → 2 → 3, back
@@ -174,7 +184,8 @@ back leaves the list entirely.
   per filter change makes back step through filter states nobody thinks of as
   places. It also keeps a date picker from adding one entry per click.
 
-This changes L11 and L14–L15's back behaviour for paging. Recommendation:
+On L11 this changes what back does after paging; L14–L15 gain the page in
+the URL for the first time. Recommendation:
 push for the page, replace for everything else. The alternative is push for
 both, which gives one back step per filter change.
 
@@ -242,10 +253,11 @@ One PR:
    falls back to 1; a filter change drops it.
 2. **Every list on it.** L1–L18, plus their filters under Q1.
 3. **The convention** in `docs/conventions.md`.
-4. **The finance view log design.** Close its PR 3 open point (paging that does
-   not change the URL): all paging changes the URL, so requirement (b), a new
-   page-view id per URL query change, covers it. Doc edit only; no finance view
-   log code.
+4. **The finance view log design.** Close the PR 3 open point that #3093 adds
+   (paging that does not change the URL): all paging changes the URL, so
+   #3093's requirement (b), a new page-view id per URL query change, covers
+   it. Doc edit only; no finance view log code. If #3093 has not merged when
+   the build starts, this step waits for it.
 
 Host pages under `checkin-app/src/app` (L17, L18) move onto the same helper,
 since nothing about their paging needs its own.
