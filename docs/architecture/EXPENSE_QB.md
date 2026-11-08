@@ -168,8 +168,8 @@ through the drift check instead, where a void shows as an amount change.
 
 The app tells a void only by its $0 total. A keyed entry that finance sets to $0 by
 hand, without voiding it, is treated the same way: the record gets a replacement
-booking. This is accepted behaviour; finance that zeroes an entry to cancel a booking
-skips the record as for a void.
+booking. Finance that zeroes an entry to cancel a booking skips or dismisses the
+record, as for a void.
 
 ### Match states
 
