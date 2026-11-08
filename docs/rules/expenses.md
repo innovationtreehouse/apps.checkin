@@ -216,6 +216,12 @@ Things the app takes as true because they are handled outside it.
   twice.
   [Decision — owner]
 
+- A mailed message with nothing to read as a receipt — no file, no amount in
+  its text, only small inline images — gets one email saying no receipt was
+  found: attach the receipt as a file, or upload it in the app. It goes to the
+  same senders a refusal notice reaches, never to finance.
+  [Decision — owner]
+
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
   fraction of a cent. Then the total may differ by up to one cent for each
