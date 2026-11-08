@@ -40,7 +40,7 @@ function signIn(claims: Claims) {
 
 async function call(claims: Claims) {
     signIn(claims);
-    const impl = jest.fn(async () => ({ ReceiptOcrAllowance: { callsLeft: 20 } }));
+    const impl = jest.fn(async () => ({ ReceiptOcrAllowance: { personId: 7 } }));
     const res = await handler(RESET, impl)(new NextRequest(URL, { method: 'POST' }), { params: Promise.resolve({ personId: '7' }) });
     return { res, impl };
 }
@@ -57,10 +57,10 @@ describe('receipt reading-allowance reset route', () => {
     it.each([
         ['FINANCE', { isFinance: true }],
         ['BOARD', { isBoardMember: true }],
-    ] as const)('lets %s reset a person and read what is left', async (_who, claims) => {
+    ] as const)('lets %s reset a person\'s allowance', async (_who, claims) => {
         const { res } = await call(claims);
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ callsLeft: 20 });
+        expect(await res.json()).toEqual({ personId: 7 });
     });
 
     it.each([
