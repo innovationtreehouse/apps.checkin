@@ -7,8 +7,8 @@ of them. No code changes with this doc.
 
 **Status: every question is decided. PR 1 (the log table) is merged; PR 2 (the
 boundary) is built.** B11 narrows slightly (Q17): five routes that show no money
-and no person stop being logged. That changes a Board ruling, so the boundary PR
-waits for the Board's confirmation.
+and no person stop being logged. @thpr confirmed the narrowing on 2026-11-08
+and released the boundary PR.
 
 ## The problem
 
@@ -400,8 +400,7 @@ mark.
    and the page allowlist map. `receiptId` in `FinanceQueueRow`'s
    classification. Retiring the `auditedRead` flag and its guard test, which
    the start-up checks replace. The reworded `docs/rules/revenue.md` register
-   line, which narrows B11 (Q17). **It waits for the Board's confirmation** of
-   that narrowing.
+   line, which narrows B11 (Q17), confirmed by @thpr on 2026-11-08.
 3. **App code: the browser and the tab.** The app-shell wrapper that tags each
    `/api` call; `receiptId` in the finance-queue rows; `financeViewKinds.ts` as
    the model-to-page link map; the tab's new entry.
@@ -519,7 +518,7 @@ as today but with exact records and fields.
   files, signoffs and line-item approvals. Amounts on their own still log a
   view (Q15), so the payouts list and a bucket approver's expense lines stay
   logged. The Q4 entries for the two exclusion lists are dropped.
-  [Decision — owner, pending Board confirmation]
+  [Decision — owner; confirmed 2026-11-08]
 
   Draft wording for the `docs/rules/revenue.md` register line, for review.
   `revenue.md` is unchanged until the boundary PR:
@@ -606,7 +605,7 @@ as today but with exact records and fields.
   not each history entry.  [Decision — owner]
 - **The register line names the household (B9).** The `revenue.md` B11 line
   says "other than a person's view of their own or their household's", so the
-  Board's confirmation of Q17 covers P7 too.  [Decision — owner]
+  narrowed B11 line states P7 too.  [Decision — owner]
 
 ## Open questions for @thpr
 
