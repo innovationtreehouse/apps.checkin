@@ -6,6 +6,7 @@ import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Ta
 import { act, api, errorMessage, isRefusal, loadError, paged, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
+import { DONOR_COMPANY_MAX, DONOR_NAME_MAX } from "@checkin/receipt-types";
 import { LoadError, Pager } from "@checkin/component-ui";
 
 interface LineRow { id: number; gtin13: string; description: string | null; quantity: number; valueCents: number | null; suggestedValueCents: number | null }
@@ -130,9 +131,9 @@ export default function ManualInKindPage() {
               it is a suggestion, and finance sets the value when accepting the gift.
             </Text>
             <Group grow align="flex-end">
-              <TextInput label="Donor first name" required value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} />
-              <TextInput label="Donor last name" required value={lastName} onChange={(e) => setLastName(e.currentTarget.value)} />
-              <TextInput label="Company (optional)" value={companyName} onChange={(e) => setCompanyName(e.currentTarget.value)} />
+              <TextInput label="Donor first name" required maxLength={DONOR_NAME_MAX} value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} />
+              <TextInput label="Donor last name" required maxLength={DONOR_NAME_MAX} value={lastName} onChange={(e) => setLastName(e.currentTarget.value)} />
+              <TextInput label="Company (optional)" maxLength={DONOR_COMPANY_MAX} value={companyName} onChange={(e) => setCompanyName(e.currentTarget.value)} />
               <TextInput label="Date given" type="date" required value={donationDate} onChange={(e) => setDonationDate(e.currentTarget.value)} />
             </Group>
             <Select

@@ -36,12 +36,7 @@ export interface OwnerDirectory {
 }
 
 /** The in-kind donor entered at receipt upload (X13). Never null: upload requires a donor. */
-export const InKindDonorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  companyName: z.string().nullable(),
-});
-export type InKindDonor = z.infer<typeof InKindDonorSchema>;
+export { InKindDonorSchema, type InKindDonor } from "@checkin/receipt-types";
 
 /** A catalog item as the no-receipt in-kind picker shows it (X10). */
 export const CatalogItemSummarySchema = z.object({

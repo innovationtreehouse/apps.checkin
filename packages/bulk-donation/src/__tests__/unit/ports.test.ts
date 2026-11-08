@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
-import type { CompletedReceipt } from "@checkin/receipt-types";
+import { DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
-import { inventorySourceKey } from "../../contract";
+import { InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -91,6 +91,15 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
 
   it("rejects a blank donor name", async () => {
     await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "" }, 0)).rejects.toBeInstanceOf(ZodError);
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, lastName: "   " }, 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("rejects a donor name over the shared limit", async () => {
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "x".repeat(DONOR_NAME_MAX + 1) }, 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("checks the donor with the shared schema", () => {
+    expect(BulkDonorSchema).toBe(InKindDonorSchema);
   });
 
   it("rejects an empty receipt id", async () => {
