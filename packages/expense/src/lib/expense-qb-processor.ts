@@ -1,4 +1,4 @@
-import { kindOf } from "@checkin/component-kit";
+import { NotWiredError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
@@ -73,7 +73,7 @@ export async function lookupCatalogInfo(
       })),
     ),
   ]).catch((err: unknown) => {
-    if (kindOf(err) === "settings") return null;
+    if (err instanceof NotWiredError) return null;
     throw err;
   });
   if (!reads) return { gtin13ByItemId: new Map(), info, catalogNotConnected: true };

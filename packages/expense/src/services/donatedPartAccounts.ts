@@ -1,5 +1,5 @@
 // Gifts of goods book each part where the same purchase would (docs/rules/expenses.md): through expense's account rules.
-import { kindOf } from "@checkin/component-kit";
+import { NotWiredError } from "@checkin/component-kit";
 import { db } from "../db";
 import { donatedPartAccount } from "../lib/account-rules";
 import { getItem, listCategories, listSubcategories } from "../lib/catalog";
@@ -16,7 +16,7 @@ export type DonatedPartAccount = { lineId: number } & ({ accountId: string } | {
 export async function resolveDonatedPartAccounts(orgId: string, parts: DonatedPart[]): Promise<DonatedPartAccount[]> {
   if (parts.length === 0) return [];
   const catalog = await Promise.all([listCategories(), listSubcategories()]).catch((err: unknown) => {
-    if (kindOf(err) === "settings") return null;
+    if (err instanceof NotWiredError) return null;
     throw err;
   });
   if (!catalog) return parts.map((p) => ({ lineId: p.lineId, reason: "catalog not connected" }));

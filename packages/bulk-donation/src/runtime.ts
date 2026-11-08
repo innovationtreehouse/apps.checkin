@@ -61,9 +61,12 @@ export const getOrgId = bulkDonationRuntime.getOrgId;
 
 export const assertOrg = bulkDonationRuntime.assertOrg;
 
-/** An unbound catalog as the 503 a person reads; any other failure is rethrown. */
+const CATALOG_DB_MISSING = "The catalog database does not exist; the infra operator checks its settings";
+
+/** A catalog that needs fixing, unbound or its database missing, as the 503 a person reads; any other failure is rethrown. */
 export function catalogNotConnected(err: unknown): never {
-  if (kindOf(err) === "settings") throw new ServiceError(503, "No catalog is connected");
+  if (err instanceof NotWiredError) throw new ServiceError(503, "No catalog is connected");
+  if (kindOf(err) === "settings") throw new ServiceError(503, CATALOG_DB_MISSING);
   throw err;
 }
 
