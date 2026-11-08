@@ -59,6 +59,10 @@ did it, and reversing a decision reverses everything it made.
 - **Same rules both ways.** One threshold test, one cost basis and one
   account-type rule serve both paths. Which test, which cost and which account
   rule are owner questions (CAD-1 to CAD-3, CAD-11); this design does not pick.
+- **Only forks are designed away.** Of the copies between libraries on these
+  paths, the capital-line copy is a fork: the expense line's review steps
+  rerun on it through other code. The donor, the gift's money and a purchase's
+  lines are hand-offs and keep their shape (section 1.4).
 - **What does not change.** A gift is still a donation and never an expense
   record. Bucket, accept, refuse and return, and the gift's one journal entry are
   unchanged. Purchased capital review and depreciation keep their place in the
@@ -151,6 +155,60 @@ Who owns what: bulk-donation owns the gift, its lines, its bucket and its
 booking. Expense owns the register, the thresholds, the account rules and the
 copy. Today the gift's capital decision is owned by expense, on the copy.
 
+### 1.3 The donor, at receipt upload
+
+A receipt marked as a gift of goods carries its donor's names. The receipt
+library keeps them on the receipt and sends them to bulk-donation, which keeps
+its own copy on the gift.
+
+| Step | Where | Writes | Audit |
+|---|---|---|---|
+| Upload or the in-kind toggle stores the donor and marks it to send | `POST /api/receipts/upload` and `PUT /api/receipts/[id]/in-kind` → `receipt/src/services/receiptService.ts:884,1357` | `Receipt.donor*`, `donorSync = pending`, `donorSyncSeq` + 1 | `uploaded` / `in_kind_updated` |
+| The donor is sent, with its sequence number | `sendDonorSync`, `receipt/src/lib/donor-sync.ts:18` → port `donorSink.recordInKindDonor` → `recordDonor`, `bulk-donation/src/services/inKindService.ts:102` | the gift's `donor*`, `donorRecordedAt`, `donorReplacedAt` when it differs | receiving side: `IN_KIND_DONOR_RECORDED`. Sending side: **only a failure**, `donor_sync_failed` |
+| The receipt is marked sent, only if nothing changed during the call | `donor-sync.ts:46-50` | `donorSync = synced` | **none** |
+| A send still pending is retried | `resendDonorSync`, `receipt/src/services/catchUp.ts:203` | as above | as above |
+| The in-kind mark is cleared | the same send → `withdrawInKind` → `withdraw`, `inKindService.ts:130` | deletes the gift, or flags a withdrawal | `IN_KIND_WITHDRAWN` / `IN_KIND_WITHDRAWN_AFTER_MONEY` |
+| Finance settles a withdrawal | `settle`, `inKindService.ts:155` | clears the **gift's** donor | `IN_KIND_WITHDRAWAL_SETTLED` |
+
+The receipt edits the donor only while the receipt is editable; once it is
+finalized, nothing on the receipt side changes the donor again, and nothing
+flows from the gift back into the receipt's donor fields. The receipt still
+holds its copy afterwards, and finance's receipt view shows it.
+
+### 1.4 Each copy between libraries: hand-off or fork
+
+@thpr's test: a copy that moves a record to its next owner, with nothing coming
+back, is a **hand-off**, and acceptable if the transfer is audited and atomic or
+recoverable. A copy after which the same steps run in two flows through
+different code is a **fork**, and is the thing to design away.
+
+| Copy | From → to | Verdict | Evidence |
+|---|---|---|---|
+| A gift's donor | receipt → bulk-donation | **Hand-off** | The decision, conflict checks, warnings and donor letter run only on the gift (`inKindAcceptService.ts`); the receipt only captures and sends. Nothing comes back. Recoverable: the sequence number drops stale sends and the catch-up step resends. Audited on arrival. Gap: B13. |
+| A gift's money and lines | finalized receipt → bulk-donation | **Hand-off** | `ingestInKind`, `bulk-donation/src/inKind.ts:20`. The receipt is read-only once finalized; the gift owns the value from then on. A resend with different values is flagged, never merged (`inKindService.ts:40-80`). Audited on arrival (`IN_KIND_MONEY_RECEIVED`). Only the decision's outcome is read back, for the receipt pages (`giftOutcomes`, `inKind.ts:81`): a read, not a copy. |
+| A purchase's lines | finalized receipt → expense | **Hand-off** | The expense is created once, keyed by the receipt's id (`expense/src/services/intakeService.ts:168-190`), and everything after runs on the expense. Its audit and recovery are outside this design and not checked here. |
+| A gift's lines for capital review (`DonatedCapitalLine`) | bulk-donation → expense | **Fork** | The steps after the copy are steps the expense line already has, run through other code; and the result flows back to the gift twice (whether it still waits, and which lines are assets). Table below. |
+| An asset on the register (`CapitalAsset`) | the line → the register | **Hand-off in shape, minted by a fork** | A register row is the asset's next owner, and for a purchase nothing comes back. But two loops mint it, differently (below), and for a gift the result is read back at booking (B10). The row stays; the second loop goes. |
+| A gift line's account | bulk-donation asks expense's account rules | Neither: a call, nothing stored | `resolveDonatedPartAccounts`, through the host. It shares the rule matcher but filters it differently for capital (B6), which the shared test in Option A settles. |
+
+**The capital fork, step by step.**
+
+| Step | Purchased line | Donated line (after the copy) | Differs how |
+|---|---|---|---|
+| Threshold test | `classifyCapital` on the whole expense, `expense/src/lib/financial-flow.ts:107` | `classifyCapital` per line, `donatedCapitalService.ts:46-48` | B4, B5 |
+| Who is offered for review | every line, `capitalService.ts:73-76` | lines over the threshold only | B11 |
+| Designation | `submitCapitalReview`, `capitalService.ts:63` | `reviewDonatedLine`, `donatedCapitalService.ts:87` | one step against two (B11) |
+| Period and owner | `setDepreciationCycle`, `capitalService.ts:118` | the same call as the designation | — |
+| Bucket check | `requireLiveBuckets`, shared | `requireLiveBuckets`, shared | the same |
+| Minting | loop at `capitalService.ts:155-177` | loop at `donatedCapitalService.ts:112-131` | unit cost, date source, idempotency (count check against a 409) (B5) |
+| Undo | `clearStepsAfterOwnerApproval`, `signoff-facts.ts:288` | none | B1, B2, B7 |
+| Audit | a row per line, `ExpenseAuditLog` | one org row holding the request | B12 |
+| Account at booking | `matchingRules`, `account-rules.ts:17` | `donatedPartAccount`, `account-rules.ts:27` | B6 |
+
+Option A designs away this fork and the second minting loop, and only these.
+The hand-offs keep their shape; their gaps (B13) are follow-ups, not part of
+this design.
+
 ## 2. Bugs found
 
 Each with where it shows. Line numbers are at `main` 7734c351e.
@@ -169,6 +227,7 @@ Each with where it shows. Line numbers are at `main` 7734c351e.
 | B10 | **The gift does not know what it booked.** Which lines booked as assets is read live from the expense database at post time and never stored on the gift. A later change on the expense side (B2's fix, a correction by hand) changes the answer for a gift already booked, and a failed read fails the queue, the page and the drain together. | `in-kind-poster.ts:269`; `in-kind-resolve.ts:247`; `listQueue`, `inKindAcceptService.ts:317-325` |
 | B11 | **The review is not the same review.** A purchase takes two steps, designate then period, and finance may mark any line capital. A gift takes one step, capital, period and owner together, and only over-threshold lines are offered. The gift's reason to act shows on the gift; the action is on a separate expense page. | `capitalService.ts:63,118`; `DonatedCapitalReviewSchema`, `donatedCapitalService.ts:77`; `expense/src/nav.ts:92` |
 | B12 | **Five capital writes leave no audit row of their own.** The copy, the sent stamp, each purchased asset minted, each donated asset minted (the review row stores the request, not the numbers), and the gift's knowledge of which lines are assets. Only clearing a purchase names the asset numbers. | as above; `capitalService.ts:161`, `donatedCapitalService.ts:117,133-138` |
+| B13 | **The receipt keeps the donor after the gift drops it.** Settling a withdrawal clears the donor on the gift, as the revenue rule says, but the receipt's own copy of the donor stays, and finance's receipt view still shows it. A hand-off gap, not a fork. A successful send also leaves no row on the sending side: only the arrival (`IN_KIND_DONOR_RECORDED`) is recorded. | `settle`, `inKindService.ts:155-170`; `Receipt.donor*` untouched after send, `donor-sync.ts:46-50`; finance view keeps donor fields, `receiptService.ts:63-70` |
 
 **B4 example.** Total threshold $2,500, unit threshold $1,000.
 
@@ -378,6 +437,8 @@ For @thpr. Numbers are fixed; a settled question keeps its number.
 | CAD-10 | Does a gift wait for its asset numbers before it books, as a purchase does? | Whether a gift can be in the books with no register row yet | The expense database is down for an hour: the gift waits, or books and registers later |
 | CAD-11 | May a purchased capital line book to an account from a rule with no capital mark, as today, or must it hold for finance like a donated one? | B6: whether an asset can sit on an expense account | Finance marks a $4,000 CNC router capital; only the "Shop tools → Tools expense" rule covers it |
 | CAD-12 | For historical assets, which wins: the register built by backfilled expenses, or the numbers seeded from QuickBooks? Should a backfilled expense mint assets at all when the seed is loaded? | B8: one row per physical asset | A 2024 table saw is in QuickBooks as ITFA07 and is also a backfilled expense that mints ITFA41 |
+| CAD-13 | Should `docs/conventions.md` state the copy test, in one line? Proposed: *"A record may be copied to another library only to hand it to its next owner, with nothing flowing back; the transfer is audited and atomic or retried. Never copy a record so that the same steps run again in another library."* | Whether future cross-library work is judged by the hand-off/fork test | The donor copy passes; the capital-line copy fails |
+| CAD-14 | Is B13 in scope here? When a gift drops its donor, should the receipt drop its copy too, and should the sending side record a successful send? | A hand-off gap, left out of this design unless you say otherwise | A withdrawn gift is settled; the receipt still shows "Jane Smith" as donor |
 
 ## 6. Rules this design would establish
 
@@ -418,6 +479,9 @@ question is answered, and not before.
   fully-depreciated date and books nothing.
 - The audit-gap fixes being made elsewhere for the routes in section 1. This
   design removes the copy those gaps are in; it does not patch them.
+- The hand-offs in section 1.4: the donor, the gift's money and lines, and a
+  purchase's lines. They keep their shape; B13 is their only gap found, and is
+  CAD-14.
 - Anything under `checkin-app/src/security/`. The route changes this needs ship
   in their own boundary PRs, listed in the migration file.
 
