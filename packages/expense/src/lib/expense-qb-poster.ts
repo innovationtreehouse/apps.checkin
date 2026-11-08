@@ -3,13 +3,13 @@
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
-  MAX_CONSECUTIVE_FAILURES, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, postFailure, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  MAX_CONSECUTIVE_FAILURES, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
   type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
-import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
+import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import {
   appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
 } from "../services/qbMatchService";
@@ -142,6 +142,8 @@ const asRead = (f: PostFailure): PostFailure => (f.failure === "data" ? { ...f, 
 
 const UNCHARGED = { system: "outage", connection: "disconnected", settings: "waiting_on_settings" } as const;
 
+const reportFailure = (f: PostFailure, expenseId: string) => expenseRuntime.failed("posting", postFailureError(f), `expense ${expenseId}`);
+
 /**
  * Records a failed post by its kind. A bug is charged a try; a refusal (data) goes to finance after
  * this one; an outage, a broken connection or a missing setting is not charged, and a setting leaves
@@ -150,8 +152,10 @@ const UNCHARGED = { system: "outage", connection: "disconnected", settings: "wai
  * expense, so it is charged as a bug.
  */
 async function recordFailure(tx: Db, current: Expense, f: PostFailure, run: RunContext = {}): Promise<PostOutcome> {
+  const aboutThisExpense = f.failure === "system" && (f.answered || run.qbAnswered);
+  reportFailure(aboutThisExpense ? { ...f, failure: "bug" } : f, current.id);
   if (f.failure === "bug") return chargeBug(tx, current, f.error);
-  if (f.failure === "system" && (f.answered || run.qbAnswered)) {
+  if (aboutThisExpense) {
     return chargeBug(tx, current, `QuickBooks answered earlier in this ${f.answered ? "post" : "run"} but not for this expense: ${f.error}`);
   }
   if (f.failure === "data") {
@@ -462,6 +466,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
           if (result.own.kind === "failed") {
             const failure = asRead(result.own.failure);
             if (failure.failure in UNCHARGED) return recordFailure(tx, before, failure, run);
+            reportFailure(failure, before.id);
             return settle(tx, before, "needs_finance", { qbMatchState: "NEEDS_FINANCE", qbFailureKind: failure.failure }, result.own.note);
           }
           return settle(tx, before, "needs_finance", { qbMatchState: "NEEDS_FINANCE" }, result.own.note);

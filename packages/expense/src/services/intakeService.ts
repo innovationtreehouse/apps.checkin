@@ -2,7 +2,7 @@
 // receiptId — the "already applied" check lives here, so the in-process caller gets it.
 import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { db, isUniqueConstraintError } from "../db";
-import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
+import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
@@ -13,7 +13,7 @@ import { createProvisionalResolutionRepository } from "../repositories/provision
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
 import { recordSubmitterSeats } from "./submitterSeatService";
-import { kindOf, ServiceError, type FailureKind } from "@checkin/component-kit";
+import { ServiceError, type FailureKind } from "@checkin/component-kit";
 
 /** A stored payload as the contract reads it now, so a code it normalizes does not count as a difference. */
 function asParsed(payloadJson: string): string {
@@ -33,7 +33,9 @@ export async function receiveCompletedReceipt(
   return { receiptId, status };
 }
 
-type Received = { receiptId: string; status: "created" | "already_applied" | "accepted"; failure?: FailureKind };
+type Received =
+  | { receiptId: string; status: "created" | "already_applied" }
+  | { receiptId: string; status: "accepted"; failure: { kind: FailureKind; reason: string } };
 
 /** A new arrival starts the payload's replay tries from zero; a replay keeps its count. */
 async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<Received> {
@@ -64,12 +66,13 @@ async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<R
   try {
     created = await processCompletedReceipt(receipt);
   } catch (err) {
-    logError("intake_build_failed", { receiptId, kind: kindOf(err) }, err);
+    const kind = expenseRuntime.failed(replay ? "intake-replay" : "intake", err, `receipt ${receiptId}`);
+    logError("intake_build_failed", { receiptId, kind }, err);
     await db.receivedExpensePayload
       .updateMany({ where: { receiptId, status: { not: "applied" } }, data: { status: "failed", failureReason: messageOf(err) } })
       // The row stays "received", which the daily replay still picks up.
       .catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
-    return { receiptId, status: "accepted", failure: kindOf(err) };
+    return { receiptId, status: "accepted", failure: { kind, reason: messageOf(err) } };
   }
   await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null } });
   return { receiptId, status: created ? "created" : "already_applied" };
@@ -111,13 +114,13 @@ async function replayOne(row: { receiptId: string; payloadJson: string; replayAt
   // A stored payload the contract refuses can never build, so it is given up at once.
   if (!stored.ok) return recordFailedReplay(receiptId, MAX_REPLAY_ATTEMPTS, `The stored payload no longer passes the receipt contract: ${stored.reason}`);
 
-  let failure: { kind: FailureKind; reason: string | null };
+  let failure: { kind: FailureKind; reason: string };
   try {
-    const { status, failure: kind } = await receive(stored.payload, { replay: true });
-    if (status !== "accepted") return true;
-    failure = { kind: kind ?? "bug", reason: null };
+    const received = await receive(stored.payload, { replay: true });
+    if (received.status !== "accepted") return true;
+    failure = received.failure;
   } catch (err) {
-    failure = { kind: kindOf(err), reason: messageOf(err) };
+    failure = { kind: expenseRuntime.failed("intake-replay", err, `receipt ${receiptId}`), reason: messageOf(err) };
   }
   // An outage, a lost connection or a missing setting is no fault of the payload, so it uses no try.
   if (UNCHARGED_KINDS.has(failure.kind)) return false;

@@ -227,7 +227,7 @@ describe("defineRuntime", () => {
     it("returns the kind, logs one failure_kinded line and calls the bound port", () => {
       const lines = logged();
       const reports: FailureReport[] = [];
-      configured({ onFailure: (r) => reports.push(r) });
+      configured({ onFailure: (r) => void reports.push(r) });
       const err = Object.assign(new KindedError("data", "refused"), { status: 400, requestId: "tid-1", codes: ["6000"] });
 
       expect(runtime.failed("posting", err, "expense 7")).toBe("data");
@@ -240,7 +240,7 @@ describe("defineRuntime", () => {
     it("reads a plain error's kind with kindOf and leaves out what it doesn't carry", () => {
       const lines = logged();
       const reports: FailureReport[] = [];
-      configured({ onFailure: (r) => reports.push(r) });
+      configured({ onFailure: (r) => void reports.push(r) });
 
       expect(runtime.failed("push", new ServiceError(403, "forbidden"))).toBe("bug");
       expect(runtime.failed("push", new Error("boom"))).toBe("bug");
@@ -263,6 +263,19 @@ describe("defineRuntime", () => {
       });
       expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
       expect(lines()).toHaveLength(3);
+    });
+
+    it("hands off without waiting on an async port, and logs a port that rejects", async () => {
+      logged();
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      let settled = false;
+      configured({ onFailure: () => new Promise<void>((resolve) => setTimeout(() => { settled = true; resolve(); }, 0)) });
+      expect(runtime.failed("push", new Error("boom"))).toBe("bug");
+      expect(settled).toBe(false);
+
+      configured({ onFailure: async () => { throw new Error("channel down"); } });
+      runtime.failed("push", new Error("boom"));
+      await vi.waitFor(() => expect(error).toHaveBeenCalledWith("[kit-test] on-failure port threw:", expect.objectContaining({ message: "channel down" })));
     });
   });
 });

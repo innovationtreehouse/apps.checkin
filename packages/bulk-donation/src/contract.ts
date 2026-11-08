@@ -1,6 +1,7 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
+import type { OnFailure } from "@checkin/component-kit";
 import type { BooksMap, BooksMapRole, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
@@ -185,6 +186,7 @@ export interface BulkDonationConfig {
   auth: BulkDonationAuth;
   /** Called once per request: the host may resolve it from its own store, so never at boot. */
   org: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   owners?: OwnerDirectory;
   catalog?: CatalogLookup;
   inventory?: InventoryApply;
