@@ -8,7 +8,8 @@ const mockShow = jest.fn();
 const mockApi = jest.fn();
 
 jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: true } } }) }));
+let mockIsManager = true;
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: mockIsManager } } }) }));
 
 const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
@@ -25,7 +26,7 @@ const baseDetail = {
     ],
   },
   ReceivedReceiptLineStatus: [
-    { id: 11, receiptLineItemId: 1, recognitionStatus: "unrecognized", assignedGtin13: null, provisionalItemGtin13: null, conversionFactor: 1 },
+    { id: 11, receiptLineItemId: 1, recognitionStatus: "unrecognized", assignedGtin13: null as string | null, provisionalItemGtin13: null, conversionFactor: 1 },
     { id: 12, receiptLineItemId: 2, recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, conversionFactor: 1 },
   ],
 };
@@ -50,6 +51,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   detail = baseDetail;
+  mockIsManager = true;
 });
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
@@ -318,6 +320,55 @@ describe("the receiving page for one receipt", () => {
     wrap();
     expect(screen.getByText("Matching pending")).toBeInTheDocument();
     expect(screen.getByText("Matching didn't run because the catalog was unavailable. It retries daily.")).toBeInTheDocument();
+  });
+
+  describe("Run matching now", () => {
+    const pending = () => ({ ...baseDetail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } });
+    /** The receipt as the reload after the run reads it. */
+    function afterRun(after: typeof baseDetail) {
+      mockApi.mockImplementation(async (path: string) => (path === "/receipts/7" ? after : { id: 7, state: after.ReceivedReceipt.state }));
+    }
+
+    it("is offered to inventory managers beside Matching pending", () => {
+      detail = pending();
+      wrap();
+      expect(screen.getByRole("button", { name: "Run matching now" })).toBeInTheDocument();
+    });
+
+    it("is not offered to anyone else", () => {
+      mockIsManager = false;
+      detail = pending();
+      wrap();
+      expect(screen.queryByRole("button", { name: "Run matching now" })).not.toBeInTheDocument();
+    });
+
+    it("is not offered once matching ran", () => {
+      wrap();
+      expect(screen.queryByRole("button", { name: "Run matching now" })).not.toBeInTheDocument();
+    });
+
+    it("runs matching for this receipt and says how many lines it matched", async () => {
+      detail = pending();
+      afterRun({
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [
+          { ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus: "recognized", assignedGtin13: "0000000000017" },
+          baseDetail.ReceivedReceiptLineStatus[1],
+        ],
+      });
+      wrap();
+      fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "1 line matched", color: "green" }));
+      expect(mockApi).toHaveBeenCalledWith("/receipts/7/run-matching", { method: "POST" });
+    });
+
+    it("says the catalog is still unavailable when matching couldn't run again", async () => {
+      detail = pending();
+      afterRun(pending());
+      wrap();
+      fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "Catalog still unavailable. Matching retries daily.", color: "gray" }));
+    });
   });
 
   it("shows no Matching pending once matching ran", () => {

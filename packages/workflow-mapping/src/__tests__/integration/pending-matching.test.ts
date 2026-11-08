@@ -9,8 +9,9 @@ import { lineItemService } from "../../services/lineItemService";
 import { ingestReceipt } from "../../services/receiptIntakeService";
 import { receiptService } from "../../services/receiptService";
 import { MATCHING_RETRY_DAYS, retryPendingMatching } from "../../services/pendingMatching";
+import { runMatching } from "../../routes";
 import { describeDb } from "../helpers/db";
-import { buildReceiptPayload, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
+import { MANAGER, buildReceiptPayload, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
 const GTIN = "0000000000017";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -237,5 +238,46 @@ describeDb("a person sends a receipt whose matching is pending", () => {
     const row = await receiptRow(r.id);
     expect(row.state).not.toBe("pending_review");
     expect(row.matchingPendingSince).toBeNull();
+  });
+});
+
+describeDb("Run matching now", () => {
+  const runNow = (id: number) => runMatching({ req: new Request("http://test/run-matching", { method: "POST" }), params: { id: String(id) } });
+
+  it("matches the receipt at once, records who ran it, and sends it once every line is decided", async () => {
+    const r = await pendingReceipt();
+
+    expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "resolved" } });
+
+    expect((await linesOf(r.id)).map((l) => l.recognitionStatus)).toEqual(["recognized", "recognized"]);
+    expect((await receiptRow(r.id)).matchingPendingSince).toBeNull();
+    const [ran] = await auditsOf(r.id, "matching_ran");
+    expect(ran).toMatchObject({ actorUserId: MANAGER.id, actorUsername: MANAGER.name });
+    expect(JSON.parse(ran?.details ?? "{}")).toEqual({ matched: 2 });
+  });
+
+  it("leaves the receipt pending while the catalog is still down, and reports nothing", async () => {
+    cat.state.down = new KindedError("system", "still down");
+    const r = await pendingReceipt();
+
+    expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "pending_review" } });
+
+    expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
+    expect(reports).toEqual([]);
+  });
+
+  it("refuses a receipt whose matching already ran", async () => {
+    const r = await makeReceipt({ lineCount: 1 });
+    await makeLineStatus(r.id, { receiptLineItemId: 1, recognitionStatus: "unrecognized" });
+
+    await expect(runNow(r.id)).rejects.toMatchObject({ status: 409 });
+    expect(cat.state.seen).toEqual([]);
+  });
+
+  it("refuses a receipt that is no longer waiting for mapping", async () => {
+    const r = await pendingReceipt({ state: "apply_failed" });
+
+    await expect(runNow(r.id)).rejects.toMatchObject({ status: 409 });
+    expect(cat.state.seen).toEqual([]);
   });
 });
