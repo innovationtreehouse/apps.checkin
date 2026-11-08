@@ -1,14 +1,13 @@
 /**
- * Matching that couldn't run on arrival: the receipt is "Matching pending", and the daily re-run
- * fills only undecided lines, sends a fully decided receipt, and gives up after five days.
+ * Matching that couldn't run on arrival: the receipt is "Matching pending" until a person runs
+ * matching, which fills only undecided lines and sends a fully decided receipt, or maps it by hand.
  */
 import { beforeEach, expect, it, vi } from "vitest";
-import { KindedError, type FailureReport } from "@checkin/component-kit";
+import { KindedError } from "@checkin/component-kit";
 import { db } from "../../db";
 import { lineItemService } from "../../services/lineItemService";
 import { ingestReceipt } from "../../services/receiptIntakeService";
 import { receiptService } from "../../services/receiptService";
-import { MATCHING_RETRY_DAYS, retryPendingMatching } from "../../services/pendingMatching";
 import { runMatching } from "../../routes";
 import { describeDb } from "../helpers/db";
 import { MANAGER, buildReceiptPayload, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
@@ -45,14 +44,12 @@ function catalog() {
 
 let cat: ReturnType<typeof catalog>;
 let sinks: ReturnType<typeof recordingSinks>;
-let reports: FailureReport[];
 
 beforeEach(async () => {
   await clearAll();
   cat = catalog();
   sinks = recordingSinks();
-  reports = [];
-  configure({ catalogReader: cat.catalogReader, ...sinks, onFailure: (r) => void reports.push(r) });
+  configure({ catalogReader: cat.catalogReader, ...sinks });
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -105,120 +102,6 @@ describeDb("arrival during a catalog outage", () => {
   });
 });
 
-describeDb("retryPendingMatching", () => {
-  it("matches every line once the catalog is back, clears the flag and sends the receipt", async () => {
-    const r = await pendingReceipt();
-
-    expect(await retryPendingMatching()).toEqual({ ran: 1, deferred: 0, gaveUp: 0, errored: 0 });
-
-    const lines = await linesOf(r.id);
-    expect(lines.map((l) => [l.recognitionStatus, l.assignedGtin13, l.conversionFactor, l.conversionVersion])).toEqual([
-      ["recognized", GTIN, 2, 3],
-      ["recognized", GTIN, 2, 3],
-    ]);
-    const row = await receiptRow(r.id);
-    expect(row.matchingPendingSince).toBeNull();
-    expect(row.state).toBe("resolved");
-    expect(sinks.calls.expense).toHaveLength(1);
-    const matched = await auditsOf(r.id, "line_matched");
-    expect(matched).toHaveLength(2);
-    expect(matched.every((a) => a.actorUserId === null)).toBe(true);
-    expect(await auditsOf(r.id, "matching_ran")).toHaveLength(1);
-    expect((await auditsOf(r.id, "auto_proceed_triggered"))[0]?.actorUserId).toBeNull();
-  });
-
-  it("never touches a line a person has decided, and sends the receipt once every line is decided", async () => {
-    const r = await pendingReceipt();
-    await db.receivedReceiptLineStatus.updateMany({
-      where: { receivedReceiptId: r.id, receiptLineItemId: 1 },
-      data: { recognitionStatus: "non_inventory" },
-    });
-
-    await retryPendingMatching();
-
-    expect(cat.state.seen.map((lookups) => lookups.length)).toEqual([1]);
-    const lines = await linesOf(r.id);
-    expect(lines.map((l) => [l.recognitionStatus, l.assignedGtin13])).toEqual([
-      ["non_inventory", null],
-      ["recognized", GTIN],
-    ]);
-    expect((await receiptRow(r.id)).state).toBe("resolved");
-  });
-
-  it("no match is a real answer: the flag clears and the receipt waits for mapping", async () => {
-    cat.state.match = false;
-    const r = await pendingReceipt();
-
-    expect(await retryPendingMatching()).toMatchObject({ ran: 1 });
-
-    const row = await receiptRow(r.id);
-    expect(row.matchingPendingSince).toBeNull();
-    expect(row.state).toBe("pending_review");
-    expect(await auditsOf(r.id, "line_matched")).toHaveLength(0);
-    expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 0, gaveUp: 0, errored: 0 });
-  });
-
-  it("keeps the flag while the catalog is still down, and reports nothing before five days", async () => {
-    cat.state.down = new KindedError("system", "still down");
-    const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS - 1 });
-
-    expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 1, gaveUp: 0, errored: 0 });
-
-    expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
-    expect(reports).toEqual([]);
-  });
-
-  it("an unbound catalog at re-run keeps the flag", async () => {
-    configure({ ...sinks, onFailure: (rep) => void reports.push(rep) });
-    const r = await pendingReceipt();
-
-    expect(await retryPendingMatching()).toMatchObject({ errored: 1 });
-    expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
-  });
-
-  it("an unbound catalog gives up after five days too, recording the failure's kind", async () => {
-    configure({ ...sinks, onFailure: (rep) => void reports.push(rep) });
-    const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS });
-
-    expect(await retryPendingMatching()).toMatchObject({ gaveUp: 1 });
-    const [gaveUp] = await auditsOf(r.id, "matching_gave_up");
-    expect(JSON.parse(gaveUp?.details ?? "{}")).toMatchObject({ kind: "settings" });
-    expect(reports).toEqual([{ lane: "matching", kind: "settings", detail: `receipt ${r.receiptId}` }]);
-  });
-
-  it("after five days stops, leaves the lines for hand mapping, and reports once to the on-failure port", async () => {
-    cat.state.down = new KindedError("system", "still down");
-    const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS });
-
-    expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 0, gaveUp: 1, errored: 0 });
-
-    const row = await receiptRow(r.id);
-    expect(row.matchingPendingSince).toBeNull();
-    expect(row.state).toBe("pending_review");
-    expect((await linesOf(r.id)).every((l) => l.recognitionStatus === "unrecognized")).toBe(true);
-    expect(await auditsOf(r.id, "matching_gave_up")).toHaveLength(1);
-    expect(reports).toEqual([{ lane: "matching", kind: "system", detail: `receipt ${r.receiptId}` }]);
-
-    expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 0, gaveUp: 0, errored: 0 });
-    expect(reports).toHaveLength(1);
-  });
-
-  it("leaves a receipt that is no longer waiting for mapping alone", async () => {
-    const r = await pendingReceipt({ state: "apply_failed" });
-
-    expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 0, gaveUp: 0, errored: 0 });
-    expect((await linesOf(r.id)).every((l) => l.recognitionStatus === "unrecognized")).toBe(true);
-  });
-
-  it("leaves a receipt without the flag alone", async () => {
-    const r = await makeReceipt({ lineCount: 1 });
-    await makeLineStatus(r.id, { receiptLineItemId: 1, recognitionStatus: "unrecognized" });
-
-    expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 0, gaveUp: 0, errored: 0 });
-    expect(cat.state.seen).toEqual([]);
-  });
-});
-
 describeDb("a person sends a receipt whose matching is pending", () => {
   it("a manual proceed clears the flag", async () => {
     const r = await pendingReceipt({ lineCount: 1 });
@@ -256,29 +139,48 @@ describeDb("Run matching now", () => {
     expect(JSON.parse(ran?.details ?? "{}")).toEqual({ matched: 2 });
   });
 
-  it("leaves the receipt pending while the catalog is still down, and reports nothing", async () => {
+  it("leaves the receipt pending while the catalog is still down", async () => {
     cat.state.down = new KindedError("system", "still down");
     const r = await pendingReceipt();
 
     expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "pending_review" } });
 
     expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
-    expect(reports).toEqual([]);
   });
 
-  it("past five days still leaves the receipt pending; the next daily run gives it up and reports it", async () => {
-    cat.state.down = new KindedError("system", "still down");
-    const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS + 1 });
+  it("never touches a line a person has decided, and sends the receipt once every line is decided", async () => {
+    const r = await pendingReceipt();
+    await db.receivedReceiptLineStatus.updateMany({
+      where: { receivedReceiptId: r.id, receiptLineItemId: 1 },
+      data: { recognitionStatus: "non_inventory" },
+    });
+
+    expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "resolved" } });
+
+    expect(cat.state.seen.map((lookups) => lookups.length)).toEqual([1]);
+    expect((await linesOf(r.id)).map((l) => [l.recognitionStatus, l.assignedGtin13])).toEqual([
+      ["non_inventory", null],
+      ["recognized", GTIN],
+    ]);
+  });
+
+  it("no match is a real answer: the flag clears and the receipt waits for mapping", async () => {
+    cat.state.match = false;
+    const r = await pendingReceipt();
+
+    expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "pending_review" } });
+
+    expect((await receiptRow(r.id)).matchingPendingSince).toBeNull();
+    expect(await auditsOf(r.id, "line_matched")).toHaveLength(0);
+  });
+
+  it("an unbound catalog leaves the receipt pending", async () => {
+    configure(sinks);
+    const r = await pendingReceipt({ daysAgo: 30 });
 
     expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "pending_review" } });
 
     expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
-    expect(await auditsOf(r.id, "matching_gave_up")).toHaveLength(0);
-    expect(reports).toEqual([]);
-
-    expect(await retryPendingMatching()).toMatchObject({ gaveUp: 1 });
-    expect((await receiptRow(r.id)).matchingPendingSince).toBeNull();
-    expect(reports).toEqual([{ lane: "matching", kind: "system", detail: `receipt ${r.receiptId}` }]);
   });
 
   it("refuses a receipt whose matching already ran", async () => {

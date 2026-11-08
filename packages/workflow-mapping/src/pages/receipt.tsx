@@ -157,7 +157,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       await api(`${base}/run-matching`, { method: "POST" });
       const after = await api<Detail>(base);
       if (after.ReceivedReceipt.matchingPendingSince) {
-        notifications.show({ message: "Catalog still unavailable. Matching retries daily.", color: "gray" });
+        notifications.show({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" });
       } else {
         const matched = after.ReceivedReceiptLineStatus.filter((ls) => undecided.has(ls.id) && ls.recognitionStatus === "recognized").length;
         notifications.show({ message: `${matched} ${matched === 1 ? "line" : "lines"} matched`, color: "green" });
@@ -200,7 +200,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {receipt.matchingPendingSince && (
-        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. It retries daily."}</Text>
+        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand."}</Text>
       )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && (
