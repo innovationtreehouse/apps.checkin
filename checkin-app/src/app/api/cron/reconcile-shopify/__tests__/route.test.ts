@@ -37,7 +37,7 @@ const RECEIVING_APPLY = { resolved: 1, failed: 0, applying: 0, skipped: 0, error
 const RECEIPT = { swept: 2, failed: 0 };
 const RECEIPT_STUCK = { swept: 1, failed: 0 };
 const RECEIPT_PUSH = { pushed: 2, failed: 0, skipped: 1 };
-const DONOR_SYNC = { resent: 1, failed: 0 };
+const DONOR_SYNC = { resent: 1, failed: 0, skipped: 0 };
 const RECEIPT_MAIL = { status: 'unbound' as const };
 const RECEIPT_OUTCOMES = { sent: 1, failed: 0 };
 // The one expense result every case uses; a new catch-up step adds its key here.

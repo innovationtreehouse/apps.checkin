@@ -1,12 +1,13 @@
-import { ServiceError } from "@checkin/component-kit";
+import { KindedError, NotWiredError, ServiceError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import { repushUnpushed, resendDonorSync } from "../../services/catchUp";
+import { CATCH_UP_CAP, MAX_CONSECUTIVE_DONOR_SYNC_FAILURES, repushUnpushed, resendDonorSync } from "../../services/catchUp";
+import { DEFAULT_LIMITS } from "../../lib/limits";
 import { importReceipts } from "../../services/importService";
 import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -123,7 +124,7 @@ describeDb("in-kind mark and donor (X13)", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
     expect(await donorSync(r.id)).toBe("pending");
     ports.fail.donor = false;
-    expect(await resendDonorSync()).toEqual({ resent: 1, failed: 0 });
+    expect(await resendDonorSync()).toEqual({ resent: 1, failed: 0, skipped: 0 });
     expect(await donorSync(r.id)).toBe("synced");
     expect(ports.calls.donors).toHaveLength(3);
   });
@@ -269,5 +270,112 @@ describeDb("stale donor sends (in-kind findings K2–K4)", () => {
     await expect(receiptService.setInKind(r.id, { isInKind: false })).rejects.toMatchObject({ status: 400 });
     expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: true, donorSync: "synced" });
     expect(ports.calls.withdrawals).toEqual([]);
+  });
+});
+
+describeDb("donor sync failures by kind (X13)", () => {
+  const MAX = MAX_CONSECUTIVE_DONOR_SYNC_FAILURES;
+  const gift = (details = manualDetails()) => receiptService.upload(textFile(), "text/plain", { details, isInKind: true, donor: { self: true } });
+  const undelivered = () => receiptService.listNeedsAttention("finance");
+
+  it.each([
+    ["system", () => true as const],
+    ["connection", () => new KindedError("connection", "donations credential revoked")],
+    ["settings", () => new NotWiredError("donorSink")],
+  ])("never gives up a donor through a multi-day %s outage, and sends it once donations is back", async (_kind, failure) => {
+    ports.fail.donor = failure();
+    const r = await gift();
+    for (let day = 0; day < 3 * MAX; day++) {
+      expect(await resendDonorSync()).toEqual({ resent: 0, failed: 1, skipped: 0 });
+    }
+    actAs(FINANCE);
+    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 1, pushGivenUp: 0 });
+
+    ports.fail.donor = false;
+    expect(await resendDonorSync()).toEqual({ resent: 1, failed: 0, skipped: 0 });
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
+    expect(await donorSync(r.id)).toBe("synced");
+  });
+
+  it.each([
+    ["an unexpected error", () => new Error("unexpected")],
+    ["a 403 from donations", () => new ServiceError(403, "Forbidden")],
+    ["donations refusing the stored donor", () => new ServiceError(400, "donor first name is required")],
+  ])("gives up a donor after the limit of bug failures from %s, and finance sees the receipt", async (_kind, failure) => {
+    ports.fail.donor = failure();
+    const r = await gift();
+    for (let i = 0; i < MAX; i++) {
+      expect(await resendDonorSync()).toEqual({ resent: 0, failed: 1, skipped: 0 });
+    }
+    const sends = ports.calls.donors.length;
+    expect(await resendDonorSync()).toEqual({ resent: 0, failed: 0, skipped: 1 });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+    expect(ports.calls.donors).toHaveLength(sends);
+
+    actAs(FINANCE);
+    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 1, pushGivenUp: 1 });
+    expect(await undelivered()).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true, lastPushFailure: failure().message })]);
+    const audited = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: "donor_sync_failed", userId: null } });
+    expect(audited.map((a) => a.valueBefore)).toEqual(Array(MAX).fill("bug"));
+  });
+
+  it("gives up a receipt stored with a blank donor for finance, never sending it to donations", async () => {
+    ports.fail.donor = true;
+    const r = await gift();
+    await db.receipt.update({ where: { id: r.id }, data: { donorFirstName: "" } });
+    ports.fail.donor = false;
+    const sends = ports.calls.donors.length;
+
+    for (let i = 0; i < MAX; i++) {
+      expect(await resendDonorSync()).toEqual({ resent: 0, failed: 1, skipped: 0 });
+    }
+    expect(await resendDonorSync()).toEqual({ resent: 0, failed: 0, skipped: 1 });
+    expect(ports.calls.donors).toHaveLength(sends);
+    expect(ports.calls.pushes).toEqual([]);
+
+    actAs(FINANCE);
+    expect(await undelivered()).toEqual([
+      expect.objectContaining({ id: r.id, pushGivenUp: true, lastPushFailure: expect.stringContaining("firstName") }),
+    ]);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorFirstName: "", donorSync: "pending" });
+  });
+
+  it("a manual push starts a fresh run, and delivers once donations takes the donor", async () => {
+    ports.fail.donor = new Error("unexpected");
+    const r = await gift();
+    for (let i = 0; i < MAX; i++) await resendDonorSync();
+    expect(await resendDonorSync()).toMatchObject({ skipped: 1 });
+
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
+    expect(await resendDonorSync()).toEqual({ resent: 0, failed: 1, skipped: 0 });
+
+    ports.fail.donor = false;
+    expect(await receiptService.push(r.id)).toEqual({ pushed: true });
+    expect(await donorSync(r.id)).toBe("synced");
+  });
+
+  it("a donor edit starts a fresh run", async () => {
+    ports.fail.donor = new Error("unexpected");
+    const r = await gift(badMath());
+    for (let i = 0; i < MAX; i++) await resendDonorSync();
+    expect(await resendDonorSync()).toMatchObject({ skipped: 1 });
+
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } });
+    expect(await resendDonorSync()).toEqual({ resent: 0, failed: 1, skipped: 0 });
+  });
+
+  it("donors catch-up gave up on leave its cap to the ones still due", async () => {
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, limits: { ...DEFAULT_LIMITS, uploadsPerPersonPerDay: CATCH_UP_CAP + 1 } });
+    ports.fail.donor = true;
+    for (let i = 0; i < CATCH_UP_CAP; i++) {
+      const { id } = await gift(manualDetails({ retailer: `Store ${i}`, receiptTotal: "1" }));
+      await db.receiptAuditLog.createMany({ data: Array.from({ length: MAX }, () => ({ receiptId: id, action: "donor_sync_failed", valueBefore: "bug", valueAfter: "unexpected" })) });
+    }
+    const due = await gift(badMath());
+    ports.fail.donor = false;
+
+    expect(await resendDonorSync()).toEqual({ resent: 1, failed: 0, skipped: CATCH_UP_CAP });
+    expect(await donorSync(due.id)).toBe("synced");
   });
 });

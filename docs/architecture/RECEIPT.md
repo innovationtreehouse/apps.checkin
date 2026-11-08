@@ -233,7 +233,12 @@ sends a `CompletedReceipt` from `@checkin/receipt-types` to `ingestReceipt`.
 Both are idempotent on `receiptId` and carry `donorSyncSeq`, so donations ignores a
 call older than one it has seen. Donor names leave the library only here, never on
 S1. `donorSync` is `none` for a receipt that was never in-kind, so a plain purchase
-never sends a withdrawal.
+never sends a withdrawal. A failed send is a `donor_sync_failed` row with its kind in
+`valueBefore`, and catch-up resends it by S1's rule: an outage is never charged, and five
+bug failures in a row give up the donor and the receipt's push, shown to finance as
+"catch-up stopped". A refusal from donations, or a stored donor failing the donor check,
+is a bug: upload checks the donor with the same rule. A donor edit or a manual push
+starts a fresh run.
 
 **X12, reimbursement status.** `reimbursementStatus` asks expense, which reads
 QuickBooks. The library stores no payment fact. A receipt missing from the answer
