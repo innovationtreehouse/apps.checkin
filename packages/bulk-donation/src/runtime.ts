@@ -1,4 +1,4 @@
-import { defineRuntime, kindOf, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { defineRuntime, isKindedError, kindOf, NotWiredError, ServiceError } from "@checkin/component-kit";
 import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
@@ -65,7 +65,7 @@ const CATALOG_DB_MISSING = "The catalog database does not exist; the infra opera
 
 /** A catalog that needs fixing, unbound or its database missing, as the 503 a person reads; any other failure is rethrown. */
 export function catalogNotConnected(err: unknown): never {
-  if (err instanceof NotWiredError) throw new ServiceError(503, "No catalog is connected");
+  if (isKindedError(err) && err.name === "NotWiredError") throw new ServiceError(503, "No catalog is connected");
   if (kindOf(err) === "settings") throw new ServiceError(503, CATALOG_DB_MISSING);
   throw err;
 }

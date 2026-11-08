@@ -5,7 +5,7 @@
  * provisional parts, whose names are.
  */
 import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
-import { httpError, kindOf, mapServiceErrors, NotWiredError, parseBody, query } from "@checkin/component-kit";
+import { httpError, isKindedError, kindOf, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
@@ -96,7 +96,7 @@ const CATALOG_DB_MISSING = "The catalog database does not exist; the infra opera
 
 /** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
 function refuseCatalogSettings(err: unknown): void {
-  if (err instanceof NotWiredError) throw httpError(503, "No catalog is connected");
+  if (isKindedError(err) && err.name === "NotWiredError") throw httpError(503, "No catalog is connected");
   if (kindOf(err) === "settings") throw httpError(503, CATALOG_DB_MISSING);
 }
 

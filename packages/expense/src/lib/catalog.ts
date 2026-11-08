@@ -11,6 +11,9 @@ import {
   LookupResultArraySchema,
 } from "./catalog-schemas";
 
+/** The 503 a person reads when the catalog database is missing. */
+export const CATALOG_DB_MISSING = "The catalog database does not exist; the infra operator checks its settings";
+
 export async function listCategories(): Promise<CatalogCategory[]> {
   return z.array(CatalogCategorySchema).parse(await getExpenseRuntime().catalog.listCategories());
 }

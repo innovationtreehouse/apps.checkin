@@ -1,11 +1,11 @@
-import { NotWiredError } from "@checkin/component-kit";
+import { isKindedError, kindOf, ServiceError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
-import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
+import { CATALOG_DB_MISSING, lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
 import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
@@ -73,7 +73,7 @@ export async function lookupCatalogInfo(
       })),
     ),
   ]).catch((err: unknown) => {
-    if (err instanceof NotWiredError) return null;
+    if (isKindedError(err) && err.name === "NotWiredError") return null;
     throw err;
   });
   if (!reads) return { gtin13ByItemId: new Map(), info, catalogNotConnected: true };
@@ -464,6 +464,12 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 // ── Finance retry of a failed QuickBooks post ─────────────────────────────────
 
+/** A missing catalog database as the 503 finance reads; the lookup already answers an unbound catalog as matching nothing. */
+function refuseMissingCatalog(err: unknown): never {
+  if (kindOf(err) === "settings") throw new ServiceError(503, CATALOG_DB_MISSING);
+  throw err;
+}
+
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
  * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
@@ -481,7 +487,7 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
     const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
     const rules = await tx.accountMapping.findMany({ where: { orgId } });
-    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "").catch(refuseMissingCatalog);
     await saveCatalogSnapshots(snapshots, tx);
     if (conflicts.length > 0) return false;
 

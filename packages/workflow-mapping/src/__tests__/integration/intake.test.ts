@@ -25,6 +25,10 @@ beforeEach(async () => {
 
 const s1Fixtures = fixturesForSeam<CompletedReceipt>("S1-completed-receipt");
 
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true });
+
 describeDb("S1 — every fixture is accepted and persisted", () => {
   it("has S1 fixtures", () => expect(s1Fixtures.length).toBeGreaterThan(0));
 
@@ -114,6 +118,22 @@ describeDb("S1 — recognition and push", () => {
   });
 
   it("an unbound catalog leaves every line unrecognized and records that it is not connected", async () => {
+    const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
+    expect(res.state).toBe("pending_review");
+    const created = await db.workflowAuditLog.findFirstOrThrow({ where: { receivedReceiptId: res.id, eventType: "receipt_created" } });
+    expect(created.details).toBe("catalog not connected");
+  });
+
+  it("an unbound catalog from another copy of the kit still records that it is not connected", async () => {
+    configure({
+      catalogReader: {
+        lookupItems: async () => {
+          throw foreignNotWired("CatalogReader.lookupItems");
+        },
+        checkReferences: recognizeAll.checkReferences,
+        getActiveItem: recognizeAll.getActiveItem,
+      },
+    });
     const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
     expect(res.state).toBe("pending_review");
     const created = await db.workflowAuditLog.findFirstOrThrow({ where: { receivedReceiptId: res.id, eventType: "receipt_created" } });

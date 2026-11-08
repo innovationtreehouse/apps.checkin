@@ -10,6 +10,10 @@ const UNNAMED = "0098765432109";
 /** What the catalog client throws when its database cannot be reached. */
 const catalogDown = () => Object.assign(new Error("Can't reach database server"), { code: "P1001" });
 
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true });
+
 describeDb("GET ownership-map", () => {
   it("returns the catalog name of each mapped part on the page, and nothing for an unknown GTIN", async () => {
     const getItemNames = vi.fn(async (gtins: string[]) => [{ gtin13: NAMED, name: "Hex bolt M6" }].filter((i) => gtins.includes(i.gtin13)));
@@ -45,6 +49,15 @@ describeDb("GET ownership-map", () => {
 
   it("shows the map without names when no catalog is connected", async () => {
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
+
+    const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
+
+    expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
+  });
+
+  it("shows the map without names when an unbound catalog comes from another copy of the kit", async () => {
+    await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
+    bindPorts({ catalog: { ...catalogResolving({}), getItemNames: async () => { throw foreignNotWired("catalog.getItemNames"); } } });
 
     const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
 
