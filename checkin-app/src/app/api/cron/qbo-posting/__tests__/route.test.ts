@@ -89,10 +89,39 @@ describe('GET /api/cron/qbo-posting', () => {
         await GET(req());
 
         expect(jest.mocked(evaluateRun).mock.calls[0][0]).toEqual({
-            lanes: ['qbo-posting', 'expense posting', 'bulk-donation in-kind-posting', 'income deposit-build'],
+            lanes: ['qbo-posting', 'expense posting'],
             failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1, stopped: true }],
         });
         expect(create.mock.calls[0][0].data).toMatchObject({ failuresByKind: { system: 1 } });
+    });
+
+    it("leaves expense posting uncovered when its drain could not run, so an open QuickBooks incident stays open", async () => {
+        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ error: true }));
+
+        await GET(req());
+
+        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting']);
+    });
+
+    it('covers in-kind and income only when their drains ran', async () => {
+        jest.mocked(runInKindQbPosting).mockResolvedValue(IN_KIND_DRAIN);
+        jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null } });
+
+        await GET(req());
+
+        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'bulk-donation in-kind-posting', 'income deposit-build']);
+    });
+
+    it('files a crashed drain under its lane and cause, leaving the lane uncovered', async () => {
+        jest.mocked(runExpenseQbPosting).mockRejectedValue(Object.assign(new Error('QuickBooks down'), { status: 503 }));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toEqual(['qbo-posting']);
+        expect(run.failures).toEqual([{ lane: 'expense posting', cause: 'quickbooks', kind: 'bug', code: 'expense crashed', count: 1, stopped: false }]);
+        logged.mockRestore();
     });
 
     it('reports a throwing step to the engine as a failure of the job', async () => {

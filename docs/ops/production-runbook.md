@@ -143,7 +143,8 @@ reports under the job run in progress. The daily reconcile job runs the receipt
 lanes (re-push, mailbox reading, OCR of mailed files) and expense intake; the daily posting job runs
 the expense, gift-of-goods and income posting lanes. A step of either job that
 crashes counts too, as a bug unless its error was sorted. An item counts once
-per run, however often its lane reports it. A failure outside a job run, such
+per run, however often its lane reports it. A run covers only the lanes whose
+work it reached, so a step that crashed or could not run keeps its incident open. A failure outside a job run, such
 as a receipt finalized by hand, is only logged.
 
 **Who gets them.** The engine reads the alert address and the Board address

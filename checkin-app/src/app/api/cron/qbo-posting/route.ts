@@ -1,5 +1,5 @@
 import { logger } from "@/lib/logger";
-import { finishRun, inRun, laneStopped, newRun, stepCrashed } from "@/lib/finishRun";
+import { finishRun, inRun, laneReached, laneStopped, newRun, stepCrashed } from "@/lib/finishRun";
 import { getOrg } from "@/lib/components/host";
 import { handler } from "@/security/handler";
 import { runExpenseQbPosting } from "@checkin/expense";
@@ -28,8 +28,9 @@ function stopProblem(lane: string, drain: DrainRun): string | null {
     return drain.stoppedAfterFailures ? `${lane} streak stop` : null;
 }
 
-/** `lane` is the drain's lane as the run names it; a stop marks it stopped. */
+/** `lane` is the drain's lane as the run names it: the drain ran, so the run reached it; a stop marks it stopped. */
 function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
+    laneReached(lane);
     const problems: string[] = [];
     const stop = stopProblem(label, drain);
     if (stop) {
@@ -63,7 +64,7 @@ async function postAll(): Promise<string[]> {
         if (typeof expense.qbPost === "object" && !("error" in expense.qbPost)) failed.push(...drainProblems("expense", "expense posting", expense.qbPost));
     } catch (err) {
         logger.error("[qbo-posting] expense QuickBooks posting failed:", err);
-        stepCrashed(JOB, "expense", err);
+        stepCrashed(JOB, "expense", err, ["expense posting"]);
         failed.push("expense");
     }
     try {
@@ -83,14 +84,16 @@ async function postAll(): Promise<string[]> {
         }
     } catch (err) {
         logger.error("[qbo-posting] in-kind QuickBooks posting failed:", err);
-        stepCrashed(JOB, "in-kind", err);
+        stepCrashed(JOB, "in-kind", err, ["bulk-donation in-kind-posting"]);
         failed.push("in-kind");
     }
     try {
-        logger.info(`[qbo-posting] income ${JSON.stringify(await drainIncomeOutbox((await getOrg()).id))}`);
+        const income = await drainIncomeOutbox((await getOrg()).id);
+        logger.info(`[qbo-posting] income ${JSON.stringify(income)}`);
+        if (typeof income.post === "object") laneReached("income deposit-build");
     } catch (err) {
         logger.error("[qbo-posting] income QuickBooks posting failed:", err);
-        stepCrashed(JOB, "income", err);
+        stepCrashed(JOB, "income", err, ["income deposit-build"]);
         failed.push("income");
     }
     try {

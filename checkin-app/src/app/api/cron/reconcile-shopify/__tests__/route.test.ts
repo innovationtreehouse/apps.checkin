@@ -101,11 +101,40 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         await GET(req());
 
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify', 'receipt push', 'receipt mail-listing', 'receipt ocr', 'expense intake', 'expense intake-replay']);
+        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay', 'receipt push']);
         expect(run.failures).toEqual([
             { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1, stopped: false },
             { lane: 'receipt push', cause: 'mapping', kind: 'connection', code: 'connection', count: 1, stopped: false },
         ]);
+        logged.mockRestore();
+    });
+
+    it('covers the mailbox lanes only when the mailbox was read, and OCR only when mail brought receipts', async () => {
+        const mail = { status: 'ok' as const, messages: 1, receipts: 1, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0, replied: 0, replyFailed: 0 };
+        jest.mocked(readMailbox).mockResolvedValueOnce(mail);
+        await GET(req());
+        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(expect.arrayContaining(['receipt mail-listing', 'receipt ocr']));
+
+        jest.mocked(readMailbox).mockResolvedValueOnce({ ...mail, receipts: 0 });
+        await GET(req());
+        expect(jest.mocked(evaluateRun).mock.calls[1][0].lanes).toContain('receipt mail-listing');
+        expect(jest.mocked(evaluateRun).mock.calls[1][0].lanes).not.toContain('receipt ocr');
+
+        jest.mocked(readMailbox).mockResolvedValueOnce({ ...mail, status: 'listing_failed' });
+        await GET(req());
+        expect(jest.mocked(evaluateRun).mock.calls[2][0].lanes).not.toContain('receipt mail-listing');
+    });
+
+    it('files a crashed step under the lane it runs and leaves that lane uncovered, so its incident stays open', async () => {
+        jest.mocked(repushUnpushed).mockRejectedValue(new Error('mapping down'));
+        jest.mocked(runExpenseCatchUp).mockResolvedValue({ ...EXPENSE, intake: { error: true } });
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toEqual(['reconcile-shopify']);
+        expect(run.failures).toEqual([{ lane: 'receipt push', cause: 'mapping', kind: 'bug', code: 'receipt push crashed', count: 1, stopped: false }]);
         logged.mockRestore();
     });
 

@@ -507,6 +507,7 @@ export async function postPayout(
       case "needs-finance":
         return toQueue(RECON_KIND.NO_DEPOSIT, null);
       case "failed":
+        // The post failed whether or not this update commits, so the report stands either way.
         reportFailed(result);
         if (current.kind === RECON_KIND.POST_FAILED) {
           return { outcome: "failed" as const, row: await tx.payoutReconciliation.update({ where: { id }, data: { postClaimedAt: null } }) };

@@ -4,9 +4,10 @@ import { recordCronRun } from "@/lib/cronRuns";
 import type { RunFailure } from "@/lib/opsIncidents";
 import { evaluateRun } from "@/lib/runIncidents";
 
-/** What one job run's lanes reported, and which lanes it stopped early. */
+/** What one job run's lanes reported, which lanes it reached, and which it stopped early. */
 export interface Run {
     reports: FailureReport[];
+    reached: Set<string>;
     stopped: Set<string>;
 }
 
@@ -15,27 +16,19 @@ const STORE = Symbol.for("@checkin/finishRun/current");
 const shared = globalThis as typeof globalThis & { [STORE]?: AsyncLocalStorage<Run> };
 const current = (shared[STORE] ??= new AsyncLocalStorage<Run>());
 
-/**
- * The library lanes each job runs every time, as "<library> <lane>", with the cause their
- * failures are grouped under. A run covers these lanes, so their incidents can close on it.
- */
-const JOB_LANES: Record<string, Record<string, string>> = {
-    "reconcile-shopify": {
-        "receipt push": "mapping",
-        "receipt mail-listing": "gmail",
-        "receipt ocr": "ocr",
-        "expense intake": "intake",
-        "expense intake-replay": "intake",
-    },
-    "qbo-posting": {
-        "expense posting": "quickbooks",
-        "bulk-donation in-kind-posting": "quickbooks",
-        "income deposit-build": "quickbooks",
-    },
+/** Each library lane, as "<library> <lane>", and the cause its failures are grouped under. */
+const CAUSES: Record<string, string> = {
+    "receipt push": "mapping",
+    "receipt mail-listing": "gmail",
+    "receipt ocr": "ocr",
+    "expense intake": "intake",
+    "expense intake-replay": "intake",
+    "expense posting": "quickbooks",
+    "bulk-donation in-kind-posting": "quickbooks",
+    "income deposit-build": "quickbooks",
 };
-const CAUSES: Record<string, string> = Object.assign({}, ...Object.values(JOB_LANES));
 
-export const newRun = (): Run => ({ reports: [], stopped: new Set() });
+export const newRun = (): Run => ({ reports: [], reached: new Set(), stopped: new Set() });
 
 /** Runs a job's work inside `run`, so every report its lanes make lands on it. */
 export const inRun = <T>(run: Run, work: () => Promise<T>): Promise<T> => current.run(run, work);
@@ -45,11 +38,22 @@ export const reportTo = (library: string): OnFailure => (report) => {
     current.getStore()?.reports.push({ ...report, lane: `${library} ${report.lane}` });
 };
 
-/** A crashed step, as a failure of the job's own lane: a bug unless its error carries a kind. */
-const crashReport = (job: string, step: string, err: unknown): FailureReport => ({ lane: job, kind: kindOf(err), faultCodes: [`${step} crashed`] });
+/** A crashed step's failure on one lane: a bug unless its error carries a kind. */
+const crashReport = (lane: string, step: string, err: unknown): FailureReport => ({ lane, kind: kindOf(err), faultCodes: [`${step} crashed`] });
 
-export function stepCrashed(job: string, step: string, err: unknown): void {
-    current.getStore()?.reports.push(crashReport(job, step, err));
+/** A crashed step, filed under the library lanes it runs, or under the job's own lane when it runs none. */
+export function stepCrashed(job: string, step: string, err: unknown, lanes: string[] = []): void {
+    const run = current.getStore();
+    for (const lane of lanes.length ? lanes : [job]) run?.reports.push(crashReport(lane, step, err));
+}
+
+/**
+ * Marks lanes the run reached: their work ran to a result. Only reached lanes count as covered,
+ * so an incident closes only on a run that really did that lane's work.
+ */
+export function laneReached(...lanes: string[]): void {
+    const run = current.getStore();
+    for (const lane of lanes) run?.reached.add(lane);
 }
 
 /** Marks a lane the run stopped early, so a system failure on it alerts on this run. */
@@ -83,10 +87,11 @@ function byKind(failures: RunFailure[]): Record<string, number> {
 export async function finishRun(job: string, startedAt: Date, completed: boolean, error: unknown, run: Run): Promise<void> {
     const failures = runFailures(run);
     await recordCronRun(job, startedAt, completed, error, byKind(failures));
-    await evaluateRun({ lanes: [job, ...Object.keys(JOB_LANES[job] ?? {})], failures });
+    await evaluateRun({ lanes: [job, ...run.reached], failures });
 }
 
 /** A run that crashed outside any step: a failure of the job's own lane. */
 export function runCrashed(run: Run, job: string, err: unknown): void {
     run.reports.push(crashReport(job, "run", err));
+    run.reached.clear();
 }
