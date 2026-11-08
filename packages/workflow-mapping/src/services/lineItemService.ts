@@ -1,4 +1,4 @@
-import { httpError, isKindedError, isServiceError, kindOf } from "@checkin/component-kit";
+import { catalogSettingsMessage, httpError, isServiceError } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import {
   catalogCheckReferencesSchema,
@@ -33,12 +33,10 @@ export function normalizeDescription(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-const CATALOG_DB_MISSING = "The catalog database does not exist; the infra operator checks its settings";
-
 /** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
 function refuseCatalogSettings(err: unknown): void {
-  if (isKindedError(err) && err.name === "NotWiredError") throw httpError(503, "No catalog is connected");
-  if (kindOf(err) === "settings") throw httpError(503, CATALOG_DB_MISSING);
+  const message = catalogSettingsMessage(err);
+  if (message) throw httpError(503, message);
 }
 
 /**

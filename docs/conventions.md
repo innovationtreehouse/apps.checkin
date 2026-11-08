@@ -262,8 +262,11 @@ missed a row stored at a different time of day.
   catalog never reads as "no match" or "no events". A route that reads an
   unbound catalog answers 503 "No catalog is connected"; a missing catalog database
   answers 503 naming who fixes it; an outage stays 502. A route or matcher reads only
-  `NotWiredError` as "not connected", never another `settings` failure. The catch-up sweep records an unbound event source as `notConnected`, not
-  as an unreadable catalog, and raises no alert. A callee that takes an `orgId`
+  `NotWiredError` as "not connected", never another `settings` failure, and tests
+  for it with the kit's branded `isNotWired`; the kit's `catalogSettingsMessage`
+  holds both 503 wordings. The catch-up sweep records an unbound event source as
+  `notConnected` and raises no alert; any other failure to read, a missing catalog
+  database included, is an unreadable catalog and alerts. A callee that takes an `orgId`
   from its caller checks it with `assertOrg` first.
 
 - **At a crossing, a callee's 4xx means refused for good.** When one library

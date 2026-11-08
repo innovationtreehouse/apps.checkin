@@ -1,4 +1,4 @@
-import { isKindedError, kindOf } from "@checkin/component-kit";
+import { isNotWired, kindOf } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@checkin/receipt-types";
 import type { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
@@ -32,7 +32,7 @@ export async function matchLines(lineItems: CompletedReceiptLineItem[], retailer
   try {
     results = catalogLookupResultSchema.array().parse(await ports().catalogReader.lookupItems(retailer, lookups));
   } catch (err) {
-    if (isKindedError(err) && err.name === "NotWiredError") return { ran: true, recognized, note: CATALOG_NOT_CONNECTED };
+    if (isNotWired(err)) return { ran: true, recognized, note: CATALOG_NOT_CONNECTED };
     const kind = kindOf(err);
     if (kind === "system" || kind === "connection") return { ran: false, err };
     throw err;

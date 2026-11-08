@@ -1,4 +1,4 @@
-import { defineRuntime, isKindedError, kindOf, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { catalogSettingsMessage, defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
 import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
@@ -61,13 +61,10 @@ export const getOrgId = bulkDonationRuntime.getOrgId;
 
 export const assertOrg = bulkDonationRuntime.assertOrg;
 
-const CATALOG_DB_MISSING = "The catalog database does not exist; the infra operator checks its settings";
-
 /** A catalog that needs fixing, unbound or its database missing, as the 503 a person reads; any other failure is rethrown. */
 export function catalogNotConnected(err: unknown): never {
-  if (isKindedError(err) && err.name === "NotWiredError") throw new ServiceError(503, "No catalog is connected");
-  if (kindOf(err) === "settings") throw new ServiceError(503, CATALOG_DB_MISSING);
-  throw err;
+  const message = catalogSettingsMessage(err);
+  throw message ? new ServiceError(503, message) : err;
 }
 
 export function getOwnerDirectory(): OwnerDirectory {

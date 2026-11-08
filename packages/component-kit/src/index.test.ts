@@ -5,11 +5,13 @@ import {
   NotWiredError,
   ServiceError,
   callerId,
+  catalogSettingsMessage,
   defineRuntime,
   httpError,
   KindedError,
   isComponentHttpError,
   isKindedError,
+  isNotWired,
   kindOf,
   isServiceError,
   mapServiceErrors,
@@ -388,6 +390,67 @@ describe("sweepOrgEvents", () => {
       onUnreadable: () => {},
     });
     expect(res).toMatchObject({ notConnected: true, unreadable: false, needsAlert: false });
+  });
+
+  const sweepThrowing = (err: unknown) =>
+    sweepOrgEvents<number>({
+      limit: 10,
+      failed: [],
+      readPage: async () => { throw err; },
+      idOf: (id) => id,
+      receivedIds: async () => [],
+      consume: async () => "processed",
+      onUnrecorded: () => {},
+      onUnreadable: () => {},
+    });
+
+  it("an unbound event source from another copy of the kit is not connected", async () => {
+    expect(await sweepThrowing(foreignNotWired("CatalogEventSource.eventsSince"))).toMatchObject({ notConnected: true, unreadable: false, needsAlert: false });
+  });
+
+  it("a missing catalog database is unreadable and raises the alert, never not connected", async () => {
+    const missingDb = Object.assign(new Error("database does not exist"), { code: "P1003" });
+    expect(await sweepThrowing(missingDb)).toMatchObject({ notConnected: false, unreadable: true, needsAlert: true });
+  });
+});
+
+/** A NotWiredError from a second bundle: same brands, different class. */
+function foreignNotWired(port: string): Error {
+  return Object.assign(new Error(`${port} is not wired`), {
+    name: "NotWiredError",
+    kind: "settings",
+    [Symbol.for("@checkin/component-kit/KindedError")]: true,
+    [Symbol.for("@checkin/component-kit/NotWiredError")]: true,
+  });
+}
+
+describe("isNotWired", () => {
+  it("recognises an unbound port, from this copy of the kit or another", () => {
+    const foreign = foreignNotWired("catalog");
+    expect(foreign instanceof NotWiredError).toBe(false);
+    expect(isNotWired(foreign)).toBe(true);
+    expect(isNotWired(new NotWiredError("catalog"))).toBe(true);
+  });
+
+  it.each([
+    ["another settings failure", new KindedError("settings", "bad config")],
+    ["a missing database", Object.assign(new Error("no db"), { code: "P1003" })],
+    ["an unbranded error named NotWiredError", Object.assign(new Error("x"), { name: "NotWiredError" })],
+    ["a non-error", "NotWiredError"],
+  ])("is false for %s", (_label, err) => {
+    expect(isNotWired(err)).toBe(false);
+  });
+});
+
+describe("catalogSettingsMessage", () => {
+  it.each([
+    ["an unbound catalog", new NotWiredError("catalog"), "No catalog is connected"],
+    ["an unbound catalog from another copy of the kit", foreignNotWired("catalog"), "No catalog is connected"],
+    ["a missing catalog database", Object.assign(new Error("no db"), { code: "P1003" }), "The catalog database does not exist; the infra operator checks its settings"],
+    ["a catalog outage", Object.assign(new Error("down"), { code: "P1001" }), null],
+    ["a bug", new Error("boom"), null],
+  ])("%s", (_label, err, message) => {
+    expect(catalogSettingsMessage(err)).toBe(message);
   });
 });
 
