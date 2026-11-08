@@ -36,8 +36,6 @@ const base = {
   donorLastName: "Giver",
   donorCompanyName: null,
   donorReplacedAt: null,
-  withdrawnAfterMoneyAt: null,
-  withdrawalSettledAt: null,
   replayConflictAt: null,
   outcome: "ACCEPTED",
   decidedAt: "2026-10-03T12:00:00.000Z",
@@ -161,13 +159,13 @@ describe("in-kind gift page", () => {
   });
 
   it("sends a receipt gift's file and goods to its receipt", () => {
-    mockGift = { ...receipt, withdrawnAfterMoneyAt: "2026-09-05T00:00:00.000Z", state: "withdrawal" };
+    mockGift = { ...receipt, replayConflictAt: "2026-09-05T00:00:00.000Z", state: "replay" };
     wrap(<ReceiptGiftPage />);
     expect(mockPath).toBe("/in-kind/receipt/4");
     expect(screen.getByRole("link", { name: "Receipt r-77" })).toHaveAttribute("href", "/receipts/r-77");
     expect(screen.getByRole("link", { name: "on the receipt" })).toHaveAttribute("href", "/receipts/r-77");
     expect(screen.getByRole("link", { name: "its receipt" })).toHaveAttribute("href", "/receipts/r-77");
-    expect(screen.getByText(/after the money arrived/)).toBeInTheDocument();
+    expect(screen.getByText(/^The receipt was resent with different values/)).toBeInTheDocument();
     expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
   });
 });

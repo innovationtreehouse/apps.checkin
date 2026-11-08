@@ -291,15 +291,13 @@ export default function InKindQueuePage() {
 
   const mayDecide = (q: QueueItem) => !q.callerConflicted && (isFinance || (isBoard && q.allFinanceConflicted));
   const decidable = (q: QueueItem) => q.state === "decision" || (q.outcome === "ACCEPTED" && q.revenueBooking === null && q.expenseBooking === null && (q.state === "bucket" || q.state === "capital" || q.state === "booking"));
-  const settleKind = (q: QueueItem) => (q.state === "withdrawal" ? "withdrawal" : q.state === "replay" ? "replay" : null);
 
   return (
     <>
       <Title order={3} mb="md">In-kind queue</Title>
       <Text size="sm" c="dimmed" mb="md">
         Every gift of goods is accepted, refused or returned by a finance holder outside the household of whoever uploaded or recorded it;
-        a Board member decides when every finance holder is conflicted. A withdrawal after money is settled here once any booked
-        side is reversed by hand in QuickBooks; settling clears the donor.
+        a Board member decides when every finance holder is conflicted.
       </Text>
       {queue.error && <LoadError what="the in-kind queue" message={queue.error} onRetry={queue.reload} />}
       {queue.data?.length === 0 && <Text c="dimmed">Nothing in the queue.</Text>}
@@ -314,7 +312,6 @@ export default function InKindQueuePage() {
           <Table.Tbody>
             {queue.data.map((q) => {
               const key = `${q.source}:${q.id}`;
-              const kind = settleKind(q);
               return [
                 <Table.Tr key={key}>
                   <Table.Td>
@@ -333,9 +330,9 @@ export default function InKindQueuePage() {
                       <Button size="xs" variant="light" onClick={() => setOpen(open === key ? null : key)}>{q.outcome ? "Change bucket" : "Decide"}</Button>
                     )}
                     {decidable(q) && q.callerConflicted && <Text size="xs" c="dimmed">You are conflicted on this gift</Text>}
-                    {kind && isFinance && (
-                      <Button size="xs" variant="light" color="red" onClick={() => act(() => api(`/in-kind/receipt/${q.id}/settle`, { method: "POST", body: JSON.stringify({ kind }) }), "Settled", queue.reload)}>
-                        {kind === "withdrawal" ? "Settle withdrawal" : "Keep first values"}
+                    {q.state === "replay" && isFinance && (
+                      <Button size="xs" variant="light" color="red" onClick={() => act(() => api(`/in-kind/receipt/${q.id}/settle`, { method: "POST", body: JSON.stringify({ kind: "replay" }) }), "Settled", queue.reload)}>
+                        Keep first values
                       </Button>
                     )}
                     {isFinance && (isHeld(q) || isDrifted(q) || q.qbNote) && (

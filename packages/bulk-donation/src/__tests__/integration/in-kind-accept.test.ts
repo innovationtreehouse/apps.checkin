@@ -8,8 +8,7 @@ import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";
-import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, withdrawInKind } from "../../inKind";
-import { inKindService } from "../../services/inKindService";
+import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt } from "../../inKind";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import type { CapitalReviewLine, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
@@ -247,7 +246,7 @@ describeDb("accepting", () => {
     await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 409 });
   });
 
-  it("a gift with no donor, or a withdrawn one, cannot be decided", async () => {
+  it("a gift with no donor cannot be decided", async () => {
     await ingestInKind(receipt());
     const id = (await db.inKindDonation.findFirstOrThrow({ where: { orgId } })).id;
     await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 409 });
@@ -487,19 +486,6 @@ describeDb("getGift", () => {
     configure(RECORDER, async () => undefined, failureReason);
     expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({ inventoryLoadFailureReason: null });
     expect(failureReason).not.toHaveBeenCalled();
-  });
-
-  it("shows a settled withdrawal with nothing left to do and no donor", async () => {
-    const id = await receiptGift();
-    await withdrawInKind(orgId, R1, 0);
-    await inKindService.settle(orgId, id, "withdrawal", by(FINANCE));
-    expect(await inKindAcceptService.getGift(orgId, "receipt", id)).toMatchObject({
-      state: null,
-      waitingOn: [],
-      donorFirstName: null,
-      donorLastName: null,
-      withdrawalSettledAt: expect.any(Date),
-    });
   });
 
   it("404s a gift in another org or of the other source", async () => {
