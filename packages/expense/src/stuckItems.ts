@@ -1,29 +1,50 @@
-import type { StuckItem } from "@checkin/component-kit";
+import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { db } from "./db";
 import { getOrgId } from "./runtime";
+import { retryQbPost } from "./lib/expense-qb-processor";
+import { SYSTEM_ACTOR } from "./lib/system-actor";
+import { retryCatalogEvent } from "./services/catalogEventConsumer";
+import { retryFailedPayload } from "./services/intakeService";
 
-const QB_FAILED = ["qb_post_failed", "qb_needs_finance", "qb_waiting_on_settings", "qb_processing_failed"];
+const INTAKE = "intake";
+const CATALOG_EVENT = "catalog event";
+const QB_POSTING = "QuickBooks posting";
 
-/** Receipt payloads and catalog events that failed to build, and expenses whose last QuickBooks post failed. */
+/** Receipt payloads and catalog events that failed to apply, and expenses whose QuickBooks post failed, each timed by its first failure. */
 export async function stuckItems(): Promise<StuckItem[]> {
   const orgId = await getOrgId();
   const [payloads, events, expenses] = await Promise.all([
-    db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, receivedAt: true } }),
-    db.expenseReceivedOrgEvent.findMany({ where: { orgId, status: "failed" }, select: { id: true, receivedAt: true } }),
-    db.expense.findMany({ where: { orgId, qbFailureKind: { not: null } }, select: { id: true, submittedAt: true } }),
+    db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, receivedAt: true, firstFailedAt: true } }),
+    db.expenseReceivedOrgEvent.findMany({ where: { orgId, status: "failed" }, select: { id: true, receivedAt: true, firstFailedAt: true } }),
+    db.expense.findMany({ where: { orgId, qbFirstFailedAt: { not: null } }, select: { id: true, qbFirstFailedAt: true } }),
   ]);
-  const lastFailedAt = new Map<string, Date>();
-  if (expenses.length) {
-    const audits = await db.expenseAuditLog.findMany({
-      where: { expenseId: { in: expenses.map((e) => e.id) }, action: { in: QB_FAILED } },
-      orderBy: { changedAt: "asc" },
-      select: { expenseId: true, changedAt: true },
-    });
-    for (const a of audits) lastFailedAt.set(a.expenseId, a.changedAt);
-  }
   return [
-    ...payloads.map((p) => ({ id: p.receiptId, step: "intake", href: `/receipts/${p.receiptId}`, failedAt: p.receivedAt })),
-    ...events.map((e) => ({ id: String(e.id), step: "catalog event", href: null, failedAt: e.receivedAt })),
-    ...expenses.map((e) => ({ id: e.id, step: "QuickBooks posting", href: `/expense/expenses/${e.id}`, failedAt: lastFailedAt.get(e.id) ?? e.submittedAt })),
+    ...payloads.map((p) => ({ id: p.receiptId, step: INTAKE, href: `/receipts/${p.receiptId}`, failedAt: p.firstFailedAt ?? p.receivedAt })),
+    ...events.map((e) => ({ id: String(e.id), step: CATALOG_EVENT, href: null, failedAt: e.firstFailedAt ?? e.receivedAt })),
+    ...expenses.flatMap((e) => (e.qbFirstFailedAt ? [{ id: e.id, step: QB_POSTING, href: `/expense/expenses/${e.id}`, failedAt: e.qbFirstFailedAt }] : [])),
   ];
+}
+
+/**
+ * Runs the item's step once. Safe to repeat: intake's "already applied" check, the event ledger
+ * and the post's claim hold. A step that fails again leaves the item stuck with its first failure
+ * time; one that is not stuck answers 404.
+ */
+export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
+  switch (step) {
+    case INTAKE:
+      return retryFailedPayload(id);
+    case CATALOG_EVENT:
+      return retryCatalogEvent(Number(id));
+    case QB_POSTING: {
+      const expense = await db.expense.findFirst({ where: { id, orgId: await getOrgId(), qbFirstFailedAt: { not: null } }, select: { id: true } });
+      if (!expense) throw new ServiceError(404, "No failed QuickBooks post for this expense");
+      const outcome = await retryQbPost(await getOrgId(), id, SYSTEM_ACTOR);
+      if (outcome === false) throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
+      if (outcome === "unbound") throw new ServiceError(503, "QuickBooks isn't connected, so nothing was sent");
+      return;
+    }
+    default:
+      throw new ServiceError(404, `No step ${step} in expense`);
+  }
 }

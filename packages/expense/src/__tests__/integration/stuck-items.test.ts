@@ -1,38 +1,71 @@
-/** The Problems list's read port: failed payloads and catalog events, and expenses whose last QuickBooks post failed. */
-import { beforeEach, expect, it } from "vitest";
+/** The Problems list's ports: failed payloads, catalog events and QuickBooks posts, each timed by its first failure, and their retry. */
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { fixture } from "@checkin/receipt-contract-fixtures";
 import { db } from "../../db";
-import { stuckItems } from "../../stuckItems";
+import { receiveCompletedReceipt } from "../../services/intakeService";
+import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
-import { bindPorts, ORG, seedExpense } from "../helpers/seed";
+import { bindPorts, directory, ORG, seedExpense } from "../helpers/seed";
 
 beforeEach(() => bindPorts({}));
+afterEach(() => vi.restoreAllMocks());
 
 describeDb("stuckItems", () => {
-  it("lists each stuck item with its page; an expense is timed by its latest QuickBooks failure", async () => {
+  it("lists each stuck item with its page, timed by its first failure", async () => {
     const at = new Date("2026-11-01T10:00:00Z");
-    const later = new Date("2026-11-03T10:00:00Z");
-    await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r1", payloadJson: "{}", status: "failed", failureReason: "bad", receivedAt: at } });
-    await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r2", payloadJson: "{}", status: "created" } });
-    await db.receivedExpensePayload.create({ data: { orgId: "org-2", receiptId: "r3", payloadJson: "{}", status: "failed" } });
-    await db.expenseReceivedOrgEvent.create({ data: { id: 51, orgId: ORG, eventType: "item_reviewed", payload: "{}", receivedAt: at, status: "failed", failureReason: "boom" } });
+    const first = new Date("2026-11-02T10:00:00Z");
+    await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r1", payloadJson: "{}", status: "failed", failureReason: "bad", receivedAt: at, firstFailedAt: first } });
+    await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r2", payloadJson: "{}", status: "applied" } });
+    await db.receivedExpensePayload.create({ data: { orgId: "org-2", receiptId: "r3", payloadJson: "{}", status: "failed", firstFailedAt: first } });
+    await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r4", payloadJson: "{}", status: "failed", receivedAt: at } });
+    await db.expenseReceivedOrgEvent.create({ data: { id: 51, orgId: ORG, eventType: "item_reviewed", payload: "{}", receivedAt: at, status: "failed", failureReason: "boom", firstFailedAt: first } });
 
-    const audited = await seedExpense({ submittedAt: at });
-    await db.expense.update({ where: { id: audited }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "system" } });
-    for (const changedAt of [at, later]) {
-      await db.expenseAuditLog.create({ data: { expenseId: audited, userId: 0, action: "qb_post_failed", changedAt } });
-    }
-    const unaudited = await seedExpense({ submittedAt: at });
-    await db.expense.update({ where: { id: unaudited }, data: { qbMatchState: "NEEDS_FINANCE", qbFailureKind: "data" } });
+    const stuck = await seedExpense({ submittedAt: at });
+    await db.expense.update({ where: { id: stuck }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: first, qbLastError: "timeout" } });
+    const unpostable = await seedExpense({ submittedAt: at });
+    await db.expense.update({ where: { id: unpostable }, data: { qbMatchState: "NEEDS_FINANCE" } });
     await seedExpense();
 
     const items = await stuckItems();
 
     expect(items).toHaveLength(4);
     expect(items).toEqual(expect.arrayContaining([
-      { id: "r1", step: "intake", href: "/receipts/r1", failedAt: at },
-      { id: "51", step: "catalog event", href: null, failedAt: at },
-      { id: audited, step: "QuickBooks posting", href: `/expense/expenses/${audited}`, failedAt: later },
-      { id: unaudited, step: "QuickBooks posting", href: `/expense/expenses/${unaudited}`, failedAt: at },
+      { id: "r1", step: "intake", href: "/receipts/r1", failedAt: first },
+      { id: "r4", step: "intake", href: "/receipts/r4", failedAt: at },
+      { id: "51", step: "catalog event", href: null, failedAt: first },
+      { id: stuck, step: "QuickBooks posting", href: `/expense/expenses/${stuck}`, failedAt: first },
     ]));
+  });
+
+  it("carries no error text", async () => {
+    await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r1", payloadJson: "{}", status: "failed", failureReason: "personal detail", firstFailedAt: new Date() } });
+    const id = await seedExpense();
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "personal detail" } });
+
+    expect(JSON.stringify(await stuckItems())).not.toContain("personal detail");
+  });
+
+  it("a second failure does not move an item's time", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fail = () => bindPorts({ signoff: { ...directory({}), personExists: async () => { throw new Error("directory down"); } } });
+    const receipt = { ...fixture<{ receiptId: string }>("S2-expense-receipt/all-recognized-gtin"), needsReimbursement: true, reimburseePersonId: 7 };
+    fail();
+    await receiveCompletedReceipt(receipt);
+    const [before] = await stuckItems();
+
+    await new Promise((r) => setTimeout(r, 5));
+    await retryStuckItem({ id: before.id, step: before.step });
+    await receiveCompletedReceipt(receipt);
+
+    expect(await stuckItems()).toEqual([before]);
+  });
+
+  it("a retry of an item that is not stuck, or of an unknown step, answers 404", async () => {
+    const id = await seedExpense();
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id: "r9", step: "intake" })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id: "1", step: "catalog event" })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id, step: "nonsense" })).rejects.toMatchObject({ status: 404 });
   });
 });

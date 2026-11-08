@@ -167,12 +167,6 @@ export const inertCatalogEventSource: CatalogEventSource = {
   },
 };
 
-/** Alerts the host binds to reach a person. */
-export interface ExpenseAlerts {
-  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
-  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
-}
-
 // ── QuickBooks (QB-1 readers, QB-2 writer) ────────────────────────────────────
 
 /** A QuickBooks Purchase or Bill, reduced to what matching needs. `txnDate` is YYYY-MM-DD. */

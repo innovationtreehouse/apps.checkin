@@ -11,20 +11,19 @@ const JOB = "qbo-posting";
 
 /**
  * The counts of a drain that ran: how it stopped, and whether its duplicate check could read
- * QuickBooks. Expense says a connection stop with `stoppedOnConnection`; in-kind says every stop's
- * kind with `stopKind`, and sets `stoppedAfterFailures` for each.
+ * QuickBooks. In-kind says every stop's kind with `stopKind`, and sets `stoppedAfterFailures` for
+ * each; expense's drain never stops on failures.
  */
 type DrainRun = {
-    stoppedAfterFailures: boolean;
-    stoppedOnConnection?: boolean;
+    stoppedAfterFailures?: boolean;
     stopKind?: string | null;
-    refusalStop: { code: string } | null;
+    refusalStop?: { code: string } | null;
     sweep: { full: boolean } | { failed: true };
 };
 
 function stopProblem(lane: string, drain: DrainRun): string | null {
     if (drain.refusalStop) return `${lane} refusal stop (code ${drain.refusalStop.code})`;
-    if (drain.stoppedOnConnection || drain.stopKind === "connection") return `${lane} connection stop`;
+    if (drain.stopKind === "connection") return `${lane} connection stop`;
     return drain.stoppedAfterFailures ? `${lane} streak stop` : null;
 }
 

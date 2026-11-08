@@ -25,7 +25,7 @@ jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue(
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
 const SECRET = 'qbo-posting-secret-under-test';
-const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, outage: 0, disconnected: 0, waiting_on_settings: 0, refused: 0, capped: null, stoppedAfterFailures: false, stoppedOnConnection: false, refusalStop: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
+const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
 const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, exhausted: 0, failed: 0, connection: 0, settings: 0, waiting: 0, capped: false, stoppedAfterFailures: false, stopKind: null, refusalStop: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 } };
 const expensePosting = (qbPost: Awaited<ReturnType<typeof runExpenseQbPosting>>['qbPost']) =>
     ({ stranded: { checked: 0, failed: 0 }, qbPost, qbDrift: 'unbound' as const, outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
@@ -80,17 +80,17 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
     });
 
-    it("hands the lanes' reports to the engine, a stopped drain's lane marked stopped, and counts them by kind", async () => {
+    it("hands the lanes' reports to the engine and counts them by kind; expense's drain never stops its lane", async () => {
         jest.mocked(runExpenseQbPosting).mockImplementation(async () => {
             reportTo('expense')({ lane: 'posting', kind: 'system', status: 503, detail: 'expense 1' });
-            return expensePosting({ ...EXPENSE_DRAIN, stoppedAfterFailures: true });
+            return expensePosting(EXPENSE_DRAIN);
         });
 
         await GET(req());
 
         expect(jest.mocked(evaluateRun).mock.calls[0][0]).toEqual({
             lanes: ['qbo-posting', 'expense posting'],
-            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1, stopped: true }],
+            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1, stopped: false }],
         });
         expect(create.mock.calls[0][0].data).toMatchObject({ failuresByKind: { system: 1 } });
     });
@@ -186,14 +186,6 @@ describe('GET /api/cron/qbo-posting', () => {
         logged.mockRestore();
     });
 
-    it('records an expense drain stopped by its failure streak', async () => {
-        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ ...EXPENSE_DRAIN, stoppedAfterFailures: true }));
-
-        await GET(req());
-
-        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: expense streak stop' });
-    });
-
     it('records an expense duplicate check that could not read QuickBooks', async () => {
         jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ ...EXPENSE_DRAIN, sweep: { failed: true } }));
 
@@ -208,22 +200,6 @@ describe('GET /api/cron/qbo-posting', () => {
         await GET(req());
 
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: in-kind streak stop, in-kind duplicate check' });
-    });
-
-    it('records an expense drain stopped by a repeated refusal code, naming the code', async () => {
-        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ ...EXPENSE_DRAIN, refusalStop: { code: '6000', returned: 3 } }));
-
-        await GET(req());
-
-        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: expense refusal stop (code 6000)' });
-    });
-
-    it('records an expense drain stopped at a broken QuickBooks connection', async () => {
-        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ ...EXPENSE_DRAIN, stoppedOnConnection: true }));
-
-        await GET(req());
-
-        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: expense connection stop' });
     });
 
     it('records an in-kind refusal stop and connection stop by their kind, not as a streak', async () => {

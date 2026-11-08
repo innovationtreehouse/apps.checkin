@@ -76,9 +76,9 @@ describeDb("finance queue — expenses tab", () => {
 });
 
 describeDb("finance queue — QuickBooks tab", () => {
-  it("reads exhausted posts and AMBIGUOUS from the match state, and the three reviews from their rows", async () => {
+  it("reads failed posts and AMBIGUOUS from the match state, and the three reviews from their rows", async () => {
     const failed = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id: failed }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    await db.expense.update({ where: { id: failed }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "timeout" } });
     const ambiguous = await seedExpense({ state: "qb_complete" });
     await db.expense.update({ where: { id: ambiguous }, data: { qbMatchState: "AMBIGUOUS" } });
     const drift = await seedExpense({ state: "qb_complete" });
@@ -88,7 +88,7 @@ describeDb("finance queue — QuickBooks tab", () => {
 
     const rows = await financeQueueRows(FINANCE, "quickbooks");
     const text = (id: string) => rows.find((r) => r.expenseId === id)?.reasons[0].text;
-    expect(text(failed)).toBe("Posting failed 5 times");
+    expect(text(failed)).toBe("Not posted");
     expect(text(ambiguous)).toBe("Several QuickBooks entries match; pick one");
     expect(text(drift)).toBe("Changed in QuickBooks after posting: amount, account");
     expect(text(dup)).toBe("Duplicate entry in QuickBooks needs voiding");
@@ -111,15 +111,14 @@ describeDb("finance queue — QuickBooks tab", () => {
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_NO_CLASS", "A line has no budget bucket, so it has no QuickBooks class"]]]);
   });
 
-  it("shows an outboxed expense a setting stops, naming the setting on the expense and generically in the queue", async () => {
+  it("names a failed post's error on the expense and leaves it out of the queue", async () => {
     const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
-    await writeAudit(db, SYSTEM_ACTOR, { expenseId: id, action: "qb_waiting_on_settings", notes: "not charged (settings): the books map has no payment account" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "the books map has no payment account" } });
+    await writeAudit(db, SYSTEM_ACTOR, { expenseId: id, action: "qb_needs_finance", notes: "the books map has no payment account" });
 
-    expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_WAITING_ON_SETTING")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
+    expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_POST_FAILED")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
     const rows = await financeQueueRows(FINANCE, "quickbooks");
-    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_WAITING_ON_SETTING", "Waiting on a QuickBooks setting"]]]);
+    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_POST_FAILED", "Not posted"]]]);
   });
 
   it("shows an expense parked for the catalog, and not one parked by another failure", async () => {
@@ -131,26 +130,6 @@ describeDb("finance queue — QuickBooks tab", () => {
     const rows = await financeQueueRows(FINANCE, "quickbooks");
     expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => [x.code, x.text])])).toEqual([[waiting, [["QB_WAITING_ON_CATALOG", "Waiting for the catalog; retries daily"]]]]);
     expect((await financeQueueCounts(FINANCE)).quickbooks).toMatchObject({ actionable: 0, total: 1 });
-  });
-
-  it("drops the setting reason once the expense posts", async () => {
-    const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "CREATED", qbFailureKind: "settings", qbTxnId: "77" } });
-    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
-  });
-
-  it("drops the setting reason once a retry clears the failure kind", async () => {
-    const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: null } });
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
-    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
-  });
-
-  it("shows no setting reason on the expense or in the queue for an expense with no outbox row", async () => {
-    const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
-    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
-    expect(await codes(FINANCE, "quickbooks", id)).toEqual([]);
   });
 });
 

@@ -485,10 +485,10 @@ function refuseMissingCatalog(err: unknown): never {
 
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
- * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
- * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
- * post that books leaves NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that
- * state), and checks off any open QB_POST_HELD flag; one that fails counts as attempt one again.
+ * mappings (so a fixed mapping takes effect) and records who asked, all under the row lock so an
+ * in-flight post never reads half-rewritten accounts; then posts once. A post that books leaves
+ * NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that state) and the failure,
+ * and checks off any open QB_POST_HELD flag; one that fails keeps its first failure time.
  * Returns the post's outcome; "unbound" when QuickBooks is not connected, and false when a line no
  * longer resolves to one account. Either refusal before the re-arm leaves the expense as it is.
  */
@@ -507,7 +507,7 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     for (const r of resolved) {
       await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: null } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED" } });
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;
   });

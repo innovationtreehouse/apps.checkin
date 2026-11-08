@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveReasons, settingWaitDetail, taxWaitsOnFinance, type QueueReason, type ReasonFacts } from "../../lib/reasons";
+import { deriveReasons, taxWaitsOnFinance, type QueueReason, type ReasonFacts } from "../../lib/reasons";
 import { REVIEW_KINDS, reviewKindOf } from "../../lib/flags";
 import { reasonText } from "../../lib/reasonWords";
 import { backToQueue } from "../../lib/backToQueue";
@@ -23,7 +23,6 @@ const facts = (over: Partial<Omit<ReasonFacts, "expense">> & { expense?: Partial
     taxCents: 0,
     receiptTotalCents: 1000,
     qbMatchState: "UNMATCHED",
-    qbPostAttempts: 0,
     ...over.expense,
   },
 });
@@ -66,9 +65,9 @@ describe("deriveReasons", () => {
     expect(taxWaitsOnFinance(500, null, 500)).toBe(false);
   });
 
-  it("reads the QuickBooks reasons from qbMatchState, with the last error and the attempts", () => {
-    expect(deriveReasons(facts({ expense: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 }, lastPostError: "Account is inactive" }))).toEqual([
-      { code: "QB_POST_FAILED", tab: "qb", amountCents: null, count: 5, detail: "Account is inactive" },
+  it("reads the QuickBooks reasons from qbMatchState, with the last error", () => {
+    expect(deriveReasons(facts({ expense: { qbMatchState: "NEEDS_FINANCE" }, lastPostError: "Account is inactive" }))).toEqual([
+      { code: "QB_POST_FAILED", tab: "qb", amountCents: null, count: null, detail: "Account is inactive" },
     ]);
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS" } }))).toEqual(["QB_AWAITING_MATCH"]);
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }, reimburseeVendorLinked: false }))).toEqual(["QB_VENDOR_MISSING"]);
@@ -80,14 +79,6 @@ describe("deriveReasons", () => {
       { code: "QB_NO_CLASS", tab: "qb", amountCents: null, count: null, detail: "Facility" },
     ]);
     expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
-  });
-
-  it("reads an expense a setting stops as a QuickBooks reason naming the setting", () => {
-    expect(deriveReasons(facts({ waitingOnSetting: { detail: "the books map has no payment account" } }))).toEqual([
-      { code: "QB_WAITING_ON_SETTING", tab: "qb", amountCents: null, count: null, detail: "the books map has no payment account" },
-    ]);
-    expect(codes(facts({ waitingOnSetting: { detail: null } }))).toEqual(["QB_WAITING_ON_SETTING"]);
-    expect(codes(facts({ expense: { state: "rejected" }, waitingOnSetting: { detail: null } }))).toEqual([]);
   });
 
   it("reads an expense parked for the catalog as a QuickBooks reason, never an account hold", () => {
@@ -126,16 +117,6 @@ describe("deriveReasons", () => {
   });
 });
 
-describe("settingWaitDetail", () => {
-  it("reads the setting from the note a settings wait writes, and nothing from any other note", () => {
-    expect(settingWaitDetail("not charged (settings): Account 61 is inactive")).toBe("Account 61 is inactive");
-    expect(settingWaitDetail("attempt 2 of 5 (settings): QuickBooks refused 3 expenses with code 6000 in one run; likely a books-map setting"))
-      .toBe("QuickBooks refused 3 expenses with code 6000 in one run; likely a books-map setting");
-    expect(settingWaitDetail("attempt 2 of 5: timeout")).toBeNull();
-    expect(settingWaitDetail(null)).toBeNull();
-  });
-});
-
 describe("reviewKindOf", () => {
   it("names the three reviews, and nothing for a retired kind", () => {
     for (const kind of REVIEW_KINDS) expect(reviewKindOf({ kind })).toBe(kind);
@@ -150,8 +131,8 @@ describe("reasonText", () => {
   it("words each reason without a code or id", () => {
     expect(reasonText(r({ code: "TAX_NOT_REVIEWED", amountCents: 1240 }), "USD")).toBe("Tax $12.40 not reviewed on the receipt");
     expect(reasonText(r({ code: "BOARD_APPROVAL", amountCents: 234_000 }), "USD")).toBe("Board approval of a $2,340.00 purchase not recorded");
-    expect(reasonText(r({ code: "QB_POST_FAILED", count: 5, detail: "Account is inactive" }), "USD")).toBe("Posting failed 5 times: Account is inactive");
-    expect(reasonText(r({ code: "QB_POST_FAILED", count: 0, detail: "the expense has no receipt date" }), "USD")).toBe("Not posted: the expense has no receipt date");
+    expect(reasonText(r({ code: "QB_POST_FAILED", detail: "Account is inactive" }), "USD")).toBe("Not posted: Account is inactive");
+    expect(reasonText(r({ code: "QB_POST_FAILED" }), "USD")).toBe("Not posted");
     expect(reasonText(r({ code: "QB_DRIFT", detail: "amount, accounts" }), "USD")).toBe("Changed in QuickBooks after posting: amount, account");
     expect(reasonText(r({ code: "QB_POST_HELD", detail: "closed but not posted: a line is missing a sign-off seat" }), "USD"))
       .toBe("Closed but not posted: a line is missing a sign-off seat");
@@ -159,8 +140,6 @@ describe("reasonText", () => {
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
     expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
     expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
-    expect(reasonText(r({ code: "QB_WAITING_ON_SETTING", detail: "Account 61 is inactive" }), "USD")).toBe("Waiting on a setting: Account 61 is inactive");
-    expect(reasonText(r({ code: "QB_WAITING_ON_SETTING" }), "USD")).toBe("Waiting on a QuickBooks setting");
     expect(reasonText(r({ code: "QB_WAITING_ON_CATALOG" }), "USD")).toBe("Waiting for the catalog; retries daily");
   });
 });

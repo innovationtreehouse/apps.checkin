@@ -13,7 +13,7 @@ import { createProvisionalResolutionRepository } from "../repositories/provision
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
 import { recordSubmitterSeats } from "./submitterSeatService";
-import { ServiceError, type FailureKind } from "@checkin/component-kit";
+import { ServiceError } from "@checkin/component-kit";
 
 /** A stored payload as the contract reads it now, so a code it normalizes does not count as a difference. */
 function asParsed(payloadJson: string): string {
@@ -23,22 +23,16 @@ function asParsed(payloadJson: string): string {
 
 /**
  * Refusals at arrival (schema, org, a changed payload for a built expense) throw. Once the payload
- * is stored expense owns it: a failure building the expense is recorded on the stored row as
- * "failed", for the daily replay, and the call returns "accepted".
+ * is stored expense owns it: a failure building the expense leaves the stored row "failed", stuck
+ * until a person retries it, and the call returns "accepted".
  */
 export async function receiveCompletedReceipt(
   raw: unknown,
 ): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }> {
-  const { receiptId, status } = await receive(raw, { replay: false });
-  return { receiptId, status };
+  return receive(raw, { replay: false });
 }
 
-type Received =
-  | { receiptId: string; status: "created" | "already_applied" }
-  | { receiptId: string; status: "accepted"; failure: { kind: FailureKind; reason: string } };
-
-/** A new arrival starts the payload's replay tries from zero; a replay keeps its count. */
-async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<Received> {
+async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }> {
   const receipt = CompletedReceiptSchema.parse(raw);
   await assertOrg(receipt.orgId);
   const { receiptId } = receipt;
@@ -53,8 +47,9 @@ async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<R
   }
 
   // Record arrival as "received"; "applied" is written only after processing commits, so a crash
-  // in between leaves a row the next call (or the catch-up sweep) finishes.
-  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", failureReason: null, receivedAt: new Date(), ...(!replay && { replayAttempts: null }) };
+  // in between leaves a row the next call (or the catch-up sweep) finishes. A resend keeps the
+  // first failure's time.
+  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", receivedAt: new Date() };
   try {
     await db.receivedExpensePayload.upsert({ where: { receiptId }, create: { receiptId, ...arrival }, update: arrival });
   } catch (err) {
@@ -68,63 +63,57 @@ async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<R
   } catch (err) {
     const kind = expenseRuntime.failed(replay ? "intake-replay" : "intake", err, `receipt ${receiptId}`);
     logError("intake_build_failed", { receiptId, kind }, err);
-    await db.receivedExpensePayload
-      .updateMany({ where: { receiptId, status: { not: "applied" } }, data: { status: "failed", failureReason: messageOf(err) } })
-      // The row stays "received", which the daily replay still picks up.
-      .catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
-    return { receiptId, status: "accepted", failure: { kind, reason: messageOf(err) } };
+    // A row left "received" is finished by the daily sweep.
+    await recordFailedPayload(receiptId, messageOf(err)).catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
+    return { receiptId, status: "accepted" };
   }
-  await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null } });
+  await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null, firstFailedAt: null } });
   return { receiptId, status: created ? "created" : "already_applied" };
 }
 
-/** Replays a stored payload gets before it is given up: no more replays, held for a developer. */
-export const MAX_REPLAY_ATTEMPTS = 5;
+/** Marks the payload failed with `reason`, stamping its first failure once. */
+async function recordFailedPayload(receiptId: string, reason: string): Promise<void> {
+  const notApplied = { receiptId, status: { not: "applied" } };
+  await db.receivedExpensePayload.updateMany({ where: notApplied, data: { status: "failed", failureReason: reason } });
+  await db.receivedExpensePayload.updateMany({ where: { ...notApplied, firstFailedAt: null }, data: { firstFailedAt: new Date() } });
+}
 
-const UNCHARGED_KINDS: ReadonlySet<FailureKind> = new Set(["system", "connection", "settings"]);
-
-/** Catch-up sweep: re-runs payloads left received or failed until they build or are given up. Capped; counts only. */
+/** Catch-up sweep: finishes payloads left "received" by a call that stopped before recording an outcome. Capped; counts only. */
 export async function replayReceivedPayloads(limit = 50): Promise<{ applied: number; failed: number }> {
   const rows = await db.receivedExpensePayload.findMany({
-    where: {
-      orgId: await getOrgId(),
-      status: { in: ["received", "failed"] },
-      OR: [{ replayAttempts: null }, { replayAttempts: { lt: MAX_REPLAY_ATTEMPTS } }],
-    },
+    where: { orgId: await getOrgId(), status: "received" },
     orderBy: { receivedAt: "asc" },
     take: limit,
-    select: { receiptId: true, payloadJson: true, replayAttempts: true },
+    select: { receiptId: true, payloadJson: true },
   });
   const counts = { applied: 0, failed: 0 };
-  for (const r of rows) {
-    try {
-      counts[(await replayOne(r)) ? "applied" : "failed"]++;
-    } catch (err) {
-      counts.failed++;
-      logError("intake_replay_failed", { receiptId: r.receiptId }, err);
-    }
-  }
+  for (const r of rows) counts[(await replayOne(r)) ? "applied" : "failed"]++;
   return counts;
 }
 
-/** True when the replay built the expense; otherwise a failure that is the payload's is counted on the row. */
-async function replayOne(row: { receiptId: string; payloadJson: string; replayAttempts: number | null }): Promise<boolean> {
+/** Retry of a failed payload: builds its expense once from the stored payload. 404 when no payload of this org is failed. */
+export async function retryFailedPayload(receiptId: string): Promise<void> {
+  const row = await db.receivedExpensePayload.findFirst({ where: { receiptId, orgId: await getOrgId(), status: "failed" }, select: { receiptId: true, payloadJson: true } });
+  if (!row) throw new ServiceError(404, "No failed intake for this receipt");
+  await replayOne(row);
+}
+
+/** True when the stored payload built its expense; a failure is recorded on the row. Never throws. */
+async function replayOne(row: { receiptId: string; payloadJson: string }): Promise<boolean> {
   const { receiptId } = row;
   const stored = storedPayload(row.payloadJson);
-  // A stored payload the contract refuses can never build, so it is given up at once.
-  if (!stored.ok) return recordFailedReplay(receiptId, MAX_REPLAY_ATTEMPTS, `The stored payload no longer passes the receipt contract: ${stored.reason}`);
-
-  let failure: { kind: FailureKind; reason: string };
   try {
-    const received = await receive(stored.payload, { replay: true });
-    if (received.status !== "accepted") return true;
-    failure = received.failure;
+    if (!stored.ok) {
+      await recordFailedPayload(receiptId, `The stored payload no longer passes the receipt contract: ${stored.reason}`);
+      return false;
+    }
+    return (await receive(stored.payload, { replay: true })).status !== "accepted";
   } catch (err) {
-    failure = { kind: expenseRuntime.failed("intake-replay", err, `receipt ${receiptId}`), reason: messageOf(err) };
+    expenseRuntime.failed("intake-replay", err, `receipt ${receiptId}`);
+    logError("intake_replay_failed", { receiptId }, err);
+    await recordFailedPayload(receiptId, messageOf(err)).catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
+    return false;
   }
-  // An outage, a lost connection or a missing setting is no fault of the payload, so it uses no try.
-  if (UNCHARGED_KINDS.has(failure.kind)) return false;
-  return recordFailedReplay(receiptId, (row.replayAttempts ?? 0) + 1, failure.reason);
 }
 
 function storedPayload(payloadJson: string): { ok: true; payload: unknown } | { ok: false; reason: string } {
@@ -135,21 +124,6 @@ function storedPayload(payloadJson: string): { ok: true; payload: unknown } | { 
   } catch (err) {
     return { ok: false, reason: messageOf(err) };
   }
-}
-
-/**
- * Counts a failed replay; at MAX_REPLAY_ATTEMPTS the row is given up, which finance's queue shows
- * as a failed intake and `intake_replay_given_up` reports for a developer. Always false.
- */
-async function recordFailedReplay(receiptId: string, attempts: number, reason: string | null): Promise<false> {
-  const givenUp = attempts >= MAX_REPLAY_ATTEMPTS;
-  const { failureReason } = await db.receivedExpensePayload.update({
-    where: { receiptId },
-    data: { replayAttempts: attempts, ...(givenUp && { status: "failed" }), ...(reason !== null && { failureReason: reason }) },
-    select: { failureReason: true },
-  });
-  if (givenUp) logError("intake_replay_given_up", { receiptId, attempts }, failureReason);
-  return false;
 }
 
 function messageOf(err: unknown): string {

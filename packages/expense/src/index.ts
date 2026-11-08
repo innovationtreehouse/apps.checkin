@@ -45,4 +45,4 @@ export * from "./services/sweeps";
 
 export * as routes from "./routes";
 
-export { stuckItems } from "./stuckItems";
+export { retryStuckItem, stuckItems } from "./stuckItems";
