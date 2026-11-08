@@ -1,4 +1,4 @@
-jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OwnershipMapPage from "@checkin/expense/pages/ownershipMap";

@@ -1,4 +1,4 @@
-jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";

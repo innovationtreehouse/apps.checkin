@@ -33,9 +33,9 @@ beforeEach(() => {
     prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 7, name: 'Ada' }]);
 });
 
-const call = () =>
+const call = (query = '') =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (GET as any)(new Request('http://localhost/api/system-status/audit-log'), {
+    (GET as any)(new Request(`http://localhost/api/system-status/audit-log${query}`), {
         type: 'session',
         user: { isSysadmin: true, isBoardMember: false },
     });
@@ -59,5 +59,20 @@ describe('GET /api/system-status/audit-log — dropdown reads dedup in SQL', () 
         expect(body.tables).toEqual(['Visit']);
         expect(body.actors).toEqual([{ id: 7, name: 'Ada' }]);
         expect(body.systemActors).toEqual(['cron:nightly']);
+    });
+});
+
+describe('GET /api/system-status/audit-log — day filters', () => {
+    it.each(['?from=x', '?to=2026-13-45', '?from=2026-1-2'])('answers 400 for a malformed day (%s), reading nothing', async (query) => {
+        const res = await call(query);
+        expect(res.status).toBe(400);
+        expect(findMany()).not.toHaveBeenCalled();
+    });
+
+    it('filters an inclusive day range', async () => {
+        await call('?from=2026-01-02&to=2026-01-03');
+        const { where } = findMany().mock.calls[0][0];
+        expect(where.timestamp.gte).toEqual(new Date('2026-01-02T00:00:00.000'));
+        expect(where.timestamp.lte).toEqual(new Date('2026-01-03T23:59:59.999'));
     });
 });

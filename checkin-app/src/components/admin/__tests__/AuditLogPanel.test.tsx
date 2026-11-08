@@ -1,4 +1,4 @@
-jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { AuditLogPanel } from "../AuditLogPanel";

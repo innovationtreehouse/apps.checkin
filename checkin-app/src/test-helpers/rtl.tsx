@@ -97,8 +97,11 @@ function setSearch(sp: URLSearchParams) {
     searchParams = sp;
     searchListeners.forEach((listener) => listener());
 }
-// A push or replace moves the mocked URL's query, so a screen keeping its state there re-renders.
-const navigate = (href: string) => setSearch(new URL(href, "http://localhost").searchParams);
+// With `followUrl`, a push or replace moves the mocked query, so a screen keeping its state there re-renders.
+let followUrl = false;
+const navigate = (href: string) => {
+    if (followUrl) setSearch(new URL(href, "http://localhost").searchParams);
+};
 export const router = {
     push: jest.fn(navigate),
     replace: jest.fn(navigate),
@@ -118,8 +121,13 @@ function useMockSearchParams() {
 }
 let session: { data: unknown; status: string; update?: jest.Mock } = { data: null, status: "unauthenticated" };
 
-/** Factory for `jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock())`. */
-export function navMock() {
+/**
+ * Factory for `jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock())`.
+ * `followUrl: true` is for a list keeping its page and filters in the URL: the router's writes
+ * then change what `useSearchParams` returns. Off, the query stays as the test set it.
+ */
+export function navMock({ followUrl: follow = false }: { followUrl?: boolean } = {}) {
+    followUrl = follow;
     return {
         useRouter: () => router,
         usePathname: () => pathname,

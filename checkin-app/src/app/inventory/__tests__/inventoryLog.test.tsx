@@ -1,5 +1,5 @@
 import { HttpError } from "@checkin/component-ui";
-jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
