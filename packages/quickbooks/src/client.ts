@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { KindedError, type FailureKind } from "@checkin/component-kit";
+import { KindedError } from "@checkin/component-kit";
 import { centsToDollars } from "@checkin/money";
 import { CREATE, CREATE_JOURNAL } from "./internal";
+import { faultKind } from "./faultCodes";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
 import type {
   AccessTokenSource,
@@ -41,13 +42,6 @@ async function faultCodes(res: Response): Promise<string[]> {
   }
 }
 
-/** A refused login is connection; 403 is too until the logged fault codes show which 403s are settings. */
-function statusKind(status: number): FailureKind {
-  if (status === 401 || status === 403) return "connection";
-  if (status === 429 || status >= 500) return "system";
-  return "data";
-}
-
 /** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
 export class QboRequestError extends KindedError {
   constructor(
@@ -56,7 +50,7 @@ export class QboRequestError extends KindedError {
     readonly requestId: string | null,
     readonly codes: readonly string[],
   ) {
-    super(statusKind(status), codes.length ? `${message}: codes ${codes.join(",")}` : message);
+    super(faultKind(status, codes), codes.length ? `${message}: codes ${codes.join(",")}` : message);
     this.name = "QboRequestError";
   }
 }

@@ -5,6 +5,7 @@ import { billCandidate, depositCandidate, findMatch, journalCandidate, purchaseC
 import { CREATE, CREATE_JOURNAL } from "./internal";
 import { LIVE_BOOKS_MAP_ROLES, type BooksMapRole } from "./booksMap";
 import { TEST_PREFIX } from "./guard";
+import { isClosedPeriod } from "./faultCodes";
 
 /** One lane record to find in QuickBooks, or create when the closed-books gate allows it. */
 export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "claimedIds" | "excludedIds"> {
@@ -45,13 +46,10 @@ export type FindOrCreateResult =
   | { kind: "created"; id: string }
   /** `onCreate`: the create itself failed, after every read answered. */
   | ({ kind: "failed"; onCreate?: true } & PostFailure)
-  /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6210): never created. */
+  /** Not found and dated in closed books, or refused by QuickBooks with a closed-books fault code: never created. */
   | { kind: "closed" }
   /** Not found and the lane may not create it on its own: finance books it or skips it. */
   | { kind: "needs-finance" };
-
-/** QuickBooks' fault for a transaction dated in a closed period. */
-const CLOSED_PERIOD_FAULT = "6210";
 
 async function candidates(client: QuickBooksClient, write: TxnWrite, from: string, to: string): Promise<MatchCandidate[]> {
   switch (write.entity) {
@@ -107,7 +105,7 @@ async function matchThenCreate(
   try {
     return { kind: "created", id: (await create()).Id };
   } catch (e) {
-    if (e instanceof QboRequestError && e.codes.includes(CLOSED_PERIOD_FAULT)) return { kind: "closed" };
+    if (e instanceof QboRequestError && isClosedPeriod(e.codes)) return { kind: "closed" };
     return { kind: "failed", ...postFailure(e), answered: true, onCreate: true };
   }
 }

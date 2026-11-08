@@ -74,6 +74,9 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   fault 6210 (closed period) is `closed`. The created `TxnDate` must sit inside the window, so a crash
   after QBO accepts is found by key next run.
 - A failed request throws `QboRequestError`, whose `codes` are the fault's numeric codes.
+- `FAULT_CODES` (`src/faultCodes.ts`) is the table of fault codes the app knows: settings, data or
+  closed books, edited by PR with a test per entry. `faultKind` sorts a refusal by it, and by status
+  for a code not listed.
 - `createVendor(client, name, key)`: finance's "Create new". A name a Customer holds becomes
   `<name> (Vendor)`; an existing Vendor with the resulting name is returned as `found` with `via: "name"`.
 - `qboString` / `qboDate` — how a caller's value enters a query: escaped / validated literals. The one

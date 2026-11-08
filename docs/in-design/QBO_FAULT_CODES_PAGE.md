@@ -157,12 +157,13 @@ Then a table, one row per code:
 | 6000 | `unclassified` | `data 14` `connection 1` | 15 | 3 Nov | today 09:12 | expense posting |
 | 6190 | `unclassified` | `data 2` | 2 | 5 Nov | 6 Nov | gift posting |
 
-- **Classified as** comes from the code table in `packages/quickbooks`, the plain
-  constant that maps a fault code to settings or data, beside the status rule
-  (`statusKind` in `packages/quickbooks/src/client.ts`) it overrides. A code not in
-  the table reads `unclassified`. The table has no entries yet, so every code reads
-  unclassified until one lands by PR (FC3). The panel imports the table, so the
-  response carries only stored rows.
+- **Classified as** comes from the code table, `FAULT_CODES` in
+  `packages/quickbooks/src/faultCodes.ts`, which maps a fault code to settings, data
+  or closed books. The same file's `faultKind` sorts every QuickBooks refusal from
+  it, so the page and the sorting read one table. A code not in the table reads
+  `unclassified`. Its one entry is 6210, closed books, which the page leaves off
+  (FC2), so every code reads unclassified until a settings or data entry lands by
+  PR (FC3). The panel imports the table, so the response carries only stored rows.
 - **Sorted as** has one pill per kind with its count, in the kind colours the rest
   of the app uses.
 - The panel refreshes on focus and every minute. Empty, it says "QuickBooks hasn't
