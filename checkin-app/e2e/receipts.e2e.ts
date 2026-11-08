@@ -133,25 +133,57 @@ test.describe("receipts in the browser", () => {
     await context.close();
   });
 
-  test("FINANCE compares a suspected duplicate's file with its original's", async ({ browser }) => {
+  test("FINANCE sees a suspected duplicate's group in one queue row, views every member's file, and decides the group", async ({ browser }) => {
     const id = stamp();
     const submitter = await loginAs(SUBMITTER);
-    // The OCR mock reads every upload as the same purchase, so the second read repeats the first.
-    await inReview(submitter, await loginAs(FINANCE), `E2E original ${id}`);
+    // The OCR mock reads every upload as the same purchase, so the copy joins every earlier live read, other tests' included.
+    const original = await inReview(submitter, await loginAs(FINANCE), `E2E original ${id}`);
     const copy = await uploadForReading(submitter, `E2E copy ${id}`);
     expect(copy.state).toBe("duplicate_flagged");
 
     const { context } = await signIn(browser, FINANCE);
     const page = await context.newPage();
     const watch = watchPage(page);
-    await page.goto(`/receipts/${encodeURIComponent(copy.id)}?queue=all`);
-    // The group holds every matching read, so other tests' receipts may be matches too.
+    await page.goto(`/receipts/${encodeURIComponent(copy.id)}?queue=duplicate_flagged`);
+    const groupBadge = page.getByText(/^Possible duplicate: in a group of \d+$/);
+    await expect(groupBadge).toBeVisible();
+    const groupSize = Number((await groupBadge.innerText()).match(/\d+$/)?.[0]);
+    expect(groupSize).toBeGreaterThanOrEqual(2);
+    await expect(page.getByText("File of match 1", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^The (file|lines) of match \d+ (is|are) not loaded\.$/)).toHaveCount(0);
+    const matchLinks = page.getByRole("link", { name: /^Open match \d+$/ });
+    const hrefs = await matchLinks.evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
+    const memberIds = [copy.id, ...hrefs.map((href) => decodeURIComponent(new URL(href, "http://e2e").pathname.split("/")[2]))];
+    expect(memberIds).toContain(original.id);
+    // Every member's file is on the page: this receipt's and one per match.
     await expect(page.getByText("This receipt's file", { exact: true })).toBeVisible();
+    for (let n = 1; n <= hrefs.length; n++) await expect(page.getByText(`File of match ${n}`, { exact: true })).toBeVisible();
     // The page shows this receipt's file above the comparison as well.
     await expect(page.getByText(`E2E copy ${id}`).first()).toBeVisible();
-    await expect(page.getByText("File of match 1", { exact: true })).toBeVisible();
-    await expect(page.getByText(/^The file of match \d+ is not loaded\.$/)).toHaveCount(0);
+    await expect(page.getByText(`E2E original ${id}`)).toBeVisible();
     await noProblems(watch, "duplicate compare");
+
+    // The Duplicates tab has one row for the whole group, counting its live members.
+    await page.goto("/finance/review?queue=duplicate_flagged");
+    const memberLink = memberIds.map((m) => `a[href^="/receipts/${encodeURIComponent(m)}?"]`).join(", ");
+    const groupRow = page.getByRole("row").filter({ has: page.locator(memberLink) });
+    await expect(groupRow).toHaveCount(1);
+    await expect(groupRow.getByRole("cell").nth(3)).toHaveText(new RegExp(`^${groupSize}(?!\\d)`));
+    await noProblems(watch, "duplicate queue");
+
+    // The row opens a held member of the group; Different purchases releases the whole group.
+    await groupRow.getByRole("link").first().click();
+    await expect(page.getByText(/^Possible duplicate: in a group of \d+$/)).toBeVisible();
+    await page.getByRole("button", { name: "Different purchases", exact: true }).click();
+    await expect(page.locator(".mantine-Notification-root").filter({ hasText: "Recorded as different purchases" })).toBeVisible();
+    await page.waitForURL(/\/finance\/review\?queue=duplicate_flagged$/);
+    await expect(page.getByRole("row").filter({ has: page.locator(memberLink) })).toHaveCount(0);
+    await noProblems(watch, "group decided");
+
+    await page.goto(`/receipts/${encodeURIComponent(copy.id)}?queue=all`);
+    await expect(page.getByRole("main").getByText("Needs your review", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(/^Possible duplicate: in a group of/)).toHaveCount(0);
+    await noProblems(watch, "copy released");
     await context.close();
   });
 
