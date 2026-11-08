@@ -228,17 +228,14 @@ export function pageViewDisposition(
 /**
  * Close this person's page-view rows whose merge span has passed before `at`.
  * A closed row takes its content key. When an earlier row of the same person in
- * the same window already holds that key, the closed row's calls are added to it
- * and the closed row is removed: the two showed the same records and fields on
- * the same page, so nothing they recorded is lost.
+ * the same window already holds that key, the closed row's calls and page-view
+ * ids are added to it and the closed row is removed: the two showed the same
+ * records and fields on the same page, so nothing they recorded is lost, and
+ * the id's first user stays findable.
  */
 async function closeFinishedPageViews(tx: TxClient, actorId: number, at: Date): Promise<void> {
     const finished = await tx.financeViewLog.findMany({
-        where: {
-            actorId,
-            viewKey: { startsWith: OPEN_VIEW_KEY_PREFIX },
-            viewedAt: { lt: new Date(at.getTime() - PAGE_VIEW_MERGE_MS) },
-        },
+        where: { actorId, closesAt: { lt: at } },
         orderBy: [{ viewedAt: "asc" }, { id: "asc" }],
     });
     for (const row of finished) {
@@ -246,16 +243,44 @@ async function closeFinishedPageViews(tx: TxClient, actorId: number, at: Date): 
         const viewKey = pageViewKey(row.pagePath ?? "", records);
         const earlier = await tx.financeViewLog.findFirst({ where: { actorId, window: row.window, viewKey } });
         if (!earlier) {
-            await tx.financeViewLog.update({ where: { id: row.id }, data: { viewKey } });
+            await tx.financeViewLog.update({ where: { id: row.id }, data: { viewKey, closesAt: null } });
             continue;
         }
         const merged = unionRecords(parseRecords(earlier.records), records);
         await tx.financeViewLog.update({
             where: { id: earlier.id },
-            data: { calls: callsColumn(unionCalls(parseCalls(earlier.calls), parseCalls(row.calls))), ...recordColumns(merged) },
+            data: {
+                calls: callsColumn(unionCalls(parseCalls(earlier.calls), parseCalls(row.calls))),
+                ...recordColumns(merged),
+                mergedPageViewIds: absorbedIds(earlier, row),
+            },
         });
         await tx.financeViewLog.delete({ where: { id: row.id } });
     }
+}
+
+/** The page-view ids a surviving row holds once `absorbed` collapses into it, its own id aside. */
+export function absorbedIds(
+    survivor: { pageViewId: string | null; mergedPageViewIds: string[] },
+    absorbed: { pageViewId: string | null; mergedPageViewIds: string[] },
+): string[] {
+    const ids = new Set([...survivor.mergedPageViewIds, ...absorbed.mergedPageViewIds]);
+    if (absorbed.pageViewId) ids.add(absorbed.pageViewId);
+    if (survivor.pageViewId) ids.delete(survivor.pageViewId);
+    return [...ids].sort();
+}
+
+/** Who first used a page-view id, and on which path, including ids collapsed into another row. */
+async function firstUseOf(tx: TxClient, pageViewId: string) {
+    const select = { actorId: true, pagePath: true } as const;
+    return (
+        (await tx.financeViewLog.findFirst({
+            where: { pageViewId },
+            orderBy: [{ viewedAt: "asc" }, { id: "asc" }],
+            select,
+        })) ??
+        (await tx.financeViewLog.findFirst({ where: { mergedPageViewIds: { has: pageViewId } }, select }))
+    );
 }
 
 async function writeUntagged(tx: TxClient, call: FinanceViewCall, at: Date): Promise<void> {
@@ -295,13 +320,9 @@ export async function recordFinanceViewCall(call: FinanceViewCall, db: DbClient 
 
         // Serialises first use of an id across people.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`finance-page-view:${tag.id}`}))`;
-        const firstUse = await tx.financeViewLog.findFirst({
-            where: { pageViewId: tag.id },
-            orderBy: [{ viewedAt: "asc" }, { id: "asc" }],
-            select: { actorId: true, pagePath: true },
-        });
+        const firstUse = await firstUseOf(tx, tag.id);
         const open = await tx.financeViewLog.findFirst({
-            where: { pageViewId: tag.id, actorId: call.actorId, viewKey: { startsWith: OPEN_VIEW_KEY_PREFIX } },
+            where: { pageViewId: tag.id, actorId: call.actorId, closesAt: { gte: at } },
             orderBy: [{ viewedAt: "desc" }, { id: "desc" }],
         });
 
@@ -331,6 +352,7 @@ export async function recordFinanceViewCall(call: FinanceViewCall, db: DbClient 
                         ...recordColumns(unionRecords(call.records)),
                         window: financeViewWindow(at),
                         viewKey: `${OPEN_VIEW_KEY_PREFIX}${randomUUID()}`,
+                        closesAt: new Date(at.getTime() + PAGE_VIEW_MERGE_MS),
                     },
                 });
         }

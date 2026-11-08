@@ -3,6 +3,7 @@
  */
 import {
     OPEN_VIEW_KEY_PREFIX,
+    absorbedIds,
     PAGE_VIEW_MERGE_MS,
     pageViewDisposition,
     pageViewKey,
@@ -30,6 +31,8 @@ function matches(row: Row, where: Where): boolean {
         if (isObject(cond)) {
             if ("startsWith" in cond) return typeof value === "string" && value.startsWith(String(cond.startsWith));
             if ("lt" in cond) return value instanceof Date && cond.lt instanceof Date && value < cond.lt;
+            if ("gte" in cond) return value instanceof Date && cond.gte instanceof Date && value >= cond.gte;
+            if ("has" in cond) return Array.isArray(value) && value.includes(cond.has);
             throw new Error(`fake db: unsupported condition on ${key}`);
         }
         if (cond instanceof Date) return value instanceof Date && value.getTime() === cond.getTime();
@@ -67,7 +70,7 @@ function makeDb() {
         }),
         create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
             if (clashes(data)) throw new Error("unique violation");
-            const row = { ...data, id: nextId++ };
+            const row = { mergedPageViewIds: [], ...data, id: nextId++ };
             rows.push(row);
             return row;
         }),
@@ -75,7 +78,7 @@ function makeDb() {
             let count = 0;
             for (const d of data) {
                 if (clashes(d)) continue;
-                rows.push({ ...d, id: nextId++ });
+                rows.push({ mergedPageViewIds: [], ...d, id: nextId++ });
                 count++;
             }
             return { count };
@@ -181,6 +184,20 @@ describe("view keys", () => {
         const calls = [{ endpoint: "GET /api/x", path: "/api/x", query: {}, role: "isFinance" }];
         expect(untaggedViewKey(calls, records))
             .not.toBe(untaggedViewKey(calls, [{ ref: "Expense:e_1", fields: ["submitterId"] }]));
+    });
+});
+
+describe("absorbedIds", () => {
+    test("adds the absorbed row's id and its own absorbed ids, never the survivor's own id", () => {
+        expect(absorbedIds(
+            { pageViewId: "pv-1", mergedPageViewIds: ["pv-0"] },
+            { pageViewId: "pv-3", mergedPageViewIds: ["pv-2", "pv-1"] },
+        )).toEqual(["pv-0", "pv-2", "pv-3"]);
+    });
+
+    test("an absorbed row with the survivor's id adds nothing", () => {
+        expect(absorbedIds({ pageViewId: "pv-1", mergedPageViewIds: [] }, { pageViewId: "pv-1", mergedPageViewIds: [] }))
+            .toEqual([]);
     });
 });
 
@@ -359,8 +376,51 @@ describe("recordFinanceViewCall", () => {
         await recordFinanceViewCall(expenseCall({ pageView: null, viewedAt: at(5 * 60_000), records: [] }), client);
         const pageRows = rows.filter((r) => r.pagePath === PAGE);
         expect(pageRows).toHaveLength(1);
-        expect(pageRows[0]).toMatchObject({ pageViewId: "pv-1", viewedAt: T0, recordCount: 1 });
+        expect(pageRows[0]).toMatchObject({ pageViewId: "pv-1", viewedAt: T0, recordCount: 1, mergedPageViewIds: ["pv-2"], closesAt: null });
         expect(parseCalls(pageRows[0].calls).map((c) => c.query)).toEqual([{}, { from: "list" }]);
+    });
+
+    test("an open row closes 30 s after its first call; a closed row stays closed", async () => {
+        const { rows, client } = makeDb();
+        await recordFinanceViewCall(expenseCall(), client);
+        expect(rows[0].closesAt).toEqual(at(PAGE_VIEW_MERGE_MS));
+
+        await recordFinanceViewCall(expenseCall({ pageView: null, viewedAt: at(PAGE_VIEW_MERGE_MS + 1), records: [] }), client);
+        expect(rows[0].closesAt).toBeNull();
+        expect(rows[0].viewKey).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    describe("an id collapsed into another row stays bound to its first user", () => {
+        const collapsePv2 = async (client: DbClient) => {
+            await recordFinanceViewCall(expenseCall(), client);
+            await recordFinanceViewCall(expenseCall({ pageView: { id: "pv-2", path: PAGE }, viewedAt: at(1000) }), client);
+            await recordFinanceViewCall(expenseCall({ pageView: null, viewedAt: at(5 * 60_000), records: [] }), client);
+        };
+
+        test("another person's call with the id writes an untagged row", async () => {
+            const { rows, client } = makeDb();
+            await collapsePv2(client);
+            expect(rows.some((r) => r.pageViewId === "pv-2")).toBe(false);
+
+            await recordFinanceViewCall(expenseCall({ actorId: 7, pageView: { id: "pv-2", path: PAGE }, viewedAt: at(6 * 60_000) }), client);
+            const theirs = rows.filter((r) => r.actorId === 7);
+            expect(theirs).toHaveLength(1);
+            expect(theirs[0].pageViewId).toBeUndefined();
+        });
+
+        test("another path under the id writes an untagged row", async () => {
+            const { rows, client } = makeDb();
+            await collapsePv2(client);
+            await recordFinanceViewCall(expenseCall({ pageView: { id: "pv-2", path: "/finance/review" }, viewedAt: at(6 * 60_000) }), client);
+            expect(rows.filter((r) => r.pageViewId === "pv-2")).toHaveLength(0);
+        });
+
+        test("the first user's late call on the same path starts a new page-view row on the id", async () => {
+            const { rows, client } = makeDb();
+            await collapsePv2(client);
+            await recordFinanceViewCall(expenseCall({ pageView: { id: "pv-2", path: PAGE }, viewedAt: at(6 * 60_000) }), client);
+            expect(rows.filter((r) => r.pageViewId === "pv-2").map((r) => r.pagePath)).toEqual([PAGE]);
+        });
     });
 
     test("a half-built entry neither collapses into nor blocks a finished one with its current content", async () => {

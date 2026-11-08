@@ -116,6 +116,19 @@ describe("recordFinanceViewCall (integration)", () => {
         expect(written[0].pageViewId).toBe(pageViewId);
     });
 
+    test("an id collapsed into an earlier row stays bound to its first user", async () => {
+        const reload = `${pageViewId}-reload`;
+        await recordFinanceViewCall(call({}));
+        await recordFinanceViewCall(call({ pageView: { id: reload, path: PAGE }, viewedAt: new Date(T0.getTime() + 1000) }));
+        await recordFinanceViewCall(call({ pageView: null, records: [], viewedAt: new Date(T0.getTime() + 5 * 60_000) }));
+        await recordFinanceViewCall(call({ actorId: PAGE_ACTORS[1], pageView: { id: reload, path: PAGE }, viewedAt: new Date(T0.getTime() + 6 * 60_000) }));
+
+        const written = await pageRows();
+        expect(written.find((r) => r.pagePath === PAGE)?.mergedPageViewIds).toEqual([reload]);
+        const theirs = written.filter((r) => r.actorId === PAGE_ACTORS[1]);
+        expect(theirs.map((r) => r.pageViewId)).toEqual([null]);
+    });
+
     test("another person's call on the id, or a call past the window, never joins the row", async () => {
         await recordFinanceViewCall(call({}));
         await recordFinanceViewCall(call({ actorId: PAGE_ACTORS[1], records: [{ ref: "Expense:e_2", fields: ["submitterId"] }] }));

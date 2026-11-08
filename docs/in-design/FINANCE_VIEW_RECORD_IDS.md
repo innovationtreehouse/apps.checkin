@@ -231,6 +231,8 @@ names e_123 even when its reimbursee panel is empty.
 | `recordIds` | the `ref`s alone, as text, for the GIN index ("who looked at Expense:e_123") |
 | `recordCount` | the number of distinct records |
 | `window`, `viewKey` | the repeat collapse (below) |
+| `closesAt` | on a page-view row still taking calls, its first call's time plus 30 seconds; null once closed, and on other rows |
+| `mergedPageViewIds` | the page-view ids of identical rows collapsed into this one (below) |
 
 **Repeats.** An untagged row collapses repeats as now: one row per person, view
 key and fifteen-minute window. Its view key hashes the calls, the record refs
@@ -249,22 +251,28 @@ field names, never its page-view id, so identical loads match.
 A page-view row fills over its first 30 seconds, so its content is not final
 until then. The writer handles that in two steps:
 
-- **While open,** the row's view key is `open:<random uuid>`, unique to it. A
-  half-built row therefore never matches, collapses into or blocks any other
-  row through the unique index.
+- **While open,** the row's view key is `open:<random uuid>`, unique to it, and
+  `closesAt` is set. A half-built row therefore never matches, collapses into or
+  blocks any other row through the unique index. A call merges only into a row
+  whose `closesAt` has not passed.
 - **Closing.** Each later call by the same person first closes that person's
   page-view rows whose 30 seconds have passed. A closed row takes its content
   key. If an earlier row of the same person in the same window already holds
   that key, the closed row's calls are unioned into the earlier row and the
   closed row is removed. The two showed the same records with the same field
-  names on the same page, so no record or field is lost.
+  names on the same page, so no record or field is lost. The closed row's
+  page-view id is added to the earlier row's `mergedPageViewIds`. The id's
+  first user and first path are looked up there too, so another person still
+  cannot start a page view on an id whose own row was collapsed.
 
 "Never delete" means never delete a useful row. Removing an identical
 duplicate after its calls are unioned into the earlier row is allowed.
 [Decision — owner]
 
 A person's last page view is always written. It is checked against earlier
-duplicates at that person's next call. One person's calls
+duplicates at that person's next call. Closing reads only that person's rows
+with `closesAt` set, through an index on person and `closesAt`, so its cost
+does not grow with the person's history. One person's calls
 are serialised by an advisory lock on the person, and a page-view id's first
 use by a second lock on the id.  [Decision — owner; approach as built in PR 1]
 

@@ -405,6 +405,8 @@ export const classifications = {
         calls: 'internal',
         records: 'internal',
         recordCount: 'internal',
+        closesAt: 'internal',
+        mergedPageViewIds: 'internal',
     },
     Account: {
         id: 'internal',

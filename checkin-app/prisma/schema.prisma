@@ -1611,6 +1611,12 @@ model FinanceViewLog {
   /// The number of distinct records.
   /// @sensitivity:internal
   recordCount Int?
+  /// On a page-view row still taking calls: its first call's time plus 30 s. Null once closed, and on other rows.
+  /// @sensitivity:internal
+  closesAt    DateTime?
+  /// Page-view ids of identical rows collapsed into this one, so each id's first user stays known.
+  /// @sensitivity:internal
+  mergedPageViewIds String[] @default([])
 
   @@unique([actorId, viewKey, window])
   @@index([viewedAt])
@@ -1618,6 +1624,9 @@ model FinanceViewLog {
   @@index([recordIds], type: Gin)
   // Page id first: the writer also looks an id up alone, to find who first used it.
   @@index([pageViewId, actorId])
+  // Closing reads only one person's open rows.
+  @@index([actorId, closesAt])
+  @@index([mergedPageViewIds], type: Gin)
 }
 
 model Account {
