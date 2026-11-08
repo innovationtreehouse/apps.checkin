@@ -7,6 +7,8 @@ import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { checkoutVariantId } from "@/lib/programs/variants";
 import { signCheckout } from "@/lib/programs/checkoutSignature";
+import { systemActor } from "@/lib/auditActor";
+import { DEV_SHOPIFY_REFUND_TABLE } from "@/lib/finance/reconcile/liveOrder";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +45,7 @@ export const POST = withAuth({}, async (req, auth) => {
         return fireProgram(body.programId, body.participantIds);
     }
     if (typeof body?.processId === "number") {
-        return fireMembership(body.processId);
+        return fireMembership(body.processId, body.refundedInShopify === true);
     }
     return apiError("Missing or invalid processId / programId", 400);
 });
@@ -62,7 +64,7 @@ async function fireWebhook(payload: object): Promise<number> {
     return res.status;
 }
 
-async function fireMembership(processId: number): Promise<NextResponse> {
+async function fireMembership(processId: number, refundedInShopify: boolean): Promise<NextResponse> {
     if (!Number.isInteger(processId)) return apiError("Missing or invalid processId", 400);
 
     const existing = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true } });
@@ -84,6 +86,18 @@ async function fireMembership(processId: number): Promise<NextResponse> {
     // overlapping fires for the same process (both inside the pre-check window
     // above) collapse into one idempotent webhook retry on the handler side;
     // sequential re-fires are blocked by the PENDING_PAYMENT gate.
+    // refundedInShopify: the mock store has refunded the order and sent no refund webhook.
+    if (refundedInShopify) {
+        await prisma.auditLog.create({
+            data: {
+                ...systemActor("webhook:shopify-refund"),
+                action: "CREATE",
+                tableName: DEV_SHOPIFY_REFUND_TABLE,
+                affectedEntityId: processId,
+                newData: { shopifyOrderId: `dev-mock-order-${processId}` },
+            },
+        });
+    }
     const status = await fireWebhook({
         id: `dev-mock-order-${processId}`,
         note_attributes: [{ name: "Membership_Process_ID", value: String(processId) }],
@@ -113,7 +127,7 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
     // stale/forged request, not a real checkout.
     const pending = await prisma.programParticipant.findMany({
         where: { programId, personId: { in: participantIds }, status: "PENDING" },
-        select: { personId: true, person: { select: { householdId: true } } },
+        select: { personId: true, pendingSince: true, person: { select: { householdId: true } } },
     });
     if (pending.length === 0) {
         return apiError("No matching participants awaiting payment", 404);
@@ -138,9 +152,9 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
 
     // note_attributes carry the comma-joined account ids + program id exactly as
     // buildShopifyCheckoutUrl encodes them; the handler splits on ',' and activates
-    // each PENDING participant. Stable order id → idempotent re-fire.
+    // each PENDING participant.
     const status = await fireWebhook({
-        id: `dev-mock-order-prog-${programId}`,
+        id: mockProgramOrderId(programId, pending),
         note_attributes: [
             { name: "CheckMeIn_Account_ID", value: pendingIds.join(",") },
             { name: "Program_ID", value: String(programId) },
@@ -158,4 +172,13 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
         select: { personId: true, status: true },
     });
     return NextResponse.json({ ok: true, participants: activated });
+}
+
+// One order per checkout: the handler counts a program seat as spent by order id, so
+// another household, or the same people enrolling again, needs a new id. Two fires for
+// the same pending enrollments share an id and replay.
+function mockProgramOrderId(programId: number, pending: { personId: number; pendingSince: Date | null }[]): string {
+    const people = pending.map((p) => p.personId).sort((a, b) => a - b).join("-");
+    const since = Math.max(...pending.map((p) => p.pendingSince?.getTime() ?? 0));
+    return `dev-mock-order-prog-${programId}-${people}-${since}`;
 }

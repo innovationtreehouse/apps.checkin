@@ -1,7 +1,8 @@
 /** QuickBooks drift: which fields of a created QuickBooks entry differ from what was posted. */
 import { describe, it, expect } from "vitest";
 import { qbKey, type QboBill } from "@checkin/quickbooks";
-import { baselineOf, driftOf, observedOf, todaysSlice, type PostedEntry } from "../../lib/expense-qb-drift";
+import { todaysSlice } from "@checkin/quickbooks";
+import { baselineOf, driftOf, observedOf, type PostedEntry } from "../../lib/expense-qb-drift";
 
 const key = qbKey("expense", "e1");
 const posted: PostedEntry = { key, amountCents: 1000, accounts: ["60", "61"], vendorId: "77" };

@@ -21,6 +21,20 @@ const text: TokenSpec = { kind: "text" };
 const link = (label?: string): TokenSpec => (label ? { kind: "link", label } : { kind: "link" });
 const SAMPLE_URL = "https://checkin.example.org/";
 
+const OPS_TOKENS = {
+    kind: text, cause: text, lanes: text, status: text, summary: text, firstSeen: text,
+    runsSeen: text, items: text, todo: text, actionLink: link("Open System Status"),
+};
+const OPS_SAMPLE = {
+    kind: "connection", cause: "QuickBooks", lanes: "expense, gift", status: "needs reconnecting",
+    summary: "The app's connection to QuickBooks is broken, for example an expired or revoked login, so expense, gift are paused.",
+    firstSeen: "Nov 7, 2026, 2:00 AM", runsSeen: "1", items: "12",
+    todo: "Finance repeats step 3 of the QuickBooks go-live runbook with the infra operator and reseeds the secret (docs/ops/quickbooks-go-live.md).",
+    actionLink: SAMPLE_URL,
+};
+const OPS_SUBJECT = "[{{kind}}] {{cause}}: {{lanes}} — {{status}}";
+const OPS_BODY = "{{summary}}\n\nLanes: {{lanes}}\nFirst seen: {{firstSeen}}\nRuns seen: {{runsSeen}}\nItems waiting: {{items}}\n\nWhat to do: {{todo}}\n\n{{actionLink}}";
+
 export const REGISTRY = {
     // ── checkin (attendance) ────────────────────────────────────────────────
     "checkin.receipt": {
@@ -185,6 +199,33 @@ export const REGISTRY = {
         defaultBody: "The receipt mapping catch-up {{problem}}. Until they apply, lines on receipts in review can stay on items the catalog has already reviewed. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
     },
 
+    // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
+    // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
+    "ops.incidentOpened": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: OPS_SAMPLE,
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: OPS_BODY,
+    },
+    "ops.incidentReminder": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "still open after 3 days", runsSeen: "4" },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: `Still open. ${OPS_BODY}`,
+    },
+    "ops.incidentEscalated": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "open for 2 weeks", runsSeen: "15" },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: `This problem has been open for two weeks, and the alert address has been told. ${OPS_BODY}`,
+    },
+    "ops.incidentRecovered": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "recovered", summary: "expense, gift ran again without this failure, so the incident is closed.", todo: "Nothing, unless items are still waiting on System Status." },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: OPS_BODY,
+    },
+
     // ── finance ─────────────────────────────────────────────────────────────
     "finance.receiptMailCeiling": {
         allowedTokens: { unresolved: text, refused: text, actionLink: link("Open the incoming receipt queue") },
@@ -206,11 +247,30 @@ export const REGISTRY = {
         defaultSubject: "Receipts: mailed receipts are about to be missed",
         defaultBody: "Mail runs did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They have left the 3-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
     },
+    // One per cause of a failed mailbox listing; receiptAlerts.mailListingFailed picks by the failure's kind.
     "finance.receiptMailboxUnreadable": {
         allowedTokens: { actionLink: link("Open the incoming receipt queue") },
         sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: the receipt mailbox could not be read",
-        defaultBody: "Today's mail run could not list the receipt mailbox, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have the mailbox's Gmail access checked, then upload or forward anything that was missed. {{actionLink}}",
+        defaultSubject: "Receipts: the receipt mailbox needs reconnecting",
+        defaultBody: "Gmail refused today's mail run access to the receipt mailbox, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator reconnect the mailbox's Gmail access, then upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.receiptMailboxUnanswered": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: Gmail did not answer the mail run",
+        defaultBody: "Gmail did not answer today's mail run, so no mailed receipt was read. The next run tries again; nothing needs fixing in the app. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. If this repeats, upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.receiptMailboxNotFound": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: Gmail can't find the receipt mailbox",
+        defaultBody: "Gmail has no mailbox at the address today's mail run asked for, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator check the receipt mailbox setting, then upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.receiptMailboxFailed": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: the mail run failed unexpectedly",
+        defaultBody: "Today's mail run failed unexpectedly while listing the receipt mailbox, so no mailed receipt was read. It has been logged for the developers. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Upload or forward anything that was missed. {{actionLink}}",
     },
     "finance.incomeBucketUnusable": {
         allowedTokens: { bucketName: text, issue: text, itemCount: text, actionLink: link("Open income items") },
@@ -237,6 +297,12 @@ export const REGISTRY = {
         defaultSubject: "Expenses: the daily check for stray QuickBooks entries could not see them all",
         defaultBody: "QuickBooks returned more purchases or bills created since {{since}} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. {{actionLink}}",
     },
+    "finance.donationDepositHandOver": {
+        allowedTokens: { batches: text, actionLink: link("Open booking batches") },
+        sampleCtx: { batches: "D-1001: it has no disbursement date", actionLink: SAMPLE_URL },
+        defaultSubject: "Donations: a finished giving-platform batch has no deposit",
+        defaultBody: "These finished batches could not be handed over for booking, so no deposit is on its way for them: {{batches}}. Settle each one in QuickBooks by hand and record why. This message comes once for each batch. {{actionLink}}",
+    },
     "finance.inKindSweepIncomplete": {
         allowedTokens: { since: text, actionLink: link("Open the in-kind queue") },
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
@@ -244,10 +310,11 @@ export const REGISTRY = {
         defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
     },
     "finance.inKindDrainStopped": {
-        allowedTokens: { failures: text, remaining: text, actionLink: link("Open the in-kind queue") },
-        sampleCtx: { failures: "3", remaining: "12", actionLink: SAMPLE_URL },
+        // cause: the sender's sentence naming why the run stopped.
+        allowedTokens: { failures: text, remaining: text, cause: text, actionLink: link("Open the in-kind queue") },
+        sampleCtx: { failures: "3", remaining: "12", cause: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.", actionLink: SAMPLE_URL },
         defaultSubject: "Gifts of goods: today's QuickBooks run stopped early",
-        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failures in a row, leaving {{remaining}} more gifts for the next run. QuickBooks may be down, or the oldest gifts may be failing on their own. {{actionLink}}",
+        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failed gifts, leaving {{remaining}} more for the next run. {{cause}} {{actionLink}}",
     },
 
     // ── receipt ─────────────────────────────────────────────────────────────
@@ -294,6 +361,15 @@ export const REGISTRY = {
         sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
         defaultSubject: "Reimbursement approved",
         defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
+    },
+
+    // ── lifecycle ───────────────────────────────────────────────────────────
+    "lifecycle.driftDigest": {
+        allowedTokens: { newCount: text, stillPresentCount: text, newList: text, stillPresentList: text, actionLink: link("Open the Lifecycle panel") },
+        sampleCtx: { newCount: "1", stillPresentCount: "1", newList: "OrgMembershipProcess process 12: invariant intake-is-unpaid (status INTAKE)", stillPresentList: "ProgramParticipant program 3 / person 45: invariant I2 (status PENDING)", actionLink: SAMPLE_URL },
+        defaultSubject: "Lifecycle drift: {{newCount}} new, {{stillPresentCount}} still present",
+        defaultBody: "These records are off their lifecycle diagram and need a person to resolve them. Nothing was changed automatically.\n\n"
+            + "New since the last report\n{{newList}}\n\nStill present\n{{stillPresentList}}\n\n{{actionLink}}",
     },
 
     // ── shopify ─────────────────────────────────────────────────────────────

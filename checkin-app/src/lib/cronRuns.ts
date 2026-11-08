@@ -37,7 +37,7 @@ export function cronJobName(url: string): string {
  *
  * `success` means the run COMPLETED, not that it was clean — pass an `error`
  * alongside `success: true` for a sweep that finished but could not process every
- * row. See {@link CronJobStatus}.
+ * row. See {@link CronJobStatus}. `failuresByKind` counts the run's failed items per failure kind.
  *
  * Never throws and never rethrows: recording that a job ran must not change
  * whether the job ran or what it returned. A failed write degrades the System
@@ -47,7 +47,7 @@ export function cronJobName(url: string): string {
  * sweep — writes are ~9/day, and a cron to prune the cron log would be the exact
  * circularity this table exists to detect. Same pattern as logIntegrationError.
  */
-export async function recordCronRun(job: string, startedAt: Date, success: boolean, error?: unknown) {
+export async function recordCronRun(job: string, startedAt: Date, success: boolean, error?: unknown, failuresByKind?: Record<string, number>) {
     try {
         await prisma.cronRunLog.create({
             data: {
@@ -55,6 +55,7 @@ export async function recordCronRun(job: string, startedAt: Date, success: boole
                 startedAt,
                 success,
                 error: error === undefined ? null : error instanceof Error ? error.message : String(error),
+                ...(failuresByKind ? { failuresByKind } : {}),
             },
         });
 
@@ -140,7 +141,8 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
  * ponytail: shares getCronJobStatuses' two reads rather than keeping a leaner
  * aggregate for the nav-poll path — the panel's "failure detail" IS half the badge,
  * so a second query shape would only be the same reads spelled twice.
+ * `skipJobs` are jobs the badge already counts through their open incident.
  */
-export async function countUnhealthyCronJobs(now: Date = new Date()): Promise<number> {
-    return (await getCronJobStatuses(now)).filter((j) => j.stale || j.lastError).length;
+export async function countUnhealthyCronJobs(now: Date = new Date(), skipJobs: ReadonlySet<string> = new Set()): Promise<number> {
+    return (await getCronJobStatuses(now)).filter((j) => (j.stale || j.lastError) && !skipJobs.has(j.job)).length;
 }

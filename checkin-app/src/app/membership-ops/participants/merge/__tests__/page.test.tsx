@@ -4,10 +4,11 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import { pinTimezone } from "@/test-helpers/tz";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import MergeParticipants from "../page";
 
 beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
@@ -52,7 +53,7 @@ describe("membership-ops/participants/merge page", () => {
     await selectBoth();
 
     expect(await screen.findByText("Keep and augment")).toBeInTheDocument();
-    expect(screen.getByText("Merge and tombstone")).toBeInTheDocument();
+    expect(screen.getByText("Merge and delete")).toBeInTheDocument();
     // Alice scores higher (visits + googleId) so she's recommended to keep.
     expect(screen.getByRole("button", { name: "Proceed to Preview" })).toBeInTheDocument();
   });
@@ -123,7 +124,7 @@ describe("membership-ops/participants/merge page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
     expect(await screen.findByText("Preview & Confirm Merge")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Tombstone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -138,6 +139,77 @@ describe("membership-ops/participants/merge page", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to Participants" }));
     expect(router.push).toHaveBeenCalledWith("/membership-ops/participants");
+  });
+
+  describe("an analysis response for a pair no longer selected", () => {
+    const participantC = {
+      id: 3, name: "Carol Clark", email: "carol@example.com", phone: null, googleId: null,
+      _count: { visits: 0, rawBadgeLogs: 0, programParticipants: 0, programVolunteers: 0 },
+      household: null,
+    };
+
+    // Holds the Alice + Bob analysis open until the returned function is called.
+    function mockSlowFirstAnalysis() {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const respond = (body: unknown) => ({ ok: true, ...jsonBody(body) }) as Response;
+      const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("q=Alice")) return respond({ people: [participantA] });
+        if (url.includes("q=Bob")) return respond({ people: [participantB] });
+        if (url.includes("q=Carol")) return respond({ people: [participantC] });
+        if (url.includes("analyze?a=1&b=2")) {
+          await held;
+          return respond({ participants: [participantA, participantB] });
+        }
+        if (url.includes("analyze?a=1&b=3")) return respond({ participants: [participantA, participantC] });
+        return respond({ success: true });
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      return { fetchMock, release };
+    }
+
+    const changeSecondPerson = () => fireEvent.click(screen.getAllByRole("button", { name: "Change" })[1]);
+
+    it("leaves the confirm step naming the person the POST merges", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      const { fetchMock, release } = mockSlowFirstAnalysis();
+      renderWithProviders(<MergeParticipants />);
+
+      await selectBoth();
+      changeSecondPerson();
+      fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Carol" } });
+      fireEvent.click(await screen.findByText("Carol Clark", { exact: false }));
+      await screen.findByText("Carol Clark (ID: 3)");
+
+      await act(async () => { release(); });
+
+      fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
+      await screen.findByText("Preview & Confirm Merge");
+      const named = screen.getByText(/will be deleted, and an archive of the record/).querySelector("strong")?.textContent;
+
+      fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
+      await screen.findByText("Merge Successful!");
+      const post = fetchMock.mock.calls.find(([url]) => url === "/api/membership-ops/participants/merge") as unknown as [string, RequestInit];
+      const { keepId, mergeId } = JSON.parse(post[1].body as string);
+
+      expect({ named, keepId, mergeId }).toEqual({ named: "Carol Clark", keepId: 1, mergeId: 3 });
+    });
+
+    it("offers no merge while the second person is unpicked", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      const { release } = mockSlowFirstAnalysis();
+      renderWithProviders(<MergeParticipants />);
+
+      await selectBoth();
+      expect(screen.getByText("Analyzing participants...")).toBeInTheDocument();
+      changeSecondPerson();
+      expect(screen.queryByText("Analyzing participants...")).not.toBeInTheDocument();
+
+      await act(async () => { release(); });
+
+      expect(screen.queryByRole("button", { name: "Proceed to Preview" })).not.toBeInTheDocument();
+    });
   });
 
   it("keeps the higher-scoring second selection, formats a raw phone, shows Household: None, and swaps kept/merged", async () => {
@@ -173,13 +245,13 @@ describe("membership-ops/participants/merge page", () => {
     expect(within(belleCard).getByText(/Google Auth: Yes/)).toBeInTheDocument();
 
     const zackCard = screen.getByText("Zack Zero (ID: 30)").closest(".mantine-Card-root") as HTMLElement;
-    expect(within(zackCard).getByText("Merge and tombstone")).toBeInTheDocument();
+    expect(within(zackCard).getByText("Merge and delete")).toBeInTheDocument();
     expect(within(zackCard).getByText(/Household: None/)).toBeInTheDocument();
     expect(within(zackCard).getByText(/Google Auth: No/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Swap Kept / Merged" }));
     expect(within(zackCard).getByText("Keep and augment")).toBeInTheDocument();
-    expect(within(belleCard).getByText("Merge and tombstone")).toBeInTheDocument();
+    expect(within(belleCard).getByText("Merge and delete")).toBeInTheDocument();
   });
 
   it("lets you change a selected participant back to search", async () => {
@@ -202,8 +274,8 @@ describe("membership-ops/participants/merge page", () => {
     setSession({ id: 1, isSysadmin: true });
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("q=Alice")) return { ok: true, json: async () => ({ people: [participantA] }) } as Response;
-      if (url.includes("q=Bob")) return { ok: true, json: async () => ({ people: [participantB] }) } as Response;
+      if (url.includes("q=Alice")) return { ok: true, ...jsonBody({ people: [participantA] }) } as Response;
+      if (url.includes("q=Bob")) return { ok: true, ...jsonBody({ people: [participantB] }) } as Response;
       if (url.includes("merge/analyze")) throw new Error("boom");
       return { ok: false, json: async () => ({}) } as Response;
     }) as unknown as typeof fetch;
@@ -280,18 +352,18 @@ describe("membership-ops/participants/merge page", () => {
     await screen.findByText("Preview & Confirm Merge");
 
     global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot merge." }) })) as unknown as typeof fetch;
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Tombstone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
     expect(await screen.findByText("Cannot merge.")).toBeInTheDocument();
 
     // Network failure surfaces as a persistent toast, and never leaks the raw JS error text.
     global.fetch = jest.fn(() => Promise.reject(new Error("Connection lost"))) as unknown as typeof fetch;
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Tombstone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({ color: "red", message: "Network error", autoClose: false })));
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument();
 
     global.fetch = jest.fn(() => Promise.reject("not an Error")) as unknown as typeof fetch;
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Tombstone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
     await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(2));
   });
 
@@ -303,7 +375,7 @@ describe("membership-ops/participants/merge page", () => {
     await screen.findByText("Keep and augment");
     fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
     await screen.findByText("Preview & Confirm Merge");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Tombstone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
     await screen.findByText("Merge Successful!");
 
     fireEvent.click(screen.getByRole("button", { name: "Merge More" }));
@@ -367,12 +439,12 @@ describe("membership-ops/participants/merge page", () => {
     await selectBoth();
     await screen.findByText("Keep and augment");
 
-    // Pick the tombstone's (Bob's) login identity instead of the keeper's default.
+    // Pick the merged-away record's (Bob's) login identity instead of the keeper's default.
     fireEvent.click(screen.getByRole("radio", { name: /bob@example\.com · unverified/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
     await screen.findByText("Preview & Confirm Merge");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Tombstone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -465,5 +537,27 @@ describe("membership-ops/participants/merge page", () => {
 
     expect(screen.queryByPlaceholderText("Search by name, email, or ID...")).not.toBeInTheDocument();
     expect(screen.queryByText("Keep and augment")).not.toBeInTheDocument();
+  });
+});
+
+describe("a search that answers after a newer one", () => {
+  it("keeps the latest query's results when an earlier query answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let finishAli: () => void = () => {};
+    const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const q = new URL(String(input), "http://localhost").searchParams.get("q");
+      if (q === "Ali") return new Promise<Response>((resolve) => { finishAli = () => resolve(answer({ people: [participantA, participantB] })); });
+      return answer({ people: [participantA] });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<MergeParticipants />);
+
+    const box = screen.getAllByPlaceholderText("Search by name, email, or ID...")[0];
+    fireEvent.change(box, { target: { value: "Ali" } });
+    fireEvent.change(box, { target: { value: "Alice" } });
+    expect(await screen.findByText("Alice Adams", { exact: false })).toBeInTheDocument();
+
+    await act(async () => { finishAli(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.queryByText("Bob Adams", { exact: false })).not.toBeInTheDocument();
   });
 });

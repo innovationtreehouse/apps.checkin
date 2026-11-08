@@ -4,8 +4,10 @@ import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
 import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
+import { errorMessage, HttpError, request, type RequestOptions } from "./http";
 
 export { invalidateLoads };
+export { errorMessage, HttpError, request, type RequestOptions };
 
 /** The signed-in person as package UIs see them. The host maps its session onto this once. */
 export interface Viewer {
@@ -47,48 +49,6 @@ export function useViewer(): Viewer | null {
   return viewer;
 }
 
-/**
- * A response that was not a usable answer. Its message is the route's `error` text, or names the HTTP status.
- * `fields` names the inputs the route refused, so a form can highlight them.
- */
-export class HttpError extends Error {
-  constructor(message: string, readonly status: number, readonly fields: readonly string[] = []) {
-    super(message);
-    this.name = "HttpError";
-  }
-}
-
-/** `invalidate: false` is for a loop of writes, which calls `invalidateLoads` once when it ends. */
-export type RequestOptions = RequestInit & { invalidate?: boolean };
-
-/** Fetches `url` and returns its JSON body; a failure throws `HttpError`. A successful write re-reads every cached load. */
-export async function request<T>(url: string, { invalidate = true, ...options }: RequestOptions = {}): Promise<T> {
-  const isForm = options.body instanceof FormData;
-  const res = await fetch(url, { ...(isForm ? {} : { headers: { "Content-Type": "application/json" } }), ...options });
-  if (res.ok && invalidate && (options.method ?? "GET").toUpperCase() !== "GET") invalidateLoads();
-  const text = await res.text();
-  let data: unknown = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // A proxy error page or a sign-in redirect is HTML, not the route's JSON.
-    throw new HttpError(res.ok ? `Unexpected non-JSON response (HTTP ${res.status})` : `HTTP ${res.status}`, res.status);
-  }
-  if (!res.ok) {
-    const { error: message, fields } = (data ?? {}) as { error?: unknown; fields?: unknown };
-    throw new HttpError(
-      typeof message === "string" ? message : `HTTP ${res.status}`,
-      res.status,
-      Array.isArray(fields) ? fields.filter((f): f is string => typeof f === "string") : [],
-    );
-  }
-  return data as T;
-}
-
-/** The text a person sees for a failure: the route's words, or fixed text for anything else, never exception text. */
-export function errorMessage(e: unknown): string {
-  return e instanceof HttpError ? e.message : "Something went wrong. Try again.";
-}
 
 export interface Loaded<T> {
   data: T | null;
@@ -100,7 +60,8 @@ export interface Loaded<T> {
   retrying: boolean;
   /** The HTTP status of a failed read; null for a network failure or no failure. */
   status: number | null;
-  reload: () => void;
+  /** Settles once the re-read has answered, and never rejects: a failed read lands in `error`. */
+  reload: () => Promise<void>;
 }
 
 const MAX_ATTEMPTS = 5;
@@ -133,8 +94,10 @@ export function createClient(base: string) {
    * cache is shared across libraries. A network failure or 5xx retries unless `retry` is false.
    * A new path starts at null, so one parent's rows never show with another's buttons. `keepPrevious`
    * is for a pager or search box, whose rows each act on their own id; it never keeps an empty list.
+   * `expireOn401: false` is for a read mounted on every page: routes also answer 401 to a session
+   * next-auth reports as signed in, such as a denied household, so it must not move anyone.
    */
-  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false }: { retry?: boolean; keepPrevious?: boolean } = {}): Loaded<T> {
+  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false, expireOn401 = true }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean } = {}): Loaded<T> {
     const url = path === null ? null : resolve(path);
     useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
     const swr = useSWR<T, LoadFailure>(
@@ -161,10 +124,10 @@ export function createClient(base: string) {
     const status = swr.error?.status ?? null;
     const onSessionExpired = useContext(SessionExpiredContext);
     useEffect(() => {
-      if (status === 401) onSessionExpired?.();
-    }, [status, onSessionExpired]);
+      if (status === 401 && expireOn401) onSessionExpired?.();
+    }, [status, expireOn401, onSessionExpired]);
     const { mutate } = swr;
-    const reload = useCallback(() => { void mutate(); }, [mutate]);
+    const reload = useCallback(() => mutate().then(() => undefined, () => undefined), [mutate]);
     return {
       data: swr.data !== undefined ? swr.data : previous,
       error: swr.error && !retrying ? swr.error.message : null,
@@ -237,3 +200,7 @@ export function LoadError({ what, message, onRetry }: { what: string; message: s
     </Alert>
   );
 }
+
+export * from "./urlState";
+export * from "./catalogNames";
+export * from "./catalogPicker";

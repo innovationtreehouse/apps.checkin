@@ -30,7 +30,7 @@ const WRITES: Array<[string, string, unknown?]> = [
 ];
 
 type ReconRow = { id: number; payoutGid: string; status: string; kind: string | null; reason?: string | null };
-type ItemRow = { variantId: string; decision: string; budgetOwnerId: number | null; budgetOwnerName: string | null };
+type ItemRow = { variantId: string; decision: string; budgetOwnerId: number | null; budgetOwnerName: string | null; quickBooksAccountId: string | null };
 type ExclusionRow = { id: number; qbTxnId: string; reason: string };
 
 const send = (s: Session | null, method: string, path: string, body?: unknown) =>
@@ -118,8 +118,14 @@ describe("income — finance journey", () => {
     const mapped = await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null });
     expect(mapped.status).toBe(200);
     expect(mapped.json).toMatchObject({ variantId: variant, budgetOwnerId: null });
+    expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "Sales" })).status).toBe(400);
+    // The ids are LOCAL_QUICKBOOKS_ACCOUNTS': 8001 is Bank, which a store sale can't book to; 8002 is Income.
+    expect((await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "8001" })).status).toBe(400);
+    const withAccount = await send(f, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: null, quickBooksAccountId: "8002" });
+    expect(withAccount.status).toBe(200);
+    expect(withAccount.json).toMatchObject({ quickBooksAccountId: "8002" });
     const items = await api<ItemRow[]>(f, "/api/income/items");
-    expect(items.json.find((i) => i.variantId === variant)).toMatchObject({ decision: "general", budgetOwnerId: null, budgetOwnerName: null });
+    expect(items.json.find((i) => i.variantId === variant)).toMatchObject({ decision: "general", budgetOwnerId: null, budgetOwnerName: null, quickBooksAccountId: "8002" });
     expect((await send(f, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(200);
     expect((await send(f, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(404);
 

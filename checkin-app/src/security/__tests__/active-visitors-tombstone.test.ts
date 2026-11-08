@@ -20,7 +20,6 @@
  */
 import prisma from '@/lib/prisma';
 import { buildCallerContext, scopesHeld, type CallerContext } from '../access-resolvers';
-import { LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import type { CtxNeeds } from '../core';
 import type { AuthResult } from '@/types/auth';
@@ -66,8 +65,8 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
     };
 }
 
-describe('activeVisitorIds prefetch excludes tombstoned visits and merged-away people', () => {
-    it('filters the query by LIVE_VISIT and LIVE_PERSON, not departedAt alone', async () => {
+describe('activeVisitorIds prefetch excludes tombstoned visits', () => {
+    it('filters the query by LIVE_VISIT, not departedAt alone', async () => {
         // The prefetch is a single findMany, so the `where` IS the filter: a
         // tombstoned open visit reaches activeVisitorIds iff the database is
         // asked for it. Asserting the query is what makes this a unit test.
@@ -77,7 +76,7 @@ describe('activeVisitorIds prefetch excludes tombstoned visits and merged-away p
         const built = await buildCallerContext(keyholderAuth, VISITORS_ONLY);
 
         expect(findMany).toHaveBeenCalledWith({
-            where: { departedAt: null, ...LIVE_VISIT, person: LIVE_PERSON },
+            where: { departedAt: null, ...LIVE_VISIT },
             select: { personId: true },
         });
         expect([...built.activeVisitorIds]).toEqual([9]);

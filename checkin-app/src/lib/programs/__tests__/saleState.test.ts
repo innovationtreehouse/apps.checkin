@@ -1,4 +1,4 @@
-import { classify, isSaleEnded, effectiveOffSaleAt, saleStockDelta, type SaleRow } from '@/lib/programs/saleState';
+import { classify, enrollmentClosedBy, isSaleEnded, effectiveOffSaleAt, saleStockDelta, type SaleRow } from '@/lib/programs/saleState';
 
 const NOW = new Date('2026-10-12T15:00:00Z');
 const row = (over: Partial<SaleRow> = {}): SaleRow => ({
@@ -44,5 +44,33 @@ describe('program sale state', () => {
     it('stays ended once the sweep stamped it, and FINISHED wins', () => {
         expect(isSaleEnded(row({ saleEndedAt: new Date('2026-10-01') }), NOW)).toBe(true);
         expect(classify(row({ phase: 'FINISHED' }), NOW)).toBe('FINISHED');
+    });
+});
+
+describe('enrollmentClosedBy', () => {
+    const open = { ...row(), maxParticipants: 10 };
+
+    it('is null for an open program with seats before its off-sale date', () => {
+        expect(enrollmentClosedBy(open, 3, NOW)).toBeNull();
+        expect(enrollmentClosedBy({ ...open, maxParticipants: null }, 99, NOW)).toBeNull();
+    });
+
+    it('closes a full program, ahead of every other cause', () => {
+        expect(enrollmentClosedBy(open, 10, NOW)).toBe('FULL');
+        expect(enrollmentClosedBy({ ...open, enrollmentStatus: 'CLOSED', offSaleAt: new Date('2026-10-01') }, 10, NOW)).toBe('FULL');
+    });
+
+    it('never reads an unknown count as full', () => {
+        expect(enrollmentClosedBy({ ...open, maxParticipants: 0 }, undefined, NOW)).toBeNull();
+    });
+
+    it('closes once the sale has ended, by date or by the sweep', () => {
+        expect(enrollmentClosedBy({ ...open, offSaleAt: new Date('2026-10-12') }, 0, NOW)).toBe('SALE_ENDED');
+        expect(enrollmentClosedBy({ ...open, startAt: new Date('2026-10-01') }, 0, NOW)).toBe('SALE_ENDED');
+        expect(enrollmentClosedBy({ ...open, saleEndedAt: new Date('2026-10-11') }, 0, NOW)).toBe('SALE_ENDED');
+    });
+
+    it('closes when enrollment is closed by hand', () => {
+        expect(enrollmentClosedBy({ ...open, enrollmentStatus: 'CLOSED' }, 0, NOW)).toBe('CLOSED');
     });
 });

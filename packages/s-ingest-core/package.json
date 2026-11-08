@@ -22,6 +22,7 @@
     "db:migrate": "node --env-file=.env node_modules/.bin/prisma migrate dev && node node_modules/.bin/prisma generate --generator client",
     "db:deploy": "prisma migrate deploy",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "test:coverage": "vitest run --coverage",
     "db:generate:security": "prisma generate --generator security"
   },

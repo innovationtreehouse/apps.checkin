@@ -94,4 +94,20 @@ describe("Receiving › Apply failed Retry", () => {
       expect(notifications.show).toHaveBeenCalledWith({ message: "Inventory: still down", color: "red", autoClose: false }),
     );
   });
+
+  it("shows an apply that left the receipt applying as still sending, not applied", async () => {
+    fetchMock
+      .mockImplementationOnce(() => reply(200, { state: "applying" }))
+      .mockImplementationOnce(() => reply(200, { state: "applying", validationNotes: "Inventory: applied but not recorded" }));
+    renderWithProviders(<ReceivingPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({
+        message: "Still sending: it stays In progress and the system retries it automatically.",
+        color: "orange",
+        autoClose: false,
+      }),
+    );
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: "green" }));
+  });
 });

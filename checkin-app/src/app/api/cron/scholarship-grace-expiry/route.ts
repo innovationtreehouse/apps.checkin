@@ -47,21 +47,21 @@ export const GET = withCron(async () => {
     let failed = 0;
     for (const record of expired) {
         try {
-            const { released: didRelease } = await deleteAndReleaseHold(record.programId, record.personId, record.program, { ...STATES.PENDING_HELD_DENIED.where, ...pastGrace });
-            if (didRelease) released++;
-
-            await prisma.auditLog.create({
-                data: {
-                    ...systemActor("cron:scholarship-grace-expiry"),
-                    action: "DELETE",
-                    tableName: "ProgramParticipant",
-                    affectedEntityId: record.personId,
-                    secondaryAffectedEntity: record.programId,
-                    // Distinct context from a manual withdrawal's audit entry — this
-                    // one is system-driven, so it's discoverable as a grace expiry.
-                    newData: { reason: "scholarship_grace_expired", graceDays, paymentPlanDeniedAt: record.paymentPlanDeniedAt },
-                },
+            const { released: didRelease } = await deleteAndReleaseHold(record.programId, record.personId, record.program, { ...STATES.PENDING_HELD_DENIED.where, ...pastGrace }, {
+                audit: (tx) => tx.auditLog.create({
+                    data: {
+                        ...systemActor("cron:scholarship-grace-expiry"),
+                        action: "DELETE",
+                        tableName: "ProgramParticipant",
+                        affectedEntityId: record.personId,
+                        secondaryAffectedEntity: record.programId,
+                        // Distinct context from a manual withdrawal's audit entry — this
+                        // one is system-driven, so it's discoverable as a grace expiry.
+                        newData: { reason: "scholarship_grace_expired", graceDays, paymentPlanDeniedAt: record.paymentPlanDeniedAt },
+                    },
+                }),
             });
+            if (didRelease) released++;
 
             logger.info(`[CRON] Auto-withdrew ${record.person.name} from ${record.program.name} — scholarship denial grace period (${graceDays}d) expired.`);
         } catch (err) {

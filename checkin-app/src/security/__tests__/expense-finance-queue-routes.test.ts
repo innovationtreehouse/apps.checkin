@@ -50,6 +50,30 @@ const ROW = {
     reasons: ['board_approval_not_recorded'],
     waitingSince: '2026-10-21T09:00:00.000Z',
 };
+const ctx: CallerContext = {
+    selfId: 1,
+    householdId: undefined,
+    isKeyholder: false,
+    isKiosk: false,
+    programsLed: new Set(),
+    programsCoreVolIn: new Set(),
+    participantIdsInScopePrograms: new Set(),
+    householdIdsInScopePrograms: new Set(),
+    eventIdsInScopePrograms: new Set(),
+    activeVisitorIds: new Set(),
+    ledHouseholdMemberIds: new Set(),
+};
+// A stored payload that never became an expense; its reason is the stored error text.
+const INTAKE_ROW = {
+    expenseId: null,
+    vendorName: 'Bolt',
+    date: '2026-10-02',
+    amountCents: 900,
+    currency: 'USD',
+    reasons: [{ code: 'INTAKE_FAILED', text: "Receipt didn't become an expense", href: '/receipts/r-failed' }],
+    waitingSince: '2026-10-02T09:00:00.000Z',
+    failureReason: 'reimbursee Pat Doe cannot be read',
+};
 const tab = (actionable: number, total: number) => ({ actionable, total, byReason: { reimbursee_to_name: actionable } });
 const TAB_COUNTS = { expenses: tab(1, 2), toSign: tab(0, 1), accountHolds: tab(0, 0), quickbooks: tab(1, 1), board: tab(0, 1) };
 
@@ -104,6 +128,22 @@ describe('finance queue routes', () => {
     });
 
     it.each([
+        ['FINANCE', { isFinance: true }],
+        ['BOARD', { isBoardMember: true }],
+    ] as const)("gives %s a failed intake's stored reason", async (_who, flags) => {
+        signIn(flags);
+        const impl = jest.fn(async () => ({ FinanceQueueRow: [INTAKE_ROW] }));
+        const res = await handler(ROWS, impl)(new NextRequest('http://localhost/api/expense/finance-queue?tab=expenses'), { params: Promise.resolve({}) });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual([INTAKE_ROW]);
+    });
+
+    it("keeps an internal view's reasons and strips the stored reason", () => {
+        const { failureReason: _failureReason, ...internal } = INTAKE_ROW;
+        expect(stripValue('FinanceQueueRow', INTAKE_ROW, ['everyones:internal', 'public'], ctx)).toEqual(internal);
+    });
+
+    it.each([
         ['a sysadmin', { isSysadmin: true }],
         ['an inventory manager', { isInventoryManager: true }],
         ['an operations volunteer', { isOperations: true }],
@@ -127,19 +167,6 @@ describe('finance queue routes', () => {
 });
 
 describe('expense detail reasons', () => {
-    const ctx: CallerContext = {
-        selfId: 1,
-        householdId: undefined,
-        isKeyholder: false,
-        isKiosk: false,
-        programsLed: new Set(),
-        programsCoreVolIn: new Set(),
-        participantIdsInScopePrograms: new Set(),
-        householdIdsInScopePrograms: new Set(),
-        eventIdsInScopePrograms: new Set(),
-        activeVisitorIds: new Set(),
-        ledHouseholdMemberIds: new Set(),
-    };
     const reason = {
         code: 'qb_post_failed',
         tab: 'quickbooks',

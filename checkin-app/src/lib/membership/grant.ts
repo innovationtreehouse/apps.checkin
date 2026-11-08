@@ -5,7 +5,7 @@ import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
-import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
+import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
 
 /**
  * Board grant of one membership year: money only.
@@ -99,10 +99,8 @@ export async function grantMembership(
 /** A lapsed ACTIVE household renews; one already paid for the live year has nothing to pay. */
 async function openRenewal(orgMembershipId: number): Promise<GrantResult> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const settledSince = settings?.orgMembershipYearBoundary
-        ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date()).settledSince
-        : MAX_DATE;
-    const settled = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId, ...settledThisCycleWhere(settledSince) }, select: { id: true } });
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    const settled = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId, ...settledThisCycleWhere(liveYear) }, select: { id: true } });
     if (settled) throw new PaymentError("wrong_phase", "This household has already paid for the current membership year.");
     const process = await createRenewalProcess(orgMembershipId);
     if (!process) throw new PaymentError("wrong_phase", "This household's membership changed while you were looking at it. Reload and try again.");

@@ -21,7 +21,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     ordersChangedSince: jest.fn(),
     orderLines: jest.fn().mockResolvedValue([{ variantId: "V1", quantity: 1, currentQuantity: 1 }]),
     ordersByLegacyIds: jest.fn().mockResolvedValue([]),
-    disputedOrderGids: jest.fn().mockResolvedValue(new Set()),
+    orderDisputeCounts: jest.fn().mockResolvedValue(new Map()),
 }));
 
 import prisma from "@/lib/prisma";

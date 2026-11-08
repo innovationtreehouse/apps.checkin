@@ -219,19 +219,23 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 
 > See sub-decision B (blurb) below.
 
-### finance — 10
+### finance — 11
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
 | `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | FINANCE, else board | messages, since, `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox: Gmail refused access | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnanswered` | receipt mail run cannot list the mailbox: Gmail did not answer | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxNotFound` | receipt mail run cannot list the mailbox: no such mailbox | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxFailed` | receipt mail run cannot list the mailbox: unexpected failure | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | FINANCE, else board | bucketName, issue, itemCount, `actionLink` ("Open income items") |
 | `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open income reconciliation") |
 | `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |
 | `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
+| `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | FINANCE, else board | batches, `actionLink` ("Open booking batches") |
 | `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
-| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak | FINANCE, else board | failures, remaining, `actionLink` ("Open the in-kind queue") |
+| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak, a lost connection, or three gifts refused with one fault code | FINANCE, else board | failures, remaining, cause, `actionLink` ("Open the in-kind queue") |
 
 ### receipt — 2
 | key | trigger | recipient | tokens |

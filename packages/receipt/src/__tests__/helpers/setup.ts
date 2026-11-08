@@ -1,5 +1,7 @@
+import { KindedError } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { db } from "../../db";
+import type { FailureKind } from "@checkin/component-kit";
 import type { InKindDonor, OcrProvider, ReceiptConfig, ReceiptPrincipal } from "../../contract";
 import { configureReceipt } from "../../runtime";
 
@@ -16,32 +18,37 @@ export function actAs(p: ReceiptPrincipal | null): void {
   current = p;
 }
 
-/** Records what reaches each port; succeeds unless told to fail. */
+/** Records what reaches each port; succeeds unless told to fail. `true` is an outage; an Error is thrown as given. */
 export function recordingPorts() {
   const calls = {
     pushes: [] as CompletedReceipt[],
     donors: [] as Array<{ orgId: string; receiptId: string; donor: InKindDonor; seq: number }>,
     withdrawals: [] as Array<{ orgId: string; receiptId: string; seq: number }>,
   };
-  const fail = { push: false, donor: false };
+  const fail: { push: boolean | Error; donor: boolean | Error } = { push: false, donor: false };
+  const failDonor = () => {
+    if (fail.donor instanceof Error) throw fail.donor;
+    if (fail.donor) throw new KindedError("system", "donations down");
+  };
   return {
     calls,
     fail,
     receiptSink: {
       ingestReceipt: async (r: CompletedReceipt) => {
         calls.pushes.push(r);
-        if (fail.push) throw new Error("workflow-mapping down");
+        if (fail.push instanceof Error) throw fail.push;
+        if (fail.push) throw new KindedError("system", "workflow-mapping down");
         return { id: calls.pushes.length, state: "pending_review", created: true };
       },
     },
     donorSink: {
       recordInKindDonor: async (orgId: string, receiptId: string, donor: InKindDonor, seq: number) => {
         calls.donors.push({ orgId, receiptId, donor, seq });
-        if (fail.donor) throw new Error("donations down");
+        failDonor();
       },
       withdrawInKind: async (orgId: string, receiptId: string, seq: number) => {
         calls.withdrawals.push({ orgId, receiptId, seq });
-        if (fail.donor) throw new Error("donations down");
+        failDonor();
       },
     },
   };
@@ -85,6 +92,11 @@ export function manualDetails(over: Record<string, unknown> = {}) {
     ...over,
   };
 }
+
+/** A reader that always fails with this kind. */
+export const failingOcr = (kind: FailureKind, error = "test failure"): OcrProvider => ({
+  extract: async () => ({ success: false, kind, error }),
+});
 
 export const okOcr = (over: Record<string, unknown> = {}): OcrProvider => ({
   extract: async () => ({

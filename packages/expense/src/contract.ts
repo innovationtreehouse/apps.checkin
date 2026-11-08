@@ -2,8 +2,8 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
-import { ServiceError } from "@checkin/component-kit";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import { NotWiredError, ServiceError } from "@checkin/component-kit";
+import type { QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
@@ -70,8 +70,10 @@ export interface SignoffDirectory {
   householdIds(personId: number): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
-  /** The live Person an id resolves to: itself when live, its merge survivor when merged away, else null. */
-  livePersonFor(personId: number): Promise<number | null>;
+  /** The live Person each id resolves to: itself when live, its merge survivor when merged away, else null. */
+  liveIds(personIds: number[]): Promise<Map<number, number | null>>;
+  /** Every id a row may hold for a live person: their own and each id merged into them. */
+  storedIdsOf(personId: number): Promise<number[]>;
   /** Whether the person holds an org membership (reimbursing a non-member takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
   /** Whether the person is a known adult; only an adult is reimbursed. */
@@ -92,7 +94,8 @@ export const inertSignoffDirectory: SignoffDirectory = {
   householdsOf: async () => new Map(),
   householdIds: async () => [],
   personExists: async () => false,
-  livePersonFor: async () => null,
+  liveIds: async (personIds) => new Map(personIds.map((id) => [id, null])),
+  storedIdsOf: async (personId) => [personId],
   isOrgMember: async () => false,
   isAdult: async () => false,
   searchAdults: async () => [],
@@ -121,17 +124,23 @@ export interface CatalogReader {
   listCategories(): Promise<unknown>;
   listSubcategories(): Promise<unknown>;
   getItem(gtin13: string): Promise<unknown>;
+  getActiveItem(gtin13: string): Promise<unknown>;
   getItemNames(gtin13s: string[]): Promise<unknown>;
   lookupItems(retailer: string, lookups: LookupEntry[]): Promise<unknown>;
 }
 
-/** An empty catalog: every part-numbered line raises a NO_MATCH hold. */
+const catalogNotWired = (method: string) => async (): Promise<never> => {
+  throw new NotWiredError(`CatalogReader.${method}`);
+};
+
+/** An unbound catalog says so rather than answer "no match"; its callers record "catalog not connected". */
 export const inertCatalogReader: CatalogReader = {
-  listCategories: async () => [],
-  listSubcategories: async () => [],
-  getItem: async () => null,
-  getItemNames: async () => [],
-  lookupItems: async () => [],
+  listCategories: catalogNotWired("listCategories"),
+  listSubcategories: catalogNotWired("listSubcategories"),
+  getItem: catalogNotWired("getItem"),
+  getActiveItem: catalogNotWired("getActiveItem"),
+  getItemNames: catalogNotWired("getItemNames"),
+  lookupItems: catalogNotWired("lookupItems"),
 };
 
 // ── S5: catalog org events ────────────────────────────────────────────────────
@@ -151,7 +160,12 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<unknown[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
+/** An unbound event source says so rather than answer "no events". */
+export const inertCatalogEventSource: CatalogEventSource = {
+  eventsSince: async () => {
+    throw new NotWiredError("CatalogEventSource.eventsSince");
+  },
+};
 
 /** Alerts the host binds to reach a person. */
 export interface ExpenseAlerts {
@@ -256,6 +270,8 @@ export interface QbVendors {
 
 export const inertQbVendors: QbVendors = { open: async () => null };
 
+export const inertQbAccounts: QboAccountList = notConnected;
+
 /** Display names of checkin people. */
 export interface PeopleDirectory {
   /** A live person's name; null when unknown. */
@@ -295,7 +311,8 @@ export interface ExpensePosting {
 
 /** S2 callee: the orchestrator hands a completed receipt's money side to expense. */
 export interface ExpenseIntake {
-  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
+  /** "accepted": stored, but the expense is not built yet; expense owns it from here. */
+  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }>;
 }
 
 /** Who is reimbursed: a Person on file, or a non-member adult added by name. */

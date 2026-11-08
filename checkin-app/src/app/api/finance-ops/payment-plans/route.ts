@@ -6,8 +6,8 @@ import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { isActiveOrgMember } from "@/lib/orgMembership";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { STATES, fromWhere } from "@/lib/programs/enrollmentState";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { ENROLLMENT_WRITES, STATES } from "@/lib/programs/enrollmentState";
+import type { Prisma } from "@/generated/prisma/client";
 
 // Two DISJOINT board queues over PENDING + isPaymentPlanRequested rows, split on
 // whether a Shopify seat is actually held (inventoryHeldAt):
@@ -26,7 +26,7 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
             // scholarship queue is PENDING_HELD, the reconciliation queue is
             // PENDING_HOLD_FAILED. Consume the definition's `where` so the split
             // can't drift from the state table.
-            where: { ...(holdsQueue ? STATES.PENDING_HOLD_FAILED.where : STATES.PENDING_HELD.where), person: LIVE_PERSON },
+            where: { ...(holdsQueue ? STATES.PENDING_HOLD_FAILED.where : STATES.PENDING_HELD.where) },
             include: {
                 // Nests household→orgMembership so the board can see CURRENT
                 // membership while a request is still pending —
@@ -47,7 +47,7 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                                 id: true,
                                 orgMembership: { select: { status: true } },
                                 householdMembers: {
-                                    where: { isHouseholdLead: true, ...LIVE_PERSON },
+                                    where: { isHouseholdLead: true },
                                     select: { id: true, name: true, email: true },
                                 },
                             },
@@ -86,14 +86,16 @@ export const POST = withAuth(
                 return apiError("programId and participantId are required", 400);
             }
 
+            if (auth.type !== 'session') {
+                return apiError("Unauthorized", 401);
+            }
+
             // Conflict of interest: no actor may approve their OWN household's program
             // payment plan (activate an enrollment without payment for their own
             // family). No role bypasses this.
-            if (auth.type === 'session') {
-                const target = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
-                if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId)) {
-                    return apiError("You cannot approve your own household's payment plan — someone outside your household must.", 403);
-                }
+            const target = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
+            if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId)) {
+                return apiError("You cannot approve your own household's payment plan — someone outside your household must.", 403);
             }
 
             // Point-in-time snapshot: membership status changes over time, so this
@@ -101,45 +103,45 @@ export const POST = withAuth(
             // OrgMembership row. Reuses the canonical org-member check (lib/orgMembership.ts).
             const wasOrgMemberAtApproval = await isActiveOrgMember(participantId);
 
-            const data = {
-                status: 'ACTIVE' as const,
-                isPaymentPlanRequested: false, // cleared since it's approved
-                pendingSince: null, // reset
-                wasOrgMemberAtApproval,
-                // Approval consumes the hold.
-                inventoryHeldAt: null,
-            };
+            const approval = { pendingSince: null, wasOrgMemberAtApproval };
 
             // Scope to the pending request so approving a non-pending/nonexistent
             // request is a no-op error, mirroring the GET queue's filter.
-            // Approve CAS: from-state status from the definition; isPaymentPlanRequested stays literal.
-            const pending = { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') };
+            const participant = { programId, personId: participantId };
             // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
             // return it. A request whose hold failed took no seat and records none.
-            const held = await prisma.programParticipant.updateMany({
-                where: { ...pending, inventoryHeldAt: { not: null } },
-                data: { ...data, seatTakenWithoutSaleAt: new Date() },
-            });
-            const count = held.count || (await prisma.programParticipant.updateMany({
-                where: { ...pending, inventoryHeldAt: null },
-                data,
-            })).count;
+            const approved = await prisma.$transaction(async (tx) => {
+                const seatTakenWithoutSaleAt = new Date();
+                const held = await tx.programParticipant.updateMany({
+                    where: { ...participant, ...ENROLLMENT_WRITES.approveHeld.where },
+                    data: { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval, seatTakenWithoutSaleAt },
+                });
 
-            if (count === 0) {
-                return apiError("No pending payment-plan request", 409);
-            }
+                let auditData: Prisma.InputJsonObject = { ...ENROLLMENT_WRITES.approveHeld.data(), ...approval, seatTakenWithoutSaleAt };
+                if (held.count === 0) {
+                    const unheld = await tx.programParticipant.updateMany({
+                        where: { ...participant, ...ENROLLMENT_WRITES.approveUnheld.where },
+                        data: { ...ENROLLMENT_WRITES.approveUnheld.data(), ...approval },
+                    });
+                    if (unheld.count === 0) return false;
+                    auditData = { ...ENROLLMENT_WRITES.approveUnheld.data(), ...approval, reason: "payment_plan_approved_no_hold" };
+                }
 
-            if (auth.type === 'session') {
-                await prisma.auditLog.create({
+                await tx.auditLog.create({
                     data: {
                         actorId: auth.user.id,
                         action: "EDIT",
                         tableName: "ProgramParticipant",
                         affectedEntityId: participantId,
                         secondaryAffectedEntity: programId,
-                        newData: data
-                    }
+                        newData: auditData,
+                    },
                 });
+                return true;
+            });
+
+            if (!approved) {
+                return apiError("No pending payment-plan request", 409);
             }
 
             // Scholarship lifecycle drives inventory: the seat was already

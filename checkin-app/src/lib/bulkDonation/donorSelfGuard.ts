@@ -3,7 +3,6 @@ import type { DbClient } from "@/lib/db-client";
 import type { AuthResult } from "@/types/auth";
 import { resolveActorHouseholdId } from "@/lib/conflictOfInterest";
 import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { forbidden } from "@/security/handler";
 import { surname } from "@/lib/bulkDonation/donorSurname";
 
@@ -37,7 +36,7 @@ export async function refuseOwnHouseholdDonor(
     reason = "actor_household_unresolved";
   } else {
     const donorSurname = surname(donor.lastName);
-    const people = await db.person.findMany({ where: { householdId, ...LIVE_PERSON }, select: { id: true, name: true } });
+    const people = await db.person.findMany({ where: { householdId }, select: { id: true, name: true } });
     const match = people.find((p) => surname(p.name) === donorSurname);
     if (!donorSurname || match) {
       reason = "own_household";

@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * The error body handler() and fileHandler() render: `{ error }`, plus `code`
- * only when the thrower of an ApiResponseError set one.
+ * and `fields` only when the thrower of an ApiResponseError set them.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import type { AuthResult } from '@/types/auth';
@@ -62,6 +62,28 @@ describe.each(renderers)('%s error body', (_, render) => {
         const res = await render(new ApiResponseError(404, 'Not found'));
         expect(res.status).toBe(404);
         expect(await res.text()).toBe('{"error":"Not found"}');
+    });
+
+    it('sends the field names past the stripper on a public-only view, with or without a code', async () => {
+        const named = await render(new ApiResponseError(400, 'Bad email', undefined, ['email']));
+        expect(named.status).toBe(400);
+        expect(await named.text()).toBe('{"error":"Bad email","fields":["email"]}');
+
+        const coded = await render(new ApiResponseError(409, 'Taken', 'already_taken', ['email', 'name']));
+        expect(await coded.text()).toBe('{"error":"Taken","code":"already_taken","fields":["email","name"]}');
+    });
+
+    it('has no fields key for an empty list', async () => {
+        const res = await render(new ApiResponseError(400, 'Bad', undefined, []));
+        expect(await res.text()).toBe('{"error":"Bad"}');
+    });
+
+    it("drops the fields of an unknown error along with the rest of it", async () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementationOnce(() => {});
+        const res = await render(Object.assign(new Error('secret detail'), { fields: ['email'], status: 400 }));
+        expect(res.status).toBe(500);
+        expect(await res.text()).toBe('{"error":"Internal Server Error"}');
+        consoleError.mockRestore();
     });
 
     it("keeps an unknown error opaque, whatever its own code says", async () => {

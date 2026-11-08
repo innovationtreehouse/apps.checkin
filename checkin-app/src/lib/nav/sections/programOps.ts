@@ -7,6 +7,8 @@ import type { NavSection } from "@/lib/nav/types";
 import { SYSADMIN_OR_BOARD, anyRole } from "@/lib/nav/gates";
 
 export const PROGRAM_OPS_ROLES = SYSADMIN_OR_BOARD;
+// Creating a program names its lead, and only the Board assigns one.
+export const NEW_PROGRAM_ROLES = ["isBoardMember"] as const;
 
 export const PROGRAM_OPS: NavSection = {
   id: "program-ops",
@@ -14,7 +16,7 @@ export const PROGRAM_OPS: NavSection = {
   href: "/program-ops",
   links: [
     { name: "All Programs", href: "/program-ops/programs", icon: "📚" },
-    { name: "New Program", href: "/program-ops/new", icon: "✨" },
+    { name: "New Program", href: "/program-ops/new", icon: "✨", visible: anyRole(NEW_PROGRAM_ROLES) },
     { name: "One Time Events", href: "/program-ops/events", icon: "📋" },
     { name: "New One Time Event", href: "/program-ops/sessions", icon: "📅" },
   ],

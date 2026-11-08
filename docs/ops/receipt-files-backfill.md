@@ -26,48 +26,165 @@ As soon as a row has its key, the app serves that row's file from the bucket.
 
 ## Run it
 
-It runs as a one-off ECS task from the app's own task definition, because the
-database and the bucket's read rule are only reachable from inside the network.
-The task role, bucket and database URL come with that definition.
+It runs as a one-off ECS task, because the database and the bucket's read rule
+are only reachable from inside the network. The commands are for bash, such as
+AWS CloudShell, and need `jq`. They only call AWS APIs.
 
-The commands below use prod's names. For dev and staging, use the cluster and
-family from `deploy-dev.yml` and `deploy-staging.yml`. Copy the capacity provider
-and network flags from the same workflow's Migrate step, into `$LAUNCH_FLAGS`.
+The task launches from the migrate task definition (`checkin-migrate-<env>`,
+container `checkin-migrate`), on Fargate Spot with the network flags of the
+deploy workflow's Migrate step. That is the one-off launch the deploy workflows
+use in every environment. The app's task definition can't stand in for it in
+prod: there it runs only on the cluster's Managed Instances, and `run-task` with
+Fargate flags fails with `Task definition does not support launch_type FARGATE`.
 
-Find the app's task definition and container name:
+The migrate task definition doesn't carry everything the script needs, so the
+`run-task` call adds what is missing:
+
+- `RECEIPT_DATABASE_URL`: already on the migrate task, because the receipt
+  library's migrations run there. It connects as the role those migrations run
+  as, which owns the tables and so can set `file_key`.
+- `RECEIPT_FILES_S3_BUCKET`: copied from the app's task definition into a
+  container override.
+- The task role: the app's task role, as a task override. The bucket policy
+  admits only that role and the admin role
+  ([design](../in-design/1265_RECEIPT_FILES_S3.md) §6), so the migrate task's
+  own role is refused.
+
+This repo can't confirm the rest, which lives in the infra repo: that your AWS
+identity may pass the app's task role to ECS (`iam:PassRole`), that the role
+accepts this task, and that the migrate subnets reach S3 through the gateway
+endpoint the read rule requires. If `run-task` refuses the role, or the report
+shows `AccessDenied` failures, stop and take it to infra. Don't change the
+bucket policy or role to get past it.
+
+### 1. Set the environment's names
+
+Run the two commands for the environment you are working in.
+
+Prod. The subnets and security group are `MIGRATE_SUBNETS` and `MIGRATE_SG` in
+`deploy-prod.yml`; if they differ from these, use the workflow's.
 
 ```bash
-TASK_DEF=$(aws ecs describe-services --cluster treehouse-prod --services checkin-prod --query 'services[0].taskDefinition' --output text)
+CLUSTER=treehouse-prod SERVICE=checkin-prod MIGRATE_FAMILY=checkin-migrate-prod LOG_GROUP=/ecs/checkin-migrate-prod
 ```
 
 ```bash
-CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" --query 'taskDefinition.containerDefinitions[0].name' --output text)
+NETWORK="awsvpcConfiguration={subnets=[subnet-0597513f1c0c3173e,subnet-0a67d72908bffbcd4,subnet-0c84ac2840be3a2bc],securityGroups=[sg-0a37ac72f79b2fd5b],assignPublicIp=ENABLED}"
 ```
 
-Start the copy:
+Staging. Like its workflow, this reuses the service's own network
+configuration.
 
 ```bash
-TASK_ARN=$(aws ecs run-task --cluster treehouse-prod --task-definition "$TASK_DEF" $LAUNCH_FLAGS --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"command\":[\"node\",\"checkin-app/receipt-file-backfill.mjs\"]}]}" --query 'tasks[0].taskArn' --output text)
+CLUSTER=checkin-stg SERVICE=checkin-stg MIGRATE_FAMILY=checkin-migrate-stg LOG_GROUP=/ecs/checkin-migrate-stg
 ```
+
+```bash
+NETWORK=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].networkConfiguration' --output json)
+```
+
+Dev. Same as staging.
+
+```bash
+CLUSTER=checkin-dev SERVICE=checkin-dev MIGRATE_FAMILY=checkin-migrate-dev LOG_GROUP=/ecs/checkin-migrate-dev
+```
+
+```bash
+NETWORK=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].networkConfiguration' --output json)
+```
+
+### 2. Read the app's image, task role and bucket
+
+Find the task definition the service runs:
+
+```bash
+APP_TASK_DEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].taskDefinition' --output text)
+```
+
+```bash
+IMAGE=$(aws ecs describe-task-definition --task-definition "$APP_TASK_DEF" --query 'taskDefinition.containerDefinitions[0].image' --output text)
+```
+
+```bash
+APP_ROLE=$(aws ecs describe-task-definition --task-definition "$APP_TASK_DEF" --query 'taskDefinition.taskRoleArn' --output text)
+```
+
+```bash
+BUCKET=$(aws ecs describe-task-definition --task-definition "$APP_TASK_DEF" --query "taskDefinition.containerDefinitions[0].environment[?name=='RECEIPT_FILES_S3_BUCKET'].value | [0]" --output text)
+```
+
+Check all three:
+
+```bash
+echo "$IMAGE $APP_ROLE $BUCKET"
+```
+
+None of them may read `None`.
+
+### 3. Point the migrate task definition at the release image
+
+`run-task` can't override the image. Register a migrate revision that runs the
+image the service runs, as the deploy workflow does. The release in that image
+carries `checkin-app/receipt-file-backfill.mjs`. The new revision is otherwise
+the same as the latest one, and the next deploy registers its own on top.
+
+```bash
+aws ecs describe-task-definition --task-definition "$MIGRATE_FAMILY" --query taskDefinition --output json | jq --arg IMG "$IMAGE" '.containerDefinitions[0].image = $IMG | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions, requiresCompatibilities, cpu, memory, runtimePlatform}' > migrate-taskdef.json
+```
+
+```bash
+MIGRATE_ARN=$(aws ecs register-task-definition --cli-input-json file://migrate-taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+```
+
+Check that it carries the receipt database URL. The list must include
+`RECEIPT_DATABASE_URL`:
+
+```bash
+aws ecs describe-task-definition --task-definition "$MIGRATE_ARN" --query 'taskDefinition.containerDefinitions[0].[secrets[].name, environment[].name]' --output text
+```
+
+### 4. Start the copy
+
+```bash
+TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$MIGRATE_ARN" --capacity-provider-strategy capacityProvider=FARGATE_SPOT,weight=1 --network-configuration "$NETWORK" --overrides "{\"taskRoleArn\":\"$APP_ROLE\",\"containerOverrides\":[{\"name\":\"checkin-migrate\",\"command\":[\"node\",\"checkin-app/receipt-file-backfill.mjs\"],\"environment\":[{\"name\":\"RECEIPT_FILES_S3_BUCKET\",\"value\":\"$BUCKET\"}]}]}" --query 'tasks[0].taskArn' --output text)
+```
+
+If `TASK_ARN` is `None`, the task didn't start; run the command without
+`--query` and `--output` to see the refusal.
 
 Wait for it and read its exit code:
 
 ```bash
-aws ecs wait tasks-stopped --cluster treehouse-prod --tasks "$TASK_ARN"
+aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
 ```
 
 ```bash
-aws ecs describe-tasks --cluster treehouse-prod --tasks "$TASK_ARN" --query 'tasks[0].containers[0].exitCode' --output text
+aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text
 ```
 
 `aws ecs wait` gives up after 10 minutes; a large first run can outlast it, so run
-it again. The report is in the task's log stream, under the log group in the task
-definition. It names rows by id and carries no file contents.
+it again.
+
+Read the report:
+
+```bash
+aws logs get-log-events --log-group-name "$LOG_GROUP" --log-stream-name "ecs/checkin-migrate/${TASK_ARN##*/}" --query 'events[].message' --output text
+```
+
+It names rows by id and carries no file contents.
 
 The script waits up to 5 minutes for a paused database to resume. If the task is
-interrupted, start it again: it picks up the rows that still have no key.
+interrupted, including by a Spot reclaim, start it again: it picks up the rows
+that still have no key.
 
-Then run the same `run-task` command with `"command":["node","checkin-app/receipt-file-backfill.mjs","--verify"]`.
+### 5. Verify
+
+Start the verify run, then wait, read the exit code and read the report with the
+same three commands as the copy:
+
+```bash
+TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$MIGRATE_ARN" --capacity-provider-strategy capacityProvider=FARGATE_SPOT,weight=1 --network-configuration "$NETWORK" --overrides "{\"taskRoleArn\":\"$APP_ROLE\",\"containerOverrides\":[{\"name\":\"checkin-migrate\",\"command\":[\"node\",\"checkin-app/receipt-file-backfill.mjs\",\"--verify\"],\"environment\":[{\"name\":\"RECEIPT_FILES_S3_BUCKET\",\"value\":\"$BUCKET\"}]}]}" --query 'tasks[0].taskArn' --output text)
+```
 
 ## Read the result
 

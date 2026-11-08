@@ -7,6 +7,7 @@ const itemRefRepo = createItemReferenceRepository(db);
 const catalogRepo = createCatalogRepository(db);
 import type { ConflictResolutionStatus } from "../workflows/conflict-resolution.machine";
 import { ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "../lib/gtin";
 import { reviewTransitionError } from "./categoryService";
 import { assertConflictResolutionTransition } from "../workflows/conflict-resolution.machine";
 import { recordTransition } from "./orgEventService";
@@ -29,7 +30,7 @@ export async function reportConflict(params: ReportConflictParams): Promise<{ id
   const foundItems = await catalogRepo.findItemsByGtins(gtins);
   const foundSet = new Set(foundItems.map((r) => r.gtin13));
   for (const gtin of gtins) {
-    if (!foundSet.has(gtin)) throw new ServiceError(400, `GTIN not found: ${gtin}`);
+    if (!foundSet.has(gtin)) throw new ServiceError(400, `GTIN not found: ${formatGtinDisplay(gtin)}`);
   }
 
   const row = await itemRefRepo.createReferenceConflict({
@@ -48,8 +49,8 @@ export async function reportConflict(params: ReportConflictParams): Promise<{ id
 }
 
 function auditNote(raisedGtin13: string, currentGtin13: string, proposedGtin13: string): string | undefined {
-  if (currentGtin13 === proposedGtin13) return `Raised against ${raisedGtin13}; the part is already on ${proposedGtin13}, so there was nothing left to decide.`;
-  if (currentGtin13 !== raisedGtin13) return `Raised against ${raisedGtin13}; decided against ${currentGtin13}, where the part was when resolved.`;
+  if (currentGtin13 === proposedGtin13) return `Raised against ${formatGtinDisplay(raisedGtin13)}; the part is already on ${formatGtinDisplay(proposedGtin13)}, so there was nothing left to decide.`;
+  if (currentGtin13 !== raisedGtin13) return `Raised against ${formatGtinDisplay(raisedGtin13)}; decided against ${formatGtinDisplay(currentGtin13)}, where the part was when resolved.`;
   return undefined;
 }
 

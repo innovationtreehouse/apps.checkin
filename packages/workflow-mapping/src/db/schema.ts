@@ -2,7 +2,6 @@ export type {
   ReceivedReceipt,
   ReceivedReceiptLineStatus as ReceivedReceiptLineStatusRow,
   WorkflowAuditLog as WorkflowAuditLogRow,
-  WorkflowSystemData,
 } from "../generated/prisma/client";
 
 // ── Enum arrays (runtime values used for validation) ──────────────────────────
@@ -47,6 +46,10 @@ export const workflowAuditEventTypeEnum = [
   "provisional_rejected",
   "org_event_rejected",
   "auto_proceed_triggered",
+  "matching_deferred",
+  "line_matched",
+  "matching_ran",
+  "matching_gave_up",
 ] as const;
 export type WorkflowAuditEventType = (typeof workflowAuditEventTypeEnum)[number];
 
@@ -65,6 +68,10 @@ export const AUDIT_EVENT_LABEL: Record<WorkflowAuditEventType, string> = {
   provisional_rejected: "Proposed catalog item rejected",
   org_event_rejected: "Catalog event from another org skipped",
   auto_proceed_triggered: "Sent to apply automatically (every line mapped)",
+  matching_deferred: "Matching pending: the catalog was unavailable",
+  line_matched: "Line matched to catalog item",
+  matching_ran: "Matching ran",
+  matching_gave_up: "Matching stopped retrying after 5 days; map the lines by hand",
 };
 
 function isAuditEventType(eventType: string): eventType is WorkflowAuditEventType {

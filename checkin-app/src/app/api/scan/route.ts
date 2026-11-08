@@ -11,6 +11,7 @@ import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_P
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
+import { isLiveHousehold } from "@/lib/household/archived";
 import { specTrace } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
@@ -231,26 +232,22 @@ export const POST = withKiosk(
 
         // 3. Lookup participant. A badge still encoding a merged-away id must not
         // reject its owner at the door: it resolves to the surviving record, and a
-        // broken chain asks the operator to reissue the badge.
+        // broken chain asks the operator to reissue the badge. A member of an
+        // archived household scans exactly as a badge that matches nobody.
         const resolved = await resolveMergedPerson(participantId);
-        if (resolved.kind !== "live") {
+        if (resolved.kind !== "live" || !(await isLiveHousehold(resolved.person.householdId))) {
             if (isDead || isReplay) return await parkUnresolvable();
             specTrace("ScanCommit", { slot, p: participantId, cid: clientEventId, kind: "rejected" });
             return resolved.kind === "broken"
                 ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
                 : apiError(`Participant ${participantId} not found.`, 404);
         }
-        const { person: participant, first: badgeRecord, hops: mergeHops } = resolved;
+        const { person: participant, hops: mergeHops } = resolved;
         if (mergeHops > 0) {
             logger.info("Scan forwarded from merged record", {
                 badgeId: participantId,
-                tombstoneId: badgeRecord?.mergedIntoId ?? null,
                 survivorId: participant.id,
                 hops: mergeHops,
-                // The scanned id had no Person row at all — the archive resolved it.
-                // True means the tombstone was deleted and the archive took over; false
-                // while tombstones are being removed means badges resolve some other way.
-                viaArchive: badgeRecord == null,
             });
         }
 

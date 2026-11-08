@@ -155,7 +155,7 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
 
     it("POST /api/membership-ops/participants/[id]/household", async () => {
         signIn(SYSADMIN_ONLY);
-        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20, mergedIntoId: null });
+        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
         db.household.findUnique.mockResolvedValue(HOUSEHOLD);
         db.tx.person.updateMany.mockResolvedValue({ count: 1 });
         db.tx.person.findUniqueOrThrow.mockResolvedValue({ id: 5, name: "Mover", householdId: 10, isHouseholdLead: false, household: HOUSEHOLD });

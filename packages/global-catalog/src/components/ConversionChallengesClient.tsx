@@ -2,9 +2,9 @@
 import { useState } from "react";
 import { Button, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { formatItemId } from "../lib/gtin";
+import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import type { ConversionChallengeRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -18,7 +18,7 @@ export default function ConversionChallengesClient() {
     try {
       await api(`/conversion-challenges/${id}/accept`, { method: "POST" });
       notifications.show({ message: "Challenge accepted — conversion factor updated", color: "green" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
     finally { setActing(null); }
   }
 
@@ -27,7 +27,7 @@ export default function ConversionChallengesClient() {
     try {
       await api(`/conversion-challenges/${id}/reject`, { method: "POST" });
       notifications.show({ message: "Challenge rejected", color: "orange" });
-    } catch (e) { notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false }); }
+    } catch (e) { showError(errorMessage(e)); }
     finally { setActing(null); }
   }
 
@@ -63,7 +63,7 @@ export default function ConversionChallengesClient() {
                 <Table.Td>{c.orgName}</Table.Td>
                 <Table.Td>
                   <Text size="sm">{c.itemReference.item.name}</Text>
-                  <Text size="xs" c="dimmed" ff="monospace">{formatItemId(c.itemReference.gtin13)}</Text>
+                  <Text size="xs" c="dimmed" ff="monospace">{formatGtinDisplay(c.itemReference.gtin13)}</Text>
                 </Table.Td>
                 <Table.Td>{c.itemReference.manufacturer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
                 <Table.Td><Text size="sm" ff={c.itemReference.partNumber ? "monospace" : undefined}>{keyLabel(c)}</Text></Table.Td>

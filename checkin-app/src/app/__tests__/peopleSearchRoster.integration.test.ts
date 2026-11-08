@@ -7,13 +7,14 @@
  *
  * The page-level test proves the printed name doesn't move when the operator ticks a
  * checkbox or types, but it does that against a mocked server. These are the server-side
- * halves of the same claim: roster mode returns ACTIVE members only, excludes merge
- * tombstones, and — the part stable names rest on — ignores `q` entirely, so a search
- * cannot shrink the population a name is computed from.
+ * halves of the same claim: roster mode returns ACTIVE members only and — the part
+ * stable names rest on — ignores `q` entirely, so a search cannot shrink the
+ * population a name is computed from.
  */
 
 import { GET } from '@/app/api/people/search/route';
 import prisma from '@/lib/prisma';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -37,11 +38,12 @@ describe('GET /api/people/search?roster=active', () => {
 
     // Anchor the renewal window to the run date rather than a fixed calendar date, so
     // the suite means the same thing whenever CI runs it: a boundary one month out puts
-    // `now` inside the 2-month lead window, with settledSince about a month behind.
+    // `now` inside the 2-month lead window.
     const now = new Date();
     const BOUNDARY = shiftMonths(now, 1);
     const INSIDE_WINDOW = shiftMonths(now, 0);
     const BEFORE_WINDOW = shiftMonths(now, -6);
+    const LIVE_YEAR = liveMembershipYear(BOUNDARY, now)!;
 
     async function setBoundary(boundary: Date | null) {
         await prisma.boardSettings.upsert({
@@ -77,7 +79,7 @@ describe('GET /api/people/search?roster=active', () => {
         name: string,
         slug: string,
         status: 'ACTIVE' | 'NONE',
-        process?: { kind: 'INITIAL' | 'RENEWAL'; status: 'ACTIVE' | 'ARCHIVED'; stageEnteredAt: Date },
+        process?: { kind: 'INITIAL' | 'RENEWAL'; status: 'ACTIVE' | 'ARCHIVED'; stageEnteredAt: Date; appliesToYear?: number },
     ) =>
         prisma.person.create({
             data: {
@@ -118,16 +120,12 @@ describe('GET /api/people/search?roster=active', () => {
         await makePerson('John Doe', 'doe', 'ACTIVE');
         await makePerson('John Lapsed', 'lapsed', 'NONE');
 
-        // ACTIVE but merged away: a tombstone row that LIVE_PERSON must keep out.
-        const ghost = await makePerson('John Ghost', 'ghost', 'ACTIVE');
-        await prisma.person.update({ where: { id: ghost.id }, data: { mergedIntoId: adminId } });
-
         // The renewal cohort. Every one of these is an ACTIVE member — status cannot be
         // what separates them, only whether they settled the current cycle.
-        await makePerson('Renewed Rita', 'rita', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
-        await makePerson('Joined Jo', 'jo', 'ACTIVE', { kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW });
-        await makePerson('Stale Sam', 'sam', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: BEFORE_WINDOW });
-        await makePerson('Archived Al', 'al', 'ACTIVE', { kind: 'RENEWAL', status: 'ARCHIVED', stageEnteredAt: INSIDE_WINDOW });
+        await makePerson('Renewed Rita', 'rita', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW, appliesToYear: LIVE_YEAR });
+        await makePerson('Joined Jo', 'jo', 'ACTIVE', { kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: INSIDE_WINDOW, appliesToYear: LIVE_YEAR });
+        await makePerson('Stale Sam', 'sam', 'ACTIVE', { kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: BEFORE_WINDOW, appliesToYear: LIVE_YEAR - 1 });
+        await makePerson('Archived Al', 'al', 'ACTIVE', { kind: 'RENEWAL', status: 'ARCHIVED', stageEnteredAt: INSIDE_WINDOW, appliesToYear: LIVE_YEAR });
 
         (getServerSession as jest.Mock).mockResolvedValue({
             user: { id: adminId, isSysadmin: true, isBoardMember: false },
@@ -150,7 +148,7 @@ describe('GET /api/people/search?roster=active', () => {
 
     const roster = async (query: string) =>
         (await rosterRows(query))
-            .filter(p => ['John Smith', 'John Doe', 'John Lapsed', 'John Ghost'].includes(p.name))
+            .filter(p => ['John Smith', 'John Doe', 'John Lapsed'].includes(p.name))
             .map(p => p.name)
             .sort();
 
@@ -161,7 +159,7 @@ describe('GET /api/people/search?roster=active', () => {
         return Object.fromEntries(rows.filter(p => names.includes(p.name)).map(p => [p.name, p.year]));
     };
 
-    it('returns ACTIVE members only, excluding non-members and merge tombstones', async () => {
+    it('returns ACTIVE members only, excluding non-members', async () => {
         expect(await roster('roster=active')).toEqual(['John Doe', 'John Smith']);
     });
 

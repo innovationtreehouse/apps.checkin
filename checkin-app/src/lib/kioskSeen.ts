@@ -13,6 +13,7 @@
 
 let lastSeenAtMs: number | null = null;
 let queuedScans = 0;
+let clockSkew: { seconds: number; atMs: number } | null = null;
 
 /**
  * How recent a signed kiosk request must be for the web to state building
@@ -47,6 +48,17 @@ export function getKioskSeen(nowMs: number = Date.now()): {
     };
 }
 
+/** Kiosk clock minus server clock, from a correctly signed request. Positive means the kiosk runs ahead. */
+export function noteKioskClockSkew(seconds: number, nowMs: number = Date.now()): void {
+    clockSkew = { seconds, atMs: nowMs };
+}
+
+/** The latest skew, or null with nothing recent to compare: an idle kiosk's old reading says nothing about now. */
+export function getKioskClockSkew(nowMs: number = Date.now()): { seconds: number; at: Date } | null {
+    if (clockSkew == null || nowMs - clockSkew.atMs > KIOSK_FRESH_MS) return null;
+    return { seconds: clockSkew.seconds, at: new Date(clockSkew.atMs) };
+}
+
 export type BuildingLink = { reachable: boolean; lastSeenAt: string | null; queued: number };
 
 /**
@@ -70,4 +82,5 @@ export function buildingLink(nowMs: number = Date.now()): BuildingLink {
 export function resetKioskSeen(): void {
     lastSeenAtMs = null;
     queuedScans = 0;
+    clockSkew = null;
 }

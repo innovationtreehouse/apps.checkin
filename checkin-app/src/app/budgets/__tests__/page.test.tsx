@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl")
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
 
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import BudgetsPage from "../page";
@@ -20,11 +20,11 @@ type Reply = () => Promise<Response>;
 type Reads = Partial<Record<"buckets" | "classes" | "approvers" | "approverOptions", Reply>>;
 
 function jsonResponse(status: number, body: unknown): Response {
-  return { ok: status < 400, status, json: async () => body } as Response;
+  return new Response(JSON.stringify(body), { status });
 }
 
 function htmlResponse(status: number): Response {
-  return { ok: false, status, json: async () => { throw new SyntaxError("Unexpected token <"); } } as unknown as Response;
+  return new Response("<html>Unavailable</html>", { status });
 }
 
 // GETs serve the page's lists, unless `reads` overrides one; every other method answers with `write`.
@@ -60,6 +60,36 @@ beforeEach(() => {
   setSession({ id: 1, isFinance: true, isBoardMember: true });
 });
 
+describe("budgets page create submit", () => {
+  const writeCount = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method).length;
+
+  it("sends one create while the first is in flight", async () => {
+    let release: (res: Response) => void = () => {};
+    mockServer(() => new Promise<Response>((resolve) => { release = resolve; }));
+    await createBucket();
+
+    const button = screen.getByRole("button", { name: "Create" });
+    fireEvent.click(button);
+
+    expect(writeCount()).toBe(1);
+    expect(button).toBeDisabled();
+
+    await act(async () => { release(jsonResponse(200, {})); });
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue(""));
+  });
+
+  it("lets finance create again after a failure", async () => {
+    mockServer(async () => jsonResponse(500, { error: "Refused" }));
+    await createBucket();
+
+    const button = screen.getByRole("button", { name: "Create" });
+    await waitFor(() => expect(button).toBeEnabled());
+
+    fireEvent.click(button);
+    await waitFor(() => expect(writeCount()).toBe(2));
+  });
+});
+
 describe("budgets page write errors", () => {
   it("shows the server's error and status in a red chip that stays up", async () => {
     mockServer(async () => jsonResponse(409, { error: "That QuickBooks Class is already mapped to another bucket." }));
@@ -68,7 +98,7 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Bucket not created",
-      message: "That QuickBooks Class is already mapped to another bucket. (409)",
+      message: "That QuickBooks Class is already mapped to another bucket.",
       autoClose: false,
     })));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -80,17 +110,27 @@ describe("budgets page write errors", () => {
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      message: "The server returned an unexpected error (500).",
+      message: "HTTP 500",
     })));
   });
 
-  it.each([502, 503, 504])("says the server is unavailable on a bare %i", async (status) => {
+  it.each([502, 504])("asks to check before retrying a create that gets a bare %i", async (status) => {
     mockServer(async () => htmlResponse(status));
     await createBucket();
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      message: `The server is unavailable (${status}). Try again in a minute.`,
+      message: "The server didn't answer. Reload to check whether your change saved before trying again.",
+    })));
+  });
+
+  it("says nothing was saved when a sleeping app answers the write with a bare 503", async () => {
+    mockServer(async () => htmlResponse(503));
+    await createBucket();
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      message: "The app was asleep and is starting up. Nothing was saved. Try again in a minute.",
     })));
   });
 
@@ -121,7 +161,7 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Bucket not saved",
-      message: "name is required (400)",
+      message: "name is required",
       autoClose: false,
     })));
   });
@@ -135,7 +175,7 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Bucket not archived",
-      message: "The server is unavailable (503). Try again in a minute.",
+      message: "The app was asleep and is starting up. Nothing was saved. Try again in a minute.",
       autoClose: false,
     })));
   });
@@ -150,7 +190,7 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Buckets not loaded",
-      message: "The server is unavailable (502). Try again in a minute.",
+      message: "The server is unavailable. Try again in a minute.",
       autoClose: false,
     })));
     expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." }));
@@ -179,7 +219,7 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "QuickBooks Classes unavailable",
-      message: "QuickBooks is not connected (502)",
+      message: "QuickBooks is not connected",
       autoClose: false,
     })));
   });
@@ -193,7 +233,7 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Approvers not changed",
-      message: "You can't set a role or flag on yourself or anyone in your own household. (403)",
+      message: "You can't set a role or flag on yourself or anyone in your own household.",
       autoClose: false,
     })));
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
@@ -221,10 +261,79 @@ describe("budgets page write errors", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "People not loaded",
-      message: "The server is unavailable (504). Try again in a minute.",
+      message: "The server is unavailable. Try again in a minute.",
       autoClose: false,
     })));
     expect(await screen.findByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+});
+
+describe("budgets org-level and restore", () => {
+  const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
+
+  it("saves a changed org-level flag from the edit form", async () => {
+    mockServer(ok);
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Org-level/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Robotics", quickBooksClassId: null, isOrgLevel: true }) }),
+    ]]));
+  });
+
+  it("shows the refusal and keeps the form open", async () => {
+    mockServer(async () => jsonResponse(409, { error: "The Board must remove this bucket's owner and treasurers first." }));
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Org-level/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Bucket not saved",
+      message: "The Board must remove this bucket's owner and treasurers first.",
+    })));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
+  const archived = async () => jsonResponse(200, [{ ...programBucket, archivedAt: "2026-10-01T00:00:00.000Z" }]);
+
+  it("restores an archived bucket", async () => {
+    mockServer(ok, { buckets: archived });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Show archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ archived: false }) }),
+    ]]));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket restored." })));
+  });
+
+  it("offers Restore only on an archived bucket", async () => {
+    mockServer(ok);
+    renderWithProviders(<BudgetsPage />);
+    await screen.findByRole("button", { name: "Archive" });
+    expect(screen.queryByRole("button", { name: "Restore" })).not.toBeInTheDocument();
+  });
+
+  it("shows a restore failure in a red chip", async () => {
+    mockServer(async () => jsonResponse(500, { error: "Refused" }), { buckets: archived });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Show archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+      color: "red",
+      title: "Bucket not restored",
+      message: "Refused",
+    })));
   });
 });
 
@@ -284,7 +393,7 @@ describe("budgets approvers owner", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
       title: "Approvers not changed",
-      message: "You can't set a role or flag on yourself or anyone in your own household. (403)",
+      message: "You can't set a role or flag on yourself or anyone in your own household.",
       autoClose: false,
     })));
     expect(within(dialog).getByRole("textbox", { name: "Owner" })).toHaveValue("Olive Owner");

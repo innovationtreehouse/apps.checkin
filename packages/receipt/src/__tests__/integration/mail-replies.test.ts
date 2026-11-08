@@ -21,6 +21,7 @@ let failSends: boolean;
 let attachment: () => Promise<Buffer>;
 
 const reader: MailboxReader = {
+  address: "receipts@example.org",
   listRecent: async () => [...messages.keys()],
   getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
   getAttachment: async () => attachment(),
@@ -41,6 +42,7 @@ function send(id: string, { from = "alice@example.org", auth = GOOGLE_PASS, head
 }
 
 const b64 = (text: string) => Buffer.from(text).toString("base64url");
+const NO_RECEIPT = { file: "your email", reason: "no_receipt" };
 
 /** A message holding the given parts. */
 function mailWith(id: string, parts: MailPart[], { from = "alice@example.org", auth = GOOGLE_PASS, headers = [] as { name: string; value: string }[] } = {}): void {
@@ -249,7 +251,47 @@ describeDb("mailed receipt acknowledgements", () => {
       { mimeType: "application/ms-tnef", filename: "winmail.dat", body: { attachmentId: "d", size: 100 } },
     ]);
     await readMailbox();
+    expect(sent.map((a) => a.refused)).toEqual([[NO_RECEIPT]]);
+  });
+
+  it("tells a verified sender once that a message held no receipt: no file, no amount, only a tiny inline image", async () => {
+    const inline = [{ name: "Content-Disposition", value: "inline" }];
+    mailWith("m1", [
+      { mimeType: "text/plain", body: { data: b64("receipt for the lathe, total $5") } },
+      { mimeType: "image/png", filename: "logo.png", headers: inline, body: { data: b64("logo"), size: 4 } },
+    ]);
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, replied: 1 });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [NO_RECEIPT] })]);
+    expect(await db.receiptMailReply.findFirstOrThrow()).toMatchObject({ refusalSentAt: expect.any(Date), doneAt: expect.any(Date) });
+  });
+
+  it("tells nobody about a reply, or a copy on which the receipt mailbox is only in Cc", async () => {
+    const empty = [{ mimeType: "text/plain", body: { data: b64("thanks, see you Tuesday") } }];
+    mailWith("cc", empty, { headers: [{ name: "To", value: "bob@example.org" }, { name: "Cc", value: "receipts@example.org" }] });
+    mailWith("reply", empty, { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: "<a1@example.org>" }] });
+    await readMailbox();
+    await sendMailReplies();
     expect(sent).toEqual([]);
+    expect(await db.receiptMailReply.count()).toBe(0);
+  });
+
+  it("still tells a sender who mailed an alias of the receipt mailbox that no receipt was found", async () => {
+    mailWith("alias", [{ mimeType: "text/plain", body: { data: b64("hello") } }], { headers: [{ name: "To", value: "expenses@example.org" }, { name: "Cc", value: "bob@example.org" }] });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", refused: [NO_RECEIPT] })]);
+  });
+
+  it("tells a forged, unknown or automatic sender nothing about a message with no receipt", async () => {
+    const empty = [{ mimeType: "text/plain", body: { data: b64("hello") } }];
+    mailWith("forged", empty, { auth: GOOGLE_FAIL });
+    mailWith("unknown", empty, { from: "stranger@example.org" });
+    mailWith("auto", empty, { headers: [{ name: "Auto-Submitted", value: "auto-replied" }] });
+    await readMailbox();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailReply.count()).toBe(0);
   });
 
   it("tells a forged or unknown sender nothing about a refused file", async () => {

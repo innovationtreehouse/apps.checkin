@@ -20,7 +20,7 @@ import { householdLeadship } from '@/lib/household/leads';
 import { isAcceptedSession } from '@/lib/session/acceptedSession';
 import type { AuthResult } from '@/types/auth';
 import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, type Role } from './core';
-import { ENROLLED_PARTICIPANT, LIVE_PERSON } from '@/lib/person/filters';
+import { ENROLLED_PARTICIPANT } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
 import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
@@ -44,7 +44,7 @@ export interface CallerContext {
     eventIdsInScopePrograms: Set<number>;
     /** Person IDs with an un-departed Visit. Only populated for keyholders. */
     activeVisitorIds: Set<number>;
-    /** Live members of the caller's household, INCLUDING the caller. Populated
+    /** Members of the caller's household, INCLUDING the caller. Populated
      *  only when the caller may manage their household (householdLeadship →
      *  canManage: a lead OR a sysadmin) — the empty set for everyone else is
      *  what makes 'led_households' narrower than 'their_households'.
@@ -93,7 +93,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
             : [],
         needs.programs
             ? prisma.programVolunteer.findMany({
-                  where: { personId: auth.user.id, isCore: true, person: LIVE_PERSON },
+                  where: { personId: auth.user.id, isCore: true },
                   select: {
                       programId: true,
                       program: { select: { participants: { where: ENROLLED_PARTICIPANT, select: { personId: true } } } },
@@ -104,7 +104,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
         // stops a deleted open visit from reading as "still in the building".
         needs.activeVisitors && ctx.isKeyholder
             ? prisma.visit.findMany({
-                  where: { departedAt: null, ...LIVE_VISIT, person: LIVE_PERSON },
+                  where: { departedAt: null, ...LIVE_VISIT },
                   select: { personId: true },
               })
             : [],
@@ -118,7 +118,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
             ? householdLeadship(auth.user.id).then(lead =>
                   lead?.canManage
                       ? prisma.person.findMany({
-                            where: { householdId: lead.householdId, ...LIVE_PERSON },
+                            where: { householdId: lead.householdId },
                             select: { id: true },
                         })
                       : [],
@@ -145,7 +145,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
         needs.programHouseholds && ctx.participantIdsInScopePrograms.size
             ? prisma.person
                   .findMany({
-                      where: { id: { in: [...ctx.participantIdsInScopePrograms] }, ...LIVE_PERSON },
+                      where: { id: { in: [...ctx.participantIdsInScopePrograms] } },
                       select: { householdId: true },
                   })
                   .then(members => {

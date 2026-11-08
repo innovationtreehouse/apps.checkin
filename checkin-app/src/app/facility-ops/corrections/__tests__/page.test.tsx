@@ -12,7 +12,7 @@ const payload = {
     id: 1, timestamp: "2026-10-01T12:00:00.000Z", actorId: 3, actorSystem: null, action: "EDIT", tableName: "Visit",
     affectedEntityId: 8, secondaryAffectedEntity: 4, newData: { type: "staff_correction" },
   }],
-  Person: [{ id: 3, name: "Pat Staff", mergedIntoId: null }, { id: 4, name: "Sam Subject", mergedIntoId: null }],
+  Person: [{ id: 3, name: "Pat Staff" }, { id: 4, name: "Sam Subject" }],
   Visit: [[null, null]],
 };
 

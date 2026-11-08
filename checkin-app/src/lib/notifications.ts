@@ -5,7 +5,6 @@ import { resolveDisplayTimezone } from "./appSettings";
 import { sourceLine, type VisitSource } from "./email-templates/base";
 import { sendTemplated } from "./email-templates/send";
 import { config } from "./config";
-import { LIVE_PERSON } from "./person/filters";
 import {
     ACTIVE_ORG_MEMBER_PERSON_WHERE,
     isActiveOrgMemberThrough,
@@ -74,11 +73,10 @@ export async function notifyNewProgramAnnounced(
     try {
         const coverageDate = await programCoverageDate(program);
 
-        // Narrow to LIVE persons with an address in an ACTIVE-membership household
-        // (canonical ACTIVE_ORG_MEMBER_PERSON_WHERE). Class-1 person.findMany with
-        // LIVE_PERSON — drift guard stays green, no allowlist (human-facing).
+        // Narrow to persons with an address in an ACTIVE-membership household
+        // (canonical ACTIVE_ORG_MEMBER_PERSON_WHERE).
         const users = await prisma.person.findMany({
-            where: { email: { not: null }, ...LIVE_PERSON, ...ACTIVE_ORG_MEMBER_PERSON_WHERE },
+            where: { email: { not: null }, ...ACTIVE_ORG_MEMBER_PERSON_WHERE },
             select: { id: true, email: true, name: true, notificationSettings: true },
         });
 
@@ -166,7 +164,7 @@ export async function sendCheckinNotifications(participantId: number, type: 'che
         // 2. Notify household leads if the participant is in a household
         if (participant.householdId) {
             const householdLeads = await prisma.person.findMany({
-                where: { householdId: participant.householdId, isHouseholdLead: true, ...LIVE_PERSON },
+                where: { householdId: participant.householdId, isHouseholdLead: true },
                 select: {
                     id: true,
                     email: true,

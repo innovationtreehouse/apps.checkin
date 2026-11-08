@@ -1,9 +1,11 @@
-import { defineRuntime, NotWiredError } from "@checkin/component-kit";
+import { catalogSettingsMessage, defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
+import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
   CatalogLookup,
   IncomeDeposits,
+  InKindAccounts,
   InKindCapital,
   InKindDirectory,
   InKindQbPosting,
@@ -12,11 +14,20 @@ import type {
 } from "./contract";
 
 const INERT_OWNERS: OwnerDirectory = { list: async () => [] };
-const INERT_CATALOG: CatalogLookup = { search: async () => [], getItem: async () => null };
+/** An unbound catalog says so rather than answer "no item". */
+const INERT_CATALOG: CatalogLookup = {
+  search: async () => {
+    throw new NotWiredError("CatalogLookup.search");
+  },
+  getItem: async () => {
+    throw new NotWiredError("CatalogLookup.getItem");
+  },
+};
 const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");
   },
+  failureReason: async () => null,
 };
 
 /** Nobody holds a role or is conflicted, so nobody can decide a gift. */
@@ -32,6 +43,9 @@ const INERT_IN_KIND: InKindDirectory = {
 /** Unbound, no line goes to capital review and none waits on it. */
 const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [], assetLineIds: async () => [] };
 
+/** Unbound, no part resolves, so every gift line waits for finance to set its account. */
+const INERT_ACCOUNTS: InKindAccounts = { resolve: async (_orgId, parts) => parts.map((p) => ({ lineId: p.lineId, reason: "The expense account rules are not connected" })) };
+
 export { NotWiredError };
 
 export const bulkDonationRuntime = defineRuntime<BulkDonationConfig, BulkDonationPrincipal>("bulk-donation");
@@ -46,6 +60,12 @@ export const getPrincipal = bulkDonationRuntime.getPrincipal;
 export const getOrgId = bulkDonationRuntime.getOrgId;
 
 export const assertOrg = bulkDonationRuntime.assertOrg;
+
+/** A catalog that needs fixing, unbound or its database missing, as the 503 a person reads; any other failure is rethrown. */
+export function catalogNotConnected(err: unknown): never {
+  const message = catalogSettingsMessage(err);
+  throw message ? new ServiceError(503, message) : err;
+}
 
 export function getOwnerDirectory(): OwnerDirectory {
   return requireRuntime().owners ?? INERT_OWNERS;
@@ -63,6 +83,10 @@ export function getInKindCapital(): InKindCapital {
   return requireRuntime().capital ?? INERT_CAPITAL;
 }
 
+export function getInKindAccounts(): InKindAccounts {
+  return requireRuntime().partAccounts ?? INERT_ACCOUNTS;
+}
+
 export function getInventoryApply(): InventoryApply {
   return requireRuntime().inventory ?? INERT_INVENTORY;
 }
@@ -75,4 +99,13 @@ export function getInKindQbPosting(): InKindQbPosting | undefined {
 /** Income's deposit ports; undefined until the host binds them, and nothing is handed over. */
 export function getIncomeDeposits(): IncomeDeposits | undefined {
   return requireRuntime().deposits;
+}
+
+const NO_QUICKBOOKS: QboAccountList = async () => {
+  throw new ServiceError(503, "QuickBooks is not connected.");
+};
+
+/** QuickBooks' live account list; unbound, every read answers 503. */
+export function getQuickBooksAccounts(): QboAccountList {
+  return requireRuntime().quickBooksAccounts ?? NO_QUICKBOOKS;
 }

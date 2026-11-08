@@ -142,7 +142,7 @@ export const orgEventConsumer: OrgEventConsumer = {
 };
 
 /** Catch-up sweep over the org's catalog events (see `sweepOrgEvents`). An event in either ledger is not read again as new. Returns counts only. */
-export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number; unprocessed: number; unreadable: boolean }> {
+export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number; unprocessed: number; unreadable: boolean; notConnected?: true }> {
   const recorded = await db.workflowFailedOrgEvent.findMany({ orderBy: { id: "asc" } });
   const sweep = await sweepOrgEvents<OrgEventRecord>({
     limit: opts.limit ?? 500,
@@ -161,5 +161,11 @@ export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{
     onUnreadable: (err) => console.error("[workflow-mapping/org-events] catalog events could not be read", err),
   });
   if (sweep.needsAlert) await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable });
-  return { applied: sweep.counts.processed, failed: sweep.counts.failed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
+  return {
+    applied: sweep.counts.processed,
+    failed: sweep.counts.failed,
+    unprocessed: sweep.unprocessed,
+    unreadable: sweep.unreadable,
+    ...(sweep.notConnected && { notConnected: true }),
+  };
 }

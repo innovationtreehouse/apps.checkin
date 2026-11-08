@@ -20,6 +20,7 @@ export type ReasonCode =
   | "QB_UNBOOKED"
   | "QB_VENDOR_MISSING"
   | "QB_NO_CLASS"
+  | "QB_WAITING_ON_SETTING"
   | ReviewKind
   | "BOARD_APPROVAL"
   | "SIGNER_HELD";
@@ -67,9 +68,21 @@ export interface ReasonFacts {
    * bucket's name, or null for a line with no bucket. Undefined when nothing stops it for a Class.
    */
   missingClass?: { bucketName: string | null };
+  /**
+   * An outboxed expense whose last post a QuickBooks or books-map setting stopped: the setting, as
+   * its audit note names it, or null. Undefined when no setting stops it.
+   */
+  waitingOnSetting?: { detail: string | null };
   /** Whether the reimbursee has a linked QuickBooks Vendor; null when there is no reimbursee. */
   reimburseeVendorLinked: boolean | null;
   openReviews: { kind: ReviewKind; detail: string | null }[];
+}
+
+const SETTING_WAIT_NOTE = /^(?:not charged|attempt \d+ of \d+) \(settings\): /;
+
+/** The setting a settings wait's audit note names; null for any other note. */
+export function settingWaitDetail(notes: string | null | undefined): string | null {
+  return notes && SETTING_WAIT_NOTE.test(notes) ? notes.replace(SETTING_WAIT_NOTE, "") || null : null;
 }
 
 /** The tax finance approved covers this expense's tax only when the amounts match. */
@@ -112,6 +125,7 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
     if (f.missingClass) out.push(reason("QB_NO_CLASS", "qb", { detail: f.missingClass.bucketName }));
+    if (f.waitingOnSetting) out.push(reason("QB_WAITING_ON_SETTING", "qb", { detail: f.waitingOnSetting.detail }));
   }
   for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 

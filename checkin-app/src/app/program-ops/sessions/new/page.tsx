@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Card, Checkbox, Container, Group, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
@@ -8,6 +8,8 @@ import { notifications } from '@mantine/notifications';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const DAYS_MAP = [
@@ -25,7 +27,9 @@ export function NewEventForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [programs, setPrograms] = useState<{ id: number, name: string }[]>([]);
+  const { data: programs, error: programsError, reload: reloadPrograms } = useLoad<{ id: number, name: string }[]>(
+    status === "authenticated" ? '/api/programs' : null,
+  );
 
   const defaultProgramId = searchParams.get('programId') || ""; // URL-prefilled, not a user edit
   const [name, setName] = useState("");
@@ -40,7 +44,6 @@ export function NewEventForm() {
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([]);
   const [until, setUntil] = useState("");
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [message, setMessage] = useState("");
@@ -55,24 +58,9 @@ export function NewEventForm() {
     );
   useUnsavedGuard(isDirty);
 
-  const fetchPrograms = useCallback(async () => {
-    try {
-      const res = await fetch('/api/programs');
-      if (res.ok) {
-        setPrograms(await res.json());
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push('/');
-    } else if (status === "authenticated") {
-      fetchPrograms();
-    }
-  }, [status, router, fetchPrograms]);
+    if (status === "unauthenticated") router.push('/');
+  }, [status, router]);
 
   const toggleDay = (day: number) => {
     setDaysOfWeek(prev =>
@@ -175,7 +163,7 @@ export function NewEventForm() {
     }
   };
 
-  if (loading || status === "loading") {
+  if (!programs && !programsError) {
     return <PageLoader />;
   }
 
@@ -186,6 +174,7 @@ export function NewEventForm() {
       <AdminPageHeader title="Schedule Event" back={{ href: cancelHref, label: 'Cancel' }} mb="lg" />
 
       <AlertBanner message={message} tone="error" mb="md" />
+      {programsError && <LoadError what="the programs" message={programsError} onRetry={reloadPrograms} />}
 
       <form onSubmit={handleSubmit}>
         <Stack>
@@ -203,7 +192,7 @@ export function NewEventForm() {
             onChange={(v) => setProgramId(v ?? "")}
             data={[
               { value: "", label: "-- None (Standalone Event) --" },
-              ...programs.map((p) => ({ value: String(p.id), label: p.name })),
+              ...(programs ?? []).map((p) => ({ value: String(p.id), label: p.name })),
             ]}
           />
 

@@ -42,6 +42,7 @@ export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
   QB_DRIFT: "Changed in QuickBooks",
   QB_POST_HELD: "Closed but not posted",
   QB_NO_CLASS: "No QuickBooks class",
+  QB_WAITING_ON_SETTING: "Waiting on a setting",
   QB_AWAITING_MATCH: "Waiting for a match",
   QB_VENDOR_MISSING: "No QuickBooks vendor",
   QB_UNBOOKED: "Not booked in QuickBooks",
@@ -66,6 +67,8 @@ export interface FinanceQueueRow {
   currency: string;
   reasons: FinanceQueueReason[];
   waitingSince: string;
+  /** A failed intake's stored error: why the incoming expense was refused or failed to build. */
+  failureReason?: string | null;
 }
 
 export interface FinanceQueueTabCount {

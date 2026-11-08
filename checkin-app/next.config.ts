@@ -32,6 +32,7 @@ const nextConfig: NextConfig = {
       { source: '/inventory/received-deltas', destination: '/inventory/inventory-log?view=applies', permanent: true },
       { source: '/expense/settings', destination: '/settings/finance', permanent: true },
       { source: '/inventory/in-kind', destination: '/donations/in-kind-gifts', permanent: true },
+      { source: '/catalog/proposals', destination: '/catalog/item-reference-proposals', permanent: true },
     ];
   },
 };

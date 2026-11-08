@@ -9,6 +9,7 @@ import type {
   ReceiptPersonIds,
   ReceiptAlerts,
   ReceiptPeople,
+  ReceiptPersonNames,
   ReceiptReplies,
   ReceiptReimbursees,
   ReceiptPrincipal,
@@ -73,6 +74,11 @@ export const inertPeople: ReceiptPeople = {
   submitterByEmail: async () => null,
 };
 
+/** Knows no names: an uploader shows as unnamed until the host binds them. */
+export const inertPersonNames: ReceiptPersonNames = {
+  namesOf: async () => new Map(),
+};
+
 /** Knows nobody: only the uploader can be reimbursed until the host binds its people. */
 export const inertReimbursees: ReceiptReimbursees = {
   search: async () => [],
@@ -97,7 +103,7 @@ export const inertAlerts: ReceiptAlerts = {
 };
 
 export const inertOcr: OcrProvider = {
-  extract: async () => ({ success: false, error: "OCR is not configured" }),
+  extract: async () => ({ success: false, kind: "settings", error: "OCR is not configured" }),
 };
 
 export const inertFileStore: ReceiptFileStore = {
@@ -123,7 +129,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "onFailure" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -135,6 +141,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     personIds: r.personIds ?? inertPersonIds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
+    personNames: r.personNames ?? inertPersonNames,
     reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
   };

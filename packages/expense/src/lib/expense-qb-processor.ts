@@ -1,56 +1,20 @@
+import { catalogSettingsMessage, isNotWired, ServiceError } from "@checkin/component-kit";
+import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
+import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
 import { lockExpense, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
-import { postExpenseToQb } from "./expense-qb-poster";
+import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
+import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
 import type { Expense } from "../generated/prisma/client";
-
-// ── Allocation helpers ────────────────────────────────────────────────────────
-
-export function allocateAmount(
-  items: { id: number; totalPriceCents: number }[],
-  total: number,
-): Map<number, number> {
-  const result = new Map<number, number>();
-  if (total === 0 || items.length === 0) {
-    for (const item of items) result.set(item.id, 0);
-    return result;
-  }
-
-  const grandTotal = items.reduce((s, i) => s + i.totalPriceCents, 0);
-  if (grandTotal === 0) {
-    for (const item of items) result.set(item.id, 0);
-    return result;
-  }
-
-  let distributed = 0;
-  const rawAllocs: { id: number; totalPriceCents: number; floored: number }[] = [];
-
-  for (const item of items) {
-    const floored = Math.floor((item.totalPriceCents * total) / grandTotal);
-    rawAllocs.push({ id: item.id, totalPriceCents: item.totalPriceCents, floored });
-    distributed += floored;
-  }
-
-  const remainder = total - distributed;
-  const sorted = [...rawAllocs].sort((a, b) =>
-    b.totalPriceCents !== a.totalPriceCents ? b.totalPriceCents - a.totalPriceCents : a.id - b.id,
-  );
-
-  for (let i = 0; i < sorted.length; i++) {
-    const extra = i < remainder ? 1 : 0;
-    result.set(sorted[i].id, sorted[i].floored + extra);
-  }
-
-  return result;
-}
 
 // ── Translation lookup ────────────────────────────────────────────────────────
 
@@ -75,18 +39,7 @@ type ConflictItem = {
   subcategory: string | null;
 };
 
-function matchesRule(rule: AccountMapping, category: string, subcategory: string, item: LineItemFields, gtin13: string): boolean {
-  if (rule.category !== "*" && rule.category !== category) return false;
-  if (rule.subcategory !== "*" && rule.subcategory !== subcategory) return false;
-  if (rule.partNumber !== "*" && rule.partNumber !== gtin13) return false;
-  if (rule.isDelayed !== null && rule.isDelayed !== item.isDelayed) return false;
-  if (rule.isCapital !== null && rule.isCapital !== item.isCapital) return false;
-  return true;
-}
-
 // ── Catalog inputs: live lookup and the sign-off snapshot ────────────────────
-
-export type CatalogInfo = { gtin13: string; category: string; subcategory: string };
 
 type CatalogLine = Pick<ExpenseLineItem, "id" | "partNumber" | "manufacturer" | "description" | "nonInventory">;
 
@@ -95,16 +48,19 @@ function resolvesThroughCatalog(li: Pick<ExpenseLineItem, "partNumber" | "nonInv
   return !!li.partNumber && !li.nonInventory;
 }
 
-/** Live catalog GTIN and category names for each catalog-resolved line; unmatched lines have no `info` entry. */
+/**
+ * Live catalog GTIN and category names for each catalog-resolved line; unmatched lines have no `info` entry.
+ * An unbound catalog matches nothing and sets `catalogNotConnected`.
+ */
 export async function lookupCatalogInfo(
   lines: CatalogLine[],
   vendorName: string,
-): Promise<{ gtin13ByItemId: Map<number, string | null>; info: Map<number, CatalogInfo> }> {
+): Promise<{ gtin13ByItemId: Map<number, string | null>; info: Map<number, CatalogInfo>; catalogNotConnected?: true }> {
   const withPartNumbers = lines.filter(resolvesThroughCatalog);
   const info = new Map<number, CatalogInfo>();
   if (withPartNumbers.length === 0) return { gtin13ByItemId: new Map(), info };
 
-  const [categories, subcategories, lookupResults] = await Promise.all([
+  const reads = await Promise.all([
     listCategories(),
     listSubcategories(),
     lookupItems(
@@ -116,7 +72,12 @@ export async function lookupCatalogInfo(
         description: li.description,
       })),
     ),
-  ]);
+  ]).catch((err: unknown) => {
+    if (isNotWired(err)) return null;
+    throw err;
+  });
+  if (!reads) return { gtin13ByItemId: new Map(), info, catalogNotConnected: true };
+  const [categories, subcategories, lookupResults] = reads;
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
   const subcategoryMap = new Map(subcategories.map((s) => [s.id, s.name]));
   const gtin13ByItemId = new Map(lookupResults.map((r) => [r.index, r.gtin13]));
@@ -184,16 +145,13 @@ async function resolveAccountsForExpense(
 
     const info = itemInfoByItemId.get(li.id);
     if (!info) {
-      conflicts.push({ lineItem: li, reason: HoldReason.NO_MATCH, matchedRows: [{ _lookupContext: { partNumber: gtin13ByItemId.get(li.id) ?? null, isDelayed: li.isDelayed, isCapital: li.isCapital } }], category: null, subcategory: null });
+      const lookupContext = { partNumber: gtin13ByItemId.get(li.id) ?? null, isDelayed: li.isDelayed, isCapital: li.isCapital, ...(live.catalogNotConnected && { catalogNotConnected: true }) };
+      conflicts.push({ lineItem: li, reason: HoldReason.NO_MATCH, matchedRows: [{ _lookupContext: lookupContext }], category: null, subcategory: null });
       continue;
     }
 
     const { category, subcategory } = info;
-    const gtin13 = gtin13ByItemId.get(li.id)!;
-    const matches = rules.filter((rule) => matchesRule(rule, category, subcategory, li, gtin13));
-
-    const exactMatches = matches.filter((r) => r.partNumber === gtin13);
-    const effectiveMatches = exactMatches.length > 0 ? exactMatches : matches;
+    const effectiveMatches = matchingRules(rules, info, li);
 
     if (effectiveMatches.length === 0) {
       conflicts.push({ lineItem: li, reason: HoldReason.NO_MATCH, matchedRows: [{ _lookupContext: { category, subcategory, partNumber: gtin13ByItemId.get(li.id) ?? null, isDelayed: li.isDelayed, isCapital: li.isCapital } }], category, subcategory });
@@ -254,12 +212,18 @@ async function persistConflicts(
 
 // ── Stage 3 (pure): allocate tax, shipping and discount over the lines ────────
 
+// Lines in id order, so a tie in the allocator goes to the earlier line.
 function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
-  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
+  const lines = [...lineItems].sort((a, b) => a.id - b.id);
+  const weights = lines.map((li) => li.totalPriceCents);
+  const allocate = (totalCents: number) => {
+    const parts = allocateCents(totalCents, weights);
+    return new Map(lines.map((li, i) => [li.id, parts[i]]));
+  };
   return {
-    taxAlloc: allocateAmount(allocItems, expense.taxCents),
-    shippingAlloc: allocateAmount(allocItems, expense.shippingCents),
-    discountAlloc: allocateAmount(allocItems, expense.discountCents),
+    taxAlloc: allocate(expense.taxCents),
+    shippingAlloc: allocate(expense.shippingCents),
+    discountAlloc: allocate(expense.discountCents),
   };
 }
 
@@ -500,33 +464,40 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 // ── Finance retry of a failed QuickBooks post ─────────────────────────────────
 
+/** A missing catalog database as the 503 finance reads; the lookup already answers an unbound catalog as matching nothing. */
+function refuseMissingCatalog(err: unknown): never {
+  const message = catalogSettingsMessage(err);
+  throw message ? new ServiceError(503, message) : err;
+}
+
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
  * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
  * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
  * post that books leaves NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that
  * state), and checks off any open QB_POST_HELD flag; one that fails counts as attempt one again.
- * Returns false when a line no longer resolves to one account; the expense stays as it is.
+ * Returns the post's outcome; "unbound" when QuickBooks is not connected, and false when a line no
+ * longer resolves to one account. Either refusal before the re-arm leaves the expense as it is.
  */
-export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
+export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<PostOutcome | "unbound" | false> {
+  if (!(await getExpenseRuntime().quickbooks.posting())) return "unbound";
   const rearmed = await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId } });
     if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
     const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
     const rules = await tx.accountMapping.findMany({ where: { orgId } });
-    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "").catch(refuseMissingCatalog);
     await saveCatalogSnapshots(snapshots, tx);
     if (conflicts.length > 0) return false;
 
     for (const r of resolved) {
       await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: null } });
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;
   });
   if (!rearmed) return false;
-  await postExpenseToQb(orgId, expenseId);
-  return true;
+  return postExpenseToQb(orgId, expenseId);
 }

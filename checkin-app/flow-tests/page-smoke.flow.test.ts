@@ -121,8 +121,8 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
   },
   "/expense/expenses": expenseList,
   "/programs-i-lead/expense-approvals": expenseList,
-  "/expense/account-mapping": () => [paged("/api/expense/account-mapping"), "/api/expense/qb-accounts"],
-  "/expense/qb-accounts": () => ["/api/expense/qb-accounts"],
+  "/expense/account-mapping": () => [paged("/api/expense/account-mapping"), "/api/expense/qb-accounts", "/api/books-map/quickbooks-accounts"],
+  "/expense/qb-accounts": () => ["/api/expense/qb-accounts", "/api/books-map/quickbooks-accounts"],
   "/expense/ownership-map": () => [paged("/api/expense/ownership-map")],
   "/expense/settings": () => ["/api/expense/org-settings"],
   "/budgets": async (v) => {
@@ -221,7 +221,7 @@ const send = (s: Session, method: string, path: string, body?: unknown) =>
   api(s, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
 const release = (board: Session, library: LibraryKey, released: boolean) =>
-  send(board, "PUT", "/api/settings/membership", { releaseLibrary: { library, released } });
+  send(board, "PUT", "/api/settings/membership", { perYearVariantClient: true, releaseLibrary: { library, released } });
 
 beforeAll(async () => {
   sections = navSections();

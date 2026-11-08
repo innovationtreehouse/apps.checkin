@@ -1,0 +1,32 @@
+{
+  "crossing": "capital-send",
+  "callee": "expense submitDonatedLines",
+  "base": {
+    "payload": {
+      "orgId": "org-1",
+      "lines": [
+        {
+          "giftSource": "receipt",
+          "giftId": 41,
+          "giftLineId": 1,
+          "description": "Table saw",
+          "quantity": 1,
+          "costCents": 250000,
+          "acquisitionDate": "2026-05-01",
+          "budgetOwnerId": 7
+        }
+      ]
+    }
+  },
+  "cases": [
+    { "name": "the payload as sent", "expect": "accepted" },
+    { "name": "the same lines again, skipped", "expect": "accepted", "after": "base" },
+    { "name": "lines for another org, a wiring bug", "expect": "bug", "status": 500, "message": "is not this org", "set": { "orgId": "another-org" } },
+    { "name": "a gift source that is neither receipt nor manual", "expect": "refused", "status": 400, "message": "Invalid option", "set": { "lines.0.giftSource": "shopify" } },
+    { "name": "a fractional gift line id", "expect": "refused", "status": 400, "message": "expected int, received number", "set": { "lines.0.giftLineId": 1.5 } },
+    { "name": "a zero quantity", "expect": "refused", "status": 400, "message": "expected number to be >0", "set": { "lines.0.quantity": 0 } },
+    { "name": "a quantity over the cap", "expect": "refused", "status": 400, "message": "expected number to be <=100000", "set": { "lines.0.quantity": 100001 } },
+    { "name": "a negative cost", "expect": "refused", "status": 400, "message": "expected number to be >=0", "set": { "lines.0.costCents": -1 } },
+    { "name": "no budget owner", "expect": "refused", "status": 400, "message": "expected number, received undefined", "unset": ["lines.0.budgetOwnerId"] }
+  ]
+}

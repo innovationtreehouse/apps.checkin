@@ -9,7 +9,7 @@ import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipa
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
+import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports, receiptRuntime } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -62,7 +62,8 @@ type Headers = { name: string; value: string }[];
 const headerValues = (headers: Headers | undefined, name: string): string[] =>
   (headers ?? []).filter((h) => h.name.toLowerCase() === name.toLowerCase()).map((h) => h.value);
 
-const ADDR_SPEC = /^[^\s@<>"(),;:]+@[^\s@<>"(),;:]+\.[^\s@<>"(),;:]+$/;
+// ASCII only: lowercasing folds some other letters to ASCII, as the Kelvin sign to `k`, naming another person's address.
+const ADDR_SPEC = /^[^\s@<>"(),;:\u0080-\uffff]+@[^\s@<>"(),;:\u0080-\uffff]+\.[^\s@<>"(),;:\u0080-\uffff]+$/;
 
 /**
  * An RFC 5322 header with comments as whitespace and each quoted string as a lone `"`, which no
@@ -102,8 +103,27 @@ export function fromAddress(headers: Headers | undefined): string | null {
   // A comma lists two addresses; a colon or semicolon is group syntax.
   if (bare === null || /[,;:]/.test(bare)) return null;
   // A display name holds no `@`: one there would be a second candidate address.
-  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim().toLowerCase();
-  return ADDR_SPEC.test(spec) ? spec : null;
+  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim();
+  return ADDR_SPEC.test(spec) ? spec.toLowerCase() : null;
+}
+
+/** The lowercased addresses a To or Cc header lists; a header that cannot be read lists none. */
+function listedAddresses(headers: Headers | undefined, name: string): string[] {
+  return headerValues(headers, name).flatMap((value) => {
+    const bare = withoutCommentsAndQuotes(value);
+    if (bare === null) return [];
+    return bare.split(/[,;:]/).map((a) => (a.match(/<([^<>]*)>/)?.[1] ?? a).trim().toLowerCase());
+  });
+}
+
+/**
+ * A reply, or a copy on which the mailbox is only in Cc: talk between people that a "no receipt"
+ * notice would interrupt. Mail to an alias of the mailbox lists it nowhere, so it is not a side copy.
+ */
+export function isSideCopy(headers: Headers | undefined, mailboxAddress: string): boolean {
+  if (headerValues(headers, "In-Reply-To").length > 0) return true;
+  const mine = mailboxAddress.toLowerCase();
+  return listedAddresses(headers, "Cc").includes(mine) && !listedAddresses(headers, "To").includes(mine);
 }
 
 type AuthResToken = { word: string } | { sep: ";" | "=" };
@@ -444,6 +464,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored, refused } = mailFiles(msg, reader);
+    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
+    if (files.length === 0 && refused.length === 0 && !isSideCopy(msg.payload.headers, reader.address)) {
+      refused.push({ file: "your email", reason: "no_receipt" });
+    }
     // Every file already in the ledger: nothing to download.
     const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
     const ledgered = files.length > 0 && rows.length >= files.length;
@@ -692,10 +716,11 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   try {
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
-    console.error("[receipt] mailbox listing failed:", err);
+    const kind = receiptRuntime.failed("mail-listing", err);
+    console.error(`[receipt] mailbox listing failed (${kind}):`, err);
     // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
     try {
-      await ports().alerts.mailListingFailed({ orgId });
+      await ports().alerts.mailListingFailed({ orgId, kind });
     } catch (alertErr) {
       console.error("[receipt] mailbox listing alert failed:", alertErr);
     }

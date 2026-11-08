@@ -47,7 +47,7 @@ const VIEW_FIELDS: Record<string, string[]> = {
     IncomePayoutView: ['payoutGid', 'issuedAt', 'status', 'netCents', 'currency', 'source'],
     IncomeBalanceTxnView: ['txnGid', 'type', 'orderGid', 'orderName', 'amountCents', 'feeCents', 'netCents', 'source'],
     IncomeQbDepositView: ['id', 'txnDate', 'totalCents', 'depositToAccount'],
-    IncomeItemView: ['variantId', 'title', 'sku', 'budgetOwnerId', 'budgetOwnerName', 'decision', 'bucketIssue'],
+    IncomeItemView: ['variantId', 'title', 'sku', 'budgetOwnerId', 'budgetOwnerName', 'decision', 'bucketIssue', 'quickBooksAccountId'],
     IncomeReconciliationCount: ['total', 'status', 'matched', 'opened', 'drifted'],
 };
 

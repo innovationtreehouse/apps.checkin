@@ -292,7 +292,7 @@ export function approvalRefusal(facts: SignoffFacts, filled: FilledSeat[], userI
 /**
  * Expenses with a line `me` may approve, as a query over the expense rows: every check of
  * approvalRefusal and the approve act that reads only the expense and `me`. It keeps each expense
- * with a line they allow, and may keep more: whether a Board stand-in's approval is the line's main
+ * with a line they allow, and may keep more: a merged-away party's stored id is not in `mine`, and whether a Board stand-in's approval is the line's main
  * act needs the other approvers' households, so lineActions decides. `household` is everyone in
  * `me`'s household, merged-away people included; `buckets` are the buckets `me` approves.
  */

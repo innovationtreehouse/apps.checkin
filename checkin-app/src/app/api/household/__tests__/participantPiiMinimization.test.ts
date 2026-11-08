@@ -14,7 +14,6 @@ import { getServerSession } from "next-auth/next";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import prisma from "@/lib/prisma";
 import { HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { GET as householdGET } from "@/app/api/household/route";
 import { GET as attendanceGET } from "@/app/api/attendance/route";
 
@@ -126,7 +125,7 @@ describe("Participant PII minimization (M1, M2)", () => {
 
         // Pin the actual query shape, not just this test's mock.
         const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
-        expect(callArgs.include.household.include.householdMembers).toEqual({ where: LIVE_PERSON, select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
+        expect(callArgs.include.household.include.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
     });
 
     // Household.intakeNotes is the family's free-text note TO the board (tier

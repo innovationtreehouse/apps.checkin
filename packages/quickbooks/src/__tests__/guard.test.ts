@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { kindOf } from "@checkin/component-kit";
 import { TEST_NOTE_MARKER, assertPayloadMarked, assertQboClientId, assertQboTarget, type QboTargetConfig } from "../guard";
 
 const SANDBOX = "1111";
@@ -67,6 +68,16 @@ describe("assertQboClientId", () => {
   });
   it("needs the development client id configured", () => {
     expect(() => assertQboClientId("prod", "prod-id", undefined)).toThrow(/QBO_DEV_CLIENT_ID/);
+  });
+  it("names the infra operator first for an unset QBO_DEV_CLIENT_ID", () => {
+    expect(() => assertQboClientId("prod", "prod-id", undefined)).toThrow(/QBO_DEV_CLIENT_ID must be set\. The infra operator sets it.*Finance/);
+  });
+  it("is settings for every refusal, naming who checks it", () => {
+    for (const refuse of [() => assertQboClientId("dev", "prod-id", "dev-id"), () => assertQboClientId("prod", "dev-id", "dev-id"), () => assertQboClientId("prod", "prod-id", undefined)]) {
+      const err = (() => { try { refuse(); } catch (e: unknown) { return e; } })();
+      expect(kindOf(err)).toBe("settings");
+      expect((err as Error).message).toMatch(/Finance/);
+    }
   });
 });
 

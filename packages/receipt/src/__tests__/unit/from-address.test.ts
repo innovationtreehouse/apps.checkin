@@ -12,6 +12,8 @@ describe("fromAddress", () => {
     ["Alice\r\n <alice@example.org>", "alice@example.org"],
     ["=?UTF-8?Q?Al=C3=ADce?= <alice@example.org>", "alice@example.org"],
     ["alice+receipts@mail.example.org", "alice+receipts@mail.example.org"],
+    ["Jos\u00e9 <jose@example.org>", "jose@example.org"],
+    ["jose@xn--bcher-kva.example", "jose@xn--bcher-kva.example"],
   ])("reads the ordinary address in %j", (value, address) => {
     expect(from(value)).toBe(address);
   });
@@ -75,6 +77,16 @@ describe("fromAddress", () => {
     ["<>"],
     [""],
   ])("refuses an address it cannot read in %j", (value) => {
+    expect(from(value)).toBeNull();
+  });
+
+  it.each([
+    ["\u212Aate@example.org"],
+    ["Kate <\u212Aate@example.org>"],
+    ["kate@\u212Aexample.org"],
+    ["jos\u00e9@example.org"],
+    ["jose@b\u00fccher.example"],
+  ])("refuses the non-ASCII address %j", (value) => {
     expect(from(value)).toBeNull();
   });
 

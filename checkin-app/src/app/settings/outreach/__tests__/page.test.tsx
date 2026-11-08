@@ -2,9 +2,10 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { notifications } from "@mantine/notifications";
 import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import OutreachSettingsPage from "../page";
 
@@ -96,7 +97,11 @@ describe("OutreachSettingsPage", () => {
     fireEvent.change(subjectInputs[0], { target: { value: "{{bogus}}" } });
     fireEvent.click(screen.getByRole("button", { name: "Save templates" }));
 
-    expect(await screen.findByText(/Unknown token \{\{bogus\}\}/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Unknown token {{bogus}} in outreachOpeningSubject", autoClose: false }),
+      ),
+    );
   });
 
   it("send panel: confirm dialog shows counts, then draining reaches 100%", async () => {

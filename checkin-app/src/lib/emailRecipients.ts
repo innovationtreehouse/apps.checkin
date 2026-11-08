@@ -3,13 +3,12 @@ import { sendEmail, runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { logger } from "@/lib/logger";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * Email fan-out helpers. Kept dependency-light (prisma + email + templates + logger only) so
  * any path can resolve-and-send without an import cycle. Callers name a template,
  * fill its tokens and pass a distinct errorLabel; these helpers only resolve
- * recipients and swallow send/query errors.
+ * recipients and swallow send/query errors, except where a helper says it throws.
  */
 
 export interface HouseholdRecipient { email: string; settings: Record<string, unknown> | null; }
@@ -28,7 +27,6 @@ export async function resolveHouseholdRecipients(
             where: {
                 householdId,
                 ...(alsoPersonId ? { OR: [{ isHouseholdLead: true }, { id: alsoPersonId }] } : { isHouseholdLead: true }),
-                ...LIVE_PERSON,
             },
             select: { email: true, notificationSettings: true },
         });
@@ -61,7 +59,7 @@ function fanOutEmails<K extends TemplateKey>(emails: string[], key: K, ctx: Temp
 export async function emailHouseholdLeads<K extends TemplateKey>(householdId: number, key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
     try {
         const leads = await prisma.person.findMany({
-            where: { householdId, isHouseholdLead: true, ...LIVE_PERSON },
+            where: { householdId, isHouseholdLead: true },
             select: { email: true },
         });
         const emails = leads.map((l) => l.email).filter((e): e is string => !!e);
@@ -73,19 +71,34 @@ export async function emailHouseholdLeads<K extends TemplateKey>(householdId: nu
 
 async function boardMemberEmails(): Promise<string[]> {
     const board = await prisma.person.findMany({
-        where: { isBoardMember: true, email: { not: null }, ...LIVE_PERSON },
+        where: { isBoardMember: true, email: { not: null } },
         select: { email: true },
     });
     return board.map((b) => b.email).filter((e): e is string => !!e);
 }
 
-/** Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed. */
-export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
+/**
+ * Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed.
+ * Resolves to how many sends the provider accepted, which is 0 after any swallowed error.
+ */
+export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<number> {
     try {
-        await fanOutEmails(await boardMemberEmails(), key, ctx);
+        const sent = await fanOutEmails(await boardMemberEmails(), key, ctx);
+        return sent.filter(Boolean).length;
     } catch (e) {
         logger.error(errorLabel, e);
+        return 0;
     }
+}
+
+/** Email every sysadmin and board member with an address on file. Returns whether anyone was reached; a failed query throws. */
+export async function emailSysadminsAndBoard<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>): Promise<boolean> {
+    const people = await prisma.person.findMany({
+        where: { OR: [{ isSysadmin: true }, { isBoardMember: true }], email: { not: null } },
+        select: { email: true },
+    });
+    const sent = await fanOutEmails(people.map((p) => p.email).filter((e): e is string => !!e), key, ctx);
+    return sent.some(Boolean);
 }
 
 /** The scholarship review notice's board fallback, which builds its own HTML. */
@@ -106,12 +119,11 @@ export async function emailBoardMembersHtml(subject: string, html: string, error
 export async function notifyFinanceAlert<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
     try {
         const finance = await prisma.person.findMany({
-            where: { roles: { some: { role: "FINANCE" } }, email: { not: null }, ...LIVE_PERSON },
+            where: { roles: { some: { role: "FINANCE" } }, email: { not: null } },
             select: { email: true },
         });
         const emails = finance.map((f) => f.email).filter((e): e is string => !!e);
-        if (emails.length === 0) return emailBoardMembers(key, ctx, errorLabel);
-        await fanOutEmails(emails, key, ctx);
+        await (emails.length === 0 ? emailBoardMembers(key, ctx, errorLabel) : fanOutEmails(emails, key, ctx));
     } catch (e) {
         logger.error(errorLabel, e);
     }

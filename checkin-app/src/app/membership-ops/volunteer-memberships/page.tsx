@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Badge, Button, Card, Chip, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { AlertBanner } from "@/components/admin/AlertBanner";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
@@ -40,10 +42,9 @@ export default function VolunteerMembershipsPage() {
   const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   // A designation's createdAt is an instant, so it renders in the org's display zone.
   const { formatDate } = useOrgTime();
-  const [rows, setRows] = useState<VolunteerRow[]>([]);
   const [newEmail, setNewEmail] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const { data, error: loadError, reload } = useLoad<{ rows?: VolunteerRow[] }>(ready ? "/api/membership-ops/volunteer-memberships" : null);
+  const rows = useMemo(() => data?.rows ?? [], [data]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; tone: "warning" | "error" } | undefined>();
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
@@ -57,27 +58,6 @@ export default function VolunteerMembershipsPage() {
 
   const flash = (text: string, tone: "warning" | "error" = "error") =>
     setMessage(text ? { text, tone } : undefined);
-
-  const fetchRows = useCallback(() =>
-    fetch("/api/membership-ops/volunteer-memberships")
-      .then(async (res) => {
-        if (!res.ok) throw new Error(String(res.status));
-        setRows((await res.json()).rows || []);
-        setLoadFailed(false);
-      })
-      .catch(() => {
-        // Without this the failed load is indistinguishable from an empty roster.
-        setRows([]);
-        setLoadFailed(true);
-      })
-      .finally(() => setLoading(false)), []);
-
-  const load = () => {
-    setLoading(true);
-    return fetchRows();
-  };
-
-  useEffect(() => { fetchRows(); }, [fetchRows]);
 
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -121,7 +101,7 @@ export default function VolunteerMembershipsPage() {
         setMatch(null);
         if (data.warning) { flash(data.warning, "warning"); }
         else { notifications.show({ message: confirmHouseholdId === undefined ? "Designation added." : "Household set as a volunteer household." }); }
-        await load();
+        await reload();
       } else { setMatch(null); flash(data.error || "Could not add."); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
@@ -138,7 +118,7 @@ export default function VolunteerMembershipsPage() {
         return;
       }
       notifications.show({ message: "Designation removed." });
-      await load();
+      await reload();
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
   };
@@ -207,9 +187,6 @@ export default function VolunteerMembershipsPage() {
   return (
     <Stack>
       <AlertBanner message={message?.text} tone={message?.tone} />
-      {loadFailed && (
-        <AlertBanner message="Could not load the volunteer roster. Refresh to try again." tone="error" />
-      )}
 
       <Card withBorder radius="md" padding="lg">
         <Title order={3} mb="xs">Volunteer Families</Title>
@@ -246,23 +223,24 @@ export default function VolunteerMembershipsPage() {
           />
         </Group>
 
-        <DataTable
-          columns={columns}
-          rows={visibleRows}
-          getRowKey={(r) => r.key}
-          loading={loading}
-          minWidth={900}
-          emptyMessage={
-            loadFailed
-              ? "Roster unavailable."
-              : rows.length === 0
+        {loadError && <LoadError what="the volunteer roster" message={loadError} onRetry={reload} />}
+        {(data || !loadError) && (
+          <DataTable
+            columns={columns}
+            rows={visibleRows}
+            getRowKey={(r) => r.key}
+            loading={!data}
+            minWidth={900}
+            emptyMessage={
+              rows.length === 0
                 ? "No volunteers or designations yet."
                 : !showInactive && !statuses.length && !search.trim()
                     && rows.every((r) => r.status === "INACTIVE" && r.designations.length === 0)
                   ? "No active volunteers. Turn on Show inactive to see archived households."
                   : "No volunteers match this filter."
-          }
-        />
+            }
+          />
+        )}
       </Card>
 
       <Card withBorder radius="md" padding="lg">

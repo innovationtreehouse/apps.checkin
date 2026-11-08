@@ -21,7 +21,7 @@
    "checkin-app/src/lib/person/**",
    "checkin-app/src/app/api/**/merge/**"
   ],
-  "instructions": "A merge deletes the merged-away Person row and keeps a PersonMerge archive; an older merged row that is still referenced stays hidden. Merged people drop out of every live list. Queries that list people must filter merged records (the LIVE_PERSON drift guard test). Merge-chain walks must handle cycles and gaps."
+  "instructions": "A merge deletes the merged-away Person row and keeps a PersonMerge archive; an older merged row that is still referenced stays hidden. Merged people drop out of every live list. Queries that list people must filter merged records. Merge-chain walks must handle cycles and gaps."
  },
  {
   "name": "money",

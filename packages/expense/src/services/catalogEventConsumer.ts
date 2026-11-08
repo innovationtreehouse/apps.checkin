@@ -99,7 +99,7 @@ export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> 
  * Catch-up sweep over the org's catalog events (see `sweepOrgEvents`). The host's daily reconcile
  * cron step calls it. Capped; counts only.
  */
-export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult | "unprocessed", number> & { unreadable: boolean }> {
+export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult | "unprocessed", number> & { unreadable: boolean; notConnected?: true }> {
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
   const failed = await repo.findPending(orgId);
@@ -115,5 +115,5 @@ export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeR
   });
   if (sweep.needsAlert) await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable });
   const { processed, duplicate, failed: failedCount } = sweep.counts;
-  return { processed, duplicate, failed: failedCount, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable };
+  return { processed, duplicate, failed: failedCount, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, ...(sweep.notConnected && { notConnected: true }) };
 }

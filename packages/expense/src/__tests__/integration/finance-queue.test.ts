@@ -5,6 +5,9 @@ import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { financeQueueActionable, financeQueueCounts, financeQueueRows } from "../../services/financeQueueService";
 import { raiseFlag } from "../../services/flagService";
+import { expenseReasons } from "../../services/reasonService";
+import { writeAudit } from "../../lib/audit";
+import { SYSTEM_ACTOR } from "../../lib/system-actor";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -31,13 +34,29 @@ describeDb("finance queue — expenses tab", () => {
     expect(await codes(FINANCE, "expenses", id)).toEqual([]);
   });
 
-  it("lists a failed intake with the payload's vendor and amount, linking to Receiving", async () => {
+  it("lists a failed intake with the payload's vendor and amount, linking to its receipt", async () => {
     await db.receivedExpensePayload.create({
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02" });
-    expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/inventory/receiving?queue=failed" }]);
+    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
+    expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
+  });
+
+  it("carries no stored reason on an expense's row", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    const row = (await financeQueueRows(FINANCE, "expenses")).find((r) => r.expenseId === id);
+    expect(row).not.toHaveProperty("failureReason");
+  });
+
+  it("shows a failed intake's currency as a code: trimmed and upper-cased, or the default when it is not one", async () => {
+    for (const [receiptId, currency] of [["r-lower", " eur "], ["r-symbol", "$"]] as const) {
+      await db.receivedExpensePayload.create({
+        data: { orgId: ORG, receiptId, status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: receiptId, receiptTotalCents: 900, currency }) },
+      });
+    }
+    const rows = await financeQueueRows(FINANCE, "expenses");
+    expect(Object.fromEntries(rows.map((r) => [r.vendorName, r.currency]))).toMatchObject({ "r-lower": "EUR", "r-symbol": "USD" });
   });
 
   it("counts a decision for FINANCE not conflicted on the expense, bookkeeping for any FINANCE, and nothing for the Board", async () => {
@@ -90,6 +109,37 @@ describeDb("finance queue — QuickBooks tab", () => {
 
     const rows = await financeQueueRows(FINANCE, "quickbooks");
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_NO_CLASS", "A line has no budget bucket, so it has no QuickBooks class"]]]);
+  });
+
+  it("shows an outboxed expense a setting stops, naming the setting on the expense and generically in the queue", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+    await writeAudit(db, SYSTEM_ACTOR, { expenseId: id, action: "qb_waiting_on_settings", notes: "not charged (settings): the books map has no payment account" });
+
+    expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_WAITING_ON_SETTING")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
+    const rows = await financeQueueRows(FINANCE, "quickbooks");
+    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_WAITING_ON_SETTING", "Waiting on a QuickBooks setting"]]]);
+  });
+
+  it("drops the setting reason once the expense posts", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "CREATED", qbFailureKind: "settings", qbTxnId: "77" } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+  });
+
+  it("drops the setting reason once a retry clears the failure kind", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: null } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+  });
+
+  it("shows no setting reason on the expense or in the queue for an expense with no outbox row", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+    expect(await codes(FINANCE, "quickbooks", id)).toEqual([]);
   });
 });
 

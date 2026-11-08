@@ -27,8 +27,8 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
         <Text><strong>Ends:</strong> {formatDateOnly(program.endAt)}</Text>
         <Text>
           <strong>Enrollment:</strong>{' '}
-          {program.enrollmentStatus === 'OPEN' ? <Text component="span" c="green">Open</Text> :
-            program.enrollmentStatus === 'CLOSED' ? <Text component="span" c="red">Closed</Text> :
+          {isClosed ? <Text component="span" c="red">Closed</Text> :
+            program.enrollmentStatus === 'OPEN' ? <Text component="span" c="green">Open</Text> :
               program.enrollmentStatus === 'WHITELIST' ? <Text component="span" c="yellow">Invite Only</Text> :
                 program.enrollmentStatus}
         </Text>
@@ -52,7 +52,7 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             {myEnrolled.map((m, i) => (
               <Text key={i} size="sm" c={m.unpaid ? 'yellow' : 'green'} ml="sm">
                 {m.name} — {m.unpaid ? 'Enrolled, not paid yet' : 'Enrolled'}
-                {m.unpaid && !isClosed && (
+                {m.unpaid && program.enrollmentStatus !== 'CLOSED' && (
                   <>{' '}<Anchor component="button" size="sm" onClick={onPayNow}>Pay now</Anchor></>
                 )}
               </Text>

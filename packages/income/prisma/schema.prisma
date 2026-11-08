@@ -82,9 +82,10 @@ model PayoutReconciliation {
   @@map("payout_reconciliations")
 }
 
-// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks category).
-// budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
-// the OwnerDirectory port. Unmapped variants, and rows with no bucket, book at organization level.
+// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks Class) and the
+// QuickBooks income account its sales book to. budget_owner_id is checkin's BudgetOwner.id in
+// another database: no FK, validated through the OwnerDirectory port. A row with no bucket books
+// at organization level; a variant with no row, or a row with no account, is undecided.
 model IncomeItemCategory {
   /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
@@ -94,6 +95,8 @@ model IncomeItemCategory {
   variantId     String   @map("variant_id")
   /// @sensitivity:internal
   budgetOwnerId Int?     @map("budget_owner_id")
+  /// @sensitivity:internal
+  quickBooksAccountId String? @map("qb_account_id")
   /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal

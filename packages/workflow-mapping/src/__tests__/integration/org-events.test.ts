@@ -134,8 +134,8 @@ describeDb("S5 remap", () => {
 });
 
 describeDb("catch-up sweep", () => {
-  it("is a no-op with the inert event source", async () => {
-    expect(await catchUpOrgEvents()).toEqual(CLEAN);
+  it("records that no catalog is connected with the inert event source", async () => {
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, notConnected: true });
   });
 
   it("replays past a bad event, records it, and retries it by id", async () => {
@@ -168,7 +168,7 @@ describeDb("catch-up sweep", () => {
 
     // A failure that clears (the stored payload now applies) is removed from the record.
     await db.workflowFailedOrgEvent.update({ where: { id: 3 }, data: { payload: approved(3).payload } });
-    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 1 });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 1, notConnected: true });
     expect(await db.workflowFailedOrgEvent.count()).toBe(0);
   });
 

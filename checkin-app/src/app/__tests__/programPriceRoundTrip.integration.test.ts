@@ -74,7 +74,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
 
     describe('CREATE: POST /api/programs', () => {
         it('persists a decimal price as exact cents (no $25.99 -> $25 truncation)', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} decimal`;
             const req = new Request('http://localhost:4000/api/programs', {
@@ -90,7 +90,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
         });
 
         it('persists a whole-dollar price as cents and keeps an empty price null', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} wholedollar`;
             const req = new Request('http://localhost:4000/api/programs', {
@@ -106,7 +106,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
         });
 
         it('keeps both prices null when omitted', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} null`;
             const req = new Request('http://localhost:4000/api/programs', {
@@ -124,7 +124,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
 
     describe('PATCH: PATCH /api/programs/[id]', () => {
         it('persists decimal prices as exact cents on update', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} patch`;
             const program = await prisma.program.create({
@@ -144,7 +144,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
         });
 
         it('clears a price back to null when set to empty string', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} patch clear`;
             const program = await prisma.program.create({

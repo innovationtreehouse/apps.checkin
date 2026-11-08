@@ -17,11 +17,12 @@ const lines = files.flatMap(({ path, text }) => text.split("\n").map((line) => (
 
 /** These put a live person into a write, a view or a destructure; they filter nothing. */
 const NOT_A_FILTER = [
-  "? { needsReimbursement, reimbursementFor: actor.name ?? `${actor.firstName} ${actor.lastName}`, reimburseePersonId: actor.id }",
-  '{ reimburseePersonId: personId, newReimbursee }: Pick<z.output<typeof UploadInputSchema>, "reimburseePersonId" | "newReimbursee">,',
-  "...sent.map((r) => confirmationView({ ...r, reimburseePersonId: actor.id }, false, mine.sent.get(r.id) ?? [])),",
-  "reimburseePersonId: actor.id,",
+  { path: "services/receiptService.ts", line: "? { needsReimbursement, reimbursementFor: actor.name ?? `${actor.firstName} ${actor.lastName}`, reimburseePersonId: actor.id }" },
+  { path: "services/receiptService.ts", line: '{ reimburseePersonId: personId, newReimbursee }: Pick<z.output<typeof UploadInputSchema>, "reimburseePersonId" | "newReimbursee">,' },
+  { path: "services/receiptService.ts", line: "...sent.map((r) => confirmationView({ ...r, reimburseePersonId: actor.id }, false, mine.sent.get(r.id) ?? []))," },
+  { path: "services/receiptService.ts", line: "reimburseePersonId: actor.id," },
 ];
+const sameLine = (a: { path: string; line: string }, b: { path: string; line: string }) => a.path === b.path && a.line === b.line;
 
 describe("a stored person id is read only through the live-people resolver", () => {
   it("a file that selects a person column passes the rows through withLivePeople", () => {
@@ -41,12 +42,12 @@ describe("a stored person id is read only through the live-people resolver", () 
   it("a filter on a person column matches every id stored for the person, not one id", () => {
     const oneId = lines
       .filter(({ line }) => /\b(uploadedByUserId|reimburseePersonId): (\{ (not|equals): )?(actor\.id|personId|viewerId)\b/.test(line))
-      .filter(({ line }) => !NOT_A_FILTER.includes(line))
+      .filter((found) => !NOT_A_FILTER.some((allowed) => sameLine(allowed, found)))
       .map(({ path, line }) => `${path}: ${line}`);
     expect(oneId).toEqual([]);
   });
 
-  it("every exemption above still exists", () => {
-    for (const allowed of NOT_A_FILTER) expect(lines.some(({ line }) => line === allowed), allowed).toBe(true);
+  it("every exemption above names exactly one line of its file", () => {
+    for (const allowed of NOT_A_FILTER) expect(lines.filter((found) => sameLine(allowed, found)), allowed.line).toHaveLength(1);
   });
 });

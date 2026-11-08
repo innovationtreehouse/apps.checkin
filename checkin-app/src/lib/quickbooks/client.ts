@@ -3,7 +3,6 @@
  * getQuickBooks() answers null (QuickBooks off) unless packages/quickbooks/src/guard.ts
  * admits the configured company; the guard's inputs are our config only.
  */
-import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import {
   QuickBooksClient,
   assertQboClientId,
@@ -13,8 +12,9 @@ import {
   type QboRealm,
   type RefresherToken,
 } from "@checkin/quickbooks";
-import { config } from "@/lib/config";
+import { KindedError } from "@checkin/component-kit";
 import { logger } from "@/lib/logger";
+import { invokeRefresher } from "@/lib/tokenRefresher";
 
 /** Re-ask the refresher this long before the token it handed out expires. Must stay below the refresher's own 10-min refresh margin, or every call re-invokes it. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
@@ -23,19 +23,20 @@ const CLIENT_TTL_MS = 60_000;
 
 export type InvokeRefresher = (functionName: string) => Promise<unknown>;
 
-const invokeLambda: InvokeRefresher = async (functionName) => {
-  const lambda = new LambdaClient({ region: config.awsRegion() });
-  const res = await lambda.send(new InvokeCommand({ FunctionName: functionName, Payload: JSON.stringify({ action: "current" }) }));
-  // The error payload can echo token-endpoint detail; name only the function.
-  if (res.FunctionError) throw new Error(`QBO token refresher ${functionName} failed`);
-  return JSON.parse(new TextDecoder().decode(res.Payload));
-};
+/** Shown on System Status and carried by every QuickBooks call while the login is revoked. */
+export const QBO_RECONNECT = "QuickBooks needs reconnecting: its login was revoked. Finance reconnects it by re-running the QuickBooks consent.";
+
+const QBO_WRONG_COMPANY = "QuickBooks settings are wrong: the token refresher holds a different QuickBooks company than this instance's QBO_REALM_ID. Finance checks which company the consent was run for.";
+const QBO_MALFORMED = "QuickBooks settings are wrong: the token refresher's answer is not a QuickBooks token, so QBO_REFRESHER_FN may name the wrong function. The infra operator checks it.";
+
+const invokeLambda: InvokeRefresher = (functionName) =>
+  invokeRefresher({ functionName, service: "QBO token refresher", reconnect: QBO_RECONNECT, malformed: QBO_MALFORMED });
 
 function parseRefresherToken(value: unknown): RefresherToken {
   const v = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
   const { accessToken, expiresAt, realmId, clientId } = v;
   if (typeof accessToken !== "string" || !accessToken || typeof expiresAt !== "number" || typeof realmId !== "string" || typeof clientId !== "string") {
-    throw new Error("QBO token refresher returned a malformed answer");
+    throw new KindedError("settings", QBO_MALFORMED);
   }
   return { accessToken, expiresAt, realmId, clientId };
 }
@@ -60,7 +61,7 @@ export function lambdaAccessTokenSource(opts: {
 
   const fetchToken = async (): Promise<RefresherToken> => {
     const token = parseRefresherToken(await invoke(opts.functionName));
-    if (token.realmId !== opts.realmId) throw new Error("QBO token refresher holds a different realm");
+    if (token.realmId !== opts.realmId) throw new KindedError("settings", QBO_WRONG_COMPANY);
     assertQboClientId(opts.checkinEnv, token.clientId, opts.devClientId);
     return token;
   };

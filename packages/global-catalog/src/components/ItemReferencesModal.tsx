@@ -5,9 +5,9 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
-import { formatItemId } from "../lib/gtin";
+import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
@@ -49,7 +49,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
       exitEdit();
       notifications.show({ message: "Reference updated", color: "green" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -128,7 +128,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       setShowAdd(false);
       notifications.show({ message: "Reference added", color: "green" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
+      showError(errorMessage(e));
     } finally { setCreating(false); }
   }
 
@@ -137,7 +137,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       await api(`/item-references/${id}/archive`, { method: "POST" });
       notifications.show({ message: "Reference archived", color: "orange" });
     } catch (e) {
-      notifications.show({ message: e instanceof Error ? e.message : "Error", color: "red", autoClose: false });
+      showError(errorMessage(e));
     }
   }
 
@@ -157,7 +157,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
 
   return (
     <Modal opened={opened} onClose={handleClose} title={item ? `References — ${item.name}` : "References"} size="xl" centered>
-      {item && <Text size="sm" c="dimmed" ff="monospace" mb="md">{formatItemId(item.gtin13)}</Text>}
+      {item && <Text size="sm" c="dimmed" ff="monospace" mb="md">{formatGtinDisplay(item.gtin13)}</Text>}
       {refsLoad.error ? <LoadError what="references" message={refsLoad.error} onRetry={refsLoad.reload} />
         : loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 && !showAdd ? (
         <Text size="sm" c="dimmed" mb="md">No references yet.</Text>

@@ -34,8 +34,8 @@ async function noProblems(watch: PageWatch, where: string): Promise<void> {
 }
 
 async function onHand(s: Session): Promise<number> {
-  const rows = await api<Array<{ gtin13: string; existingQuantity: number }>>(s, `/api/inventory/org-items?q=${gtin13}&page=1&limit=50`);
-  return rows.json.find((r) => r.gtin13 === gtin13)?.existingQuantity ?? 0;
+  const rows = await api<{ OrgItem: Array<{ gtin13: string; existingQuantity: number }> }>(s, `/api/inventory/org-items?q=${gtin13}&page=1&limit=50`);
+  return rows.json.OrgItem.find((r) => r.gtin13 === gtin13)?.existingQuantity ?? 0;
 }
 
 /** A receipt whose one backordered line is linked to the catalog item, so it waits in the receive queue. */

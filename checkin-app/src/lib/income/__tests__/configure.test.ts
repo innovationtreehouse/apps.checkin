@@ -8,7 +8,7 @@ const configureIncome = jest.fn<void, [IncomeConfig]>();
 const roleAccounts = jest.fn();
 jest.mock("@checkin/income", () => ({
   BANK_ROLE: { shopify: "SHOPIFY_BANK", benevity: "BENEVITY_BANK" },
-  SHOPIFY_LINE_ROLES: { income: "SHOPIFY_SALES", charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
+  SHOPIFY_LINE_ROLES: { charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
   roleAccounts,
   configureIncome,
   mirrorPayoutStatus: (s: string) => s.toLowerCase(),
@@ -24,6 +24,8 @@ jest.mock("../appItems", () => ({ withAppItems: (sold: unknown) => withAppItems(
 const getQuickBooks = jest.fn();
 const buildQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
+const listQuickBooksAccounts = jest.fn();
+jest.mock("@/lib/finance/booksMap", () => ({ listQuickBooksAccounts: () => listQuickBooksAccounts() }));
 
 async function config(): Promise<IncomeConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -107,27 +109,35 @@ describe("income posting binding", () => {
 
   it("names what posting still lacks, counting the Shopify roles as the drain resolves them", async () => {
     const { incomePostingMissing } = await import("../configure");
-    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_FEES: "3" });
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_FEES: "3" });
     await expect(incomePostingMissing()).resolves.toEqual([
       "Shopify mirror",
       "the switch INCOME_MIRROR_NEWEST_WINS=true",
       "no account picked for: Shopify: card remainder, Shopify: adjustments",
     ]);
     delete process.env.QBO_REALM_ID;
-    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_SALES: "2", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
     await expect(incomePostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
   });
 });
 
 describe("Benevity posting readiness", () => {
-  it("names every Benevity role the books map leaves unset", async () => {
+  it("names every live Benevity role the books map leaves unset; gifts and matches book to their rules' accounts, net of fees", async () => {
     const { benevityPostingMissing } = await import("../configure");
     process.env.QBO_REALM_ID = "123";
-    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_DONATIONS: "2" });
-    await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity: employer matches, Benevity: fees"]);
+    roleAccounts.mockResolvedValue({ BENEVITY_DONATIONS: "2", BENEVITY_FEES: "4" });
+    await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity disbursements: bank account"]);
 
     delete process.env.QBO_REALM_ID;
-    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1", BENEVITY_DONATIONS: "2", BENEVITY_MATCHES: "3", BENEVITY_FEES: "4" });
+    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1" });
     await expect(benevityPostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)"]);
+  });
+});
+
+describe("income QuickBooks account list binding", () => {
+  it("reads the books map's live account list", async () => {
+    const accounts = [{ id: "4001", name: "Sales", accountType: "Income" }];
+    listQuickBooksAccounts.mockResolvedValue(accounts);
+    await expect((await config()).quickBooksAccounts!()).resolves.toEqual(accounts);
   });
 });

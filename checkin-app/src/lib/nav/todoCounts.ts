@@ -3,18 +3,22 @@ import type { OrgMembershipProcessStatus, TrustedAdultReviewStatus } from "@/gen
 import type { AuthenticatedUser } from "@/types/auth";
 import { countHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
 import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/review";
+import { openProcess } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
-import { openConfigIssues } from "@/lib/configHealth";
+import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
+import { openIncidentSummary } from "@/lib/opsIncidentView";
 import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
 import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
+import { variantSlotYears } from "@/lib/programYear";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -70,15 +74,16 @@ export type TodoCounts = {
     // Admin keys stay numeric — each admin nav link already deep-links to a page
     // that lists its own queue, so the number is enough.
     // `membership` = board-actionable (BLOCKED, green). `applicationsTotal` =
-    // every in-flight (non-ACTIVE) application, the gray count shown on the
-    // Applications tab — mirrors what /api/admin/membership lists.
+    // every open application, the gray count shown on the Applications tab —
+    // mirrors what /api/membership-ops/applications lists.
     // `brokenEmails` = people whose email Resend has reported as undeliverable
     // (bounce/complaint) and no later delivery has cleared — see webhooks/resend.
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
     // `brokenHouseholds` = households with no lead at all (red — blocking board action).
-    // `settingsMisconfig` = how many required Shopify-checkout board settings are still
-    // unset (0–2): the membership variant ID and the volunteer discount code. Red pill on
-    // the Settings nav + Membership Settings tab — checkout is broken until both are set.
+    // `settingsMisconfig` = how many required membership settings are still unset: the
+    // membership variant ID, the volunteer discount code, the re-check interval, the
+    // boundary, and the coming year's variant. Red pill on the Settings nav + Membership
+    // Settings tab.
     // `programsMisconfig` = how many programs have a price but no matching Shopify variant
     // (paid enrollment silently can't check out). Red pill on the Program Ops Programs tab.
     // `openPaymentExceptions` = reconciler-detected payment problems (OPEN or
@@ -93,8 +98,11 @@ export type TodoCounts = {
     // inside CRON_STALE_AFTER_MS) OR whose latest run could not process every row.
     // Both mean "go look at Scheduled Jobs"; the panel says which. Computed here
     // rather than in getConfigHealth() because it needs a DB read and that function
-    // is deliberately synchronous. See lib/cronRuns.ts.
-    configHealth?: { openIssues: number; unhealthyCronJobs: number };
+    // is deliberately synchronous. See lib/cronRuns.ts. A job whose
+    // stopped-job incident is open is counted under `openIncidents` instead.
+    // `openIncidents` = incidents that have sent their first notice and not closed;
+    // watching incidents show on the Open problems panel only. See lib/opsIncidentView.ts.
+    configHealth?: { openIssues: number; unhealthyCronJobs: number; openIncidents: number };
     // Background-check reviewer surface (reviewers + board, per-viewer). `canActOn`
     // = applications this reviewer may attest now (green). `approvedAwaitingSecond`
     // = ones they approved that still need a second reviewer (gray).
@@ -115,6 +123,9 @@ export type TodoCounts = {
     // UI-only pre-release gate, see lib/libraryRelease.ts.
     releasedLibraries?: string[];
 };
+
+/** The todo-counts route's body: the counts, and the person they were read for. */
+export type TodoCountsResponse = TodoCounts & { personId: number };
 
 /** RSVP tally (Yes/Maybe/No; NO_RESPONSE omitted). */
 export type RsvpTally = { yes: number; maybe: number; no: number };
@@ -180,7 +191,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
 
     const householdId = user.householdId;
     const members = await prisma.person.findMany({
-        where: { householdId, ...LIVE_PERSON },
+        where: { householdId },
         select: { id: true },
     });
     const memberIds = members.map((m) => m.id);
@@ -188,7 +199,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
     // From the DB, not the session claim, so a lead change applies at once.
     const [isLead, seesPayments] = await Promise.all([
         prisma.person.findFirst({
-            where: { id: user.id, householdId, isHouseholdLead: true, ...LIVE_PERSON },
+            where: { id: user.id, householdId, isHouseholdLead: true },
             select: { id: true },
         }).then((p) => p !== null),
         seesHouseholdPaymentStatus(user.id),
@@ -220,7 +231,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // page highlights the member box; this drives the nav badge count.
         isLead
             ? prisma.person.findMany({
-                  where: { householdId, isHouseholdLead: true, OR: [{ phone: null }, { phone: "" }], ...LIVE_PERSON },
+                  where: { householdId, isHouseholdLead: true, OR: [{ phone: null }, { phone: "" }] },
                   select: { id: true, name: true },
               })
             : Promise.resolve([]),
@@ -228,7 +239,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // on the household page; the lead must add one or the other.
         isLead
             ? prisma.person.findMany({
-                  where: { householdId, dateOfBirth: null, isDeclaredAdult: false, ...LIVE_PERSON },
+                  where: { householdId, dateOfBirth: null, isDeclaredAdult: false },
                   select: { id: true, name: true },
               })
             : Promise.resolve([]),
@@ -251,7 +262,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // Unpaid enrollments are payment status: the household lead's alone.
         seesPayments
             ? prisma.programParticipant.findMany({
-                  where: { personId: { in: memberIds }, status: "PENDING", person: LIVE_PERSON },
+                  where: { personId: { in: memberIds }, status: "PENDING" },
                   select: { programId: true, isPaymentPlanRequested: true, program: { select: { name: true } } },
               })
             : Promise.resolve([]),
@@ -339,7 +350,7 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
         // "Total Enrolled" = active (not PENDING) participants per program.
         prisma.programParticipant.groupBy({
             by: ["programId"],
-            where: { programId: { in: ledIds }, status: "ACTIVE", person: LIVE_PERSON },
+            where: { programId: { in: ledIds }, status: "ACTIVE" },
             _count: { personId: true },
         }),
         // All upcoming sessions, ascending; we keep the next 3 per program below.
@@ -350,7 +361,7 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
         }),
         // Volunteer roster per program — used to split RSVP tallies by role.
         prisma.programVolunteer.findMany({
-            where: { programId: { in: ledIds }, person: LIVE_PERSON },
+            where: { programId: { in: ledIds } },
             select: { programId: true, personId: true },
         }),
         getLeadConflicts(userId),
@@ -388,10 +399,19 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     for (const [programId, evs] of upcomingByProgram) for (const e of evs) eventProgram.set(e.id, programId);
     const rsvpRows = upcomingEventIds.length
         ? await prisma.rSVP.findMany({
-              where: { eventId: { in: upcomingEventIds }, person: LIVE_PERSON },
+              where: { eventId: { in: upcomingEventIds } },
               select: { eventId: true, personId: true, status: true },
           })
         : [];
+    // A participant's RSVP counts only while they are enrolled; the lead's and volunteers' always count.
+    const enrolledKeys = new Set(
+        rsvpRows.length
+            ? (await prisma.programParticipant.findMany({
+                  where: { programId: { in: ledIds }, personId: { in: [...new Set(rsvpRows.map((r) => r.personId))] }, ...ENROLLED_PARTICIPANT },
+                  select: { programId: true, personId: true },
+              })).map((p) => `${p.programId}:${p.personId}`)
+            : [],
+    );
     const emptyTally = (): { participants: RsvpTally; volunteers: RsvpTally } => ({
         participants: { yes: 0, maybe: 0, no: 0 },
         volunteers: { yes: 0, maybe: 0, no: 0 },
@@ -399,8 +419,9 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     const tallyByEvent = new Map<number, { participants: RsvpTally; volunteers: RsvpTally }>();
     for (const r of rsvpRows) {
         const t = tallyByEvent.get(r.eventId) ?? emptyTally();
-        const programId = eventProgram.get(r.eventId);
-        const bucket = programId !== undefined && volunteerKeys.has(`${programId}:${r.personId}`) ? t.volunteers : t.participants;
+        const key = `${eventProgram.get(r.eventId)}:${r.personId}`;
+        if (!volunteerKeys.has(key) && r.personId !== userId && !enrolledKeys.has(key)) continue;
+        const bucket = volunteerKeys.has(key) ? t.volunteers : t.participants;
         if (r.status === "ATTENDING") bucket.yes += 1;
         else if (r.status === "MAYBE") bucket.maybe += 1;
         else if (r.status === "NOT_ATTENDING") bucket.no += 1;
@@ -422,17 +443,27 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     };
 }
 
+/** True when the coming membership year has no variant row. With no boundary there is no coming year to ask about. */
+export async function comingYearVariantUnset(boundary: Date | null | undefined, now: Date): Promise<boolean> {
+    if (!boundary) return false;
+    const row = await prisma.membershipYearVariant.findUnique({
+        where: { membershipYear: variantSlotYears(boundary, now)[1] },
+        select: { membershipYear: true },
+    });
+    return row === null;
+}
+
 /** Board surface: the board's own queue plus infra health. Callers gate on sysadmin or board. */
 async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoCounts, "admin" | "configHealth">>> {
     // Finance counts are Board/Finance reads; a sysadmin off the Board gets zeros.
     const seesFinance = !!user.isBoardMember || !!user.isFinance;
-    const [membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, unhealthyCronJobs] = await Promise.all([
+    const [membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, incidentHealth] = await Promise.all([
         prisma.orgMembershipProcess.count({
             where: { status: { in: BOARD_ACTIONABLE_MEMBERSHIP } },
         }),
-        // Every in-flight application the Applications page lists (status != ACTIVE).
+        // Every open application, the same rows the Applications page lists.
         prisma.orgMembershipProcess.count({
-            where: { status: { not: "ACTIVE" } },
+            where: openProcess.where,
         }),
         // Scholarship-queue count: mirror GET /api/finance-ops/payment-plans'
         // default filter exactly so the nav badge can't over-count. Excludes
@@ -441,13 +472,13 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // hold fails, so they don't need a green "approval pending" pill.
         seesFinance
             ? prisma.programParticipant.count({
-                  where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null, person: LIVE_PERSON },
+                  where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null },
               })
             : 0,
         // Households awaiting board approval of a membership-fee payment plan.
-        seesFinance ? prisma.orgMembershipProcess.count({ where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true } }) : 0,
+        seesFinance ? prisma.orgMembershipProcess.count({ where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true, orgMembership: { household: { archivedAt: null } } } }) : 0,
         prisma.trustedAdultReview.count({
-            where: { status: "PENDING_BOARD_REVIEW" },
+            where: { status: "PENDING_BOARD_REVIEW", trustedAdult: { household: { archivedAt: null } } },
         }),
         countHouseholdsMissingValidContact(),
         // Households nobody has claimed via Google sign-in yet: either a lead has an
@@ -457,7 +488,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         prisma.household.count({
             where: UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE,
         }),
-        // "Broken" households: live members, none of them a lead. Mirrors
+        // "Broken" households: members, none of them a lead. Mirrors
         // /api/admin/broken-households.
         prisma.household.count({
             where: BROKEN_HOUSEHOLD_WHERE,
@@ -465,7 +496,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // People Resend has reported as undeliverable (bounce/complaint), not since
         // cleared by a later delivery. See Person.emailUndeliverableAt / webhooks/resend.
         prisma.person.count({
-            where: { emailUndeliverableAt: { not: null }, ...LIVE_PERSON },
+            where: { emailUndeliverableAt: { not: null }, ...IN_LIVE_HOUSEHOLD },
         }),
         // Programs priced on a tier with no matching Shopify variant — paid enrollment
         // silently can't check out. Same condition as the list/detail UI, shared via
@@ -480,22 +511,28 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true },
+            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
-        // notice its own nightly sweep stopped working. See lib/cronRuns.ts.
-        countUnhealthyCronJobs(),
+        // notice its own nightly sweep stopped working. See lib/cronRuns.ts. Open incidents
+        // are read first so a stopped job with an open incident counts once.
+        openIncidentSummary().then(async ({ openIncidents, staleJobs }) => ({
+            openIncidents,
+            unhealthyCronJobs: await countUnhealthyCronJobs(new Date(), staleJobs),
+        })),
     ]);
     const settingsMisconfig =
+        ((await comingYearVariantUnset(boardSettings?.orgMembershipYearBoundary, new Date())) ? 1 : 0) +
         (boardSettings?.orgMembershipVariantId ? 0 : 1) +
         (boardSettings?.volunteerFamilyDiscountCode ? 0 : 1) +
         (isRecheckPolicySet(boardSettings?.bgRecheckMonths) ? 0 : 1) +
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
         admin: { membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
-        // Env-var/deploy gaps (synchronous presence checks) plus cron sweeps that
-        // stopped running or stopped working — both fold into the single red System Status pill.
-        configHealth: { openIssues: openConfigIssues(), unhealthyCronJobs },
+        // Env-var/deploy gaps and the alert address (presence checks), cron sweeps that
+        // stopped running or stopped working, and open incidents all fold into the single red
+        // System Status pill.
+        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), alertAddressCheck(boardSettings?.alertEmailAddress)]), ...incidentHealth },
     };
 }

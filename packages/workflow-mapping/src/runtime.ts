@@ -32,6 +32,7 @@ const requireRuntime = workflowRuntime.require;
 export const configureWorkflowMapping = workflowRuntime.configure;
 
 export const getOrgId = workflowRuntime.getOrgId;
+export const assertOrg = workflowRuntime.assertOrg;
 
 export function ports(): WorkflowPorts {
   const r = requireRuntime();

@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import DevShopifyClient from "./DevShopifyClient";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +27,7 @@ export default async function DevShopifyPage() {
     const hasVariant = config.shopifyMockActive() || !!settings?.orgMembershipVariantId;
 
     const pendingParticipants = await prisma.programParticipant.findMany({
-        where: { status: "PENDING", person: LIVE_PERSON },
+        where: { status: "PENDING" },
         orderBy: [{ programId: "desc" }, { personId: "asc" }],
         select: {
             personId: true,

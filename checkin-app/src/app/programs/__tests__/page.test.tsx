@@ -18,6 +18,17 @@ const programs = [
 ];
 
 describe("PublicProgramsDirectory", () => {
+  it("badges a program Closed when the server says a new claim would be refused", async () => {
+    mockFetchJson({ "/api/programs?active=true": [
+      { ...programs[0], id: 1, name: "Open One", enrollmentClosedBy: null },
+      { ...programs[0], id: 2, name: "Full One", enrollmentClosedBy: "FULL" },
+    ] });
+    renderWithProviders(<PublicProgramsDirectory />);
+
+    await screen.findByText("Full One");
+    expect(screen.getAllByText("Closed")).toHaveLength(1);
+  });
+
   it("lists public programs for an anonymous visitor", async () => {
     mockFetchJson({ "/api/programs?active=true": programs });
     renderWithProviders(<PublicProgramsDirectory />);

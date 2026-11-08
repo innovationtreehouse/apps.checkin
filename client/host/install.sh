@@ -41,12 +41,6 @@ if [ ! -f "$STATE/current.env" ]; then
   echo "KIOSK_DIGEST=$digest" >"$STATE/current.env"
 fi
 
-# An existing urgent tag is an old force, not a new one. No tag yet leaves this
-# empty, so the first force still applies.
-if [ ! -f "$STATE/urgent" ]; then
-  docker buildx imagetools inspect "$KIOSK_IMAGE:$KIOSK_URGENT_TAG" --format '{{.Manifest.Digest}}' >"$STATE/urgent" 2>/dev/null || : >"$STATE/urgent"
-fi
-
 KIOSK_HOME=$(getent passwd "$KIOSK_USER" | cut -d: -f6)
 AUTOSTART=$KIOSK_HOME/.config/openbox/autostart
 install -d -o "$KIOSK_USER" -g "$KIOSK_USER" "$KIOSK_HOME/.config" "$KIOSK_HOME/.config/openbox"

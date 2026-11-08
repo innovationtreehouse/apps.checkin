@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from 'react';
-import { Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, SimpleGrid, Stack, Text, Textarea, Title } from '@mantine/core';
+import { Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Modal, SimpleGrid, Stack, Text, Textarea, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { EntityPicker } from '@/components/admin/EntityPicker';
@@ -233,7 +233,14 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
       <Card withBorder radius="md" padding="lg">
         <Title order={4} mb="md">Active Participants ({activeParticipants.length})</Title>
         <form onSubmit={handleAddParticipant}>
-          <Group align="flex-end" gap="md" mb="lg" wrap="wrap">
+          {/* On a phone the Program Lead notice stacks above the picker instead of squeezing beside it. */}
+          <Flex
+            direction={{ base: isSysAdminOrBoard ? 'row' : 'column-reverse', sm: 'row' }}
+            align={{ base: isSysAdminOrBoard ? 'flex-end' : 'stretch', sm: 'flex-end' }}
+            gap="md"
+            mb="lg"
+            wrap="wrap"
+          >
             <Box style={{ flex: 1, minWidth: 200 }}>
               <EntityPicker<EligibleOption>
                 label="Assign Participant"
@@ -254,7 +261,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
             ) : (
               <Button type="submit" disabled={saving || !newPartId}>Enroll</Button>
             )}
-          </Group>
+          </Flex>
         </form>
 
         {enrollError && <Alert color="red" variant="light" mb="lg">{enrollError}</Alert>}

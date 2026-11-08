@@ -135,19 +135,6 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
         expect((result as { isSysadmin?: unknown }).isSysadmin).toBeUndefined();
     });
 
-    it('merge tombstone (LIVE_PERSON filter misses) ⇒ returns an empty token', async () => {
-        // A merged-away person keeps its row and its roles; the filter in the where clause
-        // is what makes the lookup miss, so assert the clause itself as well as the outcome.
-        mockFindUnique.mockResolvedValue(null);
-
-        const result = await callRefresh({ id: 7, isBoardMember: true });
-
-        expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 7, mergedIntoId: null } }),
-        );
-        expect(result).toEqual({});
-    });
-
     it('email changed since sign-in ⇒ returns an empty token', async () => {
         mockFindUnique.mockResolvedValue(dbParticipant({ email: 'new@example.com' }));
 
@@ -198,7 +185,7 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
         })) as Record<string, unknown>;
 
         expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 7, mergedIntoId: null } }),
+            expect.objectContaining({ where: { id: 7 } }),
         );
         expect(result.denied).toBe(false);
         expect(result.isSysadmin).toBe(true);
@@ -322,7 +309,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
 
         // Resolved by email on sign-in (not by id).
         expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { email: 'p@example.com', mergedIntoId: null } }),
+            expect.objectContaining({ where: { email: 'p@example.com' } }),
         );
         expect(result.id).toBe(7);
         expect(result.isSysadmin).toBe(true);
@@ -344,7 +331,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
         // Stored emails are lowercased on write, so the sign-in lookup key must be too —
         // otherwise Google's casing misses the row and NextAuth mints a duplicate.
         expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { email: 'john.doe@example.com', mergedIntoId: null } }),
+            expect.objectContaining({ where: { email: 'john.doe@example.com' } }),
         );
     });
 

@@ -156,8 +156,8 @@ arrived before the stamp goes to finance rather than booking itself.
   secret, so this run is the only proof of it.
 
 "Off:" on the connection row names the cause, such as a missing setting or a failed
-refresher. The refresher failing with an invalid grant means step 3 has to be
-repeated.
+refresher. "QuickBooks needs reconnecting" means the login was revoked: finance
+repeats step 3 with the infra operator.
 
 ## 5. Fill in the books map
 
@@ -171,16 +171,52 @@ stops the lane from posting, but the switch-on date stays.
 | Lane | Roles on the screen | What the app enforces | Status row |
 |---|---|---|---|
 | Expenses | Organisation card | Must be a Bank or Credit Card account; any other type is refused and finance is alerted | QuickBooks posting: expenses |
-| Shopify income | Shopify payouts: bank account; Shopify: sales, card remainder, fees, adjustments | All five | QuickBooks posting: Shopify income |
-| Benevity | Benevity disbursements: bank account; Benevity: donations, employer matches, fees | All four | QuickBooks posting: Benevity donations |
-| Gifts of goods | Gifts of goods: in-kind income, in-kind expense, fixed assets (donated equipment), clearing account (finance's past bookings) | All four, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
+| Shopify income | Shopify payouts: bank account; Shopify: card remainder, fees, adjustments, custom items | The first four; a payout with a custom item holds until custom items has an account | QuickBooks posting: Shopify income |
+| Benevity | Benevity disbursements: bank account | It | QuickBooks posting: Benevity donations |
+| Gifts of goods | Gifts of goods: in-kind income, clearing account (finance's past bookings) | Both, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
-Then give each budget bucket its QuickBooks Class on the same screen, and assign
-Shopify items to buckets on the income items screen (`/income/items`). A payout with
-an undecided item, or a bucket that can't be used, holds for finance rather than
-posting.
+Each role takes only the QuickBooks account types below. The picker lists only
+those, and a save of any other type, or while QuickBooks can't be read, is
+refused. A role already set to another type shows on the
+"QuickBooks books map: account types" status row; re-pick it.
 
-**Done when** the Expenses, Benevity and gifts-of-goods rows read "Bound.", and the
+| Role | Account types |
+|---|---|
+| Both bank accounts | Bank |
+| Organisation card | Bank, Credit Card |
+| Shopify: custom items; Gifts of goods: in-kind income | Income, Other Income |
+| Shopify: card remainder, adjustments | Income, Other Income, Other Current Liability |
+| Shopify: fees | Expense, Other Expense |
+| Gifts of goods: clearing account | Bank, Other Current Asset, Other Current Liability |
+
+Then give each budget bucket its QuickBooks Class on the same screen. On the income
+items screen (`/income/items`), give each Shopify item a bucket (or general income)
+and then the QuickBooks account its sales book to; the picker reads QuickBooks live
+and lists only Income and Other Income accounts. An item is decided only once it
+has both. A payout with an undecided item, or a bucket that can't be used, holds
+for finance rather than posting.
+
+Benevity gifts and employer matches book to the accounts on their account rules,
+not to a role. On the account map (`/donations/account-map`), pick a donation
+account and a match account for every rule; the picker reads QuickBooks live. A
+batch with a gift whose rule lacks the account it needs holds on the disbursement
+holds screen until finance picks one and resubmits.
+
+Each line of a gift of goods books where a purchase of the same part would: the
+expense account rules (`/expense/account-mapping`) give its account, and donated
+equipment takes its account only from a rule marked capital, which must name a
+Fixed Asset account. Other lines take Expense, Other Expense or Cost of Goods
+Sold. Review the `*` rules before this ships: they now decide gifts of goods too.
+A gift with a line no rule resolves, or whose account is of the wrong type, holds
+in the in-kind queue (`/donations/in-kind`) until finance sets that line's account
+under QuickBooks and books it.
+
+Benevity's fees need no account: each row's fees come out of its gift and match,
+so the deposit shows net income and no fee line. A row with fees but no gift or
+match holds its batch on the same holds screen for finance.
+
+**Done when** the account types row reads "Every account picked is of a type its
+role accepts.", the Expenses, Benevity and gifts-of-goods rows read "Bound.", and the
 Shopify income row lists only the switch as missing:
 "Unbound; missing: the switch INCOME_MIRROR_NEWEST_WINS=true."
 
@@ -277,5 +313,5 @@ stops every lane. None of these clears a switch-on date, and entries already in
 QuickBooks stay; voiding one is finance's job.
 
 **If the refresh token dies** (an alarm on `QBO_INVALID_GRANT`, or the connection
-row reporting the refresher failed), repeat step 3 and reseed the secret. The other
+row saying QuickBooks needs reconnecting), finance repeats step 3 with the infra operator and reseeds the secret. The other
 settings stay as they are.

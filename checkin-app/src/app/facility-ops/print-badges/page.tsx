@@ -58,30 +58,25 @@ export default function PrintBadgesPage() {
   const pendingSaves = useRef<Record<number, { value: string; timer: ReturnType<typeof setTimeout> }>>({});
   const inflightSaves = useRef(new Set<Promise<SavedNickname | null>>());
 
-  const fetchParticipants = useCallback(() => {
+  // Only the current search term's answer lands, so a slower earlier search never replaces it.
+  useEffect(() => {
+    if (!ready) return;
+    let current = true;
     const url = new URL('/api/people/search', window.location.origin);
     if (searchTerm) url.searchParams.set('q', searchTerm);
-
-    return fetch(url.toString())
+    fetch(url.toString())
       .then(async (res) => {
         const data = await res.json();
-        if (data.people) {
-          setParticipants(data.people);
-        }
+        if (current && data.people) setParticipants(data.people);
       })
       .catch((e) => {
-        console.error("Failed to search people for badges:", e);
+        if (current) console.error("Failed to search people for badges:", e);
       })
       .finally(() => {
-        setLoading(false);
+        if (current) setLoading(false);
       });
-  }, [searchTerm]);
-
-  useEffect(() => {
-    if (ready) {
-      fetchParticipants();
-    }
-  }, [ready, fetchParticipants]);
+    return () => { current = false; };
+  }, [ready, searchTerm]);
 
   // Load available membership years on mount.
   useEffect(() => {
@@ -101,9 +96,11 @@ export default function PrintBadgesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  // Reload the roster when the selected year changes.
+  // Reload the roster when the selected year changes. Only the selected year's answer
+  // lands: the opening no-year read is still in flight when the current year is picked.
   useEffect(() => {
     if (!ready) return;
+    let current = true;
     const url = new URL('/api/people/search', window.location.origin);
     url.searchParams.set('roster', 'active');
     if (selectedYear) url.searchParams.set('year', selectedYear);
@@ -112,12 +109,14 @@ export default function PrintBadgesPage() {
         if (!res.ok) throw new Error(`roster request failed: ${res.status}`);
         return res.json();
       })
-      .then(data => setRoster(data.people ?? []))
+      .then(data => { if (current) setRoster(data.people ?? []); })
       .catch(e => {
+        if (!current) return;
         console.error("Failed to load the active-member roster for badge names:", e);
         setRoster(null);
         notifications.show({ color: 'red', message: 'Could not load the active member roster, so badge names cannot be resolved. Reload to retry.', autoClose: false });
       });
+    return () => { current = false; };
   }, [ready, selectedYear]);
 
   // The draft is dropped once the record holds its value, so the box goes back to

@@ -17,7 +17,8 @@ import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed, raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
-import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
+import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
+import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
@@ -67,7 +68,8 @@ export class ReviewError extends ServiceError {
             | "same_household_reviewer"
             | "already_attested"
             | "invalid_subject"
-            | "not_undoable",
+            | "not_undoable"
+            | "shopify_unavailable",
         message: string,
     ) {
         super(REVIEW_ERROR_STATUS[code], message, code);
@@ -114,7 +116,7 @@ const QUEUE_EXCLUDES_UNSUBMITTED_PERSON_BG: Prisma.OrgMembershipProcessWhereInpu
 export async function notifyReviewers(): Promise<void> {
     try {
         const reviewers = await prisma.person.findMany({
-            where: { email: { not: null }, OR: [{ isBackgroundCheckReviewer: true }, { isBoardMember: true }], ...LIVE_PERSON },
+            where: { email: { not: null }, OR: [{ isBackgroundCheckReviewer: true }, { isBoardMember: true }] },
             select: { email: true },
         });
         const actionLink = `${config.baseUrl()}/membership-ops/review`;
@@ -165,7 +167,7 @@ export async function applicantHousehold(db: DbClient, process: { orgMembershipI
  */
 async function liveHouseholdLeadIds(db: DbClient, householdId: number | null): Promise<number[]> {
     if (householdId === null) return [];
-    const leads = await db.person.findMany({ where: { householdId, isHouseholdLead: true, ...LIVE_PERSON }, select: { id: true } });
+    const leads = await db.person.findMany({ where: { householdId, isHouseholdLead: true }, select: { id: true } });
     return leads.map((l) => l.id);
 }
 
@@ -308,6 +310,16 @@ export async function attest(
     const reviewer = await loadReviewer(reviewerId);
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) throw new ReviewError("not_reviewer", "You are not a background-check reviewer.");
 
+    if (input.result === "APPROVE") {
+        const paid = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { paidAt: true, shopifyOrderId: true } });
+        if (paid?.paidAt && paid.shopifyOrderId) {
+            await recordUnreportedReversal(paid.shopifyOrderId).catch((error) => {
+                logger.error("attest: Shopify order read failed:", { processId }, error);
+                throw new ReviewError("shopify_unavailable", "We couldn't confirm with Shopify that this application's payment still stands, so your approval wasn't saved. Please try again later.");
+            });
+        }
+    }
+
     // Re-check eligibility, create the attestation, recompute approvals, and converge
     // all inside one transaction. FOR UPDATE on the OrgMembershipProcess row serializes
     // concurrent attestations AND the payment path (payment.ts › activate takes the
@@ -352,7 +364,7 @@ export async function attest(
         });
 
         if (input.result === "REJECT") {
-            const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...awaitingBgReview.where }, data: { status: "BLOCKED", stageEnteredAt: new Date() } });
+            const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...awaitingBgReview.where }, data: { status: "BLOCKED", stageEnteredAt: new Date(), isPaymentPlanRequested: false } });
             if (!count) throw movedOn();
             await audit(tx, personActor(reviewerId), processId, { status: process.status }, { status: "BLOCKED", reason: "reviewer reject", ...(input.note ? { note: input.note } : {}) });
             // A paid household that fails review needs a manual refund — flag the board (post-tx).
@@ -682,7 +694,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
 export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
     let isVolunteerFamily = markedByReviewer;
     if (!isVolunteerFamily) {
-        const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
+        const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
         const designations = await db.volunteerDesignation.findMany({ select: { email: true } });
         isVolunteerFamily = matchesVolunteerDesignation(parents.map((p) => p.email!), designations.map((d) => d.email));
     }
@@ -761,7 +773,7 @@ type BlockedResetRow = {
  * lists PENDING_PAYMENT/PENDING_BG_CLEARANCE rows WITH consent, so parking an
  * unconsented renewal there would strand it.
  */
-function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatus {
+export function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatus {
     return process.kind === "PERSON_BG" ? "PENDING_BG_REVIEW"
         : process.kind === "RENEWAL" && !process.bgConsentAt ? "PENDING_EXTERNAL_ACTION"
         : process.paidAt ? "PENDING_BG_CLEARANCE"
