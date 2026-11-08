@@ -341,8 +341,7 @@ Procedure below is built on them.
 
 - Revoking a household's membership does none of this: its trusted adults, its
   members' trusted-adult authorisations and its program ties are left as they
-  are, and nothing goes to the board. A revocation is usually a lapse, not a
-  safeguarding matter.  [Decision]
+  are, and nothing goes to the board.  [Decision]
 
 - A denied household is sent no outreach. Denial is checked again as each
   message goes out.  [Decision]
@@ -492,8 +491,8 @@ Procedure below is built on them.
 
 - A signing adult whom the household's own review did not name is covered here
   rather than by that review, because a clearance covers only the adult who took
-  the check. Otherwise the second parent on the application — often the one
-  holding a key — belongs to no track at all.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*]
+  the check. Otherwise the second parent on the application belongs to no track
+  at all.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*]
 
 - The obligation follows an active membership. Leads of households that only ever
   started an application, were denied or revoked, or were created by an import owe
