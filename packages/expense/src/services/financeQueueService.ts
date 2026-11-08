@@ -43,10 +43,9 @@ const ROW_FIELDS = { id: true, vendorName: true, receiptDate: true, submittedAt:
 
 /**
  * Details that come from `personal` columns (a QuickBooks error, a review's stored text) stay on
- * the expense page: a queue row's reasons are classified `internal`. A setting wait's detail is
- * read from an audit note but is the app's own message naming the setting, so it shows on the row.
+ * the expense page: a queue row's reasons are classified `internal`.
  */
-const ROW_DETAIL_CODES = new Set(["QB_DRIFT", "QB_NO_CLASS", "QB_WAITING_ON_SETTING"]);
+const ROW_DETAIL_CODES = new Set(["QB_DRIFT", "QB_NO_CLASS"]);
 
 /** Runs `fn`, naming the step and the record in the error it throws, so the route's log says which failed. */
 async function withContext<T>(step: string, fn: () => Promise<T>): Promise<T> {
