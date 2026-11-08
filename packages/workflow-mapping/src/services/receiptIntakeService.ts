@@ -75,9 +75,9 @@ export interface IngestResult {
  * recorded as `apply_failed`. An unavailable catalog saves the receipt with matching pending.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
-  await assertOrg(input.orgId);
-  const orgId = await getOrgId();
   const receipt = CompletedReceiptSchema.parse(input);
+  await assertOrg(receipt.orgId);
+  const orgId = await getOrgId();
 
   const existing = await db.receivedReceipt.findUnique({ where: { receiptId: receipt.receiptId } });
   if (existing) return { id: existing.id, state: existing.state as ReceivedReceiptState, created: false };

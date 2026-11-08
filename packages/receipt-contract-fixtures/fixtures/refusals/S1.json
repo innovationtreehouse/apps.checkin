@@ -8,6 +8,7 @@
     { "name": "a fractional quantity", "expect": "accepted", "set": { "lineItems.0.quantity": 6.002 } },
     { "name": "a resend that differs, answered with the stored receipt", "expect": "accepted", "after": "base", "set": { "vendorName": "Different" } },
     { "name": "a receipt for another org, a wiring bug", "expect": "bug", "status": 500, "message": "is not this org", "set": { "orgId": "another-org" } },
+    { "name": "no orgId", "expect": "refused", "status": 400, "message": "expected string, received undefined", "unset": ["orgId"] },
     { "name": "no receiptId", "expect": "refused", "status": 400, "message": "expected string, received undefined", "unset": ["receiptId"] },
     { "name": "an empty receiptId", "expect": "refused", "status": 400, "message": "expected string to have >=1 characters", "set": { "receiptId": "" } },
     { "name": "no line items", "expect": "refused", "status": 400, "message": "expected array to have >=1 items", "set": { "lineItems": [] } },

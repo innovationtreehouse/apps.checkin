@@ -6,6 +6,7 @@
     { "name": "the payload as sent", "expect": "accepted" },
     { "name": "the same payload again, answered as already applied", "expect": "accepted", "after": "base" },
     { "name": "a resend that differs after apply, answered as already applied", "expect": "accepted", "after": "base", "set": { "receiptTotalCents": 1 } },
+    { "name": "no orgId", "expect": "refused", "status": 400, "message": "expected string, received undefined", "unset": ["orgId"] },
     { "name": "no line items", "expect": "refused", "status": 400, "message": "expected array to have >=1 items", "set": { "lineItems": [] } },
     { "name": "an empty receiptId", "expect": "refused", "status": 400, "message": "expected string to have >=1 characters", "set": { "receiptId": "" } },
     { "name": "a negative total", "expect": "refused", "status": 400, "message": "expected number to be >=0", "set": { "receiptTotalCents": -1 } },

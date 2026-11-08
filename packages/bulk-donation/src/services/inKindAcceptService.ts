@@ -557,20 +557,24 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
  * A bug, such as a 401 or 403 from the callee, is our wiring, never the accepting person's permission: a 500 that says so.
  */
 async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
+  const fault = (err: unknown) => {
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
+    const answer = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
+    answer.cause = err;
+    return answer;
+  };
+  // We built these lines, so lines our own schema rejects are our bug, not the callee's refusal.
+  const parsed = CapitalReviewLineSchema.array().safeParse(lines);
+  if (!parsed.success) throw fault(parsed.error);
   try {
-    await getInKindCapital().submit(orgId, CapitalReviewLineSchema.array().parse(lines));
+    await getInKindCapital().submit(orgId, parsed.data);
   } catch (err) {
     const kind = kindOf(err);
     const answered = toHttpError(err);
     if (kind === "data") {
       throw new ServiceError(answered?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${answered?.message ?? (err instanceof Error ? err.message : String(err))}`, answered?.code);
     }
-    if (kind === "bug") {
-      console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
-      const fault = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
-      fault.cause = err;
-      throw fault;
-    }
+    if (kind === "bug") throw fault(err);
     console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send failed`, err);
     const failed = new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
     failed.cause = err;
