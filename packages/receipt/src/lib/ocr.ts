@@ -6,6 +6,7 @@ import Anthropic, {
   InternalServerError,
   PermissionDeniedError,
   RateLimitError,
+  UnprocessableEntityError,
 } from "@anthropic-ai/sdk";
 import type { FailureKind } from "@checkin/component-kit";
 import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
@@ -120,7 +121,8 @@ export function ocrKind(err: unknown): FailureKind {
   // The API reports a used-up credit balance as a 400, which is ours to fix, not the file's.
   if (err instanceof BadRequestError && /credit balance/i.test(err.message)) return "connection";
   if (err instanceof RateLimitError || err instanceof InternalServerError || err instanceof APIConnectionError) return "system";
-  if (err instanceof BadRequestError || (err instanceof APIError && err.status === 413)) return "data";
+  // The request's content: a bad or unprocessable file, or one too large.
+  if (err instanceof BadRequestError || err instanceof UnprocessableEntityError || (err instanceof APIError && err.status === 413)) return "data";
   return "bug";
 }
 
