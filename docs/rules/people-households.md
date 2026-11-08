@@ -148,23 +148,20 @@ Things the app takes as true because they are handled outside it.
   blanks a date of birth showing someone is under 18 and declares them over 25 is
   refused.  [Decision — owner]
 
-- Blanking that date in one save and declaring in a later one is accepted, as is
-  entering an older date in its place. The app does not check IDs and keeps no
-  history to catch this.  [Decision — deliberate limit]
+- That refusal looks at a single save. A date of birth is not verified against
+  ID, and a save is not compared with earlier ones.  [Decision — deliberate limit]
 
 - Date of birth is not retained past 25; the declaration replaces it
-  automatically as members age out. Twenty-five holds three things at once: we
-  keep nothing we do not need, by then nobody's own age restricts what they may
-  do here, and it is young enough that someone of 25 is very unlikely to be the
-  parent of anyone in our programs.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
+  automatically as members age out. Twenty-five holds two things at once: we
+  keep nothing we do not need, and by then nobody's own age restricts what they
+  may do here.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
 
 - Change history can keep a date of birth past 25. A history record copies the
   date when a person's details are saved, and nothing removes that copy later.
   This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21, 2026-10-27]
 
 - Date of birth is the only field with an ageing-out rule. Broader retention is
-  deliberately not automated while the organisation is young and little has
-  accumulated; the general obligation is met by hand until that stops being true.  [Decision — deliberate limit]
+  not automated; the general obligation is met by hand.  [Decision — deliberate limit]
 
 - A youth cannot edit their own profile. As with leadership, an unknown date of
   birth reads as adult.  [Decision — deliberate limit]
