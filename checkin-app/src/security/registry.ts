@@ -382,6 +382,29 @@ defineRoute({
     ],
 });
 
+// Board archives or unarchives a household (docs/in-design/HOUSEHOLD_ARCHIVE.md).
+// Board only, NOT sysadmin: archival is a membership decision. The bag is
+// { Household }, the updated row; the view keeps id, name and archivedAt and
+// drops the address and intake note, which the action's caller does not need.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/households/[id]/archive',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'household',
+    returns: ['Household'],
+    orderedView: [
+        ['isBoardMember', ['public']],
+    ],
+});
+defineRoute({
+    endpoint: 'POST /api/membership-ops/households/[id]/unarchive',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'household',
+    returns: ['Household'],
+    orderedView: [
+        ['isBoardMember', ['public']],
+    ],
+});
+
 // Tombstone census. Lists merged-away Person rows and, per tombstone, the
 // residue still parked on it, for sysadmin/board triage. The bag is
 // { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
