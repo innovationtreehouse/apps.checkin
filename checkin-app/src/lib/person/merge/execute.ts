@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { personBgOpen } from "@/lib/membership/lifecycle";
+import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
@@ -9,7 +10,7 @@ import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
-import { bgSubjectKey } from "./guard";
+import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
     MERGE_INCLUDE,
@@ -127,6 +128,9 @@ export async function prepareMerge(
     const keeperUpdate = planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) return { refused: { status: 400, error: keeperUpdate.error } };
 
+    const disputedBlock = await disputedCheckRefusal(prisma, keep, merge, keeperUpdate.data);
+    if (disputedBlock) return { refused: disputedBlock };
+
     const reason = typeof emailChangeReason === "string" ? emailChangeReason.trim() : "";
     const trustBlock = await trustedLoginRefusal(prisma, { keepId, mergeId, keeperUpdate: keeperUpdate.data, emailChangeReason: reason }, actor);
     if (trustBlock) return { refused: trustBlock };
@@ -137,6 +141,32 @@ export async function prepareMerge(
     const bgFreshBeforeMerge = await householdBgFresh(keep.householdId);
 
     return { plan: { keep, merge, choices: parsed.choices, bgFreshBeforeMerge, emailChangeReason: reason } };
+}
+
+/** A merge that would change a disputed person's check facts, as a refusal, or null. */
+async function disputedCheckRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject, keeperUpdate: Record<string, unknown>): Promise<MergeRefusal | null> {
+    const reviews = await loadCheckReviews(db, [keep.id, merge.id]);
+    const blocked = await blockedApplicationsByLead(db, [keep, merge]);
+    const side = (personId: number): CheckSide => {
+        const own = reviews.get(personId) ?? [];
+        return { disputing: [...disputingReviews(own), ...(blocked.get(personId) ?? [])], openReviews: own.length };
+    };
+    const error = disputedCheckBlock(side(keep.id), side(merge.id), "lastBackgroundCheck" in keeperUpdate);
+    return error ? { status: 409, error } : null;
+}
+
+/**
+ * A BLOCKED household application names nobody, so it disputes every lead of its
+ * household until check reviews name their person (person-based-bg-review.md §6).
+ */
+async function blockedApplicationsByLead(db: DbClient, people: { id: number; householdId: number; isHouseholdLead: boolean }[]): Promise<Map<number, { id: number }[]>> {
+    const leads = people.filter(p => p.isHouseholdLead);
+    if (leads.length === 0) return new Map();
+    const rows = await db.orgMembershipProcess.findMany({
+        where: { status: "BLOCKED", orgMembership: { householdId: { in: leads.map(p => p.householdId) } } },
+        select: { id: true, orgMembership: { select: { householdId: true } } },
+    });
+    return new Map(leads.map(p => [p.id, rows.filter(r => r.orgMembership?.householdId === p.householdId)]));
 }
 
 /** The decision-bearing collisions between the two subjects, as a refusal, or null. */
@@ -262,7 +292,7 @@ async function lockBothSubjects(tx: TxClient, keepId: number, mergeId: number): 
 }
 
 /**
- * Re-run the subject and collision refusals on a live read, under the
+ * Re-run the subject, collision and disputed-check refusals on a live read, under the
  * households' membership locks: a household denied after prepareMerge is seen
  * here and refuses the merge. A subject that changed household since the plan
  * refuses too, since the locks cover the planned households only. Returns the
@@ -283,6 +313,8 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     const parsed = parseFieldChoices(keep, merge, plan.choices);
     const keeperUpdate = 'error' in parsed ? parsed : planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) throw new MergeRefusedError(CHANGED_WHILE_MERGING);
+    const disputedBlock = await disputedCheckRefusal(tx, keep, merge, keeperUpdate.data);
+    if (disputedBlock) throw new MergeRefusedError(disputedBlock);
     const trustBlock = await trustedLoginRefusal(tx, { emailChangeReason: plan.emailChangeReason, keeperUpdate: keeperUpdate.data, keepId: keep.id, mergeId: merge.id }, actor);
     if (trustBlock) throw new MergeRefusedError(trustBlock);
     return { keep, merge, keeperUpdate: keeperUpdate.data };
