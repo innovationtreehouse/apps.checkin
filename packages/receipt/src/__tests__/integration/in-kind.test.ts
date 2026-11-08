@@ -302,6 +302,36 @@ describeDb("donor sync failures (X13)", () => {
     expect(ports.calls.donors).toHaveLength(sends);
   });
 
+  it("a donor send that settles clears its failure, so a later push failure is timed from the push", async () => {
+    ports.fail.donor = true;
+    const r = await gift();
+    const donorFailedAt = (await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).firstFailedAt;
+    expect(donorFailedAt).toBeInstanceOf(Date);
+
+    ports.fail.donor = false;
+    ports.fail.push = new Error("mapping down");
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
+
+    const after = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
+    expect(after).toMatchObject({ donorSync: "synced", lastError: "mapping down" });
+    expect(after.firstFailedAt?.getTime()).toBeGreaterThan(donorFailedAt?.getTime() ?? Infinity);
+  });
+
+  it("an editable receipt whose donor send settles no longer shows as stuck", async () => {
+    const r = await gift(badMath());
+    ports.fail.donor = true;
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ firstFailedAt: expect.any(Date) });
+
+    ports.fail.donor = false;
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { self: true } });
+
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorSync: "synced", firstFailedAt: null, lastError: null });
+    actAs(FINANCE);
+    expect(await receiptService.get(r.id, "finance")).not.toHaveProperty("lastPushFailedAt");
+  });
+
   it("a receipt stored with a blank donor is never sent to donations, and stays stuck", async () => {
     ports.fail.donor = true;
     const r = await gift();
