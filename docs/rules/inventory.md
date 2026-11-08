@@ -129,6 +129,12 @@ How the pieces are built is described in
   The factor must match only when merging into existing stock.
   `[Decision — owner]`
 
+- A receipt's or donation's stock change, or a catalog decision, that fails
+  to apply stays failed with its error and the time it first failed. Nothing
+  retries it automatically: a person retries it from the Problems list on
+  System Status. The error shows only on the item's own inventory page.
+  `[Decision — owner]`
+
 ### Receiving
 
 - Receiving is the only way a receipt's goods reach stock, and only after every

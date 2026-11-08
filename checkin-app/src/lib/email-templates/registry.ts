@@ -175,14 +175,6 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
-    "board.inventoryEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Inventory: catalog events need attention",
-        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once; a provisional item that can't be applied alerts on each run.",
-    },
-
     // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
     // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
     "ops.incidentOpened": {

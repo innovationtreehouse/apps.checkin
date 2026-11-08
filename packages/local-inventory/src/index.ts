@@ -29,7 +29,6 @@ export type {
   InventoryRouteHandler,
   OrgEventRecord,
   CatalogEventSource,
-  InventoryAlerts,
 } from "./contract";
 
-export { stuckItems } from "./stuckItems";
+export { retryStuckItem, stuckItems } from "./stuckItems";

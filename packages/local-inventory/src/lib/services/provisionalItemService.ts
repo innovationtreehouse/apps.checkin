@@ -431,3 +431,28 @@ export function createProvisionalItemService({
 }
 
 export type ProvisionalItemService = ReturnType<typeof createProvisionalItemService>;
+
+/**
+ * Applies a provisional's stored catalog decision once. A failure is recorded on the provisional
+ * (the first failure time kept, the last error replaced) and it then waits for Retry on the
+ * Problems list; a success clears both. Returns whether it applied.
+ */
+export async function reconcileRecorded(
+  db: Db,
+  service: Pick<ProvisionalItemService, "reconcileProvisionalOnCreate">,
+  orgId: string,
+  provisionalGtin13: string,
+): Promise<boolean> {
+  const row = { orgId, provisionalGtin13 };
+  try {
+    await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
+  } catch (err) {
+    console.error(`[local-inventory/provisional] applying the catalog's decision to ${provisionalGtin13} failed`, err);
+    const reconcileLastError = err instanceof Error ? err.message : String(err);
+    await db.inventoryProvisionalItem.updateMany({ where: row, data: { reconcileLastError } });
+    await db.inventoryProvisionalItem.updateMany({ where: { ...row, reconcileFirstFailedAt: null }, data: { reconcileFirstFailedAt: new Date() } });
+    return false;
+  }
+  await db.inventoryProvisionalItem.updateMany({ where: { ...row, reconcileFirstFailedAt: { not: null } }, data: { reconcileFirstFailedAt: null, reconcileLastError: null } });
+  return true;
+}
