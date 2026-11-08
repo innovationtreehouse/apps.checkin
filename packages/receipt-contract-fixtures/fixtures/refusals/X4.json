@@ -1,0 +1,16 @@
+{
+  "crossing": "X4",
+  "callee": "local-inventory applyReceipt",
+  "base": { "fixture": "S3-inventory-delta/recognized-only", "set": { "lineItems.0.isProvisional": false } },
+  "cases": [
+    { "name": "the payload as sent", "expect": "accepted" },
+    { "name": "no retailer", "expect": "accepted", "unset": ["retailer"] },
+    { "name": "the same delta again, answered as replayed", "expect": "accepted", "after": "base" },
+    { "name": "a resend with a different delta", "expect": "refused", "after": "base", "set": { "lineItems.0.quantityDelta": 2 } },
+    { "name": "a zero quantity", "expect": "refused", "set": { "lineItems.0.quantityDelta": 0 } },
+    { "name": "a fractional quantity", "expect": "refused", "set": { "lineItems.0.quantityDelta": 1.5 } },
+    { "name": "an empty receiptId", "expect": "refused", "set": { "receiptId": "" } },
+    { "name": "a blank orgId", "expect": "refused", "set": { "orgId": "  " } },
+    { "name": "a provisional line whose GTIN is outside the provisional range", "expect": "refused", "set": { "lineItems.0.isProvisional": true } }
+  ]
+}

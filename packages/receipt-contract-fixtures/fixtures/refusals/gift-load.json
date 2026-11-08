@@ -1,0 +1,19 @@
+{
+  "crossing": "gift-load",
+  "callee": "local-inventory applyDonation",
+  "base": {
+    "payload": {
+      "orgId": "org-1",
+      "donationId": "42",
+      "lineItems": [{ "gtin13": "0001234500017", "quantityDelta": 2, "isProvisional": false, "provisionalName": "Drill" }]
+    }
+  },
+  "cases": [
+    { "name": "the payload as sent", "expect": "accepted" },
+    { "name": "the same load again, answered as replayed", "expect": "accepted", "after": "base" },
+    { "name": "a resend with a different delta", "expect": "refused", "after": "base", "set": { "lineItems.0.quantityDelta": 3 } },
+    { "name": "an empty donationId", "expect": "refused", "set": { "donationId": "" } },
+    { "name": "a zero quantity", "expect": "refused", "set": { "lineItems.0.quantityDelta": 0 } },
+    { "name": "a provisional line whose GTIN is outside the provisional range", "expect": "refused", "set": { "lineItems.0.isProvisional": true } }
+  ]
+}
