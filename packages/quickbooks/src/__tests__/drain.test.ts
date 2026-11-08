@@ -72,14 +72,15 @@ describe("runDrain", () => {
 });
 
 describe("runDrain on repeated refusal codes", () => {
-  const refusing = (codes: (string | null)[]) => {
+  type Refusal = string | string[] | null;
+  const refusing = (codes: Refusal[]) => {
     const q = [...codes];
     return async (): Promise<Posted<Outcome>> => {
       const code = q.shift();
-      return code ? { outcome: "skipped", refusedCode: code } : "posted";
+      return code ? { outcome: "skipped", refusedCodes: typeof code === "string" ? [code] : code } : "posted";
     };
   };
-  const lane = (codes: (string | null)[], returned: number[][]) => ({
+  const lane = (codes: Refusal[], returned: number[][]) => ({
     counts: fresh(),
     failures: ["failed"] as Outcome[],
     post: refusing(codes),
@@ -108,6 +109,12 @@ describe("runDrain on repeated refusal codes", () => {
   it("reports how many records the lane returned, which may be fewer than it was handed", async () => {
     const l = { ...lane(["6000", "6000", "6000"], []), unrefuse: async () => 2 };
     expect(await runDrain<number, Outcome>(rows(3), l)).toEqual({ by: "refusals", code: "6000", returned: 2, remaining: 0 });
+  });
+
+  it("counts every fault code a refusal carries toward that code", async () => {
+    const returned: number[][] = [];
+    expect(await runDrain<number, Outcome>(rows(4), lane(["6000", ["6190", "6000"], null, "6000"], returned))).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 0 });
+    expect(returned).toEqual([[0, 1, 3]]);
   });
 
   it("does not stop on three refusals with mixed codes", async () => {

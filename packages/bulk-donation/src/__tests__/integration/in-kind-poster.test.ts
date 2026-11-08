@@ -627,6 +627,17 @@ describeDb("in-kind drain", () => {
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 4, refusalStop: null });
     });
 
+    it("data: a refusal carrying several fault codes counts toward each of them", async () => {
+      await switchOn();
+      const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      const codes = [["6000"], ["6190", "6000"], ["6000"]];
+      qbo.createAnswer = (n) => ({ status: 400, codes: codes[n] });
+
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, stopKind: "settings", refusalStop: { code: "6000", returned: 3 } });
+      for (const id of refused) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbFailureKind: "settings" });
+      expect(drainStops).toEqual([{ failures: 3, remaining: 0, cause: "settings", code: "6000" }]);
+    });
+
     it("data: gifts refused with one code on every run reach finance at the attempt limit, and the lane moves on", async () => {
       await switchOn();
       const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];

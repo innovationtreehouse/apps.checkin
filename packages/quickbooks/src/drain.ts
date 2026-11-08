@@ -63,7 +63,7 @@ export function qbGate(date: string, close: CloseRead, onAt: Date | null, arrive
 }
 
 /** A post's outcome, with the fault codes when QuickBooks refused the record's create. */
-export type Posted<O extends string> = O | { outcome: O; refusedCode: string };
+export type Posted<O extends string> = O | { outcome: O; refusedCodes: readonly string[] };
 
 export interface DrainLane<R, O extends string> {
   /** Tallied per outcome as the run goes. */
@@ -71,7 +71,7 @@ export interface DrainLane<R, O extends string> {
   /** One record's post; null ends the run. */
   post(row: R): Promise<Posted<O> | null>;
   /**
-   * Returns the records refused with one code to try again, each keeping the try its refusal
+   * Returns the records refused with one code (among any others a refusal carried) to try again, each keeping the try its refusal
    * charged, once that code's MAX_SAME_CODE_REFUSALS-th refusal stops the run; answers how many
    * it returned. A lane without it never stops on refusals.
    */
@@ -109,11 +109,14 @@ export async function runDrain<R, O extends string>(rows: readonly R[], lane: Dr
     const outcome = typeof posted === "string" ? posted : posted.outcome;
     lane.counts[outcome]++;
     if (typeof posted !== "string" && lane.unrefuse) {
-      const refused = [...(refusedBy.get(posted.refusedCode) ?? []), row];
-      refusedBy.set(posted.refusedCode, refused);
-      if (refused.length >= MAX_SAME_CODE_REFUSALS) {
-        const returned = await lane.unrefuse(refused, posted.refusedCode);
-        return { by: "refusals", code: posted.refusedCode, returned, remaining: remaining - 1 };
+      // Each code a refusal carries counts on its own: the first to reach the limit stops the run.
+      for (const code of new Set(posted.refusedCodes)) {
+        const refused = [...(refusedBy.get(code) ?? []), row];
+        refusedBy.set(code, refused);
+        if (refused.length >= MAX_SAME_CODE_REFUSALS) {
+          const returned = await lane.unrefuse(refused, code);
+          return { by: "refusals", code, returned, remaining: remaining - 1 };
+        }
       }
     }
     if (lane.stopNow?.includes(outcome)) return { by: "stopNow", remaining: remaining - 1 };

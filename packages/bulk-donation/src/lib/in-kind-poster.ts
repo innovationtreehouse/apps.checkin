@@ -642,7 +642,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
       }
       if (outcome === "failed" || outcome === "exhausted") streak.push(failure ?? "bug");
       else if (outcome !== "held" && outcome !== "settings") streak = [];
-      return codes?.length ? { outcome, refusedCode: codes.join(", ") } : outcome;
+      return codes?.length ? { outcome, refusedCodes: codes } : outcome;
     },
     unrefuse: (gifts, code) => unrefuseGifts(orgId, gifts, code),
   });

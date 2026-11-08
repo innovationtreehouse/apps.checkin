@@ -78,8 +78,8 @@ class FakeQbo {
     if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const entity = url.pathname.endsWith("/bill") ? "Bill" : "Purchase";
     const body = JSON.parse(String(init?.body)) as PostedTxn;
-    const refusedWith = body.Line.map((l) => REFUSAL_CODES[l.AccountBasedExpenseLineDetail.AccountRef.value]).find(Boolean);
-    if (refusedWith) return json({ Fault: { Error: [{ code: refusedWith }] } }, 400);
+    const refusedWith = [...new Set(body.Line.map((l) => REFUSAL_CODES[l.AccountBasedExpenseLineDetail.AccountRef.value]).filter(Boolean))];
+    if (refusedWith.length) return json({ Fault: { Error: refusedWith.map((code) => ({ code })) } }, 400);
     this.posts.push({ entity, key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);
     const TotalAmt = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0) / 100;
@@ -1028,6 +1028,17 @@ describeDb("QB-2 posting — drain failure streak", () => {
 
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, refused: 0, refusalStop: null });
     expect((await expenseRow(rest)).qbMatchState).toBe("CREATED");
+  });
+
+  it("a refusal carrying several fault codes counts toward each of them", async () => {
+    const both = await refusedBy("2026-09-10", UNKNOWN_ACCOUNT);
+    const [line] = await db.expenseLineItem.findMany({ where: { expenseId: both }, orderBy: { id: "asc" } });
+    await db.expenseLineItem.update({ where: { id: line.id }, data: { resolvedQbAccount: INACTIVE_ACCOUNT } });
+    await refusedBy("2026-09-11", UNKNOWN_ACCOUNT);
+    await refusedBy("2026-09-12", UNKNOWN_ACCOUNT);
+
+    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, refusalStop: { code: "2500", returned: 3 } });
+    expect(await expenseRow(both)).toMatchObject({ qbMatchState: "POST_FAILED", qbFailureKind: "settings" });
   });
 
   it("three refusals with mixed codes do not stop the run", async () => {

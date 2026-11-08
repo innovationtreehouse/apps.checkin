@@ -88,7 +88,7 @@ export async function switchQbPostingOn(orgId: string, now = new Date()): Promis
  * read; `qbAnswered` says QuickBooks answered an earlier expense in the run; `onRefused` hears the
  * fault codes of a create QuickBooks refused.
  */
-export type PostOptions = { book?: boolean; close?: CloseRead; settings?: ExpenseSettings; qbAnswered?: boolean; onRefused?: (code: string) => void };
+export type PostOptions = { book?: boolean; close?: CloseRead; settings?: ExpenseSettings; qbAnswered?: boolean; onRefused?: (codes: readonly string[]) => void };
 
 /** What a failure in this post may read about its run. */
 type RunContext = Pick<PostOptions, "qbAnswered" | "onRefused">;
@@ -157,7 +157,7 @@ async function recordFailure(tx: Db, current: Expense, f: PostFailure, run: RunC
     const notes = refusalNote(f);
     await tx.expense.update({ where: { id: current.id }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: current.qbPostAttempts + 1, qbFailureKind: "data", qbClaimedAt: null } });
     await writeAudit(tx, SYSTEM_ACTOR, { expenseId: current.id, action: "qb_needs_finance", fieldChanged: "qbMatchState", valueBefore: current.qbMatchState, valueAfter: "NEEDS_FINANCE", notes });
-    if (f.codes?.length) run.onRefused?.(f.codes.join(", "));
+    if (f.codes?.length) run.onRefused?.(f.codes);
     return "refused";
   }
   const waitsInPlace = f.failure === "settings" && current.qbMatchState !== POSTING;
@@ -685,11 +685,11 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     stopNow: ["disconnected"],
     post: async (e) => {
       try {
-        let refusedCode: string | undefined;
-        const result = await postExpenseToQb(e.orgId, e.id, { close, settings, qbAnswered, onRefused: (code) => (refusedCode = code) });
+        let refusedCodes: readonly string[] | undefined;
+        const result = await postExpenseToQb(e.orgId, e.id, { close, settings, qbAnswered, onRefused: (codes) => (refusedCodes = codes) });
         if (result === "unbound") return null;
         if (answeredBy.includes(result)) qbAnswered = true;
-        return result === "refused" && refusedCode ? { outcome: result, refusedCode } : result;
+        return result === "refused" && refusedCodes ? { outcome: result, refusedCodes } : result;
       } catch (err) {
         logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
         return "failed";
