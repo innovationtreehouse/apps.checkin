@@ -66,7 +66,7 @@ const DRAIN_STOP_CAUSES: Record<InKindStopKind, (code?: string) => string> = {
   system: () => "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.",
   connection: () => "QuickBooks refused the app's connection. Reconnect QuickBooks; until then no gift books.",
   bug: () => "The gifts failed on their own while QuickBooks was answering. Each failure counts against its gift, and a gift that keeps failing comes to you.",
-  settings: (code) => `QuickBooks refuses entries with code ${code ?? "unknown"}; likely a books-map setting, such as an inactive account or class. These gifts were not charged a try, and the next run tries them again.`,
+  settings: (code) => `QuickBooks refuses entries with code ${code ?? "unknown"}; likely a books-map setting, such as an inactive account or class. Each refusal counts as a try against its gift; the next run tries them again, and a gift that keeps being refused comes to you.`,
 };
 
 /** Loaded on first use; the books map is read per run. */

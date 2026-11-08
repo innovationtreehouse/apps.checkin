@@ -997,14 +997,14 @@ describeDb("QB-2 posting — drain failure streak", () => {
     for (const id of held) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
   });
 
-  it("a third refusal with one code stops the run and returns all three uncharged", async () => {
+  it("a third refusal with one code stops the run and returns all three to try again, each charged its try", async () => {
     expect(MAX_SAME_CODE_REFUSALS).toBe(3);
     const refused = [];
     for (let d = 10; d < 13; d++) refused.push(await refusedBy(`2026-09-${d}`, UNKNOWN_ACCOUNT));
     const { id: rest } = await outboxed("2026-09-20");
 
     expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, posted: 0, refusalStop: { code: "2500", returned: 3 } });
-    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "settings" });
+    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "settings" });
     expect((await expenseRow(rest)).qbMatchState).toBe("UNMATCHED");
     const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: refused[0] }, orderBy: { id: "desc" } });
     expect(last).toMatchObject({ action: "qb_post_failed", valueBefore: "NEEDS_FINANCE", valueAfter: "POST_FAILED" });
@@ -1013,6 +1013,21 @@ describeDb("QB-2 posting — drain failure streak", () => {
     // Fixed in QuickBooks: the next run posts them.
     await db.expenseLineItem.updateMany({ where: { expenseId: { in: refused } }, data: { resolvedQbAccount: "60" } });
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 4, refusalStop: null });
+  });
+
+  it("expenses refused with one code on every run reach finance at the attempt limit, and the lane moves on", async () => {
+    const refused = [];
+    for (let d = 10; d < 13; d++) refused.push(await refusedBy(`2026-09-${d}`, UNKNOWN_ACCOUNT));
+    const { id: rest } = await outboxed("2026-09-20");
+
+    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
+      expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refusalStop: { code: "2500", returned: 3 } });
+    }
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refusalStop: { code: "2500", returned: 0 } });
+    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbFailureKind: "data" });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, refused: 0, refusalStop: null });
+    expect((await expenseRow(rest)).qbMatchState).toBe("CREATED");
   });
 
   it("three refusals with mixed codes do not stop the run", async () => {

@@ -85,6 +85,7 @@ describe("runDrain on repeated refusal codes", () => {
     post: refusing(codes),
     unrefuse: async (rs: readonly number[]) => {
       returned.push([...rs]);
+      return rs.length;
     },
   });
 
@@ -102,6 +103,11 @@ describe("runDrain on repeated refusal codes", () => {
     const l = lane(["6000", null, "6000", "6000", null], returned);
     expect(await runDrain<number, Outcome>(rows(5), l)).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 1 });
     expect(returned).toEqual([[0, 2, 3]]);
+  });
+
+  it("reports how many records the lane returned, which may be fewer than it was handed", async () => {
+    const l = { ...lane(["6000", "6000", "6000"], []), unrefuse: async () => 2 };
+    expect(await runDrain<number, Outcome>(rows(3), l)).toEqual({ by: "refusals", code: "6000", returned: 2, remaining: 0 });
   });
 
   it("does not stop on three refusals with mixed codes", async () => {

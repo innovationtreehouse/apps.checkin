@@ -544,18 +544,21 @@ export async function sweepInKindQbStrays(
 /**
  * One fault code refused MAX_SAME_CODE_REFUSALS creates in a run, so it reads as a QuickBooks
  * setting rather than these gifts' data: each one QuickBooks refused goes back to POST_FAILED,
- * its try given back, and the next run tries it again.
+ * keeping the try its refusal charged, and the next run tries it again. One at MAX_POST_ATTEMPTS
+ * stays with finance. Answers how many went back.
  */
-async function unrefuseGifts(orgId: string, gifts: readonly GiftToBook[], code: string): Promise<void> {
+async function unrefuseGifts(orgId: string, gifts: readonly GiftToBook[], code: string): Promise<number> {
+  let returned = 0;
   for (const gift of gifts) {
     await db.$transaction(async (tx) => {
       const posting = await lockPosting(tx, orgId, gift.source, gift.id);
-      if (posting?.matchState !== QB_MATCH_STATE.NEEDS_FINANCE || posting.qbFailureKind !== "data") return;
-      await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbPostAttempts: Math.max(0, posting.qbPostAttempts - 1) } });
-      const note = `QuickBooks refused ${MAX_SAME_CODE_REFUSALS} gifts with code ${code} in one run; likely a books-map setting. Not charged; the next run tries again`;
+      if (posting?.matchState !== QB_MATCH_STATE.NEEDS_FINANCE || posting.qbFailureKind !== "data" || posting.qbPostAttempts >= MAX_POST_ATTEMPTS) return;
+      const note = `QuickBooks refused ${MAX_SAME_CODE_REFUSALS} gifts with code ${code} in one run; likely a books-map setting. Attempt ${posting.qbPostAttempts} of ${MAX_POST_ATTEMPTS}; the next run tries again`;
       await writeSettlement(tx, orgId, gift, posting.id, { state: QB_MATCH_STATE.POST_FAILED, note, entries: [], failure: "settings" }, SYSTEM, { from: QB_MATCH_STATE.NEEDS_FINANCE, code });
+      returned++;
     });
   }
+  return returned;
 }
 
 export interface InKindDrainCounts {
@@ -573,7 +576,7 @@ export interface InKindDrainCounts {
   /** The run stopped on its failure streak, a lost connection or a repeated refusal code; `stopKind` says which. */
   stoppedAfterFailures: boolean;
   stopKind: InKindStopKind | null;
-  /** The run stopped when QuickBooks refused MAX_SAME_CODE_REFUSALS gifts with one fault code; those gifts wait uncharged. */
+  /** The run stopped when QuickBooks refused MAX_SAME_CODE_REFUSALS gifts with one fault code; `returned` of those gifts wait to try again. */
   refusalStop: { code: string; returned: number } | null;
   closeDateRead: boolean;
   sweep: InKindSweepCounts;

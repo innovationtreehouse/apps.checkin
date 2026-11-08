@@ -548,7 +548,7 @@ export type DrainCounts = Record<PostOutcome, number> & {
   stoppedAfterFailures: boolean;
   /** The run stopped at a broken QuickBooks connection. */
   stoppedOnConnection: boolean;
-  /** The run stopped when QuickBooks refused MAX_SAME_CODE_REFUSALS creates with one fault code; those expenses wait uncharged. */
+  /** The run stopped when QuickBooks refused MAX_SAME_CODE_REFUSALS creates with one fault code; `returned` of those expenses wait to try again. */
   refusalStop: { code: string; returned: number } | null;
   closeDateRead: boolean;
   sweep: SweepCounts;
@@ -617,24 +617,28 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
 /**
  * One fault code refused MAX_SAME_CODE_REFUSALS creates in a run, so it reads as a QuickBooks
  * setting rather than these expenses' data: each one QuickBooks refused goes back to POST_FAILED,
- * its try given back, and the next run tries it again.
+ * keeping the try its refusal charged, and the next run tries it again. One at MAX_POST_ATTEMPTS
+ * stays with finance. Answers how many went back.
  */
-async function unrefuseExpenses(orgId: string, expenseIds: readonly string[], code: string): Promise<void> {
+async function unrefuseExpenses(orgId: string, expenseIds: readonly string[], code: string): Promise<number> {
+  let returned = 0;
   for (const expenseId of expenseIds) {
     await db.$transaction(async (tx) => {
       const current = await lockedExpense(tx, orgId, expenseId);
-      if (current.qbMatchState !== "NEEDS_FINANCE" || current.qbFailureKind !== "data") return;
-      await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: Math.max(0, current.qbPostAttempts - 1), qbFailureKind: "settings" } });
+      if (current.qbMatchState !== "NEEDS_FINANCE" || current.qbFailureKind !== "data" || current.qbPostAttempts >= MAX_POST_ATTEMPTS) return;
+      await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
       await writeAudit(tx, SYSTEM_ACTOR, {
         expenseId,
         action: "qb_post_failed",
         fieldChanged: "qbMatchState",
         valueBefore: current.qbMatchState,
         valueAfter: "POST_FAILED",
-        notes: `not charged (settings): QuickBooks refused ${MAX_SAME_CODE_REFUSALS} expenses with code ${code} in one run; likely a books-map setting`,
+        notes: `attempt ${current.qbPostAttempts} of ${MAX_POST_ATTEMPTS} (settings): QuickBooks refused ${MAX_SAME_CODE_REFUSALS} expenses with code ${code} in one run; likely a books-map setting`,
       });
+      returned++;
     });
   }
+  return returned;
 }
 
 /**

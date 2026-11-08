@@ -609,7 +609,7 @@ describeDb("in-kind drain", () => {
       expect(drainStops).toEqual([]);
     });
 
-    it("data: a third refusal with one code reads as a setting: the run stops, all three go back uncharged, and finance is told the code once", async () => {
+    it("data: a third refusal with one code reads as a setting: the run stops, all three go back to try again, each charged its try, and finance is told the code once", async () => {
       expect(MAX_SAME_CODE_REFUSALS).toBe(3);
       await switchOn();
       const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
@@ -618,13 +618,30 @@ describeDb("in-kind drain", () => {
 
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, posted: 0, stoppedAfterFailures: true, stopKind: "settings", refusalStop: { code: "6000", returned: 3 } });
       for (const id of refused) {
-        expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "settings", qbNote: expect.stringMatching(/code 6000 in one run; likely a books-map setting/) });
+        expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "settings", qbNote: expect.stringMatching(/code 6000 in one run; likely a books-map setting/) });
       }
       await expect(posting(rest)).rejects.toThrow();
       expect(drainStops).toEqual([{ failures: 3, remaining: 1, cause: "settings", code: "6000" }]);
 
       qbo.createAnswer = null;
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 4, refusalStop: null });
+    });
+
+    it("data: gifts refused with one code on every run reach finance at the attempt limit, and the lane moves on", async () => {
+      await switchOn();
+      const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      const rest = await acceptedGift({ totalCents: 4400 });
+      qbo.createAnswer = () => ({ status: 400, codes: ["6000"] });
+
+      for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
+        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, refusalStop: { code: "6000", returned: 3 } });
+      }
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, refusalStop: { code: "6000", returned: 0 } });
+      for (const id of refused) expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbFailureKind: "data" });
+
+      qbo.createAnswer = null;
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, refusalStop: null });
+      expect(await posting(rest)).toMatchObject({ matchState: "CREATED" });
     });
 
     it("a failed read for the gift's own earlier entry on an outage leaves it to try again, uncharged; nothing is created", async () => {

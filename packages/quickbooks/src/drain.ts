@@ -71,10 +71,11 @@ export interface DrainLane<R, O extends string> {
   /** One record's post; null ends the run. */
   post(row: R): Promise<Posted<O> | null>;
   /**
-   * Returns the records refused with one code to an uncharged try-again once that code's
-   * MAX_SAME_CODE_REFUSALS-th refusal stops the run. A lane without it never stops on refusals.
+   * Returns the records refused with one code to try again, each keeping the try its refusal
+   * charged, once that code's MAX_SAME_CODE_REFUSALS-th refusal stops the run; answers how many
+   * it returned. A lane without it never stops on refusals.
    */
-  unrefuse?(rows: readonly R[], code: string): Promise<void>;
+  unrefuse?(rows: readonly R[], code: string): Promise<number>;
   /** The outcomes that count toward MAX_CONSECUTIVE_FAILURES; any other resets the streak. */
   failures: readonly O[];
   /** Outcomes that made no QuickBooks call, so they leave the streak as it is. */
@@ -92,7 +93,7 @@ export interface DrainLane<R, O extends string> {
 /** Why a run ended before its last record, and how many records it left unposted. */
 export type DrainStop =
   | { by: "day" | "count" | "failures" | "post" | "stopNow"; remaining: number }
-  /** QuickBooks refused MAX_SAME_CODE_REFUSALS creates with `code`; `returned` records went back to an uncharged try-again. */
+  /** QuickBooks refused MAX_SAME_CODE_REFUSALS creates with `code`; `returned` of them went back to try again. */
   | { by: "refusals"; code: string; returned: number; remaining: number };
 
 /** Posts each record in order until a cap, a failure streak, a stopNow outcome, a repeated refusal code or the lane ends the run. */
@@ -111,8 +112,8 @@ export async function runDrain<R, O extends string>(rows: readonly R[], lane: Dr
       const refused = [...(refusedBy.get(posted.refusedCode) ?? []), row];
       refusedBy.set(posted.refusedCode, refused);
       if (refused.length >= MAX_SAME_CODE_REFUSALS) {
-        await lane.unrefuse(refused, posted.refusedCode);
-        return { by: "refusals", code: posted.refusedCode, returned: refused.length, remaining: remaining - 1 };
+        const returned = await lane.unrefuse(refused, posted.refusedCode);
+        return { by: "refusals", code: posted.refusedCode, returned, remaining: remaining - 1 };
       }
     }
     if (lane.stopNow?.includes(outcome)) return { by: "stopNow", remaining: remaining - 1 };
