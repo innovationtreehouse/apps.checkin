@@ -403,6 +403,23 @@ describeDb("in-kind drain", () => {
     expect(qbo.posts).toHaveLength(1);
   });
 
+  it("a retry while the closing date cannot be read reports that nothing was posted and keeps the gift stuck", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    rulesThrow = new Error("rules exploded");
+    await runInKindQbPosting(orgId);
+    rulesThrow = null;
+    const { qbFirstFailedAt } = await posting(id);
+    qbo.refuseCloseRead = true;
+
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 409 });
+
+    expect(await posting(id)).toMatchObject({ qbFirstFailedAt });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await stuckItems()).toHaveLength(1);
+    qbo.refuseCloseRead = false;
+  });
+
   it("finance can book a stuck gift, which clears its failure", async () => {
     await switchOn();
     const id = await acceptedGift();
@@ -569,7 +586,7 @@ describeDb("in-kind drain", () => {
       qbo.dropAfterCreate = false;
       qbo.sinceReadStatus = 503;
 
-      await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
+      await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
       expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: expect.stringMatching(/may already have booked this gift/) });
       expect(qbo.posts).toHaveLength(1);
       await expect(resolve(id, { action: "skip", reason: "looks unbooked" })).rejects.toMatchObject({ status: 503 });
@@ -698,7 +715,7 @@ describeDb("in-kind drain — a journal entry finance voided", () => {
     const { id, first } = await landed();
     secondKeyedEntry(first);
 
-    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 409 });
 
     expect(qbo.posts).toHaveLength(1);
     expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null, qbNote: expect.stringMatching(/carry its key/) });
@@ -849,7 +866,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
       const retry = async () => {
         qbo.duringByIdRead = qbo.afterSinceRead = null;
         qbo.dropAfterCreate = true;
-        await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
+        await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
         qbo.dropAfterCreate = false;
       };
       return { id, attemptedAt, retry };
