@@ -28,6 +28,9 @@ model ReceiptOrgSettings {
   enforceReceiptAgeLimit      Boolean @default(true) @map("enforce_receipt_age_limit")
   /// @sensitivity:internal
   receiptAgeLimitDays         Int     @default(90) @map("receipt_age_limit_days")
+  /// False stops every automatic reading: uploads and mail go to manual entry, retry refuses.
+  /// @sensitivity:internal
+  ocrEnabled                  Boolean @default(true) @map("ocr_enabled")
 
   @@map("org_settings")
 }

@@ -17,6 +17,7 @@ import { useReceipts } from "../components/useReceipts";
 import { day } from "../lib/describeReceipt";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { missingDetails } from "../lib/missingDetails";
+import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -107,6 +108,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
+  // Only finance and the Board may read the settings; a submitter learns the switch is off from the retry's refusal.
+  const ocrOff = useLoad<{ ocrEnabled: boolean }>(isFinance || isBoard ? "/settings" : null).data?.ocrEnabled === false;
   const open = receipt.data != null && !TERMINAL.has(receipt.data.state);
   const held = receipt.data?.state === "duplicate_flagged";
   const group = useLoad<DuplicateGroup>((isFinance || isBoard) && open ? `/${id}/duplicate-group` : null);
@@ -439,7 +442,10 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                 )}
               </>
             )}
-            {(own || isFinance) && r.state === "ocr_failed" && (
+            {(own || isFinance) && r.state === "ocr_failed" && ocrOff && (
+              <Text size="sm" c="dimmed">{OCR_OFF_NOTE}</Text>
+            )}
+            {(own || isFinance) && r.state === "ocr_failed" && !ocrOff && (
               <Button size="xs" variant="light" onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
             )}
             {own && !TERMINAL.has(r.state) && (

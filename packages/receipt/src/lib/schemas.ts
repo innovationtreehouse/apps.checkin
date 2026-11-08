@@ -136,6 +136,7 @@ export const OrgSettingsSchema = z
     requireFinanceReviewWithTax: z.boolean().optional(),
     enforceReceiptAgeLimit: z.boolean().optional(),
     receiptAgeLimitDays: z.number().int().positive().optional(),
+    ocrEnabled: z.boolean().optional(),
   })
   .strict();
 
