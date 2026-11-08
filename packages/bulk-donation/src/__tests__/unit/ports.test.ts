@@ -123,6 +123,14 @@ describe("caller ports", () => {
     await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(notConnected);
   });
 
+  it("a missing catalog database is a 503 naming who fixes it, never \"not connected\"", async () => {
+    const missing = async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); };
+    configure({ catalog: { search: missing, getItem: missing } });
+    const dbMissing = { status: 503, message: "The catalog database does not exist; the infra operator checks its settings" };
+    await expect(searchCatalog("drill")).rejects.toMatchObject(dbMissing);
+    await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(dbMissing);
+  });
+
   it("X10 parses what the bound catalog returns", async () => {
     // A malformed response, as an adapter over an untyped transport could return.
     configure({ catalog: { search: async () => JSON.parse('[{"gtin13":"123"}]'), getItem: async () => null } });

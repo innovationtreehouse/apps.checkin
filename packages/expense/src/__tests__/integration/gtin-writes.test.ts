@@ -63,6 +63,12 @@ describeDb("GTIN writes", () => {
     expect(await db.partOwnerMap.count()).toBe(0);
   });
 
+  it("answers 503 naming who fixes it, and maps nothing, when the catalog database does not exist", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), getActiveItem: async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); } } });
+    await expect(own(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+    expect(await db.partOwnerMap.count()).toBe(0);
+  });
+
   it("still moves a part already mapped to another bucket, whatever its GTIN", async () => {
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: "0012345678905", ownerId: 101 } });
 

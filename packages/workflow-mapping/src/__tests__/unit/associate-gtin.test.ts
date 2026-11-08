@@ -79,6 +79,12 @@ describe("associateGtin GTIN check", () => {
     expect(updateEditableLine).not.toHaveBeenCalled();
   });
 
+  it("503 naming who fixes it when the catalog database does not exist, never \"not connected\"", async () => {
+    getActiveItem.mockRejectedValue(Object.assign(new Error("Database does not exist"), { code: "P1003" }));
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
   it("502 when the catalog read fails, never treating it as not found", async () => {
     getActiveItem.mockRejectedValue(new Error("catalog down"));
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);

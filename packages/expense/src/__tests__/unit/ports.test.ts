@@ -10,7 +10,10 @@ import { resolveDonatedPartAccounts } from "../../services/donatedPartAccounts";
 import { lookupCatalogInfo } from "../../lib/expense-qb-processor";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { finance } from "../../routes";
-import { ORG, principal } from "../helpers/seed";
+import { bindPorts, catalogResolving, ORG, principal } from "../helpers/seed";
+
+/** What the catalog client throws when its configured database does not exist. */
+const catalogDbMissing = () => Object.assign(new Error("Database does not exist"), { code: "P1003" });
 
 describe("callerId", () => {
   it("returns an integer id", () => {
@@ -63,6 +66,19 @@ describe("runtime", () => {
     expect(await resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).toEqual([
       { lineId: 7, reason: "catalog not connected" },
     ]);
+  });
+
+  it("the mapping catalog route answers a missing catalog database with 503 naming who fixes it", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: async () => { throw catalogDbMissing(); } } });
+    const ctx = { req: new Request("http://test/api/expense/mapping-catalog"), params: {}, principal: principal(3, { isFinance: true }) };
+    await expect(finance.mappingCatalog(ctx)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+  });
+
+  it("matching and gift accounts pass a missing catalog database up, never \"not connected\"", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: async () => { throw catalogDbMissing(); } } });
+    const line = { id: 1, partNumber: "P1", manufacturer: null, description: "drill", nonInventory: false };
+    await expect(lookupCatalogInfo([line], "Acme")).rejects.toMatchObject({ code: "P1003" });
+    await expect(resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).rejects.toMatchObject({ code: "P1003" });
   });
 
   it("the inert outbound gateway sends nothing", async () => {

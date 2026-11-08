@@ -120,6 +120,21 @@ describeDb("S1 — recognition and push", () => {
     expect(created.details).toBe("catalog not connected");
   });
 
+  it("a missing catalog database fails the intake and stores nothing, so the sender retries", async () => {
+    configure({
+      catalogReader: {
+        lookupItems: async () => {
+          throw Object.assign(new Error("Database does not exist"), { code: "P1003" });
+        },
+        checkReferences: recognizeAll.checkReferences,
+        getActiveItem: recognizeAll.getActiveItem,
+      },
+    });
+    const payload = buildReceiptPayload({ lineCount: 2 });
+    await expect(ingestReceipt(payload)).rejects.toMatchObject({ code: "P1003" });
+    expect(await db.receivedReceipt.count({ where: { receiptId: payload.receiptId } })).toBe(0);
+  });
+
   it("all lines recognized with inert sinks: recorded and held in apply_failed", async () => {
     configure({ catalogReader: recognizeAll });
     const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));

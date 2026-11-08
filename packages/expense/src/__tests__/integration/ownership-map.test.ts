@@ -60,6 +60,13 @@ describeDb("GET ownership-map", () => {
 
     expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
   });
+  it("answers 503 naming who fixes it when the catalog database does not exist, not a map without names", async () => {
+    await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
+    bindPorts({ catalog: { ...catalogResolving({}), getItemNames: async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); } } });
+
+    await expect(finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) }))
+      .rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+  });
 });
 
 describeDb("GET account-mapping catalog", () => {
