@@ -1,24 +1,14 @@
-import { KindedError, NotWiredError, kindOf } from "@checkin/component-kit";
+import { KindedError, NotWiredError } from "@checkin/component-kit";
 import type { CompletedReceiptLineItem } from "@checkin/receipt-types";
 import { db } from "../db";
 import { EDITABLE_RECEIPT_WHERE, type ReceivedReceipt } from "../db/schema";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrgId, workflowRuntime, type Actor } from "../runtime";
+import type { Actor } from "../runtime";
 import { matchLines, type Matching } from "./receiptIntakeService";
 
-/** Days the daily re-run keeps trying a receipt whose matching couldn't run, before it gives up. */
-export const MATCHING_RETRY_DAYS = 5;
-
-/** Most receipts one run re-matches; the rest wait for the next run. */
-export const PENDING_MATCHING_CAP = 50;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 type PendingRow = Pick<ReceivedReceipt, "id" | "orgId" | "receiptId" | "state" | "receiptJson" | "matchingPendingSince">;
-
-type Outcome = "ran" | "deferred" | "gaveUp" | "errored";
 
 /** Matching on the lines nobody has decided yet. An unbound catalog, a settings failure or a bug counts as not run. */
 async function matchUndecided(row: PendingRow): Promise<{ matching: Matching; lineIds: Map<number, number> }> {
@@ -40,37 +30,14 @@ async function matchUndecided(row: PendingRow): Promise<{ matching: Matching; li
 }
 
 /**
- * Re-runs matching for one receipt still waiting for mapping. Each match is written only while
- * the line is unrecognized and the receipt waits for mapping, so a person's decision always
+ * A person runs matching for one receipt still waiting for mapping. Each match is written only
+ * while the line is unrecognized and the receipt waits for mapping, so a person's decision always
  * stands. When matching ran the flag clears and the receipt does what arrival would have: every
- * line decided sends it. Past MATCHING_RETRY_DAYS the daily run (a null actor) clears the flag,
- * leaves the lines for hand mapping, and reports the failure to the on-failure port once. A
- * person's run never gives up: it reports outside any job run, where no incident would open.
+ * line decided sends it. When it could not run, the receipt stays pending, unchanged.
  */
-export async function rerunMatching(row: PendingRow, actor: Actor | null = null): Promise<Outcome> {
+export async function rerunMatching(row: PendingRow, actor: Actor): Promise<"ran" | "deferred"> {
   const { matching, lineIds } = await matchUndecided(row);
-  const since = row.matchingPendingSince;
-
-  if (!matching.ran) {
-    if (actor || !since || Date.now() - since.getTime() < MATCHING_RETRY_DAYS * DAY_MS) {
-      const kind = kindOf(matching.err);
-      return kind === "system" || kind === "connection" ? "deferred" : "errored";
-    }
-    const { count } = await db.receivedReceipt.updateMany({
-      where: { id: row.id, matchingPendingSince: since },
-      data: { matchingPendingSince: null },
-    });
-    if (count !== 1) return "deferred";
-    await insertAuditEvent(db, {
-      orgId: row.orgId,
-      actorUserId: null,
-      eventType: "matching_gave_up",
-      receivedReceiptId: row.id,
-      details: JSON.stringify({ retryDays: MATCHING_RETRY_DAYS, kind: kindOf(matching.err) }),
-    });
-    workflowRuntime.failed("matching", matching.err, `receipt ${row.receiptId}`);
-    return "gaveUp";
-  }
+  if (!matching.ran) return "deferred";
 
   let matched = 0;
   for (const [receiptLineItemId, resolved] of matching.recognized) {
@@ -89,8 +56,8 @@ export async function rerunMatching(row: PendingRow, actor: Actor | null = null)
     matched++;
     await insertAuditEvent(db, {
       orgId: row.orgId,
-      actorUserId: actor?.id ?? null,
-      actorUsername: actor?.name ?? null,
+      actorUserId: actor.id,
+      actorUsername: actor.name,
       eventType: "line_matched",
       receivedReceiptId: row.id,
       lineStatusId,
@@ -101,34 +68,12 @@ export async function rerunMatching(row: PendingRow, actor: Actor | null = null)
   await db.receivedReceipt.updateMany({ where: { id: row.id }, data: { matchingPendingSince: null } });
   await insertAuditEvent(db, {
     orgId: row.orgId,
-    actorUserId: actor?.id ?? null,
-    actorUsername: actor?.name ?? null,
+    actorUserId: actor.id,
+    actorUsername: actor.name,
     eventType: "matching_ran",
     receivedReceiptId: row.id,
     details: JSON.stringify({ matched }),
   });
   await tryAutoProceedApply(row.id, row, actor);
   return "ran";
-}
-
-/**
- * Daily step: re-runs matching on receipts whose matching couldn't run on arrival and that still
- * wait for mapping, oldest first, up to the cap. One receipt's database error does not stop the
- * rest. Returns counts only.
- */
-export async function retryPendingMatching(): Promise<Record<Outcome, number>> {
-  const rows = await db.receivedReceipt.findMany({
-    where: { orgId: await getOrgId(), ...EDITABLE_RECEIPT_WHERE, matchingPendingSince: { not: null } },
-    select: { id: true, orgId: true, receiptId: true, state: true, receiptJson: true, matchingPendingSince: true },
-    orderBy: { matchingPendingSince: "asc" },
-    take: PENDING_MATCHING_CAP,
-  });
-  const counts: Record<Outcome, number> = { ran: 0, deferred: 0, gaveUp: 0, errored: 0 };
-  for (const row of rows) {
-    counts[await rerunMatching(row).catch((err: unknown) => {
-      console.error(`[workflow-mapping/matching] re-run of receipt ${row.id} failed`, err);
-      return "errored" as const;
-    })]++;
-  }
-  return counts;
 }

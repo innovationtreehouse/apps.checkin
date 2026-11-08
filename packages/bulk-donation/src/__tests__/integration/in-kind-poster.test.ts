@@ -1163,14 +1163,6 @@ describeDb("in-kind QuickBooks drift", () => {
     expect((await posting(id)).matchState).toBe("CREATED");
   });
 
-  it("does not check a withdrawn gift, whose entry finance reverses by hand", async () => {
-    const id = await booked();
-    await db.inKindDonation.update({ where: { id }, data: { withdrawnAfterMoneyAt: new Date() } });
-    qbo.journals = [];
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 0, drifted: 0 } });
-    expect((await posting(id)).matchState).toBe("CREATED");
-  });
-
   it("checks at most the cap in one run", async () => {
     await switchOn();
     for (let i = 0; i < MAX_DRIFT_CHECKS_PER_RUN + 1; i++) await acceptedGift();

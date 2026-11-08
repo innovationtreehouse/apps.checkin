@@ -81,11 +81,11 @@ describe("finishRun", () => {
 
     it("covers only the lanes the run reached", async () => {
         const run = newRun();
-        await inRun(run, async () => laneReached("workflow-mapping matching"));
+        await inRun(run, async () => laneReached("expense intake"));
 
         await finishRun("reconcile-shopify", STARTED, true, undefined, run);
 
-        expect(report().lanes).toEqual(["reconcile-shopify", "workflow-mapping matching"]);
+        expect(report().lanes).toEqual(["reconcile-shopify", "expense intake"]);
     });
 
     it("files a crashed step under the library lanes it runs, with their cause, and leaves them uncovered", async () => {
@@ -102,7 +102,7 @@ describe("finishRun", () => {
 
     it("a run that crashed covers no library lane", async () => {
         const run = newRun();
-        await inRun(run, async () => laneReached("workflow-mapping matching"));
+        await inRun(run, async () => laneReached("expense intake"));
         runCrashed(run, "reconcile-shopify", new Error("boom"));
 
         await finishRun("reconcile-shopify", STARTED, false, undefined, run);
@@ -111,7 +111,7 @@ describe("finishRun", () => {
     });
 
     it("drops a report made outside any run", async () => {
-        reportTo("workflow-mapping")({ lane: "matching", kind: "connection", detail: "receipt 3" });
+        reportTo("expense")({ lane: "intake", kind: "connection", detail: "receipt 3" });
         const run = newRun();
 
         await finishRun("nightly", STARTED, true, undefined, run);
@@ -125,11 +125,11 @@ describe("finishRun", () => {
         const b = newRun();
         await Promise.all([
             inRun(a, async () => { await Promise.resolve(); reportTo("expense")({ lane: "posting", kind: "system", detail: "expense 1" }); }),
-            inRun(b, async () => reportTo("workflow-mapping")({ lane: "matching", kind: "system", detail: "receipt 1" })),
+            inRun(b, async () => reportTo("expense")({ lane: "intake", kind: "system", detail: "receipt 1" })),
         ]);
 
         expect(a.reports.map((r) => r.lane)).toEqual(["expense posting"]);
-        expect(b.reports.map((r) => r.lane)).toEqual(["workflow-mapping matching"]);
+        expect(b.reports.map((r) => r.lane)).toEqual(["expense intake"]);
     });
 });
 

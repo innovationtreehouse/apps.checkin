@@ -249,9 +249,10 @@ model ReceiptAuditLog {
   action       String
   /// @sensitivity:internal
   fieldChanged String?  @map("field_changed")
-  /// @sensitivity:personal
+  // The values can hold a donor's name or company, so they are pii.
+  /// @sensitivity:pii
   valueBefore  String?  @map("value_before")
-  /// @sensitivity:personal
+  /// @sensitivity:pii
   valueAfter   String?  @map("value_after")
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")

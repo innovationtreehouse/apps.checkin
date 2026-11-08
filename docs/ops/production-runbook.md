@@ -137,11 +137,10 @@ job ends its run in one shared step (`checkin-app/src/lib/finishRun.ts`): it
 records the run with its failures by kind, then hands the run to the engine,
 which also checks every job for a stopped schedule.
 
-**What it hears.** The receipt, expense, gift-of-goods, income and receiving
-libraries report each sorted failure through their "on failure" port; the app files the
+**What it hears.** The receipt, expense, gift-of-goods and income libraries report
+each sorted failure through their "on failure" port; the app files the
 reports under the job run in progress. The daily reconcile job runs the receipt
-lanes (re-push, mailbox reading, OCR of mailed files), expense intake, and receiving's
-matching re-run, which reports a receipt whose matching gave up; the daily posting job runs
+lanes (re-push, mailbox reading, OCR of mailed files) and expense intake; the daily posting job runs
 the expense, gift-of-goods and income posting lanes. A step of either job that
 crashes counts too, as a bug unless its error was sorted. An item counts once
 per run, however often its lane reports it. A run covers only the lanes whose

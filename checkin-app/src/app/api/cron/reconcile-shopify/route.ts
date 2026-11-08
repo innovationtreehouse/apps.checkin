@@ -9,7 +9,7 @@ import { getOrg } from "@/lib/components/host";
 import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
-import { catchUpOrgEvents as catchUpWorkflowEvents, retryPendingMatching, sweepStuckApplying } from "@checkin/workflow-mapping";
+import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
 import { readMailbox, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
 
 /**
@@ -80,9 +80,8 @@ function rowsFailed(outcome: object): number {
  * pending provisionals the catalog has since resolved. Each step is isolated; counts only. A
  * provisional that could not be merged counts toward the top-level `failed`.
  *
- * Then re-pushes workflow-mapping receipts left `applying` with no live push (sweepStuckApplying),
- * and re-runs matching on receipts whose matching couldn't run because the catalog was
- * unavailable (retryPendingMatching). Each isolated the same way; counts only.
+ * Then pushes workflow-mapping receipts a crash left `applying` with no live push and no recorded
+ * failure (sweepStuckApplying). Isolated the same way; counts only.
  *
  * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
  * `ocr_failed`. Isolated the same way; the response carries its count only.
@@ -99,9 +98,9 @@ function rowsFailed(outcome: object): number {
  *
  * The Shopify reconcile and the sale sweep run isolated too. The top-level `failed`, which the cron
  * run records, counts every step or expense part that crashed, every row a step reports as failed
- * (reconcile orders, receipt sweeps, outcome emails), provisionals not
- * reconciled, Apply give-ups, matching re-runs that gave up or errored, and a mailbox that could
- * not be read.
+ * (reconcile orders, receipt sweeps, outcome emails), provisionals not reconciled, a
+ * workflow-mapping catch-up that could not read the catalog's events, and a mailbox that could not
+ * be read.
  */
 export const GET = withCron(async () => {
     const result = await isolated("shopify", "Shopify reconcile", runReconcile);
@@ -112,22 +111,19 @@ export const GET = withCron(async () => {
     const inventoryEvents = await isolated("inventory events", "inventory event catch-up", catchUpInventoryEvents);
     const workflowEvents = await isolated("workflow-mapping events", "workflow-mapping event catch-up", catchUpWorkflowEvents);
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
-    const receivingMatching = await isolated("workflow-mapping pending matching", "workflow-mapping matching re-run", retryPendingMatching, ["workflow-mapping matching"]);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
     const receiptStuck = await isolated("receipt stuck uploads", "receipt stuck-upload sweep", sweepStuckUploaded);
     const receiptMail = await isolated("receipt mail", "receipt mail intake", readMailbox);
     const receiptOutcomes = await isolated("receipt outcome emails", "receipt outcome emails", sweepOutcomeNotices);
-    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receivingMatching, receipt, receiptStuck, receiptMail, receiptOutcomes];
+    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes];
     const expenseParts = "intake" in expense ? [expense.intake, expense.catalogEvents] : [];
     const failed = [...steps, ...expenseParts].filter(crashed).length
         + [result, receipt, receiptStuck, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
         + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
-        + ("gaveUp" in receivingApply ? receivingApply.gaveUp : 0)
-        + ("gaveUp" in receivingMatching ? receivingMatching.gaveUp + receivingMatching.errored : 0)
+        + ("unreadable" in workflowEvents && workflowEvents.unreadable ? 1 : 0)
         + (receiptMail.status === "listing_failed" ? 1 : 0);
     // Expense's replay re-runs the receipts live intake could not take, so it reaches both intake lanes.
     if ("intake" in expense && !crashed(expense.intake)) laneReached("expense intake", "expense intake-replay");
-    if (!crashed(receivingMatching)) laneReached("workflow-mapping matching");
     const reconciled = "configured" in result ? result : { reconcile: result };
-    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receivingMatching, receipt, receiptStuck, receiptMail, receiptOutcomes });
+    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes });
 });

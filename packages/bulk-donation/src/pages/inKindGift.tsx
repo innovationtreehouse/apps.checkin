@@ -40,8 +40,6 @@ interface Gift {
   donorLastName: string | null;
   donorCompanyName: string | null;
   donorReplacedAt: string | null;
-  withdrawnAfterMoneyAt: string | null;
-  withdrawalSettledAt: string | null;
   replayConflictAt: string | null;
   outcome: string | null;
   decidedAt: string | null;
@@ -64,8 +62,6 @@ const EVENT: Record<string, string> = {
   IN_KIND_MONEY_RECEIVED: "Receipt values received",
   IN_KIND_DONOR_RECORDED: "Donor recorded",
   IN_KIND_REPLAY_CONFLICT: "Receipt resent with different values",
-  IN_KIND_WITHDRAWN_AFTER_MONEY: "In-kind mark cleared after the money arrived",
-  IN_KIND_WITHDRAWAL_SETTLED: "Withdrawal settled",
   IN_KIND_REPLAY_SETTLED: "Kept the first values",
   IN_KIND_DECIDED: "Decided",
   IN_KIND_BUCKET_CHANGED: "Bucket changed",
@@ -159,12 +155,6 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
           {g.state ? <Badge color={IN_KIND_STATE[g.state].color}>{IN_KIND_STATE[g.state].label}</Badge> : <Badge color="gray">Nothing left to do</Badge>}
         </Group>
       </Group>
-      {g.withdrawnAfterMoneyAt && (
-        <Alert color="red">
-          The in-kind mark was cleared {when(g.withdrawnAfterMoneyAt)}, after the money arrived.
-          {g.withdrawalSettledAt ? ` Settled ${when(g.withdrawalSettledAt)}; the donor was cleared.` : ""}
-        </Alert>
-      )}
       {g.replayConflictAt && <Alert color="red">The receipt was resent with different values {when(g.replayConflictAt)}.</Alert>}
       {g.donorReplacedAt && <Alert color="yellow">The donor was replaced {when(g.donorReplacedAt)}.</Alert>}
 

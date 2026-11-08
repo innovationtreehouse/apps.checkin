@@ -26,7 +26,6 @@ async function applied(): Promise<number[]> {
 }
 
 const rejected = (id: number) => event(id, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" });
-const malformed = (id: number) => event(id, "provisional_approved", { bad: true });
 
 /** A source that honours the id cursor and returns at most `pageSize` events, like the catalog. */
 const paged = (events: OrgEventRecord[], pageSize = 500) => ({
@@ -138,7 +137,7 @@ describeDb("catch-up sweep", () => {
     expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, notConnected: true });
   });
 
-  it("replays past a bad event, records it, and retries it by id", async () => {
+  it("replays past a bad event and records it; later runs leave it for a person's retry", async () => {
     const asked: number[] = [];
     const poison = event(3, "provisional_approved", { bad: true });
     configure({
@@ -151,14 +150,15 @@ describeDb("catch-up sweep", () => {
     });
     expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 3, failed: 1 });
     expect(await applied()).toEqual([1, 2, 4]);
-    expect(await db.workflowFailedOrgEvent.findMany()).toMatchObject([{ id: 3, eventType: "provisional_approved" }]);
+    const [recorded] = await db.workflowFailedOrgEvent.findMany();
+    expect(recorded).toMatchObject({ id: 3, eventType: "provisional_approved" });
 
-    // The recorded failure is retried by id from its stored payload, and applied events are not applied again.
-    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1 });
+    expect(await catchUpOrgEvents()).toEqual(CLEAN);
     expect(asked).toEqual([0, 4, 0, 4]);
+    expect(await db.workflowFailedOrgEvent.findMany()).toEqual([recorded]);
   });
 
-  it("a bad event in the post-commit call-out does not block later events, and a fixed retry clears it", async () => {
+  it("a bad event in the post-commit call-out does not block later events, and the sweep does not retry it", async () => {
     const ls = await provisionalLine("pending_review");
     await orgEventConsumer.onOrgEvents([event(3, "provisional_approved", { bad: true }), approved(4)]);
 
@@ -166,10 +166,9 @@ describeDb("catch-up sweep", () => {
     expect(await applied()).toEqual([4]);
     expect(await db.workflowFailedOrgEvent.count()).toBe(1);
 
-    // A failure that clears (the stored payload now applies) is removed from the record.
-    await db.workflowFailedOrgEvent.update({ where: { id: 3 }, data: { payload: approved(3).payload } });
-    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 1, notConnected: true });
-    expect(await db.workflowFailedOrgEvent.count()).toBe(0);
+    configure({ catalogEventSource: paged([event(3, "provisional_approved", { bad: true }), approved(4)]) });
+    expect(await catchUpOrgEvents()).toEqual(CLEAN);
+    expect(await db.workflowFailedOrgEvent.count()).toBe(1);
   });
 
   it("catch-up consumes an event that committed after a higher id was applied", async () => {
@@ -203,67 +202,16 @@ describeDb("catch-up sweep", () => {
     expect(await applied()).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it("a capped run drains over later runs without alerting", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure({ catalogEventSource: paged([rejected(1), rejected(2), rejected(3)]), alerts: { orgEventsStuck } });
+  it("a capped run drains over later runs", async () => {
+    configure({ catalogEventSource: paged([rejected(1), rejected(2), rejected(3)]) });
 
     expect(await catchUpOrgEvents({ limit: 2 })).toEqual({ ...CLEAN, applied: 2, unprocessed: 1 });
     expect(await catchUpOrgEvents({ limit: 2 })).toEqual({ ...CLEAN, applied: 1 });
-    expect(orgEventsStuck).not.toHaveBeenCalled();
   });
 
-  it("failures that keep failing leave room in the cap for new events", async () => {
-    await orgEventConsumer.onOrgEvents([malformed(1), malformed(2), malformed(3), malformed(4)]);
-    configure({ catalogEventSource: paged([malformed(1), malformed(2), malformed(3), malformed(4), rejected(5)]) });
-
-    expect(await catchUpOrgEvents({ limit: 4 })).toEqual({ ...CLEAN, applied: 1, failed: 3, unprocessed: 1 });
-    expect(await applied()).toEqual([5]);
-  });
-});
-
-describeDb("catch-up alerts", () => {
-  it("alerts on each run while the catalog can't be read, and still retries failures", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    await orgEventConsumer.onOrgEvents([malformed(1)]);
-    configure({ catalogEventSource: { eventsSince: async () => { throw new Error("catalog down"); } }, alerts: { orgEventsStuck } });
-
-    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1, unreadable: true });
-    await catchUpOrgEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true });
-  });
-
-  it("alerts when an event first fails in the sweep, not on later retries", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck } });
-
-    await catchUpOrgEvents();
-    await catchUpOrgEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
-  });
-
-  it("alerts when an event first fails in the call-out, not when the sweep retries it", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck } });
-
-    await orgEventConsumer.onOrgEvents([malformed(1)]);
-    await catchUpOrgEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-  });
-
-  it("alerts on each run while a capped run applies nothing", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure({ catalogEventSource: paged([rejected(1)]), alerts: { orgEventsStuck } });
-
-    await catchUpOrgEvents({ limit: 0 });
-    await catchUpOrgEvents({ limit: 0 });
-    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
-  });
-
-  it("finishes the run when the alert itself throws", async () => {
-    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck: async () => { throw new Error("mail down"); } } });
-    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1 });
+  it("an unreadable catalog finishes the run and says so", async () => {
+    configure({ catalogEventSource: { eventsSince: async () => { throw new Error("catalog down"); } } });
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, unreadable: true });
   });
 
   it("finishes the sweep when a ledger write throws", async () => {
