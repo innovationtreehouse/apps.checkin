@@ -108,8 +108,6 @@ even without containers.
   snapshot's write time. A badge saved after that night's clear is therefore kept.
   After a reboot the sample cannot be aged, so the kiosk does nothing, as S1 states.
   A clear already applied is in the snapshot, so the nightly reboot does not undo it.
-  The model holds this rule with the fixes in S1, though the all-fixes run is not
-  complete.
 
 **Personal data.** The Pi now keeps names on disk, not only badge numbers. The
 register already limits what the kiosk receives: no whole last names, emails,
@@ -156,8 +154,8 @@ Pi: hourly timer, 23:00–06:00 → digest differs? → pull → swap → health
 - **The tag moves only after the image passes (owner, 2026-11-01).** After the prod
   deploy, the image is pushed by digest with no tag, and the flow and Playwright
   tiers run against that digest with the same release's server code. A failure
-  leaves the tag where it is and fails the run visibly. A forced update skips this:
-  it is for a door already wrong, and two people approve it.
+  leaves the tag where it is and fails the run visibly. A forced update skips this,
+  and two people approve it.
 - **Publishing is its own job, with its own approval (owner, 2026-11-01).** It runs
   after the deploy job in the `production` environment, and pushes, tests and moves
   the tag as one job, so each release takes one extra approval. Publishing needs an
@@ -196,10 +194,11 @@ For a real problem at the door, with no VPN or SSH needed.
   its health check rolls back once and is not retried. Each force run publishes its
   own digest for the chosen image, so forcing the same image again still applies. Because `kiosk-release` moves too, the nightly check does
   not undo the force, or retry a failed one.
-- **What it costs.** Badges during the restart are missed, and a live close prompt
-  is lost. The queue and saved state are safe. A forced update does not wait for a
-  quiet moment: it is for when the kiosk is already wrong. Whoever forces it should
-  expect those few seconds of downtime at the door.
+- **A new Pi does not jump to an old force (owner, 2026-11-01).** With no digest
+  recorded, the first urgent check records the tag's digest and does not swap. A
+  force published before that first check therefore waits for the night.
+- **During the restart.** Badges are missed, and a live close prompt is lost. The
+  queue and saved state are safe. A forced update does not wait for a quiet moment.
 - **Limits.** A Pi with no network applies the force when it reconnects. If the
   update timer or Docker itself is broken, this cannot help, and SSH or VPN is the
   remaining route.
@@ -227,10 +226,10 @@ transfer is free to 500 GB a month. A release adds about one image. Old images a
 pruned by hand if storage ever nears that limit. The repository and role live in the
 infra repo (`live/mgmt/kiosk-image.tf`).
 
-**Still true with this choice:** code merged to `main` reaches the door through the
-next release, behind that release's approval. Repo admins can change environment
-settings. Whoever can create the `kiosk-force` environment can assume the role, so
-it is created with its reviewers before the role exists.
+**Who can publish.** Code merged to `main` reaches the door through the next
+release, behind that release's approval. Repo admins, who can change environment
+settings, can publish, and so can whoever can create the `kiosk-force`
+environment. `kiosk-force` is created with its reviewers before the role exists.
 
 ### Running the container
 
@@ -470,29 +469,24 @@ rollback.
     "cleared through queue id N" in the snapshot; the overlay uses only rows above
     N. The rows still send. Queue position is used because no clock can upset it. A
     roster reply saying tonight's close has run also advances N over rows queued by
-    then, so a restart before they drain does not add those people back. That
-    advance is proposed and not yet modelled.
+    then, so a restart before they drain does not add those people back.
   - **Hearing tonight:** the roster reply and scan acknowledgement carry
     `lastNightlyCloseAt`. A reply counts as hearing tonight only when that is at or
     after the latest 23:00 by kiosk time. Otherwise it is a clock sample and leaves
-    view and snapshot alone. The wait is capped, then the kiosk believes the roster.
-    The cap is 10 minutes past 23:00, proposed and not yet modelled.
+    view and snapshot alone. The wait is capped at 10 minutes past 23:00, then the
+    kiosk believes the roster.
   - **After the close:** once a reply says the close ran, the overlay uses only rows
-    stamped after it, and treats clock-suspect rows as before it. The second half is
-    not yet modelled. Those rows are hidden only until the queue drains.
+    stamped after it, and treats clock-suspect rows as before it. Those rows are
+    hidden only until the queue drains.
   - **Reboot stamps:** a fallback stamp is never earlier than the snapshot's write
-    time, which passed at model bounds. A clock-suspect close flags any visit it
-    leaves open, which is not yet modelled.
+    time. A clock-suspect close flags any visit it leaves open.
   - **Scan path:** a badge checks for a due clear before it reads the view, as well
-    as the timer, since the model assumes the clear comes first.
-  - **Model:** a fast Pi clock gives no wrong "Welcome" to anyone not inside at 23:00
-    (complete run). Findings: `checkin-analysis/kiosk-design/findings-2026-10-31.md`.
-    Not reached: the all-fixes run, a second night, a late or failed server run,
-    real times, timezone and daylight saving.
-- **S2. The door empties just before the web each night. Accepted by the owner
-  (2026-10-31).** An online kiosk's timer clears at 23:00, before the server's run
-  lands and the next poll arrives, so door and web briefly disagree. The clear has no
-  link condition.
+    as the timer.
+  - **Fast clock:** a fast Pi clock gives no wrong "Welcome" to anyone not inside at
+    23:00.
+- **S2. The door empties just before the web each night (owner, 2026-10-31).** An
+  online kiosk's timer clears at 23:00, before the server's run lands and the next
+  poll arrives, so door and web briefly disagree. The clear has no link condition.
 
 Rejected alternatives: Postgres on the Pi (one writer and a small table; adds a
 server); Docker socket in the container (equals root); Balena or a reflash
