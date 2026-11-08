@@ -30,7 +30,7 @@ const QBO_WRONG_COMPANY = "QuickBooks settings are wrong: the token refresher ho
 const QBO_MALFORMED = "QuickBooks settings are wrong: the token refresher's answer is not a QuickBooks token, so QBO_REFRESHER_FN may name the wrong function. Finance checks it with the infra operator.";
 
 const invokeLambda: InvokeRefresher = (functionName) =>
-  invokeRefresher({ functionName, service: "QBO token refresher", reconnect: QBO_RECONNECT });
+  invokeRefresher({ functionName, service: "QBO token refresher", reconnect: QBO_RECONNECT, malformed: QBO_MALFORMED });
 
 function parseRefresherToken(value: unknown): RefresherToken {
   const v = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;

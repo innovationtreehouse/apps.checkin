@@ -7,7 +7,7 @@ import { invokeRefresher } from "../tokenRefresher";
 const send = jest.fn();
 jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(() => ({ send })), InvokeCommand: jest.fn() }));
 
-const call = { functionName: "test-refresher", service: "Test token refresher", reconnect: "Test needs reconnecting." };
+const call = { functionName: "test-refresher", service: "Test token refresher", reconnect: "Test needs reconnecting.", malformed: "Test settings are wrong." };
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const failure = (body: unknown) => ({ FunctionError: "Unhandled", Payload: bytes(body) });
 
@@ -36,6 +36,13 @@ describe("invokeRefresher", () => {
     it("is system when the error payload is unreadable", async () => {
         send.mockResolvedValue({ FunctionError: "Unhandled", Payload: new TextEncoder().encode("not json") });
         expect(kindOf(await invokeRefresher(call).catch((e: unknown) => e))).toBe("system");
+    });
+
+    it("is settings, with the malformed message, when the answer is not JSON", async () => {
+        send.mockResolvedValue({ Payload: new TextEncoder().encode("<html>not a refresher</html>") });
+        const err = await invokeRefresher(call).catch((e: unknown) => e);
+        expect(kindOf(err)).toBe("settings");
+        expect((err as Error).message).toBe("Test settings are wrong.");
     });
 
     it("is system when the invocation itself fails", async () => {

@@ -21,7 +21,7 @@ const RefresherAnswer = z.object({ accessToken: z.string().min(1), expiresAt: z.
 export type InvokeGmailRefresher = (functionName: string) => Promise<unknown>;
 
 const invokeLambda: InvokeGmailRefresher = (functionName) =>
-  invokeRefresher({ functionName, service: "Gmail token refresher", reconnect: GMAIL_RECONNECT });
+  invokeRefresher({ functionName, service: "Gmail token refresher", reconnect: GMAIL_RECONNECT, malformed: GMAIL_MALFORMED });
 
 /** A token getter for one refresher and mailbox; `invoke` is for tests. */
 export function gmailTokenSource(functionName: string, mailboxAddress: string, invoke: InvokeGmailRefresher = invokeLambda): () => Promise<string> {
