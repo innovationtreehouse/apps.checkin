@@ -35,7 +35,7 @@ export function assertQboTarget(cfg: QboTargetConfig): void {
  * production company; prod refuses those keys. `devClientId` is our config, never a secret.
  */
 export function assertQboClientId(checkinEnv: string | undefined, clientId: string, devClientId: string | undefined): void {
-  if (!devClientId) throw new KindedError("settings", "QuickBooks settings are wrong: QBO_DEV_CLIENT_ID must be set. Finance checks it with the infra operator.");
+  if (!devClientId) throw new KindedError("settings", "QuickBooks settings are wrong: QBO_DEV_CLIENT_ID must be set. The infra operator sets it to the client id of the development keys, which Finance supplies.");
   if (checkinEnv === "prod") {
     if (clientId === devClientId) throw new KindedError("settings", "QuickBooks settings are wrong: CHECKIN_ENV=prod refuses the development QuickBooks keys. Finance re-runs the consent with the production keys.");
   } else if (clientId !== devClientId) {
