@@ -570,7 +570,7 @@ async function namedReimbursee(
 ): Promise<ReimburseeOption> {
   if (newReimbursee) {
     if (!actor.addsPeople) throw new ServiceError(403, "Only finance, operations or the board may add someone who is not on file");
-    return ports().reimbursees.addNonMemberAdult(newReimbursee.name);
+    return ports().reimbursees.addNonMemberAdult(newReimbursee.name, actor.id);
   }
   if (personId === undefined || personId === actor.id) {
     return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
@@ -1332,6 +1332,16 @@ export const receiptService = {
         valueBefore: String(locked.needsReimbursement),
         valueAfter: String(needsReimbursement),
       });
+      // reimbursementFor is only the display name of this person, and a pii value has no place in the personal-tier audit values.
+      const reimburseePersonId = needsReimbursement ? actor.id : null;
+      if (locked.reimburseePersonId !== reimburseePersonId) {
+        await audit(tx, id, actor, {
+          action: "reimbursement_updated",
+          fieldChanged: "reimburseePersonId",
+          valueBefore: locked.reimburseePersonId === null ? null : String(locked.reimburseePersonId),
+          valueAfter: reimburseePersonId === null ? null : String(reimburseePersonId),
+        });
+      }
     });
     return toSubmitterView(await load(id, "submitter", actor));
   },

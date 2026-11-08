@@ -80,8 +80,8 @@ export interface SignoffDirectory {
   isAdult(personId: number): Promise<boolean>;
   /** Live known adults whose name contains `query`, by name, at most `limit` of them. */
   searchAdults(query: string, limit: number): Promise<Array<{ personId: number; name: string }>>;
-  /** Adds a non-member adult known only by name, in a household of their own; returns their Person.id. */
-  addNonMemberAdult(name: string): Promise<number>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`; returns their Person.id. */
+  addNonMemberAdult(name: string, actorId: number): Promise<number>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
