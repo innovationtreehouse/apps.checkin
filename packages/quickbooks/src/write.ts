@@ -33,6 +33,11 @@ export function postFailure(e: unknown): PostFailure {
   return e instanceof QboRequestError ? { ...base, codes: e.codes, requestId: e.requestId } : base;
 }
 
+/** A returned failure as an error a library runtime's `failed` reads: its kind, fault codes and request id. */
+export function postFailureError(f: PostFailure): KindedError {
+  return Object.assign(new KindedError(f.failure, f.error), { codes: f.codes ?? [], ...(f.requestId ? { requestId: f.requestId } : {}) });
+}
+
 export type FindOrCreateResult =
   /** `txnDate` is the matched entry's date, from the read that matched it. */
   | { kind: "found"; id: string; via: "key" | "amount"; txnDate: string }

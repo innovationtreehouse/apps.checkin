@@ -218,8 +218,12 @@ export interface FailureReport {
   detail?: string;
 }
 
-/** A library's "on failure" port. Unbound, a failure is only logged. */
-export type OnFailure = (report: FailureReport) => void;
+/**
+ * A library's "on failure" port. Unbound, a failure is only logged. The lane hands the report off
+ * and goes on without waiting: a port that returns a promise finishes on its own, and its rejection
+ * is logged.
+ */
+export type OnFailure = (report: FailureReport) => void | Promise<void>;
 
 function failureReport(lane: string, err: unknown, detail: string | undefined): FailureReport {
   const report: FailureReport = { lane, kind: kindOf(err) };
@@ -285,15 +289,17 @@ export function defineRuntime<Config extends RuntimeShape<Principal>, Principal 
     getOrgId,
     /**
      * Sorts a lane's failure: logs one `failure_kinded` line, hands the report to the bound
-     * "on failure" port, and returns the kind. Never throws, so it is safe inside a catch.
+     * "on failure" port without waiting on it, and returns the kind. Never throws, so it is safe
+     * inside a catch or a transaction.
      */
     failed(lane: string, err: unknown, detail?: string): FailureKind {
       const report = failureReport(lane, err, detail);
       console.warn(JSON.stringify({ level: "warn", event: "failure_kinded", library: name, ...report, ts: new Date().toISOString() }));
+      const portThrew = (portErr: unknown) => console.error(`[${name}] on-failure port threw:`, portErr);
       try {
-        store[key]?.onFailure?.(report);
+        void Promise.resolve(store[key]?.onFailure?.(report)).catch(portThrew);
       } catch (portErr) {
-        console.error(`[${name}] on-failure port threw:`, portErr);
+        portThrew(portErr);
       }
       return report.kind;
     },

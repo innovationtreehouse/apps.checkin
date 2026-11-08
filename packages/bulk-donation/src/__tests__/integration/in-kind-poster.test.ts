@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
-import { KindedError } from "@checkin/component-kit";
+import { KindedError, type FailureReport } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db, getPrisma } from "../../db";
@@ -137,6 +137,7 @@ let drainStops: { failures: number; remaining: number; cause: string; code?: str
 /** The expense account rules port throws this, standing in for a fault in the app's own code. */
 let rulesThrow: Error | null;
 let drainStopAlertFails: boolean;
+let failures: FailureReport[];
 
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
@@ -150,6 +151,7 @@ function configure() {
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: FINANCE, name: "finance" }) },
     org: async () => ({ id: orgId, name: "Test Org" }),
+    onFailure: (r) => void failures.push(r),
     owners: { list: async () => BUCKETS },
     inKind: {
       financeHolders: async () => [FINANCE],
@@ -256,6 +258,7 @@ beforeEach(async () => {
   unruled = new Set();
   alerts = 0;
   drainStops = [];
+  failures = [];
   drainStopAlertFails = false;
   rulesThrow = null;
   configure();
@@ -553,6 +556,29 @@ describeDb("in-kind drain", () => {
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, failed: 1 });
       expect(await posting(first)).toMatchObject({ matchState: "CREATED" });
       expect(await posting(second)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+    });
+
+    it("hands each saved failure to the on-failure port with the kind the gift was charged", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      qbo.createAnswer = () => ({ status: 500 });
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await runInKindQbPosting(orgId);
+
+      expect(failures).toEqual([expect.objectContaining({ lane: "in-kind-posting", kind: "bug", detail: `receipt gift ${id}` })]);
+    });
+
+    it("hands a post that throws to the on-failure port", async () => {
+      await switchOn();
+      const id = await acceptedGift();
+      const transaction = vi.spyOn(getPrisma(), "$transaction").mockRejectedValue(new Error("connection dropped"));
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await runInKindQbPosting(orgId);
+      transaction.mockRestore();
+
+      expect(failures).toEqual([{ lane: "in-kind-posting", kind: "bug", detail: `receipt gift ${id}` }]);
     });
 
     it("connection: the run stops at the first one, charges nothing, and tells finance to reconnect", async () => {

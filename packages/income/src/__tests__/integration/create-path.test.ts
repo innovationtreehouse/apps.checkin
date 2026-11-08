@@ -773,6 +773,18 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("hands a refused create to the on-failure port with its fault codes and request id", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "reject";
+
+    await drain();
+
+    expect(reports).toEqual([{ lane: "deposit-build", kind: "data", faultCodes: ["6000"], requestId: "tid", detail: `payout reconciliation ${(await rowFor(p)).id}` }]);
+  });
+
   it("failed: a refused create opens POST_FAILED; later runs leave it, finance's retry posts it with the same key", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";

@@ -3,7 +3,7 @@
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { NotWiredError } from "@checkin/component-kit";
+import { NotWiredError, type FailureReport } from "@checkin/component-kit";
 import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
@@ -523,6 +523,34 @@ describeDb("QB-2 posting — bounded retry", () => {
     const reads = windowReads();
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refused: 0, failed: 0 });
     expect(windowReads()).toBe(reads);
+  });
+
+  it("hands a refused create to the on-failure port with its fault codes and request id", async () => {
+    const reports: FailureReport[] = [];
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() }, onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
+    const line = await seedLineItem(id, { manualQbAccount: UNKNOWN_ACCOUNT, totalPriceCents: 500 });
+    await seedApproval(id, line, { ownerId: 7, status: "approved" });
+    await signAllLines(id);
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(reports).toEqual([{ lane: "posting", kind: "data", faultCodes: ["2500"], requestId: "tid", detail: `expense ${id}` }]);
+  });
+
+  it("hands an outage to the on-failure port as system", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    const reports: FailureReport[] = [];
+    bindPorts({ quickbooks: { posting: async () => posting() }, onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "down";
+
+    expect(await postExpenseToQb(ORG, id)).toBe("outage");
+
+    expect(reports).toEqual([expect.objectContaining({ lane: "posting", kind: "system", detail: `expense ${id}` })]);
   });
 
   it("finance fixes the account and retries: the account is re-resolved, the expense posts and the posting reason clears", async () => {
