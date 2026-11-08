@@ -165,9 +165,9 @@ async function reimburseeHasAccount(personId: number): Promise<boolean> {
   return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
-async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
+async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
   const [{ default: prisma }, { addNonMemberAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/ownHousehold")]);
-  return addNonMemberAdult(prisma, name);
+  return addNonMemberAdult(prisma, name, actorId);
 }
 
 /** The Gmail reader when mail intake binds (mailboxConfig.ts); otherwise intake reports "unbound". */

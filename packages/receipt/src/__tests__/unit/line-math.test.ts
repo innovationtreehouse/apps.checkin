@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { receiptMath } from "../../lib/lineMath";
+import { lineTotalAfterEdit, receiptMath } from "../../lib/lineMath";
 import { validateLineItemMath } from "../../lib/receipt-flow";
 
 const whole = { quantity: 2, unitPriceCents: 500 };
@@ -38,5 +38,23 @@ describe("receipt math", () => {
   it("is the check the server's intake flow runs", () => {
     expect(validateLineItemMath([whole, fractional], 0, 0, 0, 2001)).toBe(true);
     expect(validateLineItemMath([whole, fractional], 0, 0, 0, 2002)).toBe(false);
+  });
+});
+
+describe("a line's total after an edit", () => {
+  // Printed as 3 × $3.33 = $10.00: the line total carries a cent the unit price lost to rounding.
+  const printed = { quantity: 3, unitPriceCents: 333, totalPriceCents: 1000 };
+
+  it("keeps the stored total while quantity and unit price stand", () => {
+    expect(lineTotalAfterEdit(printed, { quantity: 3, unitPriceCents: 333 })).toBe(1000);
+  });
+
+  it("is quantity × unit price once either changes", () => {
+    expect(lineTotalAfterEdit(printed, { quantity: 4, unitPriceCents: 333 })).toBe(1332);
+    expect(lineTotalAfterEdit(printed, { quantity: 3, unitPriceCents: 334 })).toBe(1002);
+  });
+
+  it("rounds a fractional cost to the cent", () => {
+    expect(lineTotalAfterEdit({ quantity: 1, unitPriceCents: 333, totalPriceCents: 333 }, { quantity: 1.5, unitPriceCents: 333 })).toBe(500);
   });
 });

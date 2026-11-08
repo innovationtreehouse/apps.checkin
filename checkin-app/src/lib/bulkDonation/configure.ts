@@ -17,7 +17,7 @@
  * expense library's account rules. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting, InKindStopKind } from "@checkin/bulk-donation";
+import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/components/host";
 import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -62,14 +62,6 @@ export async function inKindPostingMissing(): Promise<string[]> {
   ];
 }
 
-/** What the in-kind stop alert tells finance, by the stop's kind; a settings stop names QuickBooks' fault code. */
-const DRAIN_STOP_CAUSES: Record<InKindStopKind, (code?: string) => string> = {
-  system: () => "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.",
-  connection: () => "QuickBooks refused the app's connection. Reconnect QuickBooks; until then no gift books.",
-  bug: () => "The gifts failed on their own while QuickBooks was answering. Each failure counts against its gift, and a gift that keeps failing comes to you.",
-  settings: (code) => `QuickBooks refuses entries with code ${code ?? "unknown"}; likely a books-map setting, such as an inactive account or class. Each refusal counts as a try against its gift; the next run tries them again, and a gift that keeps being refused comes to you.`,
-};
-
 /** Loaded on first use; the books map is read per run. */
 function inKindQbPosting(): InKindQbPosting | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
@@ -82,15 +74,6 @@ function inKindQbPosting(): InKindQbPosting | undefined {
         since: since.toISOString().slice(0, 10),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       }, "In-kind sweep alert failed:");
-    },
-    async drainStopped({ failures, remaining, cause, code }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert("finance.inKindDrainStopped", {
-        failures: String(failures),
-        remaining: String(remaining),
-        cause: DRAIN_STOP_CAUSES[cause](code),
-        actionLink: `${config.baseUrl()}/donations/in-kind`,
-      }, "In-kind drain alert failed:");
     },
   };
 }

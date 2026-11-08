@@ -22,6 +22,7 @@ import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptRec
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
+import { lineTotalAfterEdit } from "../lib/lineMath";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { givenUp, pushRecords } from "./catchUp";
@@ -595,7 +596,7 @@ async function namedReimbursee(
 ): Promise<ReimburseeOption> {
   if (newReimbursee) {
     if (!actor.addsPeople) throw new ServiceError(403, "Only finance, operations or the board may add someone who is not on file");
-    return ports().reimbursees.addNonMemberAdult(newReimbursee.name);
+    return ports().reimbursees.addNonMemberAdult(newReimbursee.name, actor.id);
   }
   if (personId === undefined || personId === actor.id) {
     return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
@@ -1036,6 +1037,10 @@ export const receiptService = {
       ];
 
       const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
+      const totalPriceCents = lineTotalAfterEdit(li, { quantity, unitPriceCents });
+      if (totalPriceCents !== li.totalPriceCents) {
+        edited.push({ field: "totalPrice", before: li.totalPriceCents / 100, after: totalPriceCents / 100 });
+      }
       const updated = await tx.receiptLineItem.update({
         where: { id: lineItemId },
         data: {
@@ -1044,7 +1049,7 @@ export const receiptService = {
           manufacturer: edit.manufacturer === undefined ? li.manufacturer : edit.manufacturer || null,
           quantity,
           unitPriceCents,
-          totalPriceCents: Math.round(quantity * unitPriceCents),
+          totalPriceCents,
           isDelayed: edit.isDelayed ?? li.isDelayed,
         },
       });
@@ -1359,6 +1364,16 @@ export const receiptService = {
         valueBefore: String(locked.needsReimbursement),
         valueAfter: String(needsReimbursement),
       });
+      // reimbursementFor is only the display name of this person, and a pii value has no place in the personal-tier audit values.
+      const reimburseePersonId = needsReimbursement ? actor.id : null;
+      if (locked.reimburseePersonId !== reimburseePersonId) {
+        await audit(tx, id, actor, {
+          action: "reimbursement_updated",
+          fieldChanged: "reimburseePersonId",
+          valueBefore: locked.reimburseePersonId === null ? null : String(locked.reimburseePersonId),
+          valueAfter: reimburseePersonId === null ? null : String(reimburseePersonId),
+        });
+      }
     });
     return toSubmitterView(await load(id, "submitter", actor));
   },
