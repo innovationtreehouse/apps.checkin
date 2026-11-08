@@ -2,11 +2,13 @@
  * @jest-environment node
  */
 import { recordCronRun } from "@/lib/cronRuns";
+import { recordFaultCodes } from "@/lib/qboFaultCodes";
 import { evaluateRun } from "@/lib/runIncidents";
 import { finishRun, inRun, laneReached, laneStopped, newRun, reportTo, runCrashed, stepCrashed } from "../finishRun";
 
 jest.mock("@/lib/cronRuns", () => ({ recordCronRun: jest.fn() }));
 jest.mock("@/lib/runIncidents", () => ({ evaluateRun: jest.fn() }));
+jest.mock("@/lib/qboFaultCodes", () => ({ recordFaultCodes: jest.fn() }));
 
 const STARTED = new Date("2026-11-07T09:15:00Z");
 const report = () => jest.mocked(evaluateRun).mock.calls[0][0];
@@ -147,5 +149,23 @@ describe("finishRun", () => {
 
         expect(a.reports.map((r) => r.lane)).toEqual(["expense posting"]);
         expect(b.reports.map((r) => r.lane)).toEqual(["receipt push"]);
+    });
+});
+
+describe("reportTo and the QuickBooks fault-code table", () => {
+    it("records each QuickBooks lane's report, in a run or not", async () => {
+        const refusal = { kind: "data", status: 400, faultCodes: ["6000"] } as const;
+        reportTo("expense")({ lane: "posting", ...refusal });
+        await inRun(newRun(), async () => reportTo("bulk-donation")({ lane: "in-kind-posting", ...refusal }));
+        reportTo("income")({ lane: "deposit-build", ...refusal });
+
+        expect(jest.mocked(recordFaultCodes).mock.calls.map(([r]) => r.lane)).toEqual(["expense posting", "bulk-donation in-kind-posting", "income deposit-build"]);
+    });
+
+    it("records nothing for a lane outside QuickBooks", () => {
+        reportTo("receipt")({ lane: "ocr", kind: "data", faultCodes: ["6000"] });
+        reportTo("expense")({ lane: "intake", kind: "data", faultCodes: ["6000"] });
+
+        expect(recordFaultCodes).not.toHaveBeenCalled();
     });
 });

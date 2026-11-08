@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { kindOf, type FailureReport, type OnFailure } from "@checkin/component-kit";
 import { recordCronRun } from "@/lib/cronRuns";
 import type { RunFailure } from "@/lib/opsIncidents";
+import { recordFaultCodes } from "@/lib/qboFaultCodes";
 import { evaluateRun } from "@/lib/runIncidents";
 
 /** What one job run's lanes reported, which lanes it reached, and which it stopped early. */
@@ -33,9 +34,14 @@ export const newRun = (): Run => ({ reports: [], reached: new Set(), stopped: ne
 /** Runs a job's work inside `run`, so every report its lanes make lands on it. */
 export const inRun = <T>(run: Run, work: () => Promise<T>): Promise<T> => current.run(run, work);
 
-/** The host's "on failure" port for one library. A report outside a job run is only the library's own log line. */
+/**
+ * The host's "on failure" port for one library. A QuickBooks lane's fault codes are always counted;
+ * otherwise a report outside a job run is only the library's own log line.
+ */
 export const reportTo = (library: string): OnFailure => (report) => {
-    current.getStore()?.reports.push({ ...report, lane: `${library} ${report.lane}` });
+    const named = { ...report, lane: `${library} ${report.lane}` };
+    current.getStore()?.reports.push(named);
+    if (CAUSES[named.lane] === "quickbooks") void recordFaultCodes(named);
 };
 
 /** A crashed step's failure on one lane: a bug unless its error carries a kind. */

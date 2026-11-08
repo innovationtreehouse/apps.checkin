@@ -486,6 +486,14 @@ export const classifications = {
         itemsAffected: 'internal',
         detail: 'internal',
     },
+    QboFaultCodeSeen: {
+        code: 'internal',
+        kind: 'internal',
+        count: 'internal',
+        firstSeenAt: 'internal',
+        lastSeenAt: 'internal',
+        lastLane: 'internal',
+    },
     LifecycleDriftReport: {
         id: 'internal',
         model: 'internal',
@@ -749,6 +757,8 @@ export const relations = {
     CronRunLog: {
     },
     OpsIncident: {
+    },
+    QboFaultCodeSeen: {
     },
     LifecycleDriftReport: {
     },
