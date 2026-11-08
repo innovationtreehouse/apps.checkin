@@ -26,10 +26,12 @@ beforeEach(async () => {
 
 describeDb("automatic reading switch", () => {
   it("is on by default", async () => {
+    withOcr();
     expect(await orgSettingsService.ocrSwitch()).toEqual({ ocrEnabled: true });
   });
 
   it("records who turned it off, and changes only through its own update", async () => {
+    withOcr();
     await turnOcrOff();
     expect(await orgSettingsService.ocrSwitch()).toEqual({ ocrEnabled: false });
     expect(await db.receiptAuditLog.findMany({ where: { action: "settings_updated" } })).toEqual([
