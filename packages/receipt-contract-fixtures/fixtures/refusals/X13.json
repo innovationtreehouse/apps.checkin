@@ -14,7 +14,7 @@
     { "name": "a donor with no company", "expect": "accepted", "set": { "donor.companyName": null } },
     { "name": "the same donor again", "expect": "accepted", "after": "base" },
     { "name": "an older sequence than one already seen, ignored", "expect": "accepted", "after": "base", "set": { "seq": 1, "donor.lastName": "Older" } },
-    { "name": "a donor for another org", "expect": "refused", "status": 400, "message": "orgId is not this org", "set": { "orgId": "another-org" } },
+    { "name": "a donor for another org, a wiring bug", "expect": "bug", "status": 500, "message": "is not this org", "set": { "orgId": "another-org" } },
     { "name": "an empty receiptId", "expect": "refused", "status": 400, "message": "expected string to have >=1 characters", "set": { "receiptId": "" } },
     { "name": "an empty first name", "expect": "refused", "status": 400, "message": "expected string to have >=1 characters", "set": { "donor.firstName": "" } },
     { "name": "an empty last name", "expect": "refused", "status": 400, "message": "expected string to have >=1 characters", "set": { "donor.lastName": "" } },

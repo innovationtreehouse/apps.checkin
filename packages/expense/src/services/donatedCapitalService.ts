@@ -11,18 +11,7 @@ import { formatItfa, fullyDepreciatedDate, nextItfaSeq } from "../lib/capital-re
 import { requireFinance, requireLiveBuckets } from "./approvalService";
 import { ServiceError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
-
-/** One accepted gift line, valued with its share of the receipt's tax and shipping. */
-export interface DonatedLine {
-  giftSource: "receipt" | "manual";
-  giftId: number;
-  giftLineId: number;
-  description: string;
-  quantity: number;
-  costCents: number;
-  acquisitionDate: string | null;
-  budgetOwnerId: number;
-}
+import { DonatedCapitalLineSchema, type DonatedCapitalLine } from "@checkin/receipt-types";
 
 /** What finance's screen reads: the line and its review. */
 const VIEW_SELECT = {
@@ -50,8 +39,9 @@ export function unitCosts(costCents: number, units: number): number[] {
 }
 
 /** Keeps the lines at or over the org's capital thresholds for review. A resend does nothing. */
-export async function submitDonatedLines(orgId: string, lines: DonatedLine[]): Promise<void> {
+export async function submitDonatedLines(orgId: string, sent: DonatedCapitalLine[]): Promise<void> {
   await assertOrg(orgId);
+  const lines = DonatedCapitalLineSchema.array().parse(sent);
   const settings = await db.expenseOrgSettings.findFirst({ where: { orgId } });
   const candidates = lines.filter((l) =>
     classifyCapital(l.costCents, [{ unitPriceCents: unitCosts(l.costCents, unitsOf(l.quantity))[0] }], settings),
