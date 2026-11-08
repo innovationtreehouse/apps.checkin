@@ -167,6 +167,9 @@ export const relations = {
     },
 } as const;
 
+export const marks = {
+} as const;
+
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 export type TierOf<M extends Models, F extends FieldsOf<M>> = (typeof classifications)[M][F];

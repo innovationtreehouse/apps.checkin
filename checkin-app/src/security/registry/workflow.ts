@@ -29,10 +29,10 @@ const WORKFLOW_CLOSE_OUT_VIEW: readonly OrderedViewEntry[] = [
 ];
 
 // Reads — the parsed projections (workflowSyntheticClassifications.ts), never the blob.
-defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptSummary'], orderedView: WORKFLOW_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptSummary'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowReceiptSummary', id: 'id', model: 'ReceivedReceipt' }] } });
 defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/counts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptCount'], orderedView: WORKFLOW_VIEW });
-defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/[id]', authorize: WORKFLOW_READ, envelope: null, returns: ['ReceivedReceipt', 'WorkflowReceiptView', 'WorkflowReceiptLineView', 'ReceivedReceiptLineStatus'], orderedView: WORKFLOW_VIEW, auditedRead: true });
-defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowAuditLog'], orderedView: WORKFLOW_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/[id]', authorize: WORKFLOW_READ, envelope: null, returns: ['ReceivedReceipt', 'WorkflowReceiptView', 'WorkflowReceiptLineView', 'ReceivedReceiptLineStatus'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowReceiptView', id: 'receiptId', model: 'Receipt' }] } });
+defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowAuditLog'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowAuditLog', id: 'receivedReceiptId', model: 'ReceivedReceipt' }] } });
 
 // Writes — receipt transitions, then line edits (409 while the receipt is applying or resolved,
 // enforced in the library).

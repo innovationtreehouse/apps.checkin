@@ -69,3 +69,10 @@ export const classifications = {
 } as const;
 
 export const relations = {} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  IncomePayoutView: ["netCents"],
+  IncomeBalanceTxnView: ["amountCents", "feeCents", "netCents"],
+  IncomeQbDepositView: ["totalCents"],
+} as const;

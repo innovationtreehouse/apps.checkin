@@ -42,11 +42,13 @@ model Receipt {
   orgId              String   @map("org_id")
   // The uploader's checkin Person.id.
   /// @sensitivity:internal
+  /// @financeMark
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
   // Null once the file lives in the store under fileKey.
   /// @sensitivity:pii
+  /// @financeMark
   fileBlob           Bytes?   @map("file_blob")
   // The object holding the file; null means the bytes are in fileBlob.
   /// @sensitivity:pii
@@ -61,9 +63,11 @@ model Receipt {
   needsReimbursement Boolean  @default(false) @map("needs_reimbursement")
   // Display only; the reimbursee's identity is reimburseePersonId.
   /// @sensitivity:pii
+  /// @financeMark
   reimbursementFor   String?  @map("reimbursement_for")
   // The checkin Person.id owed the reimbursement, named by the uploader; null for backfill.
   /// @sensitivity:internal
+  /// @financeMark
   reimburseePersonId Int?     @map("reimbursee_person_id")
   // upload | email | import
   /// @sensitivity:internal
@@ -71,10 +75,13 @@ model Receipt {
   /// @sensitivity:internal
   isInKind           Boolean  @default(false) @map("is_in_kind")
   /// @sensitivity:pii
+  /// @financeMark
   donorFirstName     String?  @map("donor_first_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorLastName      String?  @map("donor_last_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorCompanyName   String?  @map("donor_company_name")
   // X13 delivery: none (never in-kind) | pending | synced
   /// @sensitivity:internal
@@ -124,12 +131,16 @@ model ReceiptDetail {
   /// @sensitivity:internal
   currency                   String    @default("USD")
   /// @sensitivity:internal
+  /// @financeMark
   shippingCents              Int       @default(0) @map("shipping_cents")
   /// @sensitivity:internal
+  /// @financeMark
   taxCents                   Int       @default(0) @map("tax_cents")
   /// @sensitivity:internal
+  /// @financeMark
   discountCents              Int       @default(0) @map("discount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   receiptTotalCents          Int?      @map("receipt_total_cents")
   /// @sensitivity:internal
   state                      String    @default("uploaded")
@@ -194,6 +205,7 @@ model ReceiptFinanceReview {
   note            String?
   // The receipt's tax when finance decided; a later change to the tax is not covered.
   /// @sensitivity:internal
+  /// @financeMark
   taxCents        Int?     @map("tax_cents")
   /// @sensitivity:internal
   decidedAt       DateTime @default(now()) @map("decided_at")
@@ -219,8 +231,10 @@ model ReceiptLineItem {
   /// @sensitivity:internal
   quantity        Float   @default(1)
   /// @sensitivity:internal
+  /// @financeMark
   unitPriceCents  Int     @map("unit_price_cents")
   /// @sensitivity:internal
+  /// @financeMark
   totalPriceCents Int     @map("total_price_cents")
   /// @sensitivity:internal
   isDelayed       Boolean @default(false) @map("is_delayed")
@@ -251,8 +265,10 @@ model ReceiptAuditLog {
   fieldChanged String?  @map("field_changed")
   // The values can hold a donor's name or company, so they are pii.
   /// @sensitivity:pii
+  /// @financeMark
   valueBefore  String?  @map("value_before")
   /// @sensitivity:pii
+  /// @financeMark
   valueAfter   String?  @map("value_after")
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")
@@ -331,6 +347,7 @@ model ReceiptMailItem {
   refusal        Json?
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
+  /// @financeMark
   fileBlob       Bytes?    @map("file_blob")
   // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
   // to name the object for an admin restore. Null with no fileBlob means no file is kept.

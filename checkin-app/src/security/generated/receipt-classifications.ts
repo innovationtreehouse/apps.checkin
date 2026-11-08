@@ -211,6 +211,15 @@ export const relations = {
     },
 } as const;
 
+export const marks = {
+    Receipt: ['uploadedByUserId', 'fileBlob', 'reimbursementFor', 'reimburseePersonId', 'donorFirstName', 'donorLastName', 'donorCompanyName'],
+    ReceiptDetail: ['shippingCents', 'taxCents', 'discountCents', 'receiptTotalCents'],
+    ReceiptFinanceReview: ['taxCents'],
+    ReceiptLineItem: ['unitPriceCents', 'totalPriceCents'],
+    ReceiptAuditLog: ['valueBefore', 'valueAfter'],
+    ReceiptMailItem: ['fileBlob'],
+} as const;
+
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 export type TierOf<M extends Models, F extends FieldsOf<M>> = (typeof classifications)[M][F];

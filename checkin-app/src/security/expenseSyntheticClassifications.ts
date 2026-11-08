@@ -105,6 +105,7 @@ export const classifications = {
   // column it comes from, because it can name a person.
   FinanceQueueRow: {
     expenseId: "internal",
+    receiptId: "internal",
     vendorName: "internal",
     date: "internal",
     amountCents: "internal",
@@ -143,4 +144,12 @@ export const relations = {
   ExpenseCapitalSeedResult: {
     results: { model: "ExpenseCapitalSeedRow", isList: true },
   },
+} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  ExpenseQbCandidateView: ["totalCents"],
+  DonatedCapitalLineView: ["costCents"],
+  FinanceQueueRow: ["vendorName", "amountCents"],
+  ExpenseQueueReason: ["amountCents"],
 } as const;

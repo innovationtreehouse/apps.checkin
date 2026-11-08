@@ -25,7 +25,7 @@ const FINANCE_READ_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE], 
 
 // Submitter only: the caller's own receipts.
 defineRoute({ endpoint: 'POST /api/receipts/upload', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SUBMITTER_VIEW });
-defineRoute({ endpoint: 'GET /api/receipts/mine', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/mine', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/acknowledge-rejection', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
@@ -44,18 +44,18 @@ defineRoute({ endpoint: 'GET /api/receipts/reimbursee-options', authorize: 'rece
 // anyone named; the library refuses everyone but the reimbursee and that Board
 // member, and confirming grants nothing else.
 const CONFIRMATION_VIEW: readonly OrderedViewEntry[] = [['isBoardMember', ['everyones:internal']], ['authenticated', ['their_own:internal']]];
-defineRoute({ endpoint: 'GET /api/receipts/confirmations', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/confirmations', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW, financeView: { records: [{ key: 'ReceiptConfirmationView', id: 'id', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/confirmation', authorize: 'authenticated', envelope: null, returns: ['ReceiptConfirmationView', 'ReceiptConfirmationLineView'], orderedView: CONFIRMATION_VIEW });
 
 // What became of the reimbursements someone else uploaded for the caller, read
 // by the person reimbursed alone (`their_own` on reimburseePersonId), with the
 // approvers' and finance's reasons. Any signed-in person is admitted because the
 // reimbursee can be anyone named; the library lists only the caller's own.
-defineRoute({ endpoint: 'GET /api/receipts/reimbursements', authorize: 'authenticated', envelope: null, returns: ['ReceiptReimbursedView'], orderedView: [['authenticated', ['their_own:personal', 'their_own:internal']]] });
+defineRoute({ endpoint: 'GET /api/receipts/reimbursements', authorize: 'authenticated', envelope: null, returns: ['ReceiptReimbursedView'], orderedView: [['authenticated', ['their_own:personal', 'their_own:internal']]], financeView: { records: [{ key: 'ReceiptReimbursedView', id: 'id', model: 'Receipt' }] } });
 
 // Shared: a submitter on their own receipt, or FINANCE on any.
-defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW, auditedRead: true });
-defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SHARED_READ_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
+defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SHARED_READ_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'PATCH /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/line-items', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'PATCH /api/receipts/[id]/line-items/[lineItemId]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
@@ -64,14 +64,14 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/retry-ocr', authorize: 'receipt
 defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
 
 // FINANCE reads (BOARD too).
-defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'GET /api/receipts/queue-counts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptQueueCounts'], orderedView: FINANCE_READ_VIEW });
-defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 // A receipt's duplicate group: org-wide, since its members may be anyone's receipts.
-defineRoute({ endpoint: 'GET /api/receipts/[id]/duplicate-group', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/[id]/duplicate-group', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_READ_VIEW, financeView: { records: [{ key: 'ReceiptDuplicateGroup', id: { param: 'id' }, model: 'Receipt' }, { key: 'ReceiptDuplicateGroup', id: 'members[].id', model: 'Receipt' }, { key: 'ReceiptDuplicateGroup', id: 'members[].copyOfId', model: 'Receipt' }, { key: 'ReceiptDuplicateGroup', id: 'dismissed[]', model: 'Receipt' }] } });
 // Finance review's Duplicates tab: one row per group, across anyone's receipts.
-defineRoute({ endpoint: 'GET /api/receipts/duplicate-queue', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateQueueRow'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/duplicate-queue', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateQueueRow'], orderedView: FINANCE_READ_VIEW, financeView: { records: [{ key: 'ReceiptDuplicateQueueRow', id: 'id', model: 'Receipt' }] } });
 
 // FINANCE actions.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/approve', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
@@ -99,7 +99,7 @@ defineRoute({ endpoint: 'PUT /api/receipts/settings/ocr', authorize: { anyRole: 
 defineRoute({ endpoint: 'POST /api/receipts/allowance/[personId]/reset', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOcrAllowance'], orderedView: [['isFinance', ['public']], ['isBoardMember', ['public']]] });
 
 // Gmail mail queue: FINANCE only (the sender address is read by FINANCE alone).
-defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 
@@ -119,7 +119,7 @@ defineRoute({ endpoint: 'POST /api/finance/mail-aliases/[id]/approve', authorize
 // Mailbox ignore list: FINANCE only, kept beside the mail queue. A held mail
 // item joins it through the discard route above (`ignoreFile: true`).
 defineRoute({ endpoint: 'POST /api/receipts/[id]/ignore-file', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
-defineRoute({ endpoint: 'GET /api/receipts/ignored-files', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/receipts/ignored-files', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'DELETE /api/receipts/ignored-files/[id]', authorize: 'finance', envelope: null, returns: ['ReceiptIgnoredFileView'], orderedView: FINANCE_VIEW });
 
 // Receipt flow status: how many receipts, receiving records and expenses sit in
@@ -148,12 +148,10 @@ defineFileRoute({
     authorize: 'receipt-submitter',
     orderedView: [['isFinance', ['everyones:pii']], ['isBoardMember', ['everyones:pii']], ['authenticated', ['their_own:pii']]],
     file: { model: 'Receipt', field: 'fileBlob' },
-    auditedRead: true,
 });
 defineFileRoute({
     endpoint: 'GET /api/receipts/mail-items/[id]/file',
     authorize: 'finance',
     orderedView: [['isFinance', ['everyones:pii']]],
     file: { model: 'ReceiptMailItem', field: 'fileBlob' },
-    auditedRead: true,
 });

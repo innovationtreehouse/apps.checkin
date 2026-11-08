@@ -66,3 +66,6 @@ export const classifications = {
 } as const;
 
 export const relations = {} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {} as const;

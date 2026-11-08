@@ -296,7 +296,7 @@ that name.
 
 | Who does it | What |
 |---|---|
-| `fileHandler` | authentication, admission, the per-row tier check (404 when it fails), the finance-view record of `auditedRead`, and the delivery headers |
+| `fileHandler` | authentication, admission, the per-row tier check (404 when it fails), the finance-view record of a marked file served to anyone but its owner, and the delivery headers |
 | The library | the magic-byte check at intake, a `file_viewed` or `mail_file_viewed` audit row on each read, and loading the whole file into memory; nothing streams |
 
 Images go `inline` under `Content-Security-Policy: sandbox`, PDFs `inline` without

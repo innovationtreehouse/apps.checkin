@@ -11,7 +11,10 @@ import { DELETE as undoNotThisOne } from "../not-this-one/[otherId]/route";
 import { POST as differentPurchases } from "../different-purchases/route";
 import { POST as keepThisOne } from "../keep-this-one/route";
 
-jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock("@/lib/finance/financeViewLog", () => ({
+  ...jest.requireActual("@/lib/finance/financeViewLog"),
+  recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock("@checkin/receipt/services/receiptService", () => ({
   receiptService: {
     get: jest.fn(),

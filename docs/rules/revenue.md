@@ -346,11 +346,14 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - Only finance and the board can see who gave.  [Decision — *Principle: least privilege*]
 
-- Every view of finance records other than a person's own is recorded, each look
-  at a donor included: who looked, which records, through which screen, and when,
-  never what the records said.
-  A person looking at their own receipts is not recorded, and neither is a
-  count. Only the Board reads the record.  [Decision — owner]
+- Every view of finance records that shows money or a person tied to it is
+  recorded, other than a person's view of their own or their household's, each
+  look at a donor included: who looked, on which page, which records and which of
+  their sensitive fields, and when, never what the records said. A view that
+  shows neither, such as a list of QuickBooks transactions excluded from
+  matching, is not recorded. A person looking at their own receipts is not
+  recorded, and neither is a count. Only the Board reads the record.
+  [Decision — owner; Board ruling B11, narrowed]
 
 - A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
 

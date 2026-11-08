@@ -399,6 +399,17 @@ export const relations = {
     },
 } as const;
 
+export const marks = {
+    Expense: ['submitterId', 'vendorName', 'taxCents', 'shippingCents', 'discountCents', 'receiptTotalCents', 'reimbursementFor', 'reimburseePersonId'],
+    ExpenseReceiptReview: ['approvedTaxCents'],
+    ExpenseTaxApproval: ['taxCents'],
+    ExpenseLineItem: ['unitPriceCents', 'totalPriceCents', 'allocatedTaxCents', 'allocatedShippingCents', 'allocatedDiscountCents'],
+    ReceivedExpensePayload: ['payloadJson'],
+    CapitalAsset: ['costCents'],
+    DonatedCapitalLine: ['costCents'],
+    ExpenseReimburseeVendor: ['reimburseePersonId'],
+} as const;
+
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 export type TierOf<M extends Models, F extends FieldsOf<M>> = (typeof classifications)[M][F];

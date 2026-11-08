@@ -299,6 +299,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: false,
             activeVisitors: false,
             ledHouseholdMembers: false,
+            householdMembers: false,
         });
     });
 
@@ -309,6 +310,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: false,
             activeVisitors: false,
             ledHouseholdMembers: true,
+            householdMembers: false,
         });
     });
 
@@ -319,6 +321,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: false,
             activeVisitors: false,
             ledHouseholdMembers: false,
+            householdMembers: false,
         });
     });
 
@@ -329,7 +332,13 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: true,
             activeVisitors: false,
             ledHouseholdMembers: false,
+            householdMembers: true,
         });
+    });
+
+    it('a route that can send household-owned finance rows fetches the household members', () => {
+        expect(byEndpoint.get('GET /api/finance-ops/payment-plans')?.ctxNeeds.householdMembers).toBe(true);
+        expect(byEndpoint.get('GET /api/receipts')?.ctxNeeds.householdMembers).toBe(false);
     });
 
     it('ALL_CTX_NEEDS is the everything mask (masking with it is a no-op)', () => {

@@ -12,7 +12,10 @@ import { GET as getReceiptGift } from '../receipt/[id]/route';
 import { GET as getManualGift } from '../manual/[id]/route';
 
 const mockGetGift = jest.fn();
-jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 // Each route calls getGift(source) at module load; the handler it returns reads mockGetGift per request.
 jest.mock('@checkin/bulk-donation', () => ({
