@@ -839,6 +839,21 @@ defineRoute({
     orderedView: [],
 });
 
+// Retry and Retry all on the Problems list: re-runs each named stuck item's
+// step and answers whether it ran. Admits the people who see System Status;
+// each step's own role check runs inside the route. No error text leaves (see
+// problemsSyntheticClassifications.ts), so neither view needs a personal grant.
+defineRoute({
+    endpoint: 'POST /api/system-status/problems/retry',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'results',
+    returns: ['ProblemRetryResult'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal']],
+        ['isBoardMember', ['everyones:internal']],
+    ],
+});
+
 // Daily QuickBooks expense posting (stranded recovery + outbox drain), a money
 // write, so it answers only to its own secret, never the shared CRON_SECRET.
 // Admission gate only: the response carries no rows.
