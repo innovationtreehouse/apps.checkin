@@ -38,6 +38,7 @@ import {
 } from "../lib/schemas";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
 import { getOrgId, limits, ports, receiptRuntime, requireActor } from "../runtime";
+import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
@@ -412,6 +413,15 @@ async function applyOcr(id: string, actor: ReceiptPrincipal, callId: number): Pr
   }
 }
 
+/** False while automatic reading is turned off. */
+async function ocrIsOn(): Promise<boolean> {
+  return (await getOrgSettings(await getOrgId())).ocrEnabled;
+}
+
+/** Land an auto upload in `ocr_failed` with the switched-off note, spending no call. */
+const failOcrSwitchedOff = (id: string, actor: ReceiptPrincipal) =>
+  failOcr(id, actor, { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off", refundCallId: null });
+
 /** Lands the receipt in `ocr_failed`, giving back `refundCallId`; the audit action names the failure's kind (`ocr_failed:<kind>`). */
 async function failOcr(
   id: string,
@@ -466,6 +476,10 @@ export async function intakeMailedReceipt(
     afterInsert: ledger,
   });
   await deleteStoredFiles([heldFileKey]);
+  if (!(await ocrIsOn())) {
+    await failOcrSwitchedOff(id, actor);
+    return id;
+  }
   let callId: number;
   try {
     callId = await reserveOcrCall(actor);
@@ -832,7 +846,8 @@ export const receiptService = {
       : {};
     const inKind = input.isInKind && input.donor ? { isInKind: true, donorSync: "pending", ...donorNames(input.donor, actor) } : {};
     const d = input.details;
-    const callId = d ? null : await reserveOcrCall(actor);
+    const ocrOff = !d && !(await ocrIsOn());
+    const callId = d || ocrOff ? null : await reserveOcrCall(actor);
 
     const insert = insertReceipt({
       orgId: await getOrgId(),
@@ -866,7 +881,8 @@ export const receiptService = {
     });
 
     if (input.isInKind) await sendDonorSync(id, actor);
-    if (callId === null) await runFlowLogged(id, actor);
+    if (ocrOff) await failOcrSwitchedOff(id, actor);
+    else if (callId === null) await runFlowLogged(id, actor);
     else await applyOcr(id, actor, callId);
     return toSubmitterView(await load(id, "submitter", actor));
   },
@@ -1007,6 +1023,7 @@ export const receiptService = {
     } catch (e) {
       transitionError(e);
     }
+    if (!(await ocrIsOn())) throw new ServiceError(503, OCR_OFF_NOTE);
     const callId = await reserveOcrCall(actor);
     try {
       await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");

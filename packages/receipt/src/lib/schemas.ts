@@ -139,6 +139,8 @@ export const OrgSettingsSchema = z
   })
   .strict();
 
+export const OcrSwitchSchema = z.object({ ocrEnabled: z.boolean() }).strict();
+
 export const ImportLineItemSchema = z.object({
   lineNumber: z.number().int().positive(),
   description: z.string().min(1).max(500),

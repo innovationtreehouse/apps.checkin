@@ -238,6 +238,7 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: SETTING('/settings/outreach') },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: SETTING('/settings/shopify-webhook') },
   { href: '/settings/finance', label: 'Finance Settings', section: 'Settings', keywords: 'expense threshold capital board review note in lieu', visible: SETTING('/settings/finance') },
+  { href: '/settings/receipt-reading', label: 'Receipt reading', section: 'Settings', keywords: 'ocr automatic reading receipt scan turn off', visible: SETTING('/settings/receipt-reading') },
 ];
 
 // Routes that exist as page.tsx but are intentionally absent from the directory.
