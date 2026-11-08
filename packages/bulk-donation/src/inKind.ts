@@ -1,5 +1,5 @@
-// In-kind crossings (FR5). The callees (X9, X13) assert the injected org, a plain error for a
-// wiring bug, then parse their input and record it. A 4xx or validation error means refused for
+// In-kind crossings (FR5). The callees (X9, X13) parse their input, check it is for the injected
+// org (a plain error: a wiring bug) and record it. A 4xx or validation error means refused for
 // good; anything else means try again. A differing resend is flagged for finance, not thrown. The caller wrappers (X10) parse what the
 // bound port returns. The no-receipt entry records a donation for the current org and principal
 // and loads its goods (X11).
@@ -18,8 +18,8 @@ const inKindReceiptSchema = CompletedReceiptSchema.refine((r) => r.isInKind, { m
 
 /** X9 callee: an in-kind receipt's money side. Written once per `receiptId`; a differing replay is flagged for finance, never merged. */
 export async function ingestInKind(receipt: CompletedReceipt): Promise<void> {
-  await assertOrg(receipt.orgId);
   const r = inKindReceiptSchema.parse(receipt);
+  await assertOrg(r.orgId);
   await inKindService.recordMoney(r.orgId, r.receiptId, {
     receiptTotalCents: r.receiptTotalCents,
     receiptDate: r.receiptDate,

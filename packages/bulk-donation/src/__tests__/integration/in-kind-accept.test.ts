@@ -603,6 +603,18 @@ describeDb("capital review", () => {
     expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
   });
 
+  it("lines our own schema rejects are our bug, not a capital review refusal", async () => {
+    const id = await receiptGift();
+    await db.inKindDonationLine.updateMany({ where: { donationId: id }, data: { quantity: 100001 } });
+    const sent = captureCapital();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
+    logged.mockRestore();
+    expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/accepted.*fault in our software/) });
+    expect((failed as Error).message).not.toMatch(/refused/);
+    expect(sent).toHaveLength(0);
+  });
+
   it("a gift with a line in capital review waits on it before booking", async () => {
     const id = await receiptGift();
     captureCapital([{ giftSource: "receipt", giftId: id }]);
