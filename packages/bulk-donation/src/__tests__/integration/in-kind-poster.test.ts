@@ -669,11 +669,12 @@ describeDb("in-kind drain — a journal entry finance voided", () => {
     return copy;
   };
 
-  it("books a replacement when the only keyed entry was voided, and the sweep raises nothing for the void", async () => {
+  it("a retry books a replacement when the only keyed entry was voided, and the sweep raises nothing for the void", async () => {
     const { id, first } = await landed();
     voidEntry(first);
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, sweep: { flagged: 0 } });
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
 
     expect(qbo.posts).toHaveLength(2);
     const replacement = qbo.journals[1];
@@ -682,25 +683,25 @@ describeDb("in-kind drain — a journal entry finance voided", () => {
     expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbNote: null });
   });
 
-  it("links the live entry when one of two keyed entries was voided", async () => {
+  it("a retry links the live entry when one of two keyed entries was voided", async () => {
     const { id, first } = await landed();
     const live = secondKeyedEntry(first);
     voidEntry(first);
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
 
     expect(qbo.posts).toHaveLength(1);
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: live.Id }]);
   });
 
-  it("two live keyed entries still go to finance", async () => {
+  it("on retry, two live keyed entries still go to finance", async () => {
     const { id, first } = await landed();
     secondKeyedEntry(first);
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 1 });
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
 
     expect(qbo.posts).toHaveLength(1);
-    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE" });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null, qbNote: expect.stringMatching(/carry its key/) });
   });
 
   it("finance's skip applies when the gift's only keyed entry was voided", async () => {
