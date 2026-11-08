@@ -18,7 +18,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
+import { DEFAULT_CURRENCY, DONOR_COMPANY_MAX, DONOR_NAME_MAX } from "@checkin/receipt-types";
 import { api, errorMessage, upload } from "../components/api";
 import { CURRENCY_CODE } from "../lib/schemas";
 import { listWords, missingDetails } from "../lib/missingDetails";
@@ -203,9 +203,9 @@ export default function UploadPage() {
               />
               {!selfDonor && (
                 <Group grow>
-                  <TextInput label="Donor first name" value={donor.firstName} onChange={(e) => setDonor({ ...donor, firstName: e.currentTarget.value })} required />
-                  <TextInput label="Donor last name" value={donor.lastName} onChange={(e) => setDonor({ ...donor, lastName: e.currentTarget.value })} required />
-                  <TextInput label="Company (optional)" value={donor.companyName} onChange={(e) => setDonor({ ...donor, companyName: e.currentTarget.value })} />
+                  <TextInput label="Donor first name" value={donor.firstName} onChange={(e) => setDonor({ ...donor, firstName: e.currentTarget.value })} maxLength={DONOR_NAME_MAX} required />
+                  <TextInput label="Donor last name" value={donor.lastName} onChange={(e) => setDonor({ ...donor, lastName: e.currentTarget.value })} maxLength={DONOR_NAME_MAX} required />
+                  <TextInput label="Company (optional)" value={donor.companyName} onChange={(e) => setDonor({ ...donor, companyName: e.currentTarget.value })} maxLength={DONOR_COMPANY_MAX} />
                 </Group>
               )}
             </>

@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 import type { FailureKind, OnFailure } from "@checkin/component-kit";
-import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
+import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
@@ -50,12 +50,7 @@ export interface ReceiptSink {
 
 // ── X13: in-kind donor → donations ───────────────────────────────────────────
 
-export const InKindDonorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  companyName: z.string().nullable(),
-});
-export type InKindDonor = z.infer<typeof InKindDonorSchema>;
+export { InKindDonorSchema, type InKindDonor } from "@checkin/receipt-types";
 
 /**
  * X13. Both calls are idempotent on `receiptId`; a later recordInKindDonor replaces the donor.
