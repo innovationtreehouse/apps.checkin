@@ -44,20 +44,20 @@ afterAll(() => {
 
 describe("getProblems", () => {
     it("lists every library's stuck items, oldest first, each named by its library", async () => {
-        expense.stuckItems.mockResolvedValue([{ id: "e1", step: "QuickBooks posting", error: "refused", failedAt: hoursAgo(5) }]);
-        mapping.stuckItems.mockResolvedValue([{ id: "r1", step: "apply", error: null, failedAt: hoursAgo(50) }]);
+        expense.stuckItems.mockResolvedValue([{ id: "e1", step: "QuickBooks posting", href: null, failedAt: hoursAgo(5) }]);
+        mapping.stuckItems.mockResolvedValue([{ id: "r1", step: "apply", href: null, failedAt: hoursAgo(50) }]);
 
         const { items, unread } = await getProblems();
 
         expect(items.map((i) => [i.library, i.id])).toEqual([["workflow mapping", "r1"], ["expense", "e1"]]);
-        expect(items[1]).toMatchObject({ step: "QuickBooks posting", error: "refused" });
+        expect(items[1]).toMatchObject({ step: "QuickBooks posting" });
         expect(unread).toEqual([]);
     });
 
     it("names a library whose read fails and still lists the others", async () => {
         const logged = jest.spyOn(console, "error").mockImplementation(() => undefined);
         gifts.stuckItems.mockRejectedValue(new Error("db down"));
-        receipt.stuckItems.mockResolvedValue([{ id: "x", step: "flow", error: "boom", failedAt: hoursAgo(1) }]);
+        receipt.stuckItems.mockResolvedValue([{ id: "x", step: "flow", href: null, failedAt: hoursAgo(1) }]);
 
         const { items, unread } = await getProblems();
 
@@ -75,15 +75,15 @@ describe("getProblems", () => {
 
 describe("sendProblemsDigest", () => {
     it("sends nothing while nothing has been stuck more than a day", async () => {
-        receipt.stuckItems.mockResolvedValue([{ id: "x", step: "flow", error: "boom", failedAt: hoursAgo(23) }]);
+        receipt.stuckItems.mockResolvedValue([{ id: "x", step: "flow", href: null, failedAt: hoursAgo(23) }]);
         await sendProblemsDigest(NOW);
         expect(sendTemplated).not.toHaveBeenCalled();
     });
 
-    it("emails the alert address the items stuck more than a day, without their error text", async () => {
+    it("emails the alert address the items stuck more than a day", async () => {
         receipt.stuckItems.mockResolvedValue([
-            { id: "old", step: "flow", error: "secret detail", failedAt: hoursAgo(30) },
-            { id: "new", step: "flow", error: "boom", failedAt: hoursAgo(2) },
+            { id: "old", step: "flow", href: null, failedAt: hoursAgo(30) },
+            { id: "new", step: "flow", href: null, failedAt: hoursAgo(2) },
         ]);
 
         await sendProblemsDigest(NOW);
@@ -96,11 +96,10 @@ describe("sendProblemsDigest", () => {
         expect(ctx.count).toBe("1");
         expect(ctx.items).toContain("old");
         expect(ctx.items).not.toContain("new");
-        expect(ctx.items).not.toContain("secret detail");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {
-        expense.stuckItems.mockResolvedValue([{ id: "e1", step: "intake", error: null, failedAt: hoursAgo(15 * 24) }]);
+        expense.stuckItems.mockResolvedValue([{ id: "e1", step: "intake", href: null, failedAt: hoursAgo(15 * 24) }]);
 
         await sendProblemsDigest(NOW);
 
@@ -118,7 +117,7 @@ describe("sendProblemsDigest", () => {
 
     it("an unset address sends nothing, with no fallback", async () => {
         findSettings.mockResolvedValue({ alertEmailAddress: " ", boardEmailAddress: null });
-        expense.stuckItems.mockResolvedValue([{ id: "e1", step: "intake", error: null, failedAt: hoursAgo(20 * 24) }]);
+        expense.stuckItems.mockResolvedValue([{ id: "e1", step: "intake", href: null, failedAt: hoursAgo(20 * 24) }]);
 
         await sendProblemsDigest(NOW);
 

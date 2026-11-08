@@ -235,14 +235,14 @@ export interface FailureReport {
 }
 
 /**
- * One item a library's step left stuck, as its "stuck items" port answers. `error` is null when the
- * library records no error text; `failedAt` is the first failure where the library records one, else
- * the item's last change.
+ * One item a library's step left stuck, as its "stuck items" port answers. `href` is the item's own
+ * page, null when it has none; `failedAt` is the first failure where the library records one, else
+ * the item's last change. No error text: the item's page shows it under its own access rules.
  */
 export interface StuckItem {
   id: string;
   step: string;
-  error: string | null;
+  href: string | null;
   failedAt: Date;
 }
 

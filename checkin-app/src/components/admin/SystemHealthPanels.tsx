@@ -206,12 +206,12 @@ export function OpenProblemsBox() {
 }
 
 // Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
-type StuckItem = { library: string; id: string; step: string; error: string | null; failedAt: string };
+type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
 type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown }; cronJobs?: unknown };
 
 /**
- * The receipt flow's Problems list: every stuck item, oldest first, with its error and when it
- * failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
+ * The receipt flow's Problems list: every stuck item, oldest first, with a link to its own page
+ * (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
  */
 export function ProblemsBox() {
   const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; staleJobs: CronJob[] } | null>(null);
@@ -254,9 +254,8 @@ export function ProblemsBox() {
               <Group gap="xs">
                 <Badge variant="light">{i.library}</Badge>
                 <span>{i.step}</span>
-                <Code>{i.id}</Code>
+                {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
               </Group>
-              <Text size="sm">{i.error ?? 'No error recorded.'}</Text>
               <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
             </List.Item>
           ))}

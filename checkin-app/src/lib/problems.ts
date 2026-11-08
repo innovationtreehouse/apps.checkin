@@ -46,7 +46,7 @@ const address = (value: string | null | undefined): string | null => value?.trim
 /**
  * The daily email: while anything has been stuck more than a day, or a job has not run on time, the
  * alert address gets the list; the Board address gets a copy once anything has been stuck more than
- * two weeks. Ids, steps and dates only, never error text. An unset address sends nothing. Never throws.
+ * two weeks. Ids, steps and dates only. An unset address sends nothing. Never throws.
  *
  * ponytail: it sends on every nightly run, so a same-night rerun of the nightly job sends it twice.
  */

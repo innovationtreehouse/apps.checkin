@@ -20,7 +20,7 @@ jest.mock('@/lib/receipt/mailboxHealth', () => ({ getReceiptMailboxHealth: async
 
 jest.mock('@/lib/problems', () => ({
     getProblems: async () => ({
-        items: [{ library: 'expense', id: 'e1', step: 'intake', error: 'bad payload', failedAt: new Date('2026-11-01T12:00:00.000Z') }],
+        items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: new Date('2026-11-01T12:00:00.000Z') }],
         unread: ['gifts'],
     }),
 }));
@@ -107,7 +107,7 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         const res = await call({ type: 'session', user: { isSysadmin: true, isBoardMember: false } });
         const body = await res.json();
         expect(body.problems).toEqual({
-            items: [{ library: 'expense', id: 'e1', step: 'intake', error: 'bad payload', failedAt: '2026-11-01T12:00:00.000Z' }],
+            items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: '2026-11-01T12:00:00.000Z' }],
             unread: ['gifts'],
         });
     });

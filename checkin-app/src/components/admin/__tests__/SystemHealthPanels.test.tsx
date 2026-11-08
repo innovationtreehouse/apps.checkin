@@ -257,13 +257,13 @@ describe("OpenProblemsBox", () => {
 });
 
 describe("ProblemsBox", () => {
-  it("lists each stuck item with its library, step, error and time, then each job not on time", async () => {
+  it("lists each stuck item with its library, step, a link to its page and its time, then each job not on time", async () => {
     mockFetchJson({
       "/api/system-status/config-health": {
         problems: {
           items: [
-            { library: "expense", id: "e1", step: "QuickBooks posting", error: "QuickBooks refused: code 6000", failedAt: "2026-11-01T12:00:00.000Z" },
-            { library: "workflow mapping", id: "r1", step: "apply", error: null, failedAt: "2026-11-02T12:00:00.000Z" },
+            { library: "expense", id: "e1", step: "QuickBooks posting", href: "/expense/expenses/e1", failedAt: "2026-11-01T12:00:00.000Z" },
+            { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
           ],
           unread: ["gifts"],
         },
@@ -275,8 +275,8 @@ describe("ProblemsBox", () => {
     });
     renderWithProviders(<ProblemsBox />);
 
-    expect(await screen.findByText("QuickBooks refused: code 6000")).toBeInTheDocument();
-    expect(screen.getByText("No error recorded.")).toBeInTheDocument();
+    expect((await screen.findByText("e1")).closest("a")).toHaveAttribute("href", "/expense/expenses/e1");
+    expect(screen.getByText("7").closest("a")).toBeNull();
     expect(screen.getByText("qbo-posting")).toBeInTheDocument();
     expect(screen.queryByText("nightly")).not.toBeInTheDocument();
     expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
