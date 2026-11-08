@@ -119,7 +119,6 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.isInKind).toBe(true);
         expect(out.lineItems).toEqual([{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }]);
         expect(out.reimbursement).toEqual({ paidOn: null });
-        expect(out.pushGivenUp).toBe(true);
         expect(out.lastPushFailedAt).toBe('2026-10-20T00:00:00.000Z');
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure']) {
             expect(out).not.toHaveProperty(f);
@@ -142,6 +141,7 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.donorCompanyName).toBe('Doe Hardware');
         expect(out.validationNotes).toBe('rejected: wrong store');
         expect(out.lastPushFailure).toBe('receiver timed out');
+        expect(out).not.toHaveProperty('pushGivenUp');
     });
 
     it('an internal-only view strips the audit actor name, values and the mail sender', () => {
@@ -185,7 +185,7 @@ describe('ReceiptView tiering', () => {
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         // The three old duplicate columns are still on ReceiptDetail, but no response carries them.
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt', 'duplicateFlagClearedAt', 'duplicateSuspectReceiptId', 'duplicateSuspectIsRejected');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 
