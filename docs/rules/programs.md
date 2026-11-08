@@ -331,9 +331,14 @@ Things the app takes as true because they are handled outside it.
 - Each program has an off-sale date, set by the board, defaulting to its start
   date; it may fall before or after the start. On that date new claims stop, and
   the next daily run closes enrollment and hides the public item, retrying each
-  day until the store confirms. Families who claimed in time still pay through
-  the reserved-seat item. Moving only the start date never reopens an ended
-  sale.  [Decision]
+  day until the store confirms. Moving only the start date never reopens an
+  ended sale.  [Decision]
+
+- A family whose unpaid claim was made in time can still pay it through the
+  reserved-seat item, whether enrollment was closed by the off-sale date's daily
+  run or by the Board by hand. It may also still request a scholarship or payment
+  plan after the off-sale date, and the request takes its seat as any request
+  does.  [Decision — Owner ruling, 2026-11-08]
 
 - A program with no reserved-seat item keeps its public item on sale past the
   off-sale date, because hiding it would stop claimed families paying; the
