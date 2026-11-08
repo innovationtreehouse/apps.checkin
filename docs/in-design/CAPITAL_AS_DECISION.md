@@ -405,9 +405,10 @@ one row per org holding the highest number ever issued. Each mint takes the
 next number from it and raises it in the same transaction; the row lock also
 serialises concurrent mints, which the full-register scan in `nextItfaSeq`
 (`capital-register.ts:40`) does not. Seeding a historical number above the mark
-raises it too; `link` issues no number and leaves it alone. The mark starts
-empty; production holds no financial data yet. The audit log is
-never an input.
+raises it too; `link` issues no number and leaves it alone. So the next number
+is always one more than the highest on the register, seeded QuickBooks labels
+included, without reading history. The mark starts at the register's highest,
+which in production is none. The audit log is never an input.
 
 - The expense registers inside its period step's transaction: atomic.
 - The gift's period step commits on the gift's side; the in-kind drain then
@@ -634,8 +635,13 @@ is nothing of capital to clear. Its signatures and QuickBooks parts stand.
   two; a gift with an unstamped capital line does not book.
 - Booking: a gift's asset line books from its own decision with the expense
   database unreachable.
-- Model check before building: the gift's register-then-stamp under crash and
-  retry, the one place a duplicate asset number could be minted.
+- Model check, done for the expense side: with the capital steps added to the
+  sign-off model, a send-back from a capital step is unreachable for every
+  expense the app can create, and the existing sign-off properties still hold.
+  Still to check before building: the gift's register-then-stamp under crash
+  and retry, the one place a duplicate asset number could be minted. The gift's
+  finality does not need a model once the withdrawal-after-money state is
+  removed (CAD-8).
 - Flow test: accept a gift, decide one line capital on the gift's page, see it
   book to a fixed-asset account and appear on the register with a link to the
   gift line.
