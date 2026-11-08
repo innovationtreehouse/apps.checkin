@@ -318,8 +318,12 @@ already has the first three:
 What a record waits on is read from its lines, the same way for both: it waits
 on designation while a line it offered has no `isCapital`, and on the period
 while a capital line has no `depreciationYears`. The expense keeps its existing
-`capital_review` and `set_depreciation_cycle` states for that; a gift's
-existing "waiting on capital" says the same. Whether the record needed review
+`capital_review` and `set_depreciation_cycle` states for that, and they must
+never disagree with its lines: the review module's `afterStep` is the only
+code that moves an expense out of either state, and it checks, before
+committing, that the state the expense lands in is what its lines say it waits
+on. A mismatch is a bug and rolls the step back. A gift has no state of its
+own for this; its "waiting on capital" is read from its lines. Whether the record needed review
 at all is the threshold test, run once when it becomes final and stored on the
 record (`Expense` takes it as its state; the gift gains `capitalReviewNeeded`).
 
@@ -359,7 +363,7 @@ module holding the two steps, written against a small store:
 interface CapitalLineStore {
   lines(): Promise<CapitalLine[]>;                        // the record's lines and unit costs
   save(line: CapitalLine, before: CapitalLine): Promise<void>; // the line and its audit row
-  afterStep(step: "designated" | "period_set"): Promise<void>; // expense: advance its state; gift: nothing
+  afterStep(step: "designated" | "period_set"): Promise<void>; // expense: advance its state, checked against its lines; gift: nothing
 }
 designate(store, actor, input): Promise<void>;
 setPeriod(store, actor, input, register: RegisterCall): Promise<void>;
@@ -394,9 +398,17 @@ interface AssetUnit { costCents: number; acquisitionDate: string | null; depreci
 `CapitalAsset` gains `sourceKind`, the three gift source columns and
 `unitIndex`, with a plain unique index on (org, source, unit index). That index
 makes `register` repeatable. Asset numbers are physical labels and are never
-reused (CAD-7). Nothing deletes an asset any more, and the next number also
-counts the numbers past clearings deleted, which their audit rows name, so none
-of those comes back either.
+reused (CAD-7).
+
+The next number comes from a stored high-water mark, `CapitalAssetSequence`,
+one row per org holding the highest number ever issued. Each mint takes the
+next number from it and raises it in the same transaction; the row lock also
+serialises concurrent mints, which the full-register scan in `nextItfaSeq`
+(`capital-register.ts:40`) does not. Seeding a historical number above the mark
+raises it too; `link` issues no number and leaves it alone. The mark is set
+once, at migration, from the highest number on the register and the highest
+in past clearings' audit rows. After that the audit log is history only, never
+an input.
 
 - The expense registers inside its period step's transaction: atomic.
 - The gift's period step commits on the gift's side; the in-kind drain then
@@ -504,7 +516,7 @@ number.
 | CAD-4 | After accept: the gift's capital decision is its own step, on the gift's page. | Accept stays one act. The capital step is bookkeeping, so any finance holder may take it, as classifying a signed-off purchase is; the accept's conflict rule does not carry over. |
 | CAD-5 | Like a purchase: two steps, designate, then period and owner. Reuse the purchase's review wholesale. | The review logic is lifted out of the expense services into one module both paths call (section 3, "Review"); the gift does not get its own. |
 | CAD-6 | No. A capital decision never changes after the record books; any mistake is cleaned up by hand. Leave it that way. | Same for both paths. The app never retires or re-registers. |
-| CAD-7 | Asset numbers are physical labels and are never reused, whatever the design. And capital is not decided before the record can no longer be withdrawn. | No number is ever issued twice: the next number counts every number issued, including those past clearings deleted (B7). Under this design nothing is undone, so no number is freed. Capital steps open only once a gift is accepted or an expense can no longer be sent back; the expense loses its send-back edges out of the capital steps, and the asset deletion behind B7 goes. |
+| CAD-7 | Asset numbers are physical labels and are never reused, whatever the design. And capital is not decided before the record can no longer be withdrawn. | No number is ever issued twice: the next number comes from a stored high-water mark, set at migration above every number issued, including those past clearings deleted (B7). Under this design nothing is undone, so no number is freed. Capital steps open only once a gift is accepted or an expense can no longer be sent back; the expense loses its send-back edges out of the capital steps, and the asset deletion behind B7 goes. |
 | CAD-8 | Yes: remove the withdrawal-after-money state. | The flag, finance's settle action, the queue's `withdrawal` reason and the `revenue.md` rule behind them go, in a PR of their own outside this design. B1 and B13 go with them. |
 | CAD-9 | No separate library. | The register, thresholds and review module stay in the expense library; Option B is dropped. |
 | CAD-10 | A capital line needs its number before it goes to QuickBooks. | A gift does not book until each capital line's assets are registered and stamped, as a purchase's are minted before its entry. |
@@ -612,7 +624,10 @@ is nothing of capital to clear. Its signatures and QuickBooks parts stand.
   CAD-2 and CAD-3 examples: the six chairs, the $1,130 table and the laser with
   its lens kit, each giving the same answer bought or given.
 - Expense integration: `register` repeated for the same line returns the same
-  numbers and writes its audit row once; the capital steps refuse to open while
+  numbers and writes its audit row once; the high-water mark rises with each
+  mint and with a higher seeded number, and two concurrent mints get different
+  numbers; `afterStep` refuses a state its lines disagree with, and for every
+  reachable expense state the lines agree; the capital steps refuse to open while
   the reimbursee is unknown; naming a reimbursee never sends an expense back
   out of a capital step.
 - Bulk-donation integration: each capital step and its events in one
