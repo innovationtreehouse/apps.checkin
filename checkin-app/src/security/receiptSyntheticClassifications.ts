@@ -5,11 +5,10 @@
  * ReceiptView — the receipt as the library returns it: `Receipt` and its
  * `ReceiptDetail` flattened into one row (repositories/receipt.ts `ReceiptRow`),
  * plus the detail screen's line items and review reasons and "My receipts"'
- * paid status (`reimbursement`: `{ paidOn }` or null), and on a finalized receipt
- * not yet delivered to receiving its push record: whether catch-up has given up
- * (`pushGivenUp`), and the latest failure's time and message (`lastPushFailedAt`,
- * `lastPushFailure`). The message is the receipt's `lastError`, so it keeps that
- * column's `personal` tier. A finalized receipt also carries its
+ * paid status (`reimbursement`: `{ paidOn }` or null), and on a stuck receipt its
+ * first failure's time (`lastPushFailedAt`) and, on the single-receipt read, its
+ * step's last error (`lastPushFailure`), a flow or push error. The error is the
+ * receipt's `lastError`, so it keeps that column's `personal` tier. A finalized receipt also carries its
  * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
  * expense's status with each rejected line's note, and an in-kind gift's
  * decision. The line notes are approvers' free text, so the field is `personal`,
@@ -26,8 +25,8 @@
  * every line of their own receipt. A line without the stamp fails closed.
  *
  * ReceiptQueueCounts — how many of the org's receipts each review queue holds:
- * a count per state, finalized receipts not yet delivered, and those catch-up
- * gave up on. Counts only, `internal`.
+ * a count per state, finalized receipts not yet delivered, and those whose push
+ * failed (`pushGivenUp`). Counts only, `internal`.
  *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
@@ -132,7 +131,6 @@ export const classifications = {
     financialReviewReasons: "internal",
     complete: "internal",
     reimbursement: "internal",
-    pushGivenUp: "internal",
     lastPushFailedAt: "internal",
     lastPushFailure: "personal",
     purchaseOutcome: "personal",
