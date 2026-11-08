@@ -121,16 +121,11 @@ describeDb("finance queue — QuickBooks tab", () => {
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_POST_FAILED", "Not posted"]]]);
   });
 
-  it("shows an expense parked for the catalog, and not one parked by another failure", async () => {
-    const waiting = await seedExpense({ state: "qb_error" });
-    await writeAudit(db, SYSTEM_ACTOR, { expenseId: waiting, action: "qb_waiting_on_catalog" });
-    const failed = await seedExpense({ state: "qb_error" });
-    await writeAudit(db, SYSTEM_ACTOR, { expenseId: failed, action: "qb_processing_failed", notes: "boom" });
-
-    const rows = await financeQueueRows(FINANCE, "quickbooks");
-    expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => [x.code, x.text])])).toEqual([[waiting, [["QB_WAITING_ON_CATALOG", "Waiting for the catalog; retries daily"]]]]);
-    expect((await financeQueueCounts(FINANCE)).quickbooks).toMatchObject({ actionable: 0, total: 1 });
+  it("lists no qb_error expense: it is on the Problems list", async () => {
+    await seedExpense({ state: "qb_error" });
+    expect(await financeQueueRows(FINANCE, "quickbooks")).toEqual([]);
   });
+
 });
 
 describeDb("finance queue — account holds tab", () => {

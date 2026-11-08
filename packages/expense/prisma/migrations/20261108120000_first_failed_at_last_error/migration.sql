@@ -27,4 +27,21 @@ UPDATE "expenses" e SET
   "qb_last_error" = (SELECT f."notes" FROM failures f WHERE f."expense_id" = e."id" ORDER BY f."changed_at" DESC LIMIT 1)
 WHERE e."qb_failure_kind" IS NOT NULL;
 
+-- An expense in qb_error is timed from its first processing failure since it last processed,
+-- and carries its latest error.
+WITH failures AS (
+  SELECT a."expense_id", a."changed_at", a."notes"
+  FROM "expense_audit_log" a
+  JOIN "expenses" e ON e."id" = a."expense_id"
+  WHERE e."state" = 'qb_error'
+    AND a."action" IN ('qb_processing_failed', 'qb_waiting_on_catalog')
+    AND a."changed_at" > COALESCE(
+      (SELECT MAX(r."changed_at") FROM "expense_audit_log" r WHERE r."expense_id" = a."expense_id" AND r."action" IN ('qb_event_emitted', 'qb_holds_created')),
+      '-infinity'::timestamp)
+)
+UPDATE "expenses" e SET
+  "qb_first_failed_at" = COALESCE((SELECT MIN(f."changed_at") FROM failures f WHERE f."expense_id" = e."id"), e."submitted_at"),
+  "qb_last_error" = COALESCE((SELECT f."notes" FROM failures f WHERE f."expense_id" = e."id" AND f."notes" IS NOT NULL ORDER BY f."changed_at" DESC LIMIT 1), 'The catalog was unavailable')
+WHERE e."state" = 'qb_error';
+
 COMMIT;

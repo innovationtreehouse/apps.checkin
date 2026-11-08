@@ -223,8 +223,11 @@ run. Expense's step, `runExpenseQbPosting`, runs first, ahead of the donation
 hand-over, in-kind and income, and each lane fails on its own. It has four parts,
 each also failing on its own:
 
-- `recoverStrandedQbExpenses`: expenses left in `qb_pending` or `qb_error` with no
-  outbox row, at most 50.
+- `recoverStrandedQbExpenses`: expenses a crash left in `qb_pending` with no outbox
+  row, at most 50. An expense that failed to prepare for QuickBooks (account
+  resolution, the catalog, the outbox commit) is in `qb_error`, stuck with
+  `qbFirstFailedAt` and `qbLastError` until a person retries it from the Problems
+  list.
 - `drainExpenseOutbox`: every outboxed expense not yet in QuickBooks, oldest receipt
   first, then the orphan sweep.
 - `checkQbDrift`: the drift check below.

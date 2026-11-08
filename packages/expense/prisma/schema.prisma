@@ -167,10 +167,11 @@ model Expense {
   // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbFailureKind      String?   @map("qb_failure_kind")
-  // When the expense's post first failed; set while null, cleared when a post settles. Set means stuck.
+  // When the expense first failed to prepare for QuickBooks (qb_error) or to post; set while null,
+  // cleared when that step succeeds. Set means stuck.
   /// @sensitivity:internal
   qbFirstFailedAt    DateTime? @map("qb_first_failed_at")
-  // The latest failed post's error, shown only on the expense's own page.
+  // The latest error of that failed step, shown only on the expense's own page.
   /// @sensitivity:personal
   qbLastError        String?   @map("qb_last_error")
   // When a post claimed the expense (POSTING) before calling QuickBooks; cleared when it settles.

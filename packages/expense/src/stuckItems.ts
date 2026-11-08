@@ -1,27 +1,33 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { db } from "./db";
 import { getOrgId } from "./runtime";
-import { retryQbPost } from "./lib/expense-qb-processor";
+import { checkAndProcessExpense, retryQbPost } from "./lib/expense-qb-processor";
 import { SYSTEM_ACTOR } from "./lib/system-actor";
 import { retryCatalogEvent } from "./services/catalogEventConsumer";
 import { retryFailedPayload } from "./services/intakeService";
 
 const INTAKE = "intake";
 const CATALOG_EVENT = "catalog event";
+const QB_PROCESSING = "QuickBooks processing";
 const QB_POSTING = "QuickBooks posting";
 
-/** Receipt payloads and catalog events that failed to apply, and expenses whose QuickBooks post failed, each timed by its first failure. */
+/**
+ * Receipt payloads and catalog events that failed to apply, expenses that failed to prepare for
+ * QuickBooks (qb_error), and expenses whose QuickBooks post failed, each timed by its first failure.
+ */
 export async function stuckItems(): Promise<StuckItem[]> {
   const orgId = await getOrgId();
   const [payloads, events, expenses] = await Promise.all([
     db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, receivedAt: true, firstFailedAt: true } }),
     db.expenseReceivedOrgEvent.findMany({ where: { orgId, status: "failed" }, select: { id: true, receivedAt: true, firstFailedAt: true } }),
-    db.expense.findMany({ where: { orgId, qbFirstFailedAt: { not: null } }, select: { id: true, qbFirstFailedAt: true } }),
+    db.expense.findMany({ where: { orgId, qbFirstFailedAt: { not: null } }, select: { id: true, state: true, qbFirstFailedAt: true } }),
   ]);
   return [
     ...payloads.map((p) => ({ id: p.receiptId, step: INTAKE, href: `/receipts/${p.receiptId}`, failedAt: p.firstFailedAt ?? p.receivedAt })),
     ...events.map((e) => ({ id: String(e.id), step: CATALOG_EVENT, href: null, failedAt: e.firstFailedAt ?? e.receivedAt })),
-    ...expenses.flatMap((e) => (e.qbFirstFailedAt ? [{ id: e.id, step: QB_POSTING, href: `/expense/expenses/${e.id}`, failedAt: e.qbFirstFailedAt }] : [])),
+    ...expenses.flatMap((e) =>
+      e.qbFirstFailedAt ? [{ id: e.id, step: e.state === "qb_error" ? QB_PROCESSING : QB_POSTING, href: `/expense/expenses/${e.id}`, failedAt: e.qbFirstFailedAt }] : [],
+    ),
   ];
 }
 
@@ -36,8 +42,13 @@ export async function retryStuckItem({ id, step }: { id: string; step: string })
       return retryFailedPayload(id);
     case CATALOG_EVENT:
       return retryCatalogEvent(Number(id));
+    case QB_PROCESSING: {
+      const orgId = await getOrgId();
+      if (!(await db.expense.findFirst({ where: { id, orgId, state: "qb_error" }, select: { id: true } }))) throw new ServiceError(404, "No failed QuickBooks processing for this expense");
+      return checkAndProcessExpense(orgId, id);
+    }
     case QB_POSTING: {
-      const expense = await db.expense.findFirst({ where: { id, orgId: await getOrgId(), qbFirstFailedAt: { not: null } }, select: { id: true } });
+      const expense = await db.expense.findFirst({ where: { id, orgId: await getOrgId(), state: { not: "qb_error" }, qbFirstFailedAt: { not: null } }, select: { id: true } });
       if (!expense) throw new ServiceError(404, "No failed QuickBooks post for this expense");
       const outcome = await retryQbPost(await getOrgId(), id, SYSTEM_ACTOR);
       if (outcome === false) throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");

@@ -284,6 +284,7 @@ async function commitQbProcessing(
     await tx.expenseEvent.create({
       data: { orgId, expenseId },
     });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
 
     await advanceWorkflowInTx(tx, {
       expenseId,
@@ -302,8 +303,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   let expense = await db.expense.findFirst({ where: { id: expenseId } });
   if (!expense) return;
 
-  // Recover expenses that previously errored: transition qb_error → qb_pending
-  // so the machine path for QB_COMPLETE remains consistent.
+  // A retry of a qb_error expense goes back to qb_pending, so the machine path for QB_COMPLETE holds.
   if (expense.state === "qb_error") {
     await advanceWorkflow({
       db,
@@ -343,17 +343,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
-    if ((await processExpenseForQb(orgId, expenseId, expense)) === "catalog_unavailable") {
-      // An outage parks the expense for the posting run's recovery; it never counts as a failure.
-      await advanceWorkflow({
-        db,
-        expenseId,
-        currentState: expense.state,
-        event: { type: "QB_ERROR" },
-        actor: SYSTEM_ACTOR,
-        action: "qb_waiting_on_catalog",
-      }).catch(unlessRaceLost);
-    }
+    await processExpenseForQb(orgId, expenseId, expense);
   } catch (err) {
     // A concurrent drain moved the expense first and carries it on; this is not a QB failure.
     if (err instanceof StaleStateError) return;
@@ -362,6 +352,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
     const current = await db.expense.findFirst({ where: { id: expenseId } });
     if (!current || (current.state !== "qb_pending" && current.state !== "qb_on_hold")) throw err;
 
+    const error = err instanceof Error ? err.message : String(err);
     await advanceWorkflow({
       db,
       expenseId,
@@ -369,30 +360,22 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       event: { type: "QB_ERROR" },
       actor: SYSTEM_ACTOR,
       action: "qb_processing_failed",
-      auditNotes: err instanceof Error ? err.message : String(err),
+      auditNotes: error,
     }).catch(unlessRaceLost);
+    // Stuck in qb_error until a person retries it; the first failure's time is kept.
+    await db.expense.updateMany({ where: { id: expenseId, state: "qb_error" }, data: { qbLastError: error } });
+    await db.expense.updateMany({ where: { id: expenseId, state: "qb_error", qbFirstFailedAt: null }, data: { qbFirstFailedAt: new Date() } });
   }
 }
 
-/** Returns "catalog_unavailable" when the catalog could not be read, before anything is written. */
-async function processExpenseForQb(
-  orgId: string,
-  expenseId: string,
-  expense: Expense,
-): Promise<"catalog_unavailable" | void> {
+async function processExpenseForQb(orgId: string, expenseId: string, expense: Expense): Promise<void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
   if (lineItems.length === 0) return;
 
   const rules = await db.accountMapping.findMany({ where: { orgId } });
 
-  const accounts = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "").catch((err: unknown) => {
-    if (kindOf(err) !== "system") throw err;
-    logError("qb_catalog_unavailable", { expenseId, orgId }, err);
-    return null;
-  });
-  if (!accounts) return "catalog_unavailable";
-  const { resolved, conflicts, snapshots } = accounts;
+  const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
 
   if (conflicts.length > 0) {
     await saveCatalogSnapshots(snapshots);
@@ -408,6 +391,7 @@ async function processExpenseForQb(
         action: "qb_holds_created",
       });
     }
+    await db.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
     return;
   }
 
@@ -443,13 +427,13 @@ async function processExpenseForQb(
 }
 
 // ── Stranded recovery (catch-up sweep) ────────────────────────────────────────
-// Re-runs expenses left in qb_pending or qb_error without an outbox row (a crash between the
-// state advance and QB processing, or an outage). The host's daily reconcile cron step calls it;
-// checkAndProcessExpense is idempotent. Capped; returns counts only.
+// Re-runs expenses left in qb_pending without an outbox row (a crash between the state advance and
+// QB processing). A qb_error expense waits for a person's retry. The host's daily cron step calls
+// it; checkAndProcessExpense is idempotent. Capped; returns counts only.
 
 export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: number; failed: number }> {
   const candidates = await db.expense.findMany({
-    where: { state: { in: ["qb_pending", "qb_error"] } },
+    where: { state: "qb_pending" },
     select: { id: true, orgId: true },
     orderBy: { submittedAt: "asc" },
   });

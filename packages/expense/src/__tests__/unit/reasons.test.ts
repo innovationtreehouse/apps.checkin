@@ -81,10 +81,7 @@ describe("deriveReasons", () => {
     expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
   });
 
-  it("reads an expense parked for the catalog as a QuickBooks reason, never an account hold", () => {
-    expect(deriveReasons(facts({ expense: { state: "qb_error" }, waitingOnCatalog: true }))).toEqual([
-      { code: "QB_WAITING_ON_CATALOG", tab: "qb", amountCents: null, count: null, detail: null },
-    ]);
+  it("gives a qb_error expense no queue reason: it is on the Problems list", () => {
     expect(codes(facts({ expense: { state: "qb_error" } }))).toEqual([]);
   });
 
@@ -140,7 +137,6 @@ describe("reasonText", () => {
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
     expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
     expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
-    expect(reasonText(r({ code: "QB_WAITING_ON_CATALOG" }), "USD")).toBe("Waiting for the catalog; retries daily");
   });
 });
 

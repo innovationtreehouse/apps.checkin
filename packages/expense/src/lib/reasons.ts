@@ -20,7 +20,6 @@ export type ReasonCode =
   | "QB_UNBOOKED"
   | "QB_VENDOR_MISSING"
   | "QB_NO_CLASS"
-  | "QB_WAITING_ON_CATALOG"
   | ReviewKind
   | "BOARD_APPROVAL"
   | "SIGNER_HELD";
@@ -67,8 +66,6 @@ export interface ReasonFacts {
    * bucket's name, or null for a line with no bucket. Undefined when nothing stops it for a Class.
    */
   missingClass?: { bucketName: string | null };
-  /** An expense the catalog's outage parked in qb_error; the posting run's recovery retries it. */
-  waitingOnCatalog?: true;
   /** Whether the reimbursee has a linked QuickBooks Vendor; null when there is no reimbursee. */
   reimburseeVendorLinked: boolean | null;
   openReviews: { kind: ReviewKind; detail: string | null }[];
@@ -114,7 +111,6 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
     if (f.missingClass) out.push(reason("QB_NO_CLASS", "qb", { detail: f.missingClass.bucketName }));
-    if (f.waitingOnCatalog) out.push(reason("QB_WAITING_ON_CATALOG", "qb"));
   }
   for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 
