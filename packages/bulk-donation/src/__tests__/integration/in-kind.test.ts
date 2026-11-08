@@ -55,6 +55,15 @@ beforeEach(async () => {
 });
 
 describeDb("in-kind join on receiptId", () => {
+  it.each(["", "usd"])("takes the money side of a receipt with a currency of %j", async (currency) => {
+    await ingestInKind({ ...receipt(R1), currency });
+    expect(await row()).toMatchObject({ receiptTotalCents: 2500 });
+  });
+
+  it("refuses the money side of a receipt with a currency of \"$\"", async () => {
+    await expect(ingestInKind({ ...receipt(R1), currency: "$" })).rejects.toThrow();
+  });
+
   it("money first waits as donor needed, then waits to be accepted once the donor arrives", async () => {
     await ingestInKind(receipt(R1));
     expect((await queue()).map((q) => [q.receiptId, q.state])).toEqual([[R1, "donor"]]);

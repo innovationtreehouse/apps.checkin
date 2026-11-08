@@ -22,6 +22,8 @@ const find = (lines: DepositLine[], account: string, bucket: number | null = nul
   lines.find((l) => l.account === account && l.budgetOwnerId === bucket)?.amountCents;
 
 const categories = new Map([["V-shirt", 7], ["V-camp", 9]]);
+const accounts = new Map([["V-shirt", "400"], ["V-camp", "401"], ["V-mug", "402"]]);
+const sales = { categories, accounts, customItemsAccountId: "450" };
 
 describe("buildDepositLines", () => {
   it("books each charge line to its bucket, tax and shipping to org level, the fee to fees", () => {
@@ -30,7 +32,7 @@ describe("buildDepositLines", () => {
       payoutNetCents: 8700 - 282,
       txns: [txn("charge", "O1", 8700, 282)],
       orderLines: [line("O1", "V-shirt", 1000, 2, 100), line("O1", "V-camp", 5000), line("O1", "V-mug", 1000)],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 7)).toBe(1900);
     expect(find(lines, "income", 9)).toBe(5000);
@@ -40,17 +42,17 @@ describe("buildDepositLines", () => {
     expect(sum(lines)).toBe(8418);
   });
 
-  it("splits a charge smaller than its lines proportionally, rounding left at org level", () => {
+  it("splits a charge smaller than its lines proportionally, the leftover cent to a line", () => {
     const lines = buildDepositLines({
       payoutNetCents: 1000,
       txns: [txn("charge", "O1", 1000)],
       orderLines: [line("O1", "V-shirt", 1000), line("O1", "V-camp", 1000), line("O1", "V-mug", 1000)],
-      categories,
+      ...sales,
     });
-    expect(find(lines, "income", 7)).toBe(333);
+    expect(find(lines, "income", 7)).toBe(334);
     expect(find(lines, "income", 9)).toBe(333);
     expect(find(lines, "income", null)).toBe(333);
-    expect(find(lines, "charge_remainder")).toBe(1);
+    expect(find(lines, "charge_remainder")).toBeUndefined();
     expect(sum(lines)).toBe(1000);
   });
 
@@ -59,7 +61,7 @@ describe("buildDepositLines", () => {
       payoutNetCents: 6000 - 3000,
       txns: [txn("charge", "O1", 6000), txn("refund", "O1", -3000)],
       orderLines: [line("O1", "V-shirt", 1000), line("O1", "V-camp", 5000)],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 7)).toBe(1000 - 500);
     expect(find(lines, "income", 9)).toBe(5000 - 2500);
@@ -71,7 +73,7 @@ describe("buildDepositLines", () => {
       payoutNetCents: 10000 - 4000,
       txns: [txn("charge", "O1", 10000), txn("refund", "O1", -4000)],
       orderLines: [line("O1", "V-camp", 6000), { ...line("O1", "V-shirt", 4000), currentQuantity: 0 }],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 9)).toBe(6000);
     expect(find(lines, "income", 7)).toBeUndefined();
@@ -84,7 +86,7 @@ describe("buildDepositLines", () => {
       payoutNetCents: -1000,
       txns: [txn("refund", "O1", -1000)],
       orderLines: [{ ...line("O1", "V-shirt", 1000, 3, 300), currentQuantity: 2 }, line("O1", "V-camp", 5000)],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 7)).toBe(-900);
     expect(find(lines, "income", 9)).toBeUndefined();
@@ -97,7 +99,7 @@ describe("buildDepositLines", () => {
       payoutNetCents: -3000,
       txns: [txn("refund", "O1", -3000)],
       orderLines: [{ ...line("O1", "V-camp", 5000), currentQuantity: 0 }, { ...line("O1", "V-shirt", 1000), currentQuantity: 0 }],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 9)).toBe(-2500);
     expect(find(lines, "income", 7)).toBe(-500);
@@ -109,14 +111,52 @@ describe("buildDepositLines", () => {
       payoutNetCents: -1000,
       txns: [txn("refund", "O1", -1000)],
       orderLines: [{ ...line("O1", "V-camp", 0), currentQuantity: 0 }, line("O1", "V-shirt", 2000)],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 7)).toBe(-1000);
     expect(find(lines, "income", 9)).toBeUndefined();
     expect(sum(lines)).toBe(-1000);
   });
 
-  it("leaves refund rounding at org level so the lines sum exactly to the refund", () => {
+  it.each([
+    { unitsLeft: 2, weight: 33 },
+    { unitsLeft: 1, weight: 67 },
+  ])("rounds a 100-cent line of 3 units to $weight cents with $unitsLeft left", ({ unitsLeft, weight }) => {
+    const lines = buildDepositLines({
+      payoutNetCents: -100,
+      txns: [txn("refund", "O1", -100)],
+      orderLines: [{ ...line("O1", "V-shirt", 100, 3, 200), currentQuantity: unitsLeft }],
+      ...sales,
+    });
+    expect(find(lines, "income", 7)).toBe(-weight);
+    expect(find(lines, "charge_remainder")).toBe(-(100 - weight));
+  });
+
+  it("gives no refund weight to a mirror row with more units now than sold", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -2000,
+      txns: [txn("refund", "O1", -2000)],
+      orderLines: [{ ...line("O1", "V-shirt", 1000, 3), currentQuantity: 5 }, { ...line("O1", "V-camp", 2000), currentQuantity: 0 }],
+      ...sales,
+    });
+    expect(find(lines, "income", 9)).toBe(-2000);
+    expect(find(lines, "income", 7)).toBeUndefined();
+    expect(sum(lines)).toBe(-2000);
+  });
+
+  it("gives no refund weight to a mirror row of quantity 0", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: -2000,
+      txns: [txn("refund", "O1", -2000)],
+      orderLines: [line("O1", "V-shirt", 1000, 0), { ...line("O1", "V-camp", 2000), currentQuantity: 0 }],
+      ...sales,
+    });
+    expect(find(lines, "income", 9)).toBe(-2000);
+    expect(find(lines, "income", 7)).toBeUndefined();
+    expect(sum(lines)).toBe(-2000);
+  });
+
+  it("gives refund rounding to the lines so they sum exactly to the refund", () => {
     const lines = buildDepositLines({
       payoutNetCents: -1000,
       txns: [txn("refund", "O1", -1000)],
@@ -125,12 +165,12 @@ describe("buildDepositLines", () => {
         { ...line("O1", "V-camp", 1000), currentQuantity: 0 },
         { ...line("O1", "V-mug", 1000), currentQuantity: 0 },
       ],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", 7)).toBe(-333);
     expect(find(lines, "income", 9)).toBe(-333);
-    expect(find(lines, "income", null)).toBe(-333);
-    expect(find(lines, "charge_remainder")).toBe(-1);
+    expect(find(lines, "income", null)).toBe(-334);
+    expect(find(lines, "charge_remainder")).toBeUndefined();
     expect(sum(lines)).toBe(-1000);
   });
 
@@ -139,7 +179,7 @@ describe("buildDepositLines", () => {
       payoutNetCents: 500 - 120,
       txns: [txn("charge", null, 500), txn("ADJUSTMENT", null, -120)],
       orderLines: [],
-      categories,
+      ...sales,
     });
     expect(find(lines, "income", null)).toBe(500);
     expect(find(lines, "adjustments")).toBe(-120);
@@ -147,8 +187,8 @@ describe("buildDepositLines", () => {
   });
 
   it("books a charge with no order lines whole to org-level income", () => {
-    const lines = buildDepositLines({ payoutNetCents: 700, txns: [txn("charge", "O9", 700)], orderLines: [], categories });
-    expect(lines).toEqual([{ account: "income", budgetOwnerId: null, amountCents: 700 }]);
+    const lines = buildDepositLines({ payoutNetCents: 700, txns: [txn("charge", "O9", 700)], orderLines: [], ...sales });
+    expect(lines).toEqual([{ account: "income", accountId: null, budgetOwnerId: null, amountCents: 700 }]);
   });
 
   it("aggregates lines across charges per bucket", () => {
@@ -156,24 +196,62 @@ describe("buildDepositLines", () => {
       payoutNetCents: 2000,
       txns: [txn("charge", "O1", 1000), txn("charge", "O2", 1000)],
       orderLines: [line("O1", "V-shirt", 1000), line("O2", "V-shirt", 1000)],
-      categories,
+      ...sales,
     });
-    expect(lines).toEqual([{ account: "income", budgetOwnerId: 7, amountCents: 2000 }]);
+    expect(lines).toEqual([{ account: "income", accountId: "400", budgetOwnerId: 7, amountCents: 2000 }]);
+  });
+
+  it("books each sale to its item's QuickBooks account, one line per account and bucket", () => {
+    // A membership and two program items, all in bucket 7; the two program items share an account.
+    const lines = buildDepositLines({
+      payoutNetCents: 6000,
+      txns: [txn("charge", "O1", 6000)],
+      orderLines: [line("O1", "V-member", 1000), line("O1", "V-camp", 3000), line("O1", "V-class", 2000)],
+      categories: new Map([["V-member", 7], ["V-camp", 7], ["V-class", 7]]),
+      accounts: new Map([["V-member", "400"], ["V-camp", "410"], ["V-class", "410"]]),
+    });
+    expect(lines).toEqual([
+      { account: "income", accountId: "400", budgetOwnerId: 7, amountCents: 1000 },
+      { account: "income", accountId: "410", budgetOwnerId: 7, amountCents: 5000 },
+    ]);
+  });
+
+  it("books a custom item as general income on the custom-items account", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: 1500,
+      txns: [txn("charge", "O1", 1500)],
+      orderLines: [line("O1", null, 500), line("O1", "V-shirt", 1000)],
+      ...sales,
+    });
+    expect(lines).toEqual([
+      { account: "income", accountId: "450", budgetOwnerId: null, amountCents: 500 },
+      { account: "income", accountId: "400", budgetOwnerId: 7, amountCents: 1000 },
+    ]);
+  });
+
+  it("puts no QuickBooks account on remainder, fee and adjustment lines; their roles resolve at booking", () => {
+    const lines = buildDepositLines({
+      payoutNetCents: 1200 - 30 + 50,
+      txns: [txn("charge", "O1", 1200, 30), txn("adjustment", null, 50)],
+      orderLines: [line("O1", "V-shirt", 1000)],
+      ...sales,
+    });
+    for (const l of lines.filter((l) => l.account !== "income")) expect(l.accountId).toBeNull();
   });
 
   it("refuses to build when the transactions do not sum to the payout net", () => {
     expect(() =>
-      buildDepositLines({ payoutNetCents: 999, txns: [txn("charge", null, 1000)], orderLines: [], categories }),
+      buildDepositLines({ payoutNetCents: 999, txns: [txn("charge", null, 1000)], orderLines: [], ...sales }),
     ).toThrow(/sum to 1000, payout net is 999/);
   });
 
-  it("carries no buyer identity: every line is account, bucket and amount only", () => {
+  it("carries no buyer identity: every line is account, QuickBooks account, bucket and amount only", () => {
     const lines = buildDepositLines({
       payoutNetCents: 1000,
       txns: [{ ...txn("charge", "O1", 1000), orderName: "#1001 Jane Buyer" }],
       orderLines: [line("O1", "V-shirt", 1000)],
-      categories,
+      ...sales,
     });
-    for (const l of lines) expect(Object.keys(l).sort()).toEqual(["account", "amountCents", "budgetOwnerId"]);
+    for (const l of lines) expect(Object.keys(l).sort()).toEqual(["account", "accountId", "amountCents", "budgetOwnerId"]);
   });
 });

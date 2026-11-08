@@ -12,7 +12,7 @@ const FINANCE = "finance@example.com";
 const BOARD = "boardmember@example.com";
 const APPROVER = "keyholder1@example.com";
 
-interface Receipt { id: string; state: string; duplicateSuspectReceiptId?: string | null }
+interface Receipt { id: string; state: string }
 type Received = { id: number; receiptId: string; state: string };
 type Detail = { ReceivedReceipt: Received; ReceivedReceiptLineStatus: Array<{ id: number; recognitionStatus: string }> };
 type Approval = { id: number; lineItemId: number; ownerId: number | null; status: string };
@@ -77,13 +77,10 @@ describe("receipt to expense journey", () => {
     expect(copy.status).toBe(200);
     expect(copy.json.state).toBe("duplicate_flagged");
 
-    // FINANCE finds it in the duplicates queue, with the receipt it repeats named.
+    // FINANCE finds it in the duplicates queue, grouped with the receipt it repeats.
     const duplicates = await api<Receipt[]>(finance, "/api/receipts?state=duplicate_flagged");
     expect(duplicates.status).toBe(200);
     expect(duplicates.json.some((r) => r.id === copy.json.id)).toBe(true);
-    const flagged = await api<Receipt>(finance, `/api/receipts/${copy.json.id}`);
-    expect(flagged.status).toBe(200);
-    expect(flagged.json.duplicateSuspectReceiptId).toEqual(expect.any(String));
 
     const group = await api<{ members: Array<{ id: string }> }>(finance, `/api/receipts/${copy.json.id}/duplicate-group`);
     expect(group.json.members.map((m) => m.id)).toEqual(expect.arrayContaining([original?.id, copy.json.id]));

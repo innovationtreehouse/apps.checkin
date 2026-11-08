@@ -163,6 +163,14 @@ describeDb("S5 consumer — catch-up sweep", () => {
 });
 
 describeDb("S5 consumer — catch-up alerts", () => {
+  it("records that no catalog is connected when the event source is unbound, and alerts nobody", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    bindPorts({ alerts: { orgEventsStuck } });
+
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, notConnected: true });
+    expect(orgEventsStuck).not.toHaveBeenCalled();
+  });
+
   it("alerts on each run while the catalog can't be read, and still retries failures", async () => {
     const orgEventsStuck = vi.fn(async () => {});
     await consumeCatalogEvent(malformed(1));

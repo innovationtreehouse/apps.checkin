@@ -213,11 +213,24 @@ describe('Program Settings API Integration Tests', () => {
              expect(res.status).toBe(403);
              
              const data = await res.json();
-             expect(data.error).toBe('Forbidden: Only administrators can reassign Program Leaders');
+             expect(data.error).toBe('Forbidden: Only the Board can reassign Program Leaders');
         });
 
-        it('should allow admins to reassign the leadMentorId', async () => {
+        it('refuses a sysadmin off the Board a new lead, and lets the form resend the current one', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             const send = (leadMentorId: number) => PATCH(new Request(`http://localhost:4000/api/programs/${targetProgramId}`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ leadMentorId }),
+             }) as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
+
+             expect((await send(newLeadId)).status).toBe(403);
+             const { leadMentorId: current } = await prisma.program.findUniqueOrThrow({ where: { id: targetProgramId } });
+             expect(current).not.toBe(newLeadId);
+             expect((await send(current!)).status).toBe(200);
+        });
+
+        it('should allow the Board to reassign the leadMentorId', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}`, {
                  method: 'PATCH',

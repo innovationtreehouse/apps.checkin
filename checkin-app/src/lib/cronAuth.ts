@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { logger } from "./logger";
 import { config } from "./config";
-import { cronJobName, recordCronRun } from "./cronRuns";
+import { cronJobName } from "./cronRuns";
+import { finishRun, inRun, newRun, runCrashed } from "./finishRun";
 import { constantTimeEqual } from "./signatureCompare";
 
 /**
@@ -56,11 +57,12 @@ async function reportedFailures(res: NextResponse): Promise<number> {
  *       return NextResponse.json({ success: true, ...result });
  *   });
  *
- * Every completed run is stamped into CronRunLog — here rather than per-route, so
- * a cron route added later is covered without touching it. Nothing about the sweep
- * changes: the job name comes from the request path, the record is written after
- * the handler has already produced its response, and {@link recordCronRun}
- * swallows its own failures. Only AUTHORIZED runs are recorded; a 401 never
+ * Every completed run ends in {@link finishRun} — here rather than per-route, so
+ * a cron route added later is covered without touching it: the run is stamped into
+ * CronRunLog with what its library lanes reported, and the incident engine applies it.
+ * Nothing about the sweep changes: the job name comes from the request path, the
+ * record is written after the handler has already produced its response, and
+ * finishRun swallows its own failures. Only AUTHORIZED runs are recorded; a 401 never
  * happened as far as the ledger is concerned.
  *
  * TWO signals are recorded, not one, because "did it run" and "did it work" are
@@ -86,16 +88,18 @@ export function withCron(
 
         const job = cronJobName(req.url);
         const startedAt = new Date();
+        const run = newRun();
 
         try {
-            const res = await handler(req);
+            const res = await inRun(run, () => handler(req));
             const ran = res.status < 400;
             const failed = ran ? await reportedFailures(res) : 0;
-            await recordCronRun(job, startedAt, ran, failed > 0 ? `${failed} item(s) failed` : ran ? undefined : `HTTP ${res.status}`);
+            await finishRun(job, startedAt, ran, failed > 0 ? `${failed} item(s) failed` : ran ? undefined : `HTTP ${res.status}`, run);
             return res;
         } catch (error) {
             logger.error("Cron handler error:", error);
-            await recordCronRun(job, startedAt, false, error);
+            runCrashed(run, job, error);
+            await finishRun(job, startedAt, false, error, run);
             return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
         }
     };

@@ -1,8 +1,7 @@
 "use client";
-import { useState } from "react";
 import { Table, Text, Title } from "@mantine/core";
 import { paged, useLoad, when } from "../components/api";
-import { LoadError, Pager } from "@checkin/component-ui";
+import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 
 interface EventRow { id: number; disbursementId: string; payload: string; createdAt: string }
 
@@ -17,7 +16,7 @@ function summary(payload: string): string {
 
 /** /donations/events — completed disbursements (booking batches); income books each deposit. */
 export default function EventsPage() {
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const events = useLoad<EventRow[]>(paged("/disbursement-events", page), { keepPrevious: true });
 
   return (

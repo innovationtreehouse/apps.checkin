@@ -3,9 +3,10 @@ import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
-import { getOrgId, ports } from "../runtime";
+import { getOrgId, ports, receiptRuntime } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
+import { liveIds } from "./livePeople";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
 import { receiptMath, type MathLine } from "./lineMath";
@@ -128,7 +129,9 @@ function submitterConfirmation(row: ReceiptRow) {
 
 /**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
- * null with an audit row, for the catch-up step or the manual button to resend. A receipt whose
+ * null with an audit row, for the catch-up step or the manual button to resend. A refusal (the
+ * receipt's own check or mapping's 4xx) is `push_refused`; any other failure is `push_failed`
+ * with its kind in `valueBefore`. A receipt whose
  * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
  * any older call still in flight) before the money side reaches it. A receipt that is not
  * finalized is refused before anything is sent or written.
@@ -147,6 +150,8 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     }
     const lineItems = await receiptRepo.listLineItems(receiptId);
     const review = await db.receiptFinanceReview.findUnique({ where: { receiptId } });
+    // Like the receipt's own person columns, an id naming nobody live goes as stored: expense keeps it as a record.
+    const decider = review && (await liveIds([review.decidedByUserId])).get(review.decidedByUserId);
     const { taxReview } = computeFinancialReviewFlags(await getOrgSettings(orgId), row.taxCents, row.receiptDate ?? "", row.isInKind);
     const payload = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
       message: "receipt orgId does not match this org",
@@ -177,7 +182,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
           ? {
               outcome: review.outcome,
               reasons: review.reasons,
-              decidedByPersonId: review.decidedByUserId,
+              decidedByPersonId: decider ?? review.decidedByUserId,
               note: review.note,
               taxCents: review.taxCents ?? undefined,
               decidedAt: review.decidedAt.toISOString(),
@@ -196,17 +201,24 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
         isDelayed: li.isDelayed,
       })),
     });
-    const result = ingestResultSchema.parse(await ports().receiptSink.ingestReceipt(payload));
+    const answer = ingestResultSchema.safeParse(await ports().receiptSink.ingestReceipt(payload));
+    // An answer we can't read is our bug, not mapping refusing the receipt.
+    if (!answer.success) throw new Error(`workflow-mapping answer unreadable: ${answer.error.message}`);
+    const result = answer.data;
     await db.$transaction(async (tx) => {
       await tx.receipt.update({ where: { id: receiptId }, data: { pushedAt: new Date() } });
       await audit(tx, receiptId, actor, { action: "pushed", valueAfter: result.created ? "created" : "replayed" });
     });
     return true;
   } catch (err) {
-    await audit(db, receiptId, actor, {
-      action: "push_failed",
-      valueAfter: err instanceof Error ? err.message : String(err),
-    }).catch(() => undefined);
+    const kind = receiptRuntime.failed("push", err, `receipt ${receiptId}`);
+    const valueAfter = err instanceof Error ? err.message : String(err);
+    await audit(
+      db,
+      receiptId,
+      actor,
+      kind === "data" ? { action: "push_refused", valueAfter } : { action: "push_failed", valueBefore: kind, valueAfter },
+    ).catch(() => undefined);
     return false;
   }
 }

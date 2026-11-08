@@ -7,6 +7,7 @@
 import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { canSubmitReceipts } from "@/lib/volunteer";
+import { settleCounts } from "@checkin/component-kit";
 import { financeQueueCountKey } from "@checkin/receipt/nav";
 
 export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
@@ -36,8 +37,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     count: async (): Promise<Record<string, number>> => {
       if (!process.env.BULK_DONATION_DATABASE_URL) return {};
       const { getNavCounts, getOrgId } = await import("@checkin/bulk-donation");
-      const { unassignedQueue, disbursementHolds } = await getNavCounts(await getOrgId());
-      return { unassignedQueue, disbursementHolds };
+      return getNavCounts(await getOrgId());
     },
   },
   {
@@ -46,6 +46,13 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     visible: (u) => u.isInventoryManager === true,
     count: async () =>
       process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
+  },
+  {
+    library: "catalog",
+    // Only INVENTORY_MANAGER approves, rejects or maps a proposal; every other catalog viewer only reads.
+    visible: (u) => u.isInventoryManager === true,
+    count: async (): Promise<Record<string, number>> =>
+      process.env.CATALOG_DATABASE_URL ? (await import("@checkin/global-catalog")).proposalService.getNavCounts() : {},
   },
   {
     library: "local-inventory",
@@ -71,18 +78,18 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     // BOARD reads the queues but cannot act on them, so it gets no queue count.
     visible: (u) => canSubmitReceipts(u) || u.ageBand === "adult" || u.isFinance === true || u.isBoardMember === true,
     count: async (u): Promise<Record<string, number>> => {
-      if (!process.env.RECEIPT_DATABASE_URL || typeof u.id !== "number") return {};
+      const id = u.id;
+      if (!process.env.RECEIPT_DATABASE_URL || typeof id !== "number") return {};
       const { receiptService } = await import("@checkin/receipt");
       const board = u.isBoardMember === true;
-      const [awaitingMe, toConfirm, finance] = await Promise.all([
-        canSubmitReceipts(u) ? receiptService.countAwaitingSubmitter(u.id) : null,
-        u.ageBand === "adult" || board ? receiptService.countToConfirm(u.id, board) : null,
-        u.isFinance === true ? receiptService.countAwaitingFinance(u.id) : null,
-      ]);
+      const { finance, ...counts } = await settleCounts("receipt", {
+        ...(canSubmitReceipts(u) ? { awaitingMe: () => receiptService.countAwaitingSubmitter(id) } : {}),
+        ...(u.ageBand === "adult" || board ? { toConfirm: () => receiptService.countToConfirm(id, board) } : {}),
+        ...(u.isFinance === true ? { finance: () => receiptService.countAwaitingFinance(id) } : {}),
+      });
       return {
-        ...(awaitingMe === null ? {} : { awaitingMe }),
-        ...(toConfirm === null ? {} : { toConfirm }),
-        ...(finance === null
+        ...counts,
+        ...(finance === undefined
           ? {}
           : {
               awaitingFinance: finance.total,

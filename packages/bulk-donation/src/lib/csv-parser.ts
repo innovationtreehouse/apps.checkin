@@ -107,7 +107,8 @@ const benevityRowSchema = z.object({
   nonprofitName: str,
   nonprofitId: str,
   disbursementId: str,
-  disbursementDate: isoDate,
+  // A batch's deposit is dated from this, and a finished batch can't be changed.
+  disbursementDate: isoDate.refine((s) => s !== "", "no disbursement date"),
   bankDate: isoDate,
   bankReferenceId: str,
   paymentMethod: str,
@@ -177,9 +178,31 @@ interface Located {
   info: { lines: number };
 }
 
+/** csv-parse's own messages can quote a cell, which may be a donor's name, so only its position is kept. */
+const QUOTING: Record<string, string> = {
+  CSV_QUOTE_NOT_CLOSED: "a quoted cell is never closed",
+  CSV_INVALID_CLOSING_QUOTE: "text follows a closing quote",
+  INVALID_OPENING_QUOTE: "a quote mark sits inside an unquoted cell",
+};
+
+function csvErrorIssue(err: CsvError): string {
+  const line: unknown = err.lines;
+  const col: unknown = err.column;
+  const where = typeof line === "number" ? `line ${line}` : "somewhere in the file";
+  const column = typeof col === "number" ? `, column ${col + 1}` : "";
+  return `${where}${column}: ${QUOTING[err.code] ?? "the file is not valid CSV"}`;
+}
+
+/** Every .xlsx starts with the zip signature. */
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
 function readRecords(buffer: Buffer): Located[] {
+  if (buffer.subarray(0, 4).equals(ZIP_MAGIC)) {
+    throw new CsvValidationError(["this is an Excel workbook, not a CSV; export it from Benevity as CSV"]);
+  }
+  let records: Located[];
   try {
-    return parse(buffer, {
+    records = parse(buffer, {
       bom: true,
       trim: true,
       skip_empty_lines: true,
@@ -187,9 +210,11 @@ function readRecords(buffer: Buffer): Located[] {
       info: true,
     }) as Located[];
   } catch (err) {
-    if (err instanceof CsvError) throw new CsvValidationError([err.message]);
+    if (err instanceof CsvError) throw new CsvValidationError([csvErrorIssue(err)]);
     throw err;
   }
+  if (records.length === 0) throw new CsvValidationError(["the file is empty"]);
+  return records;
 }
 
 /** The Donations Report's footer labels, which sit under the gift table with fewer cells than the header. */
@@ -199,6 +224,17 @@ const FOOTER_LABELS = new Set(["totals", "total donations (gross)", "check fee",
 const TOTALLED = [
   "donationAmountCents", "matchAmountCents", "causeSupportFeeCents", "merchantFeeCents", "checkFeeCents",
 ] as const satisfies readonly (keyof BenevityRow)[];
+
+/**
+ * Amount columns a Benevity file always carries, zero or not. A file without one
+ * would import every gift at $0 there, so it is refused. The Donations Report has no
+ * Check Fee column: it carries that fee as a footer row, so only the flat export
+ * must have one.
+ */
+const REQUIRED_AMOUNTS = [
+  "donationAmountCents", "matchAmountCents", "causeSupportFeeCents", "merchantFeeCents",
+] as const satisfies readonly (keyof BenevityRow)[];
+const FLAT_REQUIRED_AMOUNTS = [...REQUIRED_AMOUNTS, "checkFeeCents"] as const;
 
 /** Where a field comes from in this file: a header column's index, else a preamble value. */
 type Binding = { label: string; index: number } | { label: string; value: string } | null;
@@ -231,7 +267,13 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
     if (key !== "" && !key.startsWith("#") && value !== "") preamble.set(key, value);
   }
   const bindings = new Map(FIELDS.map((f) => [f, bind(f, header, preamble)] as const));
-  const labelOf = (field: PropertyKey) => bindings.get(field as keyof BenevityRow)?.label ?? String(field);
+  const required = headerAt === 0 ? FLAT_REQUIRED_AMOUNTS : REQUIRED_AMOUNTS;
+  const missing = required.filter((f) => bindings.get(f) === null).map((f) => `"${SOURCES[f].columns[0]}"`);
+  if (missing.length > 0) {
+    const named = missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} or ${missing[missing.length - 1]}`;
+    throw new CsvValidationError([`no ${named} column; the header has: ${header.join(", ")}`]);
+  }
+  const labelOf = (field: PropertyKey) => bindings.get(field as keyof BenevityRow)?.label ?? SOURCES[field as keyof BenevityRow]?.columns[0] ?? String(field);
 
   const rows: BenevityRow[] = [];
   const issues: string[] = [];

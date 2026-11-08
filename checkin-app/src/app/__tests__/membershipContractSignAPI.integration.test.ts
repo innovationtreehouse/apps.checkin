@@ -313,6 +313,86 @@ describe('POST /api/membership/contract/sign', () => {
         await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.id } });
     });
 
+    describe('a claim with no request ids', () => {
+        const MINUTE = 60_000;
+
+        async function claimedProcess(label: string, claimAgeMs: number) {
+            const hh = await prisma.household.create({ data: { name: `HH ${label} ${TAG}` } });
+            const holder = await prisma.person.create({ data: { email: `holder-${label}-${TAG}@example.com`, name: 'Hollis Holder', householdId: hh.id, isHouseholdLead: true } });
+            const other = await prisma.person.create({ data: { email: `other-${label}-${TAG}@example.com`, name: 'Olive Other', householdId: hh.id, isHouseholdLead: true } });
+            const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+            const proc = await prisma.orgMembershipProcess.create({
+                data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoSignerPersonId: holder.id, zohoClaimedAt: new Date(Date.now() - claimAgeMs) },
+            });
+            (zoho.createRequest as jest.Mock).mockClear();
+            (zoho.recallRequest as jest.Mock).mockClear();
+            return { holder, other, procId: proc.id };
+        }
+        const row = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id } });
+
+        it('abandoned past the window: the same lead reclaims it and signs', async () => {
+            const { holder, procId } = await claimedProcess('abandoned-same', 10 * MINUTE);
+            (zoho.createRequest as jest.Mock).mockResolvedValueOnce({ requestId: 'REQ-RE', actionId: 'ACT-RE', documentId: 'DOC-RE' });
+
+            asUser(holder.id);
+            expect((await SIGN(signReq())).status).toBe(200);
+
+            expect(zoho.createRequest).toHaveBeenCalledTimes(1);
+            expect(await row(procId)).toMatchObject({ zohoEnvelopeId: 'REQ-RE', zohoActionId: 'ACT-RE', zohoSignerPersonId: holder.id });
+        });
+
+        it('abandoned past the window: another lead takes it over', async () => {
+            const { other, procId } = await claimedProcess('abandoned-other', 10 * MINUTE);
+            (zoho.createRequest as jest.Mock).mockResolvedValueOnce({ requestId: 'REQ-OT', actionId: 'ACT-OT', documentId: 'DOC-OT' });
+
+            asUser(other.id);
+            expect((await SIGN(signReq())).status).toBe(200);
+
+            expect(await row(procId)).toMatchObject({ zohoEnvelopeId: 'REQ-OT', zohoSignerPersonId: other.id });
+        });
+
+        it('fresh: refused for everyone, and no Zoho request is created', async () => {
+            const { holder, other, procId } = await claimedProcess('fresh', MINUTE);
+
+            asUser(holder.id);
+            expect((await SIGN(signReq())).status).toBe(409);
+            asUser(other.id);
+            expect(await (await SIGN(signReq())).json()).toMatchObject({ code: 'signing_in_progress' });
+
+            expect(zoho.createRequest).not.toHaveBeenCalled();
+            expect((await row(procId)).zohoSignerPersonId).toBe(holder.id);
+        });
+
+        it('a slow request overtaken mid-create recalls its own request and stores nothing', async () => {
+            const { holder, other, procId } = await claimedProcess('slow', 10 * MINUTE);
+            (zoho.createRequest as jest.Mock).mockImplementationOnce(async () => {
+                await prisma.orgMembershipProcess.update({ where: { id: procId }, data: { zohoSignerPersonId: other.id, zohoClaimedAt: new Date() } });
+                return { requestId: 'REQ-SLOW', actionId: 'ACT-SLOW', documentId: 'DOC-SLOW' };
+            });
+
+            asUser(holder.id);
+            expect((await SIGN(signReq())).status).toBe(409);
+
+            expect(zoho.recallRequest).toHaveBeenCalledWith('tok', 'REQ-SLOW');
+            expect(await row(procId)).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: other.id });
+        });
+
+        it('the same lead overtaking their own slow request keeps the newer claim', async () => {
+            const { holder, procId } = await claimedProcess('slow-same', 10 * MINUTE);
+            const newer = new Date();
+            (zoho.createRequest as jest.Mock).mockImplementationOnce(async () => {
+                await prisma.orgMembershipProcess.update({ where: { id: procId }, data: { zohoClaimedAt: newer } });
+                return { requestId: 'REQ-OLD', actionId: 'ACT-OLD', documentId: 'DOC-OLD' };
+            });
+
+            asUser(holder.id);
+            expect((await SIGN(signReq())).status).toBe(409);
+
+            expect(zoho.recallRequest).toHaveBeenCalledWith('tok', 'REQ-OLD');
+            expect(await row(procId)).toMatchObject({ zohoEnvelopeId: null, zohoSignerPersonId: holder.id, zohoClaimedAt: newer });
+        });
+    });
+
     // A lead opened the request but the board records the contract by hand: the
     // record must not say that lead signed.
     it('a board mark-contract clears the signer, so the household shows "Signed" with no name', async () => {

@@ -13,6 +13,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { buildingLink, getKioskClockSkew, resetKioskSeen } from '../kioskSeen';
 import { verifyKioskSignature } from '../verify-kiosk';
 
 /** Generate an Ed25519 keypair and return the raw 32-byte public key + a signer. */
@@ -30,6 +31,54 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 // Unique nonce per call so independent test cases never collide in the cache.
 let nonceCounter = 0;
 const freshNonce = () => `nonce-${nonceCounter++}`;
+
+describe('kiosk clock skew reading', () => {
+    beforeEach(() => resetKioskSeen());
+    afterAll(() => resetKioskSeen());
+
+    const send = (offsetSeconds: number, signer = makeKeypair(), keys = signer.rawPublic) => {
+        const ts = String(nowSec() + offsetSeconds);
+        const nonce = freshNonce();
+        const sig = signer.sign(ts, nonce, 'POST', '/api/scan', '');
+        return verifyKioskSignature('POST', '/api/scan', '', ts, sig, nonce, keys);
+    };
+
+    it('notes the skew of a correctly signed stale request, still refuses it, and does not mark the kiosk seen', () => {
+        const res = send(-3600);
+        expect(res).toEqual({ ok: false, status: 401, error: 'Timestamp too old or too far in the future' });
+        expect(Math.abs(getKioskClockSkew()!.seconds + 3600)).toBeLessThanOrEqual(1);
+        expect(buildingLink().lastSeenAt).toBeNull();
+    });
+
+    it('ignores a stale request with a bad signature, with the same refusal', () => {
+        const res = send(3600, makeKeypair(), makeKeypair().rawPublic);
+        expect(res).toEqual({ ok: false, status: 401, error: 'Timestamp too old or too far in the future' });
+        expect(getKioskClockSkew()).toBeNull();
+    });
+
+    it('ignores a fresh request with a bad signature', () => {
+        expect(send(-10, makeKeypair(), makeKeypair().rawPublic).ok).toBe(false);
+        expect(getKioskClockSkew()).toBeNull();
+    });
+
+    it('a request within the window replaces an earlier off reading', () => {
+        send(-3600);
+        expect(send(-10).ok).toBe(true);
+        expect(Math.abs(getKioskClockSkew()!.seconds + 10)).toBeLessThanOrEqual(1);
+    });
+
+    it('a refused replay does not change the reading', () => {
+        const { rawPublic, sign } = makeKeypair();
+        const ts = String(nowSec() - 40);
+        const nonce = freshNonce();
+        const sig = sign(ts, nonce, 'POST', '/api/scan', '');
+        verifyKioskSignature('POST', '/api/scan', '', ts, sig, nonce, rawPublic);
+        send(-10);
+        const reading = getKioskClockSkew()!.seconds;
+        expect(verifyKioskSignature('POST', '/api/scan', '', ts, sig, nonce, rawPublic).ok).toBe(false);
+        expect(getKioskClockSkew()!.seconds).toBe(reading);
+    });
+});
 
 describe('verifyKioskSignature', () => {
     it('accepts a correctly signed, fresh request', () => {

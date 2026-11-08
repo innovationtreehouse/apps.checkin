@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
+import { ServiceError, type FailureReport } from "@checkin/component-kit";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
@@ -18,7 +19,7 @@ const NOW = new Date("2026-06-30T12:00:00Z");
 /** When the shared setup switches income posting on: before any payout the tests add. */
 const ON_AT = new Date("2026-06-30T11:00:00Z");
 const BANK = "35";
-const SHOPIFY_ROLES: Partial<Record<BooksMapRole, string>> = { SHOPIFY_BANK: BANK, SHOPIFY_SALES: "80", SHOPIFY_CHARGE_REMAINDER: "81", SHOPIFY_FEES: "90", SHOPIFY_ADJUSTMENTS: "91" };
+const SHOPIFY_ROLES: Partial<Record<BooksMapRole, string>> = { SHOPIFY_BANK: BANK, SHOPIFY_CUSTOM_ITEMS: "80", SHOPIFY_CHARGE_REMAINDER: "81", SHOPIFY_FEES: "90", SHOPIFY_ADJUSTMENTS: "91" };
 const tokens = { current: async () => "tok" };
 const realm = { env: "sandbox" as const, realmId: "123" };
 
@@ -103,7 +104,7 @@ let activeClasses: string[];
 
 const gid = (n: number) => `gid://shopify/ShopifyPaymentsPayout/${n}`;
 
-/** A paid payout of one charge on order `O<n>` with one custom-item line, so the whole charge books at org level. */
+/** A paid payout of one charge on order `O<n>` with one custom-item line, so the whole charge books at org level on the custom-items account. */
 function payout(n: number, day: string, netCents: number): string {
   const g = gid(n);
   payouts.push({ payoutGid: g, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD", source: "api" });
@@ -436,6 +437,24 @@ describeDb("postPayout — claim, lookup and settle", () => {
     const created = qbo.deposits.at(-1)?.Id;
     expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null, qbNote: `app entry ${created} may need voiding: its post lost the payout to another` });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.lost_claim" } })).toBe(1);
+  });
+
+  it("a refused create whose post lost its claim reports nothing", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "reject";
+    // Another post takes the payout over once this one holds the claim.
+    qbo.onWindowRead = async () => void (await db.payoutReconciliation.updateMany({
+      where: { orgId: ORG_A, source: "shopify", payoutGid: p, postClaimedAt: { not: null } },
+      data: { postClaimedAt: new Date(Date.now() + 60_000) },
+    }));
+
+    await drain();
+
+    expect(reports).toEqual([]);
+    expect(await rowFor(p)).not.toMatchObject({ kind: "POST_FAILED" });
   });
 
   it("finance's dismiss takes over a stalled post; its late create leaves a note that keeps the payout in the queue", async () => {
@@ -772,6 +791,18 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("hands a refused create to the on-failure port with its fault codes and request id", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "reject";
+
+    await drain();
+
+    expect(reports).toEqual([{ lane: "deposit-build", kind: "data", faultCodes: ["6000"], requestId: "tid", detail: `payout reconciliation ${(await rowFor(p)).id}` }]);
+  });
+
   it("failed: a refused create opens POST_FAILED; later runs leave it, finance's retry posts it with the same key", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
@@ -910,6 +941,65 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
   });
 });
 
+describeDb("postPayout — a deposit finance voided", () => {
+  beforeEach(switchOn);
+
+  /** An attempted payout whose create landed but never settled: QuickBooks holds its keyed deposit. */
+  const landed = async () => {
+    const g = payout(2, "2026-06-28", 500);
+    qbo.mode = "accept-then-drop";
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ kind: "POST_FAILED" });
+    qbo.mode = "ok";
+    const first = qbo.deposits.at(-1);
+    if (!first) throw new Error("no deposit");
+    return { g, first };
+  };
+  /** QuickBooks keeps a voided entry's memo, at a zero total. */
+  const voidEntry = (entry: QboDeposit) => void (entry.TotalAmt = 0);
+  const secondKeyedEntry = (entry: QboDeposit) => {
+    const copy = { ...entry, Id: "7001" };
+    qbo.deposits.push(copy);
+    qbo.createdAt.set(copy.Id, Date.now());
+    return copy;
+  };
+
+  it("finance's retry books a replacement when the only keyed deposit was voided, and never links the voided one", async () => {
+    const { g, first } = await landed();
+    voidEntry(first);
+
+    const row = await resolve(g, { action: "retry" });
+
+    expect(qbo.posts).toHaveLength(2);
+    const replacement = qbo.deposits.at(-1);
+    expect(replacement?.Id).not.toBe(first.Id);
+    expect(row).toMatchObject({ status: "POSTED", origin: "created", depositId: replacement?.Id });
+  });
+
+  it("finance's dismiss links the live deposit when one of two keyed deposits was voided", async () => {
+    const { g, first } = await landed();
+    const live = secondKeyedEntry(first);
+    voidEntry(first);
+
+    expect(await resolve(g, { action: "dismiss", reason: "booked elsewhere" })).toMatchObject({ status: "POSTED", origin: "created", depositId: live.Id });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("finance's dismiss is refused while two live deposits carry the payout's key", async () => {
+    const { g, first } = await landed();
+    secondKeyedEntry(first);
+
+    await expect(resolve(g, { action: "dismiss", reason: "booked elsewhere" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("finance's dismiss applies when the payout's only keyed deposit was voided", async () => {
+    const { g, first } = await landed();
+    voidEntry(first);
+
+    expect(await resolve(g, { action: "dismiss", reason: "booked elsewhere" })).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED", depositId: null });
+  });
+});
+
 describeDb("drainIncomeOutbox — deposit lines", () => {
   beforeEach(switchOn);
 
@@ -928,11 +1018,11 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     return g;
   }
 
-  it("splits each charge by order line to its bucket's Class; general income, fees and adjustments book at org level; sums to net", async () => {
+  it("splits each charge by order line to its item's account and bucket's Class; general income, fees and adjustments book at org level; sums to net", async () => {
     const g = orderPayout(2);
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "83" } });
 
     await drain();
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", depositTotalCents: 9830 });
@@ -943,8 +1033,8 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     }));
     expect(lines).toEqual(
       expect.arrayContaining([
-        { cents: 6000, account: "80", cls: "700" },
-        { cents: 4000, account: "80", cls: undefined },
+        { cents: 6000, account: "82", cls: "700" },
+        { cents: 4000, account: "83", cls: undefined },
         { cents: -320, account: "90", cls: undefined },
         { cents: 150, account: "91", cls: undefined },
       ]),
@@ -953,13 +1043,36 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(lines.reduce((s, l) => s + l.cents, 0)).toBe(9830);
   });
 
+  it("hands a deposit that cannot be built to the on-failure port", async () => {
+    const g = orderPayout(2);
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "83" } });
+    let lists = 0;
+    const reports: FailureReport[] = [];
+    bind({
+      owners: {
+        list: async () => {
+          // The bucket check reads the owners first; the deposit build's read is the one that fails.
+          if (++lists > 1) throw new ServiceError(429, "busy");
+          return owners;
+        },
+      },
+      onFailure: (r) => void reports.push(r),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await drain();
+    expect(reports).toEqual([{ lane: "deposit-build", kind: "system", status: 429, detail: `payout reconciliation ${(await rowFor(g)).id}` }]);
+  });
+
   const camp = { id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" };
-  const general = () => db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null } });
+  const general = () => db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "82" } });
 
   it("an undecided item holds the payout as NEEDS_MAPPING; it never becomes NO_DEPOSIT, and deciding releases it on the next run", async () => {
     const g = orderPayout(2);
     owners = [camp];
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
 
     expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "undecided items: V2" });
@@ -972,14 +1085,41 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(qbo.posts).toHaveLength(0);
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.needs_mapping" } })).toBe(1);
 
-    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 }, "82");
     expect(await drain(late)).toMatchObject({ post: { posted: 1, held: 0 } });
     expect(await rowFor(g)).toMatchObject({ status: "POSTED", kind: null, reason: null, depositTotalCents: 9830 });
   });
 
+  it("an item with a bucket choice but no account holds the payout; picking the account releases it", async () => {
+    const g = orderPayout(2);
+    owners = [camp];
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await general();
+
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: "undecided items: V1" });
+
+    await itemCategoryService.setCategory(ORG_A, "V1", 7, { userId: 1 }, "84");
+    expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
+    const accounts = qbo.posts[0].body.Line.map((l) => l.DepositLineDetail.AccountRef.value);
+    expect(accounts).toEqual(expect.arrayContaining(["84", "82"]));
+  });
+
+  it("a custom item holds the payout while Shopify: custom items has no account", async () => {
+    bind({ booksMap: { ...shopifyMap, accounts: async () => ({ ...SHOPIFY_ROLES, SHOPIFY_CUSTOM_ITEMS: undefined }) } });
+    const g = payout(3, "2026-06-28", 500);
+
+    expect(await drain()).toMatchObject({ post: { held: 1, posted: 0 } });
+    expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING", reason: "custom items: no account picked for Shopify: custom items" });
+
+    bind();
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts[0].body.Line.map((l) => l.DepositLineDetail.AccountRef.value)).toEqual(["80"]);
+  });
+
   it("a decision made before an item's first sale is honoured on its first payout", async () => {
-    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
-    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 }, "82");
+    await itemCategoryService.setCategory(ORG_A, "V2", null, { userId: 1 }, "82");
 
     const g = orderPayout(2);
 
@@ -989,7 +1129,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
 
   it("an item marked general income books without a Class and is not held", async () => {
     const g = orderPayout(2);
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null, quickBooksAccountId: "82" } });
     await general();
 
     expect(await drain()).toMatchObject({ post: { posted: 1, held: 0 } });
@@ -1016,7 +1156,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
   ])("a bucket %s alerts once before any payout, marks its items, holds its payouts, and releases once restored", async (_label, owner, active, issue) => {
     owners = owner ? [owner] : [];
     activeClasses = active;
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
     await general();
 
     await drain();
@@ -1051,7 +1191,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     await expect(resolve(g, { action: "book" })).rejects.toMatchObject({ status: 409 });
 
     await general();
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: null, quickBooksAccountId: "82" } });
     await drain(new Date("2026-06-30T13:00:00Z"));
     expect(await rowFor(g)).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", qbNote: null });
     expect(qbo.posts).toHaveLength(0);
@@ -1185,7 +1325,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
   it("while the Classes can't be read, only payouts with a bucketed sale hold, and no alert fires", async () => {
     owners = [camp];
     bind({ classes: { activeClassIds: async () => { throw new Error("socket hang up"); } } });
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
     await general();
     const held = orderPayout(2);
     const plain = payout(3, "2026-06-28", 500);
@@ -1205,7 +1345,7 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     owners = [{ ...camp, quickBooksClassId: null }];
     let sends = 0;
     bind({ alerts: { postCapReached: async () => {}, bucketUnusable: async () => { sends++; throw new Error("SES down"); }, sweepIncomplete: async () => {} } });
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
 
     await drain();
     await drain();
@@ -1215,13 +1355,13 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
 
   it("reassigning a broken bucket's items releases the payout without touching the bucket", async () => {
     owners = [{ ...camp, quickBooksClassId: null }];
-    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
     await general();
     const g = orderPayout(2);
     await drain();
     expect(await rowFor(g)).toMatchObject({ kind: "NEEDS_MAPPING" });
 
-    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 });
+    await itemCategoryService.setCategory(ORG_A, "V1", null, { userId: 1 }, "82");
     await drain();
     expect(await rowFor(g)).toMatchObject({ status: "POSTED" });
     expect(bucketAlerts).toHaveLength(1);
@@ -1231,6 +1371,14 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
 describeDb("item assignment", () => {
   const actor = { userId: 1 };
   const assign = (id: number | null) => itemCategoryService.setCategory(ORG_A, "V1", id, actor);
+
+  it("sets the item's account with its bucket choice, keeps it when the bucket alone changes, and lists it", async () => {
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    expect(await itemCategoryService.setCategory(ORG_A, "V1", null, actor, "84")).toMatchObject({ budgetOwnerId: null, quickBooksAccountId: "84" });
+    expect(await assign(7)).toMatchObject({ budgetOwnerId: 7, quickBooksAccountId: "84" });
+    expect((await itemCategoryService.listItems(ORG_A)).find((i) => i.variantId === "V1")).toMatchObject({ decision: "bucket", quickBooksAccountId: "84" });
+    expect(await itemCategoryService.setCategory(ORG_A, "V1", 7, actor, null)).toMatchObject({ quickBooksAccountId: null });
+  });
 
   it("assigns to a live bucket with an active Class, or to general income", async () => {
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
@@ -1357,6 +1505,20 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
       await resolve(p, { action: "dismiss", reason: "booked in an earlier year" });
       await drain();
       expect(await rowFor(p)).toMatchObject({ status: "RESOLVED", resolution: "DISMISSED" });
+    });
+
+    it("a payout that stops being hand-loaded goes back to waiting", async () => {
+      await switchOn();
+      const p = payout(2, "2026-06-28", 500);
+      setPayout(p, { source: "hand_loaded" });
+      await drain();
+      expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "HAND_LOADED" });
+
+      setPayout(p, { source: "api" });
+      await runReconcile(ORG_A, NOW);
+      expect(await rowFor(p)).toMatchObject({ status: "WAITING", kind: null });
+      expect((await audits("reconciliation.waiting")).at(-1)).toMatchObject({ reason: "HAND_LOADED cleared" });
+      expect(qbo.posts).toHaveLength(0);
     });
 
     it("a waiting payout whose net changed tracks the new net and books at it", async () => {
@@ -1540,19 +1702,18 @@ describeDb("income settings", () => {
 
 describeDb("a second source: Benevity deposits handed over through expectDeposit", () => {
   const BENEVITY_BANK = "36";
-  const ROLES: Partial<Record<BooksMapRole, string>> = { ...SHOPIFY_ROLES, BENEVITY_BANK, BENEVITY_DONATIONS: "60", BENEVITY_MATCHES: "61", BENEVITY_FEES: "62" };
+  const ROLES: Partial<Record<BooksMapRole, string>> = { ...SHOPIFY_ROLES, BENEVITY_BANK };
   let roleAccounts: Partial<Record<BooksMapRole, string>>;
   const booksMap: BooksMap = { accounts: async () => roleAccounts, classes: async () => new Map([[7, "700"]]) };
 
-  /** A disbursement of a $100 gift to bucket 7 and a $50 match at organization level, less a $3 fee. */
+  /** A disbursement of a $100 gift to bucket 7 and a $50 match at organization level, each net of its part of a $3 fee. */
   const disbursement = (txnDate = "2026-06-28", over: Partial<ExpectedDeposit> = {}): ExpectedDeposit => ({
     txnDate,
     netCents: 14_700,
     bankRole: "BENEVITY_BANK",
     lines: [
-      { role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 10_000, description: "Benevity donations" },
-      { role: "BENEVITY_MATCHES", budgetOwnerId: null, amountCents: 5_000 },
-      { role: "BENEVITY_FEES", budgetOwnerId: null, amountCents: -300 },
+      { accountId: "60", budgetOwnerId: 7, amountCents: 9_800, description: "Benevity donations" },
+      { accountId: "61", budgetOwnerId: null, amountCents: 4_900 },
     ],
     memo: "Benevity disbursement D1",
     ...over,
@@ -1572,7 +1733,7 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await rowFor("D1")).toMatchObject({ source: "benevity", status: "WAITING", payoutDate: "2026-06-28", payoutNetCents: 14_700 });
     expect(await status()).toEqual({ state: "waiting" });
 
-    const later = disbursement("2026-06-29", { netCents: 14_800, lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_800 }] });
+    const later = disbursement("2026-06-29", { netCents: 14_800, lines: [{ accountId: "60", budgetOwnerId: 7, amountCents: 14_800 }] });
     expect(await expect1("D1", later)).toBe("updated");
     expect(await rowFor("D1")).toMatchObject({ payoutDate: "2026-06-29", payoutNetCents: 14_800 });
 
@@ -1661,16 +1822,15 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(key).toBe(qbKey("income", "benevity:D1"));
     expect(body).toMatchObject({ TxnDate: "2026-06-28", DepositToAccountRef: { value: BENEVITY_BANK } });
     expect(body.Line.map((l) => [l.Amount, l.DepositLineDetail.AccountRef.value, l.DepositLineDetail.ClassRef?.value])).toEqual([
-      [100, "60", "700"],
-      [50, "61", undefined],
-      [-3, "62", undefined],
+      [98, "60", "700"],
+      [49, "61", undefined],
     ]);
     expect(await status()).toMatchObject({ state: "booked", totalCents: 14_700 });
   });
 
   it("skips a deposit whose role finance has not mapped, without failing it", async () => {
     await switchOn();
-    delete roleAccounts.BENEVITY_FEES;
+    delete roleAccounts.BENEVITY_BANK;
     await expect1();
     expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, waiting: 1 } });
     expect(qbo.posts).toHaveLength(0);
@@ -1750,10 +1910,22 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await settings()).toMatchObject({ qbPostingOnAt: ON_AT, benevityQbPostingOnAt: null });
   });
 
-  it("a Benevity source with no deposit yet needs only its bank; a line needs its role", () => {
+  it("a Benevity source needs only its bank, its lines naming their accounts", () => {
     expect(missingRoles({ source: "benevity", expected: null }, {})).toEqual(["BENEVITY_BANK"]);
     expect(missingRoles({ source: "benevity", expected: null }, { BENEVITY_BANK })).toEqual([]);
-    const one = disbursement("2026-06-28", { lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: null, amountCents: 14_700 }] });
-    expect(missingRoles({ source: "benevity", expected: one }, { BENEVITY_BANK })).toEqual(["BENEVITY_DONATIONS"]);
+    expect(missingRoles({ source: "benevity", expected: disbursement() }, { BENEVITY_BANK })).toEqual([]);
+  });
+
+  it("sends finance a deposit stored before its lines named accounts, rather than booking it on a role", async () => {
+    await switchOn();
+    await expect1();
+    const row = await rowFor("D1");
+    const legacy = { ...disbursement(), lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_700 }] };
+    await db.payoutReconciliation.update({ where: { id: row!.id }, data: { expected: legacy } });
+    roleAccounts = { ...ROLES, BENEVITY_DONATIONS: "60" };
+
+    expect(await drain()).toMatchObject({ post: { posted: 0, held: 1 } });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await rowFor("D1")).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: expect.stringMatching(/book it by hand or dismiss it/) });
   });
 });

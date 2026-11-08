@@ -384,14 +384,16 @@ the fence.
   `Date` header, and the kiosk's monotonic clock at send and at receipt. The
   server time at the midpoint is the `Date` value; its uncertainty is half the
   round trip plus one second (`Date` has whole-second resolution). The kiosk
-  keeps the latest sample (on disk, so a restart keeps it).
+  keeps the latest sample on disk, so a restart on the same boot keeps it. After
+  a reboot monotonic time has reset and the sample cannot be aged, so it is unused.
 - **Stamp.** A scan's time is the sample's server time plus the monotonic time
   elapsed since the sample. Its uncertainty is the sample's plus one second per
   hour since it (well above a Pi oscillator's drift). Both go in the queue row
   (`scanned_at` as now, plus a new `time_uncertainty_ms`) and are sent
-  (`scanTimeUncertaintyMs`). With no sample since the queue file was created,
-  the kiosk falls back to its wall clock and marks the scan clock-suspect, as
-  today.
+  (`scanTimeUncertaintyMs`). With no usable sample, the kiosk falls back to its
+  wall clock and marks the scan clock-suspect, as today. A fallback stamp is never
+  earlier than the saved view's write time, and a clock-suspect close flags any
+  visit it leaves open; the model has not yet run this.
 - **Flag.** The server applies the scan at its time, as today, and flags it for
   review when a close's time falls within its uncertainty
   (`|closedAt − scannedAt| ≤ uncertainty`): which side of the close it belongs
@@ -652,9 +654,13 @@ gets "Welcome" rather than a wrong "Goodbye".
   the kiosk does nothing, and the view stays as it was.
 - **It sends nothing.** The server's 23:00 run stays the one close of record, and
   the backstop when the kiosk is dead or unplugged.
-- **Not yet re-checked.** The model showed a fast Pi clock giving a "Welcome" to
-  someone still inside. That run used the Pi's clock, so this time source needs
-  its own check.
+- **Hearing tonight.** The roster reply and scan acknowledgement carry
+  `lastNightlyCloseAt` (ISO timestamp, null if none). A reply counts only when
+  that is at or after the latest 23:00 by kiosk time; otherwise it is a clock
+  sample and leaves the view alone, up to a capped wait. The rest of the kiosk's
+  rules are in `KIOSK_CONTAINER.md`, S1.
+- **Model.** With this time source, a fast Pi clock gives no wrong "Welcome" to
+  anyone not inside at 23:00. The all-fixes run and the wait cap are not yet proven.
 
 About 15 lines on the kiosk. It needs the server-time sample, so it ships with
 protocol 8.

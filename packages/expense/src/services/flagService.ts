@@ -6,7 +6,7 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { FLAG_AUDIENCE, FLAG_KINDS, isFlagKind, taxNeedsFinance, type FlagAudience, type FlagKind } from "../lib/flags";
-import { conflictedParties, lockExpense } from "../lib/signoff-facts";
+import { isConflicted, lockExpense } from "../lib/signoff-facts";
 import { ServiceError } from "@checkin/component-kit";
 
 /**
@@ -104,7 +104,7 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
     const expense = await tx.expense.findUniqueOrThrow({ where: { id: flag.expenseId } });
     // A control flag is checked off by someone independent of the expense, never by its submitter,
     // its reimbursee, or anyone in their households.
-    if ((await conflictedParties(expense)).includes(actor.userId)) {
+    if (await isConflicted(expense, actor.userId)) {
       throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
     }
     // The match and the check-off are one statement: the drift check rewrites an open flag without the expense lock.

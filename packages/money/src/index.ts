@@ -58,6 +58,48 @@ export function sumCents(...amounts: number[]): number {
 }
 
 /**
+ * Split `totalCents` across parts in proportion to `weights`, in whole cents that sum to
+ * `totalCents` exactly. Each part takes the floor of its exact share; the leftover cents go one
+ * each to the largest fractional remainders, a tie to the larger weight, then the earlier part.
+ * Either sign works for the total and the weights. Weights that sum to zero (all-zero
+ * included) split the total equally; a caller that must refuse that case checks before calling.
+ * Arithmetic is BigInt so shares stay exact past the safe-integer product range.
+ */
+export function allocateCents(totalCents: number, weights: readonly number[]): number[] {
+  for (const n of [totalCents, ...weights]) {
+    if (!Number.isSafeInteger(n)) throw new Error(`Allocation amounts must be safe integers, got ${n}`);
+  }
+  if (weights.length === 0) {
+    if (totalCents !== 0) throw new Error(`Cannot allocate ${totalCents} cents across no parts`);
+    return [];
+  }
+  const zero = BigInt(0);
+  const one = BigInt(1);
+  const sum = weights.reduce((s, w) => s + BigInt(w), zero);
+  const ws = sum === zero ? weights.map(() => one) : weights.map(BigInt);
+  // A positive denominator keeps BigInt division a floor and remainders in [0, denom).
+  const denom = sum === zero ? BigInt(weights.length) : sum < zero ? -sum : sum;
+  const total = sum < zero ? -BigInt(totalCents) : BigInt(totalCents);
+  const shares = ws.map((w, i) => {
+    const num = total * w;
+    let floor = num / denom;
+    if (num % denom !== zero && num < zero) floor -= one;
+    return { i, floor, rem: num - floor * denom, w };
+  });
+  // Each floor drops less than one cent, so fewer than weights.length cents are left over.
+  let leftover = Number(BigInt(totalCents) - shares.reduce((s, p) => s + p.floor, zero));
+  const byFraction = [...shares].sort((a, b) =>
+    a.rem !== b.rem ? (b.rem > a.rem ? 1 : -1) : a.w !== b.w ? (b.w > a.w ? 1 : -1) : a.i - b.i,
+  );
+  for (const p of byFraction) {
+    if (leftover <= 0) break;
+    p.floor += one;
+    leftover -= 1;
+  }
+  return shares.map((p) => Number(p.floor));
+}
+
+/**
  * Canonical money display formatter. Input is INTEGER CENTS; output is a localized
  * currency string with thousands grouping and the currency's symbol, e.g.
  * `formatCents(1234567)` → "$12,345.67", `formatCents(1234567, "EUR")` → "€12,345.67".

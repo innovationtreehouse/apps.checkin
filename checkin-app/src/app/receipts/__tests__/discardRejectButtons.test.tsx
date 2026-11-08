@@ -18,7 +18,7 @@ jest.mock("@checkin/receipt/components/ReceiptFile", () => ({ __esModule: true, 
 jest.mock("@checkin/receipt/components/ReceiptEditor", () => ({ __esModule: true, default: () => <div /> }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
-  useLoad: (path: string | null) => ({ data: path === "/r1" ? mockReceipt : path === null ? null : [], error: null, reload: jest.fn() }),
+  useLoad: (path: string | null) => ({ data: path === "/r1" ? mockReceipt : path === null ? null : path.endsWith("/duplicate-group") ? { members: [], dismissed: [] } : [], error: null, reload: jest.fn() }),
   useRoles: () => mockRoles,
   send: jest.fn(),
 }));

@@ -1,5 +1,5 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
+jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock({ followUrl: true }));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 import { fireEvent, screen, waitFor } from "@testing-library/react";
@@ -98,5 +98,17 @@ describe("FinanceViewsPage", () => {
 
         expect(await screen.findByText("Couldn't load the finance view log")).toBeInTheDocument();
         expect(screen.queryByText("No finance views match these filters.")).not.toBeInTheDocument();
+    });
+
+    it("hides the empty answer while a changed filter loads", async () => {
+        setSession({ id: 2, isBoardMember: true });
+        mockFetchJson({ "/api/system-status/finance-views": { FinanceViewLog: [], Person: [] } });
+        renderWithProviders(<FinanceViewsPage />);
+        await screen.findByText("No finance views match these filters.");
+
+        global.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
+        fireEvent.change(screen.getByLabelText("Record id"), { target: { value: "r_1" } });
+
+        await waitFor(() => expect(screen.queryByText("No finance views match these filters.")).not.toBeInTheDocument());
     });
 });

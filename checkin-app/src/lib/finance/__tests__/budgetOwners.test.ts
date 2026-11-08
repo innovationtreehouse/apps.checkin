@@ -4,36 +4,37 @@
 /**
  * A bucket's owner and treasurers follow the own-household rule: nobody names
  * or removes themself or anyone in their household, and a refusal writes
- * nothing. A permitted change writes the row and one audit row together. A
- * merged-away (tombstoned) person is refused as not found, and an org-level
- * bucket takes no approvers.
+ * nothing. A permitted change writes the row and one audit row together. An
+ * unknown person is refused as not found, and an org-level bucket takes no
+ * approvers. Whether a bucket is org-level changes only when no approver or
+ * awaited Board seat depends on it, and a restore brings an archived bucket back.
  */
 import { createBudgetOwner, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
+import { holdBucketLines } from '@checkin/expense';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
-const mergedInto: Record<number, number> = { 4: 3 };
 const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null }> = {
     7: { isOrgLevel: false, ownerId: null },
     8: { isOrgLevel: true, ownerId: null },
     9: { isOrgLevel: false, ownerId: 2 },
 };
 const tx = {
-    budgetOwner: { create: jest.fn(), update: jest.fn() },
+    budgetOwner: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     budgetOwnerTreasurer: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
     auditLog: { create: jest.fn() },
+    $queryRaw: jest.fn(),
 };
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
         person: {
             findUnique: ({ where }: { where: { id: number } }) =>
                 Promise.resolve(where.id in households ? { householdId: households[where.id] } : null),
-            findFirst: ({ where }: { where: { id: number; mergedIntoId?: null } }) => {
-                const isMatch = where.id in households && !(where.mergedIntoId === null && where.id in mergedInto);
-                return Promise.resolve(isMatch ? { householdId: households[where.id] } : null);
-            },
+            findFirst: ({ where }: { where: { id: number } }) =>
+                Promise.resolve(where.id in households ? { householdId: households[where.id] } : null),
         },
         budgetOwner: {
             findUnique: ({ where, select }: { where: { id: number }; select: Record<string, unknown> }) => {
@@ -50,6 +51,7 @@ jest.mock('@/lib/prisma', () => ({
 beforeEach(() => {
     jest.clearAllMocks();
     tx.budgetOwnerTreasurer.findUnique.mockResolvedValue(null);
+    tx.$queryRaw.mockResolvedValue([{ isOrgLevel: false }]);
 });
 
 const nothingWritten = () => {
@@ -91,8 +93,8 @@ describe('setBucketTreasurer', () => {
         nothingWritten();
     });
 
-    test.each([true, false])('refuses a merged-away person as not found (on=%s), writing nothing', async (on) => {
-        await expect(setBucketTreasurer(1, 7, 4, on)).rejects.toMatchObject({ status: 404, message: 'Person not found' });
+    test.each([true, false])('refuses an unknown person as not found (on=%s), writing nothing', async (on) => {
+        await expect(setBucketTreasurer(1, 7, 99, on)).rejects.toMatchObject({ status: 404, message: 'Person not found' });
         nothingWritten();
     });
 
@@ -130,6 +132,136 @@ describe('setBucketOwner', () => {
 
     test('refuses an org-level bucket', async () => {
         await expect(setBucketOwner(1, 8, 3)).rejects.toMatchObject({ status: 409 });
+        nothingWritten();
+    });
+});
+
+describe('approvers and the org-level flag, changed at once', () => {
+    beforeEach(() => tx.$queryRaw.mockResolvedValue([{ isOrgLevel: true }]));
+    const refused = { status: 409, message: 'An org-level bucket has no owner or treasurers.' };
+
+    test('refuses an owner once the locked bucket is org-level, writing nothing', async () => {
+        await expect(setBucketOwner(5, 7, 3)).rejects.toMatchObject(refused);
+        nothingWritten();
+    });
+
+    test('refuses a treasurer once the locked bucket is org-level, writing nothing', async () => {
+        await expect(setBucketTreasurer(5, 7, 3, true)).rejects.toMatchObject(refused);
+        nothingWritten();
+    });
+});
+
+describe('updateBudgetOwner: org-level and restore', () => {
+    const held = holdBucketLines as jest.Mock;
+    const awaiting = jest.fn();
+    const stored = (over: Record<string, unknown> = {}) => ({
+        name: 'Shop', quickBooksClassId: '12', isOrgLevel: false, archivedAt: null, ownerId: null, _count: { treasurers: 0 }, ...over,
+    });
+
+    beforeEach(() => {
+        awaiting.mockResolvedValue(0);
+        held.mockImplementation((_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => change(awaiting));
+        tx.budgetOwner.update.mockResolvedValue({ id: 7 });
+    });
+
+    test.each([
+        ['an owner', { ownerId: 2 }],
+        ['a treasurer', { _count: { treasurers: 1 } }],
+    ])('refuses to make a bucket holding %s org-level, writing nothing', async (_name, over) => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored(over));
+        await expect(updateBudgetOwner(1, 7, { isOrgLevel: true })).rejects.toMatchObject({
+            status: 409,
+            message: "The Board must remove this bucket's owner and treasurers first.",
+        });
+        nothingWritten();
+    });
+
+    test('makes a bucket with no approvers org-level and audits the change', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored());
+        await updateBudgetOwner(1, 7, { isOrgLevel: true });
+        expect(tx.$queryRaw).toHaveBeenCalled();
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { isOrgLevel: true } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                action: 'EDIT',
+                tableName: 'BudgetOwner',
+                affectedEntityId: 7,
+                oldData: expect.objectContaining({ isOrgLevel: false }),
+                newData: { isOrgLevel: true },
+            }),
+        });
+        expect(held).not.toHaveBeenCalled();
+    });
+
+    test('refuses to make an org-level bucket a program bucket while a Board seat is awaited, writing nothing', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        awaiting.mockResolvedValue(2);
+        await expect(updateBudgetOwner(1, 8, { isOrgLevel: false })).rejects.toMatchObject({
+            status: 409,
+            message: 'Open expenses in this bucket still need a Board signature; have them signed or recorded first.',
+        });
+        expect(held).toHaveBeenCalledWith(8, expect.any(Function));
+        expect(awaiting).toHaveBeenCalled();
+        nothingWritten();
+    });
+
+    test('makes an org-level bucket a program bucket with no Board seat awaited, and audits the change', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        await updateBudgetOwner(1, 8, { isOrgLevel: false });
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                action: 'EDIT',
+                oldData: expect.objectContaining({ isOrgLevel: true }),
+                newData: { isOrgLevel: false },
+            }),
+        });
+    });
+
+    test('takes the line hold before the bucket row lock and keeps it until the flag change commits', async () => {
+        const events: string[] = [];
+        held.mockImplementation(async (_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => {
+            events.push('hold');
+            const bucket = await change(awaiting);
+            events.push('release');
+            return bucket;
+        });
+        tx.$queryRaw.mockImplementation(async () => {
+            events.push('row lock');
+            return [{ isOrgLevel: true }];
+        });
+        tx.budgetOwner.update.mockImplementation(async () => {
+            events.push('flag written');
+            return { id: 8 };
+        });
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ isOrgLevel: true }));
+        await updateBudgetOwner(1, 8, { isOrgLevel: false });
+        expect(events).toEqual(['hold', 'row lock', 'flag written', 'release']);
+    });
+
+    test('an edit that keeps the flag checks neither approvers nor seats', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ ownerId: 2 }));
+        await updateBudgetOwner(1, 9, { name: 'Renamed', isOrgLevel: false });
+        expect(awaiting).not.toHaveBeenCalled();
+        expect(tx.budgetOwner.update).toHaveBeenCalled();
+    });
+
+    test('rejects a flag that is not a boolean', async () => {
+        await expect(updateBudgetOwner(1, 7, { isOrgLevel: 'yes' })).rejects.toMatchObject({ status: 400 });
+        nothingWritten();
+    });
+
+    test('restores an archived bucket and audits it', async () => {
+        const archivedAt = new Date('2026-10-01');
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ archivedAt }));
+        await updateBudgetOwner(1, 7, { archived: false });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { archivedAt: null } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ action: 'EDIT', oldData: expect.objectContaining({ archivedAt }), newData: { archivedAt: null } }),
+        });
+    });
+
+    test('archives only through the archive route', async () => {
+        await expect(updateBudgetOwner(1, 7, { archived: true })).rejects.toMatchObject({ status: 400 });
         nothingWritten();
     });
 });

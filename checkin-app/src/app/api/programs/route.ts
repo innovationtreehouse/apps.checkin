@@ -9,11 +9,12 @@ import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
 import { dollarsToCentsOrNull } from "@checkin/money";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { resolveProgramYear } from "@/lib/programs/update";
+import { enrollmentClosedBy } from "@/lib/programs/saleState";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -127,8 +128,8 @@ export async function GET(req: Request) {
                 ...PUBLIC_PROGRAM_SELECT,
                 _count: {
                     select: {
-                        participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } },
-                        volunteers: { where: { person: LIVE_PERSON } },
+                        participants: { where: ENROLLED_PARTICIPANT },
+                        volunteers: true,
                         events: true
                     }
                 }
@@ -157,21 +158,27 @@ export async function GET(req: Request) {
             const counts = await Promise.race([
                 prisma.program.findMany({
                     where: { id: { in: staticRows.map((prg) => prg.id) } },
-                    select: { id: true, _count: { select: { participants: { where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } }, volunteers: { where: { person: LIVE_PERSON } }, events: true } } },
+                    select: { id: true, _count: { select: { participants: { where: ENROLLED_PARTICIPANT }, volunteers: true, events: true } } },
                 }).catch(() => null),
                 new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), 2_500); t.unref?.(); }),
             ]);
             const countById = new Map((counts ?? []).map((c) => [c.id, c._count]));
-            return NextResponse.json(staticRows.map((prg) => ({ ...prg, _count: countById.get(prg.id) })));
+            return NextResponse.json(staticRows.map((prg) => withClosedBy({ ...prg, _count: countById.get(prg.id) })));
         }
-        return NextResponse.json(await fetchPrograms());
+        return NextResponse.json((await fetchPrograms()).map(withClosedBy));
     } catch (error) {
         await logBackendError(error, "GET /api/programs");
         return apiError("Failed to fetch programs", 500);
     }
 }
 
-export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req, auth) => {
+// saleEndedAt is internal-tier and not selected; the off-sale date alone decides, as the claim route does until the sweep runs.
+function withClosedBy<P extends Omit<Parameters<typeof enrollmentClosedBy>[0], 'saleEndedAt'> & { _count?: { participants: number } }>(prg: P) {
+    return { ...prg, enrollmentClosedBy: enrollmentClosedBy({ ...prg, saleEndedAt: null }, prg._count?.participants) };
+}
+
+// Creating a program names its lead, and only the Board assigns one.
+export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
 
     // Hoisted so the catch can name an orphaned Shopify product (created, but DB write failed) for manual cleanup.

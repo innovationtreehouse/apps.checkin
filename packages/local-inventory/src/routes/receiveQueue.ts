@@ -1,17 +1,17 @@
-/** Receive-queue route factories: list, cancel, and fulfill into on-hand stock. */
+/** Receive-queue route factories: list (with the lines' provisional parts), cancel, and fulfill into on-hand stock. */
 import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { getOrgId, getPrincipal, getServices } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
+import { provisionalNames } from "./_shared";
 
 const cancelSchema = z.object({ reason: z.string().trim().min(1, "reason is required") });
 
-export const list: InventoryRouteHandler = async ({ req }) => ({
-  ReceiveQueue: await getServices().receiveQueueService.listQueue(
-    await getOrgId(),
-    query(req).get("includeFulfilled") === "true",
-  ),
-});
+export const list: InventoryRouteHandler = async ({ req }) => {
+  const orgId = await getOrgId();
+  const lines = await getServices().receiveQueueService.listQueue(orgId, query(req).get("includeFulfilled") === "true");
+  return { ReceiveQueue: lines, InventoryProvisionalItem: await provisionalNames(orgId, lines.map((l) => l.gtin13)) };
+};
 
 export const remove: InventoryRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);

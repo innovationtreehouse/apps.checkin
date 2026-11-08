@@ -7,7 +7,7 @@
 import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
-import { createCatalogRepository } from "../repositories/catalog";
+import { createCatalogRepository, itemSearch } from "../repositories/catalog";
 import { usageBehaviorEnum } from "../db/schema";
 import { createItem } from "../services/itemService";
 import { getDb, getPrincipal } from "../runtime";
@@ -34,14 +34,7 @@ function itemWhere(sp: URLSearchParams): Prisma.ItemWhereInput {
   const q = sp.get("q")?.trim() ?? "";
   const where: Prisma.ItemWhereInput = {};
   if (!includeArchived) where.archivedAt = null;
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: "insensitive" } },
-      { gtin13: { contains: q } },
-      { category: { name: { contains: q, mode: "insensitive" } } },
-      { subcategory: { name: { contains: q, mode: "insensitive" } } },
-    ];
-  }
+  if (q) where.OR = itemSearch(q);
   return where;
 }
 

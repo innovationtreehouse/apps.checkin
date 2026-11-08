@@ -11,6 +11,7 @@ KIOSKCTL = os.path.join(HERE, "host", "kioskctl")
 A = "sha256:" + "a" * 64
 B = "sha256:" + "b" * 64
 C = "sha256:" + "c" * 64
+D = "sha256:" + "d" * 64
 
 FAKES = {
     "docker": r"""#!/usr/bin/env bash
@@ -53,6 +54,7 @@ class KioskctlTest(unittest.TestCase):
         self.conf = os.path.join(self.fake, "host.conf")
         self.write_conf()
         self.write(self.state, "current.env", f"KIOSK_DIGEST={A}\n")
+        self.write(self.state, "urgent", D + "\n")
         self.set_hour("23")
 
     def write(self, directory, name, text):
@@ -183,7 +185,7 @@ class KioskctlTest(unittest.TestCase):
         self.set_tag("kiosk-urgent", B)
         self.write(self.fake, "pull_fails", "")
         self.assertEqual(self.run_ctl("check-urgent"), 0)
-        self.assertEqual(self.state_of("urgent"), "")
+        self.assertEqual(self.state_of("urgent"), D)
         self.assertEqual(self.current(), A)
         os.remove(os.path.join(self.fake, "pull_fails"))
         self.assertEqual(self.run_ctl("check-urgent"), 0)
@@ -193,6 +195,34 @@ class KioskctlTest(unittest.TestCase):
         self.set_tag("kiosk-urgent", A)
         self.assertEqual(self.run_ctl("check-urgent"), 0)
         self.assertEqual(self.state_of("urgent"), A)
+        self.assertEqual(self.restarts(), [])
+
+    def test_first_urgent_check_records_without_moving(self):
+        os.remove(os.path.join(self.state, "urgent"))
+        self.set_hour("14")
+        self.set_tag("kiosk-urgent", B)
+        self.assertEqual(self.run_ctl("check-urgent"), 0)
+        self.assertEqual(self.state_of("urgent"), B)
+        self.assertEqual(self.current(), A)
+        self.assertEqual(self.restarts(), [])
+        self.assertNotIn(f"docker pull ghcr.io/example/kiosk@{B}", self.log())
+
+        self.set_tag("kiosk-urgent", C)
+        self.assertEqual(self.run_ctl("check-urgent"), 0)
+        self.assertEqual(self.current(), C)
+
+    def test_empty_urgent_record_counts_as_none(self):
+        self.write(self.state, "urgent", "")
+        self.set_tag("kiosk-urgent", B)
+        self.assertEqual(self.run_ctl("check-urgent"), 0)
+        self.assertEqual(self.state_of("urgent"), B)
+        self.assertEqual(self.current(), A)
+
+    def test_unreadable_urgent_tag_with_no_record_changes_nothing(self):
+        os.remove(os.path.join(self.state, "urgent"))
+        self.assertEqual(self.run_ctl("check-urgent"), 0)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "urgent")))
+        self.assertEqual(self.current(), A)
         self.assertEqual(self.restarts(), [])
 
     def test_going_back_sticks_through_the_nightly_check(self):
@@ -255,6 +285,14 @@ class KioskctlTest(unittest.TestCase):
     def test_reboot_unit_goes_through_kioskctl(self):
         with open(os.path.join(HERE, "host", "kiosk-reboot.service")) as f:
             self.assertIn("ExecStart=/usr/local/bin/kioskctl reboot\n", f.read())
+
+    def test_state_stays_outside_the_containers_data_mount(self):
+        with open(KIOSKCTL) as f:
+            self.assertIn("STATE=${KIOSK_STATE_DIR:-/var/lib/kiosk-host}\n", f.read())
+        with open(os.path.join(HERE, "host", "kiosk-client.service")) as f:
+            unit = f.read()
+        self.assertIn("EnvironmentFile=/var/lib/kiosk-host/current.env\n", unit)
+        self.assertIn("-v /var/lib/kiosk:/data \\\n", unit)
 
     def test_example_health_command_runs_the_script_in_the_image(self):
         with open(os.path.join(HERE, "host", "host.conf.example")) as f:

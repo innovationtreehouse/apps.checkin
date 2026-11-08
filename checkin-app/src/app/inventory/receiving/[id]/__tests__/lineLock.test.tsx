@@ -8,6 +8,8 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1
 let mockLoads: Record<string, unknown> = {};
 jest.mock("@checkin/workflow-mapping/components/api", () => ({
   ...jest.requireActual("@checkin/workflow-mapping/components/api"),
+  // Part-name lookups never settle; these tests read only the line lock.
+  api: () => new Promise(() => {}),
   useLoad: (path: string) => ({ data: mockLoads[path] ?? null, error: null, reload: jest.fn() }),
 }));
 
@@ -41,7 +43,7 @@ describe("receipt page line lock", () => {
     (stamps) => {
       load({ state: "apply_failed", ...stamps });
       renderWithProviders(<ReceiptPage />);
-      for (const name of ["Associate", "Propose", "Not inventory"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      for (const name of ["Associate", "Not inventory"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.getByText("Lines locked")).toBeInTheDocument();
       expect(screen.getByText(/Retry sends the part that failed with the same lines\./)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Retry apply" })).toBeInTheDocument();

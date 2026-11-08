@@ -10,6 +10,8 @@
 import { NextResponse } from 'next/server';
 import { requireCronSecret, withCron } from '@/lib/cronAuth';
 import prisma from '@/lib/prisma';
+// The incident engine has its own tests; here a run only reaches it.
+jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 
 const SECRET = 'unit-cron-secret';
 

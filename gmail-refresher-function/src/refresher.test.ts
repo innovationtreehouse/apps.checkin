@@ -40,11 +40,11 @@ describe("run", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("logs the alarm marker on invalid_grant, without secrets", async () => {
+  it("answers ReconsentRequired on invalid_grant and logs the alarm marker, without secrets", async () => {
     googleAnswers({ error: "invalid_grant", error_description: "detail" }, 400);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(run({ action: "current" }, store)).rejects.toThrow(/invalid_grant/);
+    await expect(run({ action: "current" }, store)).rejects.toMatchObject({ name: "ReconsentRequired" });
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const logged = JSON.stringify(errorSpy.mock.calls[0]);
@@ -56,7 +56,8 @@ describe("run", () => {
     googleAnswers({ error: "server_error", error_description: "echoed-detail" }, 500);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(run({ action: "current" }, store)).rejects.toThrow(/^Google token request failed 500: server_error$/);
+    const err = await run({ action: "current" }, store).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "Error", message: "Google token request failed 500: server_error" });
 
     expect(errorSpy).not.toHaveBeenCalled();
   });

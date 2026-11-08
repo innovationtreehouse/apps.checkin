@@ -48,6 +48,9 @@ type OrgItemRow = {
   location: { id: number; name: string } | null;
 };
 type QueueRow = { id: number; gtin13: string; quantity: number; fulfilledAt: string | null };
+type ProvisionalRow = { provisionalGtin13: string; name: string };
+type OrgItemsBag = { OrgItem: OrgItemRow[]; InventoryProvisionalItem: ProvisionalRow[] };
+type QueueBag = { ReceiveQueue: QueueRow[]; InventoryProvisionalItem: ProvisionalRow[] };
 type ConflictRow = { id: number; status: string; realGtin13: string; provisionalGtin13: string; resolution?: string };
 type LogRow = { gtin13: string; fieldChanged: string; valueAfter: string | null; username?: string | null };
 
@@ -91,12 +94,12 @@ describe("local inventory — route auth", () => {
   it("serves a viewer public fields only, and a manager the internal ones too", async () => {
     const viewer = await loginAs(VIEWER);
     const manager = await loginAs(MANAGER);
-    const asViewer = await api<OrgItemRow[]>(viewer, "/api/inventory/org-items");
-    const asManager = await api<OrgItemRow[]>(manager, "/api/inventory/org-items");
-    expect(asViewer.json.length).toBeGreaterThan(0);
-    expect(asViewer.json[0].orgId).toBeUndefined();
-    expect(asViewer.json[0].gtin13).toMatch(/^\d{13}$/);
-    expect(asManager.json[0].orgId).toBe("treehouse");
+    const asViewer = await api<OrgItemsBag>(viewer, "/api/inventory/org-items");
+    const asManager = await api<OrgItemsBag>(manager, "/api/inventory/org-items");
+    expect(asViewer.json.OrgItem.length).toBeGreaterThan(0);
+    expect(asViewer.json.OrgItem[0].orgId).toBeUndefined();
+    expect(asViewer.json.OrgItem[0].gtin13).toMatch(/^\d{13}$/);
+    expect(asManager.json.OrgItem[0].orgId).toBe("treehouse");
   });
 
   it("server-renders an inventory page (proves the library tsx transpiles)", async () => {
@@ -118,9 +121,11 @@ describe("local inventory — manager journey", () => {
     const shelfId = (shelf.json as LocationRow).id;
     expect((await send(m, "POST", "/api/inventory/locations", { name: "  " })).status).toBe(400);
 
-    // Org item: create at the bin, then edit its quantities.
-    const gtin = "0000000000017";
+    // Org item: create a seeded catalog item at the bin, then edit its quantities.
+    const catalog = await api<Array<{ gtin13: string; name: string }>>(m, "/api/catalog/items?q=Power%20Distribution%20Hub");
+    const gtin = catalog.json.find((i) => i.name === "Power Distribution Hub")!.gtin13;
     expect((await send(m, "POST", "/api/inventory/org-items", { gtin13: "123" })).status).toBe(400);
+    expect((await send(m, "POST", "/api/inventory/org-items", { gtin13: "0000000000017" })).status).toBe(400);
     const created = await send(m, "POST", "/api/inventory/org-items", { gtin13: gtin, existingQuantity: 2, locationId: binId });
     expect(created.status).toBe(200);
     expect((created.json as OrgItemRow).location?.name).toBe(`Bin ${stamp}`);
@@ -139,22 +144,22 @@ describe("local inventory — manager journey", () => {
     // A location in use can't be deleted; reassigning its items frees it.
     expect((await send(m, "DELETE", `/api/inventory/locations/${binId}`)).status).toBe(409);
     expect((await send(m, "POST", `/api/inventory/locations/${binId}/reassign`, { targetLocationId: shelfId })).status).toBe(200);
-    const moved = await api<OrgItemRow>(m, `/api/inventory/org-items/${gtin}`);
-    expect(moved.json.location?.id).toBe(shelfId);
+    const moved = await api<{ OrgItem: OrgItemRow }>(m, `/api/inventory/org-items/${gtin}`);
+    expect(moved.json.OrgItem.location?.id).toBe(shelfId);
     expect((await send(m, "PUT", `/api/inventory/locations/${binId}`, { name: `Old bin ${stamp}` })).status).toBe(200);
     expect((await send(m, "DELETE", `/api/inventory/locations/${binId}`)).status).toBe(200);
 
     // Receive the seeded backorder line into stock; a second fulfill is a conflict.
-    const queue = await api<QueueRow[]>(m, "/api/inventory/receive-queue");
-    const line = queue.json.find((q) => q.gtin13 === "0098765432109")!;
+    const queue = await api<QueueBag>(m, "/api/inventory/receive-queue");
+    const line = queue.json.ReceiveQueue.find((q) => q.gtin13 === "0098765432109")!;
     expect(line).toBeDefined();
     const fulfilled = await send(m, "POST", `/api/inventory/receive-queue/${line.id}/fulfill`);
     expect(fulfilled.status).toBe(200);
     expect((fulfilled.json as QueueRow).fulfilledAt).not.toBeNull();
     expect((await send(m, "POST", `/api/inventory/receive-queue/${line.id}/fulfill`)).status).toBe(409);
-    expect((await api<OrgItemRow>(m, "/api/inventory/org-items/0098765432109")).json.existingQuantity).toBe(3);
-    const open = await api<QueueRow[]>(m, "/api/inventory/receive-queue");
-    expect(open.json.some((q) => q.id === line.id)).toBe(false);
+    expect((await api<{ OrgItem: OrgItemRow }>(m, "/api/inventory/org-items/0098765432109")).json.OrgItem.existingQuantity).toBe(3);
+    const open = await api<QueueBag>(m, "/api/inventory/receive-queue");
+    expect(open.json.ReceiveQueue.some((q) => q.id === line.id)).toBe(false);
 
     // Resolve the seeded uom_mismatch by summing both counts (4 provisional + 10 real).
     const conflicts = await api<ConflictRow[]>(m, "/api/inventory/inventory-merge-conflicts");
@@ -163,7 +168,7 @@ describe("local inventory — manager journey", () => {
     const resolved = await send(m, "PUT", `/api/inventory/inventory-merge-conflicts/${conflict.id}/resolve`, { quantityMethod: "sum" });
     expect(resolved.json).toMatchObject({ id: conflict.id, status: "resolved" });
     expect((await send(m, "PUT", `/api/inventory/inventory-merge-conflicts/${conflict.id}/resolve`, { quantityMethod: "sum" })).status).toBe(400);
-    expect((await api<OrgItemRow>(m, `/api/inventory/org-items/${conflict.realGtin13}`)).json.existingQuantity).toBe(14);
+    expect((await api<{ OrgItem: OrgItemRow }>(m, `/api/inventory/org-items/${conflict.realGtin13}`)).json.OrgItem.existingQuantity).toBe(14);
     expect((await api(m, `/api/inventory/org-items/${conflict.provisionalGtin13}`)).status).toBe(404);
 
     // Stop tracking the item.

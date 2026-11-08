@@ -77,8 +77,11 @@ describeDb("S5 handler", () => {
 });
 
 describeDb("S5 catch-up", () => {
-  it("is a no-op with the inert event source", async () => {
-    expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0, unprocessed: 0, unreadable: false });
+  it("records that no catalog is connected with the inert event source, and alerts nobody", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure(undefined, { orgEventsStuck });
+    expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0, unprocessed: 0, unreadable: false, notConnected: true });
+    expect(orgEventsStuck).not.toHaveBeenCalled();
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {

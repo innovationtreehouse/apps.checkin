@@ -15,12 +15,11 @@ import { OWN_HOUSEHOLD_DONOR_MESSAGE } from '@/lib/bulkDonation/donorSelfGuard';
 import { householdMembersOf, householdsSharingSurname, surname } from '@/lib/bulkDonation/donorSurname';
 import prisma from '@/lib/prisma';
 
-type PersonRow = { id: number; householdId: number; name: string; mergedIntoId?: number };
+type PersonRow = { id: number; householdId: number; name: string };
 const people: PersonRow[] = [
     { id: 7, householdId: 70, name: 'Robin Okafor' },
     { id: 8, householdId: 70, name: 'Sam Okafor-Lee' },
     { id: 9, householdId: 90, name: 'Alex Brandt' },
-    { id: 10, householdId: 90, name: 'Lee Varga', mergedIntoId: 3 },
 ];
 
 const mockAuditCreate = jest.fn<Promise<object>, [unknown]>(async () => ({}));
@@ -30,11 +29,9 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         person: {
             findUnique: jest.fn(async ({ where }: { where: { id: number } }) => people.find((p) => p.id === where.id) ?? null),
-            findMany: jest.fn(async ({ where }: { where: { id?: number | { in: number[] }; householdId?: number | { in: number[] }; mergedIntoId?: null } }) => {
+            findMany: jest.fn(async ({ where }: { where: { id?: number | { in: number[] }; householdId?: number | { in: number[] } } }) => {
                 const hit = (v: number, w: number | { in: number[] } | undefined) => w === undefined || (typeof w === 'number' ? v === w : w.in.includes(v));
-                return people.filter(
-                    (p) => hit(p.id, where.id) && hit(p.householdId, where.householdId) && (where.mergedIntoId !== null || p.mergedIntoId === undefined),
-                );
+                return people.filter((p) => hit(p.id, where.id) && hit(p.householdId, where.householdId));
             }),
         },
         // Deferred: jest.mock is hoisted above mockAuditCreate's initialisation.
@@ -144,12 +141,6 @@ describe('POST /api/donations/in-kind/manual', () => {
         expect(record).toHaveBeenCalledWith('treehouse', valid('Okafor'), expect.objectContaining({ actorUserId: 9 }));
     });
 
-    it('ignores a merged person row in the household', async () => {
-        signIn(9, { isOperations: true });
-        expect((await post(valid('Varga'))).status).toBe(200);
-        expect(record).toHaveBeenCalled();
-    });
-
     it('refuses BOARD', async () => {
         signIn(9, { isBoardMember: true });
         expect((await post(valid('Okafor'))).status).toBe(403);
@@ -244,18 +235,17 @@ describe('surname', () => {
 });
 
 describe('in-kind household reads (the accept step\'s conflict rule and surname warning)', () => {
-    it('matches a donor surname against anyone live in each person\'s household, in one batch', async () => {
+    it('matches a donor surname against anyone in each person\'s household, in one batch', async () => {
         const checks = [
             { personId: 7, lastName: 'Okafor' },
             { personId: 7, lastName: 'Lee' },
             { personId: 9, lastName: 'Okafor' },
-            { personId: 9, lastName: 'Varga' },
             { personId: 7, lastName: 'Jr' },
         ];
-        await expect(householdsSharingSurname(prisma, checks)).resolves.toEqual([true, true, false, false, false]);
+        await expect(householdsSharingSurname(prisma, checks)).resolves.toEqual([true, true, false, false]);
     });
 
-    it('lists each person\'s live household, the person included', async () => {
+    it('lists each person\'s household, the person included', async () => {
         const households = await householdMembersOf(prisma, [7, 9]);
         expect(households.get(7)?.sort()).toEqual([7, 8]);
         expect(households.get(9)).toEqual([9]);

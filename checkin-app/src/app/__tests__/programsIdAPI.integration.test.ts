@@ -216,6 +216,29 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.name).toBe('Public Prog ID API Test');
         });
 
+        it('tells every caller why a new claim would be refused', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue(null);
+             const base = { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2999-12-31'), phase: 'RUNNING' as const, enrollmentStatus: 'OPEN' as const, leadMentorId: leadId };
+             const [open, full, ended] = await Promise.all([
+                 prisma.program.create({ data: { ...base, name: 'Open Prog ID API Test', offSaleAt: new Date('2999-01-01'), maxParticipants: 5 } }),
+                 prisma.program.create({ data: { ...base, name: 'Full Prog ID API Test', offSaleAt: new Date('2999-01-01'), maxParticipants: 0 } }),
+                 prisma.program.create({ data: { ...base, name: 'Ended Prog ID API Test', offSaleAt: new Date('2020-01-01') } }),
+             ]);
+             try {
+                 const closedBy = async (id: number) => {
+                     const req = new Request(`http://localhost:4000/api/programs/${id}`, { method: 'GET' });
+                     const res = await GET(req as unknown as import("next/server").NextRequest, createParams(id) as unknown as never);
+                     return (await res.json()).enrollmentClosedBy;
+                 };
+                 expect(await closedBy(open.id)).toBeNull();
+                 expect(await closedBy(full.id)).toBe('FULL');
+                 expect(await closedBy(ended.id)).toBe('SALE_ENDED');
+                 expect(await closedBy(publicProgramId)).toBe('CLOSED');
+             } finally {
+                 await prisma.program.deleteMany({ where: { id: { in: [open.id, full.id, ended.id] } } });
+             }
+        });
+
         it('should return 404 Not Found for invalid program ID', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId } });
 
@@ -598,7 +621,7 @@ describe('Individual Program API Integration Tests', () => {
                                 orgMembership: {
                                     create: {
                                         status: 'NONE',
-                                        processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: paidBeforeWindow, stageEnteredAt: paidBeforeWindow } },
+                                        processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: paidBeforeWindow, stageEnteredAt: paidBeforeWindow, appliesToYear: boundary.getUTCFullYear() - 1 } },
                                     },
                                 },
                             },
@@ -1043,11 +1066,11 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
             expect(res.status).toBe(403);
             const data = await res.json();
-            expect(data.error).toBe('Forbidden: Only administrators can reassign Program Leaders');
+            expect(data.error).toBe('Forbidden: Only the Board can reassign Program Leaders');
         });
 
-        it('allows admins to reassign leadMentorId', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        it('allows the Board to reassign leadMentorId', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const req = new Request(`http://localhost:4000/api/programs/${validPublishProgramId}`, {
                 method: 'PATCH',

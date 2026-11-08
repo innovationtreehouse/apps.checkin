@@ -10,7 +10,7 @@
 import { GET } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
-import { nextBoundary, membershipYearCycle, coveredThrough, grantableYears } from '@/lib/membership/renewal';
+import { nextBoundary, membershipYearCycle, coveredThrough, grantableYears, liveMembershipYear } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -173,7 +173,7 @@ describe('GET /api/membership-ops/households — awaitingPayment + dates', () =>
 /**
  * settledForComingYear. The route's "settled this
  * cycle" probe consumes settledThisCycleWhere = kind-agnostic, status ACTIVE,
- * stageEnteredAt≥windowStart (ARCHIVED never paid — sweep-only). Requires a boundary that puts
+ * appliesToYear the live year (ARCHIVED never paid — sweep-only). Requires a boundary that puts
  * `now` inside the renewal window so the probe is live (out of season it matches
  * nothing, and settledForComingYear is trivially false — see the describe above).
  */
@@ -182,8 +182,7 @@ describe('GET /api/membership-ops/households — settledForComingYear', () => {
     let adminId: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
-    // A boundary ~1 month ahead ⇒ windowStart ~1 month ago ⇒ now is in-season and a
-    // stageEnteredAt of `now` sits inside the window.
+    // A boundary ~1 month ahead ⇒ windowStart ~1 month ago ⇒ now is in-season.
     const boundaryConfig = (() => {
         const b = new Date();
         b.setUTCMonth(b.getUTCMonth() + 1);
@@ -230,7 +229,7 @@ describe('GET /api/membership-ops/households — settledForComingYear', () => {
         });
         initialActiveHouseholdId = a.householdId;
         const am = await prisma.orgMembership.create({ data: { householdId: initialActiveHouseholdId, status: 'ACTIVE' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: am.id, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: now } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: am.id, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: now, appliesToYear: liveMembershipYear(boundaryConfig, now) } });
 
         // Board-archived RENEWAL in-window: archive never completed payment, so this is
         // not settled and the money horizon stays put.
@@ -247,7 +246,7 @@ describe('GET /api/membership-ops/households — settledForComingYear', () => {
         });
         activeRenewalHouseholdId = c.householdId;
         const cm = await prisma.orgMembership.create({ data: { householdId: activeRenewalHouseholdId, status: 'ACTIVE' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: cm.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: now } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: cm.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: now, appliesToYear: liveMembershipYear(boundaryConfig, now) } });
 
         // ACTIVE with no process at all: what a bare manual grant or an import records.
         // Coverage is what was bought, and nothing was — not settled, whatever its age.

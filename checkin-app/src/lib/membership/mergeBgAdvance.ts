@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
 import { logBackendError } from "@/lib/logger";
+import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { bgFreshThreshold, householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
@@ -207,6 +208,7 @@ async function clearHeldRow(
 ): Promise<void> {
     const { status, from } = held;
     for (const process of await uncleared(householdId, from)) {
+        await recordUnreportedReversalOnProcess(process.id);
         const outcome = await reviewTransaction(async (tx) => {
             // clearBackgroundCheck's contract; also serializes against a concurrent attest.
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;

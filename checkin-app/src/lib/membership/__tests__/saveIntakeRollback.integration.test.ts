@@ -68,13 +68,16 @@ describe('saveIntake rollback', () => {
         jest.mocked(recordSelfGrantRefusal).mockRejectedValueOnce(new Error(REFUSAL_WRITE_FAILED));
         const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-        await expect(saveIntake(actorId, {
-            secondaryParent: { id: guardianId, name: 'Guardian' },
-            children: [{ name: 'Child', email: `taken-${TAG}@example.com` }],
-        })).rejects.toMatchObject({ code: 'email_in_use', fields: ['children'] });
+        try {
+            await expect(saveIntake(actorId, {
+                secondaryParent: { id: guardianId, name: 'Guardian' },
+                children: [{ name: 'Child', email: `taken-${TAG}@example.com` }],
+            })).rejects.toMatchObject({ code: 'email_in_use', fields: ['children'] });
 
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('self-grant refusal failed'), expect.anything(), expect.anything());
-        consoleError.mockRestore();
+            expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('self-grant refusal failed'), expect.anything(), expect.anything());
+        } finally {
+            consoleError.mockRestore();
+        }
         expect(recordSelfGrantRefusal).toHaveBeenCalledTimes(1);
         expect(await prisma.person.count({ where: { householdId: refused.id } })).toBe(2);
     });

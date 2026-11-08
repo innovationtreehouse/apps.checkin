@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getExpenseRuntime } from "../runtime";
 import type { CatalogCategory, CatalogSubcategory, ItemInfo, ItemName, LookupEntry, LookupResult } from "../contract";
 import {
+  ActiveItemSchema,
   CatalogCategorySchema,
   CatalogSubcategorySchema,
   ItemInfoSchema,
@@ -20,6 +21,11 @@ export async function listSubcategories(): Promise<CatalogSubcategory[]> {
 
 export async function getItem(gtin13: string): Promise<ItemInfo | null> {
   return ItemInfoSchema.parse(await getExpenseRuntime().catalog.getItem(gtin13));
+}
+
+/** The approved, non-archived item with this GTIN, or null. */
+export async function getActiveItem(gtin13: string): Promise<{ gtin13: string; name: string } | null> {
+  return ActiveItemSchema.parse(await getExpenseRuntime().catalog.getActiveItem(gtin13));
 }
 
 /** The catalog name of each listed GTIN the catalog knows. */

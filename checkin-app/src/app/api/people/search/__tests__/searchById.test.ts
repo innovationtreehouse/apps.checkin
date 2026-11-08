@@ -68,4 +68,10 @@ describe('GET /api/people/search — search by id', () => {
         expect((where.AND as Prisma.PersonWhereInput[])).toHaveLength(2);
         expect(textOrLegs()).toContainEqual({ id: 42 });
     });
+
+    it('leaves out members of an archived household', async () => {
+        await GET(req('q=42'));
+        const where = findManyMock.mock.calls[0][0].where as Prisma.PersonWhereInput;
+        expect(where.household).toEqual({ archivedAt: null });
+    });
 });

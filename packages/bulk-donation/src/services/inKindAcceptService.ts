@@ -3,14 +3,16 @@
 // or by a Board member when every finance holder is conflicted. The screen's warnings never block.
 import { z } from "zod";
 import { db, type DbOrTx } from "../db";
-import { getInKindCapital, getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
+import { getInKindCapital, getInKindDirectory, getInventoryApply, getOrgId, getOwnerDirectory } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
-import type { CapitalReviewLine } from "../contract";
-import { ServiceError } from "@checkin/component-kit";
+import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
+import { ServiceError, kindOf, toHttpError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "@checkin/gtin";
+import { allocateCents } from "@checkin/money";
 
 export type InKindSource = "receipt" | "manual";
 export type InKindOutcome = "ACCEPTED" | "REFUSED" | "RETURNED";
@@ -47,6 +49,8 @@ interface GiftLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The account finance set by hand on a held line; it wins over every account rule. */
+  quickBooksAccountId: string | null;
 }
 
 /** Both in-kind tables in one shape. `donorLastName` feeds the warnings and never leaves this file. */
@@ -98,7 +102,7 @@ const RECEIPT_SELECT = {
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true }, orderBy: { lineNumber: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
 } as const;
 
 const MANUAL_SELECT = {
@@ -108,7 +112,7 @@ const MANUAL_SELECT = {
   donorLastName: true,
   recordedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true }, orderBy: { id: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true, quickBooksAccountId: true }, orderBy: { id: "asc" } },
 } as const;
 
 type ReceiptRow = Awaited<ReturnType<typeof findReceipts>>[number];
@@ -156,24 +160,11 @@ async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id:
 
 /**
  * Spreads the difference between `totalCents` and the values (a receipt's tax, shipping or
- * discount) across them by value, largest remainder first, so they sum to the total exactly.
- * All-zero values share it equally.
+ * discount) across them by value, so they sum to the total exactly.
  */
 export function spreadToTotal(values: number[], totalCents: number): number[] {
-  const sum = values.reduce((a, b) => a + b, 0);
-  const weights = sum > 0 ? values : values.map(() => 1);
-  const weightSum = sum > 0 ? sum : values.length;
-  const extra = totalCents - sum;
-  const exact = weights.map((w) => (extra * w) / weightSum);
-  const shares = exact.map(Math.floor);
-  let left = extra - shares.reduce((a, b) => a + b, 0);
-  const order = exact.map((e, i) => ({ i, rem: e - shares[i] })).sort((a, b) => b.rem - a.rem || a.i - b.i);
-  for (const { i } of order) {
-    if (left <= 0) break;
-    shares[i]++;
-    left--;
-  }
-  return values.map((v, i) => v + shares[i]);
+  const extra = allocateCents(totalCents - values.reduce((a, b) => a + b, 0), values);
+  return values.map((v, i) => v + extra[i]);
 }
 
 /** An accepted gift's lines as capital review takes them: a receipt's lines carry its tax and shipping. */
@@ -184,7 +175,7 @@ function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[]
     giftSource: g.source,
     giftId: g.id,
     giftLineId: l.id,
-    description: l.description ?? l.gtin13 ?? "Donated item",
+    description: l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "Donated item"),
     quantity: l.quantity,
     costCents: costs[i],
     acquisitionDate: g.receiptDate ?? g.donationDate,
@@ -562,12 +553,32 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
  * Sends an accepted gift's lines once its decision has committed: the expense library has its own
  * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
  * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
+ * A send the callee refuses would be refused again, so finance sees why instead of being told to resend.
+ * A bug, such as a 401 or 403 from the callee, is our wiring, never the accepting person's permission: a 500 that says so.
  */
 async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
+  const fault = (err: unknown) => {
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
+    const answer = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
+    answer.cause = err;
+    return answer;
+  };
+  // We built these lines, so lines our own schema rejects are our bug, not the callee's refusal.
+  const parsed = CapitalReviewLineSchema.array().safeParse(lines);
+  if (!parsed.success) throw fault(parsed.error);
   try {
-    await getInKindCapital().submit(orgId, lines);
-  } catch {
-    throw new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+    await getInKindCapital().submit(orgId, parsed.data);
+  } catch (err) {
+    const kind = kindOf(err);
+    const answered = toHttpError(err);
+    if (kind === "data") {
+      throw new ServiceError(answered?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${answered?.message ?? (err instanceof Error ? err.message : String(err))}`, answered?.code);
+    }
+    if (kind === "bug") throw fault(err);
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send failed`, err);
+    const failed = new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+    failed.cause = err;
+    throw failed;
   }
   const data = { capitalSubmittedAt: new Date() };
   if (source === "receipt") await db.inKindDonation.update({ where: { id }, data });
@@ -598,16 +609,31 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
 
 const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
 
-/** What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its recorder and inventory load. */
+/**
+ * What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its
+ * recorder and inventory load, with why the load failed while it has not loaded.
+ */
 async function readPageExtras(orgId: string, source: InKindSource, id: number) {
   if (source === "receipt") {
     const donor = await db.inKindDonation.findFirstOrThrow({ where: { id, orgId }, select: DONOR_SELECT });
-    return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null };
+    return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null, inventoryLoadFailureReason: null };
   }
-  return db.manualInKindDonation.findFirstOrThrow({
+  const row = await db.manualInKindDonation.findFirstOrThrow({
     where: { id, orgId },
     select: { ...DONOR_SELECT, recordedAt: true, recordedByUsername: true, inventoryLoadedAt: true },
   });
+  const inventoryLoadFailureReason = row.inventoryLoadedAt ? null : await readLoadFailure(id);
+  return { ...row, inventoryLoadFailureReason };
+}
+
+/** The page loads without the reason when inventory cannot answer, and keeps its "Load again". */
+async function readLoadFailure(id: number): Promise<string | null> {
+  try {
+    return await getInventoryApply().failureReason(inventorySourceKey(id));
+  } catch (err) {
+    console.warn(`[bulk-donation] reading in-kind donation ${id}'s inventory load failure failed`, err);
+    return null;
+  }
 }
 
 /** The gift's history, oldest first; donor-read audit rows are left out. */
@@ -670,6 +696,7 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     expenseBooking: bookedSide(sides, "expense"),
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
+    inventoryLoadFailureReason: extras.inventoryLoadFailureReason,
     lines: gift.lines,
     events,
   };
@@ -687,7 +714,7 @@ export interface GiftToBook {
   createdAt: Date;
   totalCents: number;
   budgetOwnerId: number;
-  lines: { id: number; description: string; valueCents: number }[];
+  lines: { id: number; description: string; valueCents: number; gtin13: string | null; quickBooksAccountId: string | null }[];
 }
 
 function toBook(g: Gift): GiftToBook | null {
@@ -702,7 +729,13 @@ function toBook(g: Gift): GiftToBook | null {
     createdAt: g.moneyReceivedAt,
     totalCents: total,
     budgetOwnerId: g.budgetOwnerId,
-    lines: capitalReviewLines(g, g.budgetOwnerId).map((l) => ({ id: l.giftLineId, description: l.description, valueCents: l.costCents })),
+    lines: capitalReviewLines(g, g.budgetOwnerId).map((l, i) => ({
+      id: l.giftLineId,
+      description: l.description,
+      valueCents: l.costCents,
+      gtin13: g.lines[i].gtin13,
+      quickBooksAccountId: g.lines[i].quickBooksAccountId,
+    })),
   };
 }
 
@@ -731,7 +764,8 @@ async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ read
     const gift = waits.includes("booking") ? toBook(g) : null;
     if (!gift) continue;
     open.push(gift);
-    if (waits.length === 1) ready.push(gift);
+    // A drifted gift stays open, so it can rival a hand booking, but only finance moves it.
+    if (waits.length === 1 && postings.get(key)?.matchState !== QB_MATCH_STATE.DRIFT) ready.push(gift);
   }
   return { ready, open };
 }

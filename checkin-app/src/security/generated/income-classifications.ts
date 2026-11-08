@@ -31,6 +31,7 @@ export const classifications = {
         orgId: 'internal',
         variantId: 'internal',
         budgetOwnerId: 'internal',
+        quickBooksAccountId: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },

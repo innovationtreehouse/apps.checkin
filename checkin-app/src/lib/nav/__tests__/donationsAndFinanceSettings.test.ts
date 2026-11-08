@@ -8,7 +8,7 @@ import { SETTINGS, settingsRolesFor } from "@/lib/nav/sections/settings";
 import { FINANCE } from "@/lib/nav/sections/finance";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
 import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
-import { sectionBadges } from "@/components/navBadges";
+import { sectionBadges, sectionTabBadge } from "@/components/navBadges";
 
 const counts = (releasedLibraries: string[], libraries?: TodoCounts["libraries"]) =>
   ({
@@ -32,15 +32,19 @@ const keyholder: NavUser = { isKeyholder: true };
 
 const hrefs = (s: typeof DONATIONS, u: NavUser, c: TodoCounts | null = released) => visibleLinks(s, u, c).map((l) => l.href);
 
-const DONATION_SCREENS = [
-  "/donations/uploads", "/donations/unassigned", "/donations/transactions", "/donations/holds", "/donations/in-kind",
+const BENEVITY_SCREENS = [
+  "/donations/uploads", "/donations/transactions", "/donations/unassigned", "/donations/holds",
   "/donations/events", "/donations/comment-rules", "/donations/account-map",
 ];
+const IN_KIND_SCREENS = ["/donations/in-kind-gifts", "/donations/in-kind"];
+
+const tree = (u: NavUser, c: TodoCounts | null = released) =>
+  visibleLinks(DONATIONS, u, c).map((l) => [l.name, (l.subLinks ?? []).map((s) => s.href)]);
 
 describe("Settings > Finance", () => {
-  it("shows Finance to FINANCE and Board, last, at /settings/finance", () => {
-    expect(hrefs(SETTINGS, finance)).toEqual(["/settings/finance"]);
-    expect(hrefs(SETTINGS, board).at(-1)).toBe("/settings/finance");
+  it("shows Finance to FINANCE and Board, before Receipt reading, at /settings/finance", () => {
+    expect(hrefs(SETTINGS, finance)).toEqual(["/settings/finance", "/settings/receipt-reading"]);
+    expect(hrefs(SETTINGS, board).slice(-2)).toEqual(["/settings/finance", "/settings/receipt-reading"]);
     expect(visibleLinks(SETTINGS, finance, released)[0].name).toBe("Finance");
   });
 
@@ -50,8 +54,15 @@ describe("Settings > Finance", () => {
   });
 
   it("hides Finance from FINANCE until expense is released", () => {
-    const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "expense"));
+    const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "expense" && k !== "receipt"));
     expect(sectionShown(SETTINGS, finance, unreleased)).toBe(false);
+  });
+
+  it("shows Receipt reading to sysadmin, FINANCE and Board once receipt is released, and admits only them", () => {
+    for (const u of [sysadmin, finance, board]) expect(hrefs(SETTINGS, u)).toContain("/settings/receipt-reading");
+    expect(hrefs(SETTINGS, operations)).not.toContain("/settings/receipt-reading");
+    expect(hrefs(SETTINGS, sysadmin, counts(LIBRARY_KEYS.filter((k) => k !== "receipt")))).not.toContain("/settings/receipt-reading");
+    expect(settingsRolesFor("/settings/receipt-reading")).toEqual(["isSysadmin", "isFinance", "isBoardMember"]);
   });
 
   it("sends FINANCE's sidebar entry straight to Finance", () => {
@@ -74,13 +85,16 @@ describe("Settings > Finance", () => {
 });
 
 describe("Donations section", () => {
-  it("shows FINANCE and Board every donation screen, then In-kind gifts", () => {
-    for (const u of [finance, board]) expect(hrefs(DONATIONS, u)).toEqual([...DONATION_SCREENS, "/donations/in-kind-gifts"]);
+  it("shows FINANCE and Board a Benevity tab and an In-Kind tab, each with its screens in flow order", () => {
+    for (const u of [finance, board]) {
+      expect(tree(u)).toEqual([["Benevity", BENEVITY_SCREENS], ["In-Kind", IN_KIND_SCREENS]]);
+      expect(hrefs(DONATIONS, u)).toEqual(["/donations/uploads", "/donations/in-kind-gifts"]);
+    }
   });
 
-  it("shows operations and an inventory manager only In-kind gifts, and lands them there", () => {
+  it("shows operations and an inventory manager only In-Kind's no-receipt gifts, and lands them there", () => {
     for (const u of [operations, inventoryManager]) {
-      expect(hrefs(DONATIONS, u)).toEqual(["/donations/in-kind-gifts"]);
+      expect(tree(u)).toEqual([["In-Kind", ["/donations/in-kind-gifts"]]]);
       expect(DONATIONS.hrefFor?.(u, released)).toBe("/donations/in-kind-gifts");
     }
   });
@@ -97,7 +111,12 @@ describe("Donations section", () => {
   it("admits FINANCE or Board on the donation screens, and the in-kind audience on In-kind gifts", () => {
     expect(donationsRolesFor("/donations/uploads")).toEqual(["isFinance", "isBoardMember"]);
     expect(donationsRolesFor("/donations/in-kind")).toEqual(["isFinance", "isBoardMember"]);
+    expect(donationsRolesFor("/donations/in-kind/receipt/4")).toEqual(["isFinance", "isBoardMember"]);
     expect(donationsRolesFor("/donations/in-kind-gifts")).toEqual(["isFinance", "isBoardMember", "isOperations", "isInventoryManager"]);
+  });
+
+  it("admits the in-kind audience on bare /donations, which sends each viewer to their first tab", () => {
+    expect(donationsRolesFor("/donations")).toEqual(["isFinance", "isBoardMember", "isOperations", "isInventoryManager"]);
   });
 
   it("carries the unassigned and holds counts as one red sidebar pill, and each on its own tab", () => {
@@ -106,8 +125,11 @@ describe("Donations section", () => {
     expect(sectionBadges(DONATIONS.href, tabs, c)).toEqual([
       { count: 3, color: "red", label: "2 unassigned gifts; 1 disbursement holds" },
     ]);
-    expect(tabs.find((t) => t.href === "/donations/unassigned")?.badge?.(c)?.count).toBe(2);
-    expect(tabs.find((t) => t.href === "/donations/holds")?.badge?.(c)?.count).toBe(1);
+    const benevity = tabs.find((t) => t.name === "Benevity")?.subLinks ?? [];
+    expect(sectionTabBadge(benevity, "/donations/unassigned", c)?.count).toBe(2);
+    expect(sectionTabBadge(benevity, "/donations/holds", c)?.count).toBe(1);
+    expect(sectionTabBadge(tabs, "/donations/uploads", c)?.count).toBe(3);
+    expect(sectionTabBadge(tabs, "/donations/in-kind-gifts", c)).toBeNull();
     expect(sectionBadges(DONATIONS.href, tabs, released)).toEqual([]);
   });
 

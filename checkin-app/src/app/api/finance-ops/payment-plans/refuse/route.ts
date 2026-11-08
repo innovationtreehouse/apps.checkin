@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { fromWhere } from "@/lib/programs/enrollmentState";
+import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
 import type { Prisma } from "@/generated/prisma/client";
 
 // Denies a pending scholarship / payment-plan request — the sibling of
@@ -30,43 +30,40 @@ export const POST = withAuth(
                 return apiError("programId and participantId are required", 400);
             }
 
+            if (auth.type !== 'session') {
+                return apiError("Unauthorized", 401);
+            }
+
             // Conflict of interest: mirrors approve — no actor may refuse their OWN
             // household's request either. No role bypasses this.
-            if (auth.type === 'session') {
-                const target = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
-                if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId)) {
-                    return apiError("You cannot refuse your own household's payment plan — someone outside your household must.", 403);
-                }
+            const target = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
+            if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId)) {
+                return apiError("You cannot refuse your own household's payment plan — someone outside your household must.", 403);
             }
 
             const deniedAt = new Date();
-            const heldData = { isPaymentPlanRequested: false, paymentPlanDeniedAt: deniedAt };
 
             // Scope to the pending request so refusing a non-pending/nonexistent
             // request is a no-op error, mirroring approve's guard. Transactional
             // true->false guard: a double-refuse (already false) 409s instead of
             // re-stamping paymentPlanDeniedAt.
-            const held = await prisma.programParticipant.updateMany({
-                // Deny CAS: from-state status from the definition; the flag narrowing stays literal.
-                where: { programId, personId: participantId, isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, ...fromWhere('PENDING_HELD') },
-                data: heldData,
-            });
-
-            let auditData: Prisma.InputJsonObject = heldData;
-            if (held.count === 0) {
-                const noHoldData = { isPaymentPlanRequested: false };
-                const noHold = await prisma.programParticipant.updateMany({
-                    where: { programId, personId: participantId, isPaymentPlanRequested: true, inventoryHeldAt: null, ...fromWhere('PENDING_HOLD_FAILED') },
-                    data: noHoldData,
+            const denied = await prisma.$transaction(async (tx) => {
+                const held = await tx.programParticipant.updateMany({
+                    where: { programId, personId: participantId, ...ENROLLMENT_WRITES.denyHeld.where },
+                    data: ENROLLMENT_WRITES.denyHeld.data(deniedAt),
                 });
-                if (noHold.count === 0) {
-                    return apiError("No pending payment-plan request", 409);
-                }
-                auditData = { ...noHoldData, deniedAt: deniedAt.toISOString(), reason: "payment_plan_denied_no_hold" };
-            }
 
-            if (auth.type === 'session') {
-                await prisma.auditLog.create({
+                let auditData: Prisma.InputJsonObject = ENROLLMENT_WRITES.denyHeld.data(deniedAt);
+                if (held.count === 0) {
+                    const noHold = await tx.programParticipant.updateMany({
+                        where: { programId, personId: participantId, ...ENROLLMENT_WRITES.denyUnheld.where },
+                        data: ENROLLMENT_WRITES.denyUnheld.data(),
+                    });
+                    if (noHold.count === 0) return false;
+                    auditData = { ...ENROLLMENT_WRITES.denyUnheld.data(), deniedAt: deniedAt.toISOString(), reason: "payment_plan_denied_no_hold" };
+                }
+
+                await tx.auditLog.create({
                     data: {
                         actorId: auth.user.id,
                         action: "EDIT",
@@ -76,6 +73,11 @@ export const POST = withAuth(
                         newData: auditData,
                     },
                 });
+                return true;
+            });
+
+            if (!denied) {
+                return apiError("No pending payment-plan request", 409);
             }
 
             // Denial is deliberately silent — no automatic applicant email: the ack

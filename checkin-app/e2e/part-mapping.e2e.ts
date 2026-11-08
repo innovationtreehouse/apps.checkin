@@ -64,7 +64,7 @@ test.describe("Part mapping in the browser", () => {
 
     await lineRow(page, line).getByRole("button", { name: "Associate" }).click();
     await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill("dISTRIBUTION h");
-    await expect(page.getByRole("option", { name: /Power Distribution Hub/ })).toBeVisible();
+    await expect(page.getByRole("radio", { name: /Power Distribution Hub/ })).toBeVisible();
     await noProblems(watch, "catalog search");
     await context.close();
   });
@@ -87,7 +87,9 @@ test.describe("Part mapping in the browser", () => {
     const { receivedId: id } = await inReceiving(await loginAs(MANAGER), `E2E Part mapping propose ${stamp()}`, [{ description: line, quantity: 1, unitPrice: 8 }]);
     const { context, page, watch } = await openAsManager(browser, id);
 
-    await lineRow(page, line).getByRole("button", { name: "Propose" }).click();
+    await lineRow(page, line).getByRole("button", { name: "Associate" }).click();
+    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(`E2E no such item ${stamp()}`);
+    await page.getByRole("button", { name: "Propose new item" }).click();
     await page.getByPlaceholder("Proposed name").fill(`E2E proposed item ${stamp()}`);
     await page.getByPlaceholder("Category", { exact: true }).click();
     await page.getByRole("option", { name: "N — Electronics" }).click();
@@ -111,7 +113,7 @@ test.describe("Part mapping in the browser", () => {
 
       await page.goto(`/inventory/receiving/${id}`);
       await expect(lineRow(page, line)).toBeVisible();
-      for (const action of ["Associate", "Propose", "Not inventory", "Proceed"]) {
+      for (const action of ["Associate", "Not inventory", "Proceed"]) {
         await expect(page.getByRole("button", { name: action, exact: true }), action).toHaveCount(0);
       }
       await noProblems(watch, `${email} views Part mapping`);

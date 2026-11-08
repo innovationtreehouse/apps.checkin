@@ -1,7 +1,8 @@
 name: Browser e2e tests
 
 # Drives real user journeys in a browser (Playwright, checkin-app/e2e/*.e2e.ts) against the
-# dockerized DEVELOPMENT server the flow tests use (deploy/docker-compose.flow.yml).
+# dockerized DEVELOPMENT server the flow tests use (deploy/docker-compose.flow.yml), and the
+# kiosk's own page served by the kiosk image (checkin-app/kiosk-flow/*.kiosk-e2e.ts).
 # Nightly on main and on demand; never part of PR CI. See AGENTS.md → Test classes.
 
 on:
@@ -61,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     # Seven persona sweeps and the journeys on a cold dev server. Playwright's globalTimeout
     # (55 min) ends the tests first, leaving room for the stack's start-up and the upload.
-    timeout-minutes: 75
+    timeout-minutes: 110
     permissions:
       contents: read
       id-token: write # mint the GitHub OIDC token to assume the AWS role (no stored creds)
@@ -105,11 +106,44 @@ jobs:
         if: always()
         run: docker compose -f deploy/docker-compose.flow.yml down -v
 
+  # The kiosk image on the flow stack, on arm64 as it ships (deploy/kiosk-flow.sh).
+  kiosk_e2e:
+    name: Kiosk page browser tests (arm64)
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Log in to Amazon ECR Public
+        uses: ./.github/actions/ecr-public-login
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run the kiosk browser tier
+        run: deploy/kiosk-flow.sh e2e
+
+      - name: Upload report and traces
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: kiosk-playwright-report
+          path: |
+            checkin-app/playwright-report/
+            checkin-app/test-results/
+            checkin-app/e2e-results.json
+          retention-days: 7
+
   # One open issue tracks a failing nightly run: opened or updated on each red run, commented
   # on and closed by the next green one. A gate that did not succeed is a red run too.
   report:
     name: Track nightly failures
-    needs: [gate, e2e]
+    needs: [gate, e2e, kiosk_e2e]
     if: always() && github.event_name == 'schedule' && (needs.gate.result != 'success' || needs.gate.outputs.run == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -126,11 +160,19 @@ jobs:
           name: playwright-report
           path: report
 
+      - name: Download the kiosk results
+        if: needs.kiosk_e2e.result != 'success'
+        uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: kiosk-playwright-report
+          path: report-kiosk
+
       - name: Open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RESULT: ${{ needs.gate.result == 'success' && needs.e2e.result || format('gate {0}', needs.gate.result) }}
+          RESULT: ${{ needs.gate.result != 'success' && format('gate {0}', needs.gate.result) || needs.e2e.result != 'success' && needs.e2e.result || needs.kiosk_e2e.result != 'success' && format('kiosk {0}', needs.kiosk_e2e.result) || 'success' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.sha }}
         run: |
@@ -147,9 +189,12 @@ jobs:
           fi
 
           failed=""
-          if [ -f report/e2e-results.json ]; then
+          results=()
+          for file in report/e2e-results.json report-kiosk/e2e-results.json; do
+            if [ -f "$file" ]; then results+=("$file"); fi
+          done
+          if [ "${#results[@]}" -gt 0 ]; then
             failed="$(node -e '
-              const r = require(process.argv[1]);
               const out = [];
               const walk = (suite, path) => {
                 for (const spec of suite.specs ?? []) {
@@ -160,10 +205,13 @@ jobs:
                 }
                 for (const child of suite.suites ?? []) walk(child, [...path, child.title]);
               };
-              for (const suite of r.suites ?? []) walk(suite, []);
-              for (const err of r.errors ?? []) out.push(`- ${(err.message ?? "").split("\n")[0]}`);
+              for (const file of process.argv.slice(1)) {
+                const r = require(require("path").resolve(file));
+                for (const suite of r.suites ?? []) walk(suite, []);
+                for (const err of r.errors ?? []) out.push(`- ${(err.message ?? "").split("\n")[0]}`);
+              }
               console.log(out.join("\n"));
-            ' "$PWD/report/e2e-results.json")"
+            ' "${results[@]}")"
           fi
           if [ -z "$failed" ]; then
             case "$RESULT" in

@@ -239,11 +239,11 @@ describe('order reads', () => {
         expect(db.shopOrderLine.findMany.mock.calls[0][0].distinct).toEqual(['variantLegacyId']);
     });
 
-    it('disputedOrderGids counts API-synced disputes on real, API-synced orders only', async () => {
-        db.shopBalanceTransaction.findMany.mockResolvedValue([{ orderGid: 'g1' }, { orderGid: 'g2' }]);
+    it('orderDisputeCounts counts API-synced disputes on real, API-synced orders only', async () => {
+        db.shopBalanceTransaction.findMany.mockResolvedValue([{ orderGid: 'g1' }, { orderGid: 'g1' }, { orderGid: 'g2' }]);
         db.shopOrder.findMany.mockResolvedValue([{ shopifyGid: 'g1' }]);
 
-        expect(await freshClient().disputedOrderGids(['g1', 'g2', 'g3'])).toEqual(new Set(['g1']));
+        expect(await freshClient().orderDisputeCounts(['g1', 'g2', 'g3'])).toEqual(new Map([['g1', 2]]));
         expect(whereOf(db.shopBalanceTransaction.findMany).AND).toEqual([API_SOURCE]);
         expect(whereOf(db.shopBalanceTransaction.findMany).OR).toEqual([
             { type: { contains: 'dispute', mode: 'insensitive' } },

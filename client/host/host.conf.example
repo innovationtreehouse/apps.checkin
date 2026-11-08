@@ -1,5 +1,5 @@
 # Host settings for the kiosk. Read by systemd and by kioskctl: KEY=value only.
-KIOSK_IMAGE=ghcr.io/innovationtreehouse/kiosk
+KIOSK_IMAGE=public.ecr.aws/q2q3l9k2/kiosk
 KIOSK_RELEASE_TAG=kiosk-release
 KIOSK_URGENT_TAG=kiosk-urgent
 # Runs inside the container: kioskctl adds `docker exec kiosk-client`, so do not

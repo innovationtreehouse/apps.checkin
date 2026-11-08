@@ -176,7 +176,7 @@ The file route is registered and migrated like any route: the route-coverage lin
 
 ## What this layer does NOT cover (yet)
 
-- **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work. An `ApiResponseError` renders as `{ error }`, or `{ error, code }` when its thrower passed a `code`; nothing derives a code from any other error.
+- **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work. An `ApiResponseError` renders as `{ error }`, plus `code` and `fields` when its thrower passed them; nothing derives a code from any other error. `fields` holds the names of refused inputs, never their submitted values. An error body skips the stripper, so its thrower answers for what it holds.
 - **AuditLog content.** `oldData`/`newData` JSON blobs can carry any field — they're written before this layer sees them.
 - **Server Components.** All pages are currently `"use client"` and hit `/api/`, so the registry covers everything. A future Server Component reading Prisma directly needs to register too.
 - **Per-row scope correctness in the generic contract test.** The generic contract asserts every visible field has a grantable tier, but doesn't verify per-row scope-holding (that would require route-specific personas). Route-specific tests (e.g. `programsIdAPI.test.ts`) cover those.

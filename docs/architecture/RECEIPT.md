@@ -218,10 +218,13 @@ sends a `CompletedReceipt` from `@checkin/receipt-types` to `ingestReceipt`.
 - `submitterId` is the uploader's `Person.id`. `backfill` is true when the receipt
   has a QuickBooks link, which tells downstream not to post it again. `financeReview`
   is present only for an approved review.
-- A push never throws to its caller. A failure leaves `pushedAt` null with a
-  `push_failed` audit row, for the catch-up step or the manual `push-to-inventory`
-  route. Catch-up skips a receipt after five of its own failures in a row, until a
-  manual push of it or any delivery in the org.
+- A push never throws to its caller. A failure leaves `pushedAt` null with an audit
+  row, for the catch-up step or the manual `push-to-inventory` route. A refusal (the
+  receipt's own payload check, or a 4xx from workflow-mapping other than 401, 403 or
+  429) is `push_refused`, and catch-up skips the receipt at once. Any other failure is
+  `push_failed`, its kind in `valueBefore`. Catch-up skips a receipt after five bug
+  failures in a row; a manual push of it clears the skip. An outage (system, connection
+  or settings) is never charged to the receipt, which stays due for the next run.
 - A receipt whose `donorSync` is still `pending` is held back with a `push_deferred`
   audit row, so donations has the final in-kind state before the money side arrives.
 
@@ -230,7 +233,12 @@ sends a `CompletedReceipt` from `@checkin/receipt-types` to `ingestReceipt`.
 Both are idempotent on `receiptId` and carry `donorSyncSeq`, so donations ignores a
 call older than one it has seen. Donor names leave the library only here, never on
 S1. `donorSync` is `none` for a receipt that was never in-kind, so a plain purchase
-never sends a withdrawal.
+never sends a withdrawal. A failed send is a `donor_sync_failed` row with its kind in
+`valueBefore`, and catch-up resends it by S1's rule: an outage is never charged, and five
+bug failures in a row give up the donor and the receipt's push, shown to finance as
+"catch-up stopped". A refusal from donations, or a stored donor failing the donor check,
+is a bug: upload checks the donor with the same rule. A donor edit or a manual push
+starts a fresh run.
 
 **X12, reimbursement status.** `reimbursementStatus` asks expense, which reads
 QuickBooks. The library stores no payment fact. A receipt missing from the answer

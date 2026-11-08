@@ -6,7 +6,7 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { taxWaitsOnFinance } from "../lib/reasons";
 import { CLOSED_STATES } from "../lib/signoff";
-import { conflictedParties, lockExpense } from "../lib/signoff-facts";
+import { isConflicted, lockExpense } from "../lib/signoff-facts";
 import { requireFinance } from "./approvalService";
 import { ServiceError } from "@checkin/component-kit";
 
@@ -32,7 +32,7 @@ export async function approveTax(principal: ExpensePrincipal, expenseId: string,
     if (!taxWaitsOnFinance(expense.taxCents, expense.receiptReview, expense.taxApproval?.taxCents ?? null)) {
       throw new ServiceError(409, "This expense's tax does not wait on finance");
     }
-    if ((await conflictedParties(expense)).includes(actor.userId)) {
+    if (await isConflicted(expense, actor.userId)) {
       throw new ServiceError(403, "You cannot approve tax on an expense that you or your household submitted or would be reimbursed for");
     }
     const approval = { taxCents: expense.taxCents, approvedByUserId: actor.userId, note, approvedAt: new Date() };

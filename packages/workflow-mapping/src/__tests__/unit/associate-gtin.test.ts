@@ -1,5 +1,5 @@
 /** Associate's GTIN gate: only a well-formed GTIN-13 naming an approved, non-archived catalog item reaches the line. */
-import { ServiceError } from "@checkin/component-kit";
+import { NotWiredError, ServiceError } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogReader, CatalogSubmissions } from "../../contract";
 import { configure } from "../helpers/setup";
@@ -23,6 +23,10 @@ const { lineItemService } = await import("../../services/lineItemService");
 
 const ACTIVE = "0011111111110";
 const ARCHIVED = "0033333333330";
+
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true, [Symbol.for("@checkin/component-kit/NotWiredError")]: true });
 const noRef = { exists: false, gtin13: null, id: null, conversionFactor: 1, conversionVersion: 1 };
 
 const getActiveItem = vi.fn<CatalogReader["getActiveItem"]>();
@@ -73,14 +77,32 @@ describe("associateGtin GTIN check", () => {
     expect(updateEditableLine).not.toHaveBeenCalled();
   });
 
+  it("503 \"No catalog is connected\" when the catalog is unbound, never treating it as not found", async () => {
+    getActiveItem.mockRejectedValue(new NotWiredError("CatalogReader.getActiveItem"));
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("503 \"No catalog is connected\" for an unbound catalog from another copy of the kit", async () => {
+    getActiveItem.mockRejectedValue(foreignNotWired("CatalogReader.getActiveItem"));
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("503 naming who fixes it when the catalog database does not exist, never \"not connected\"", async () => {
+    getActiveItem.mockRejectedValue(Object.assign(new Error("Database does not exist"), { code: "P1003" }));
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
   it("502 when the catalog read fails, never treating it as not found", async () => {
-    getActiveItem.mockRejectedValue(new Error("CatalogReader.getActiveItem not wired"));
+    getActiveItem.mockRejectedValue(new Error("catalog down"));
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(lineItemService.associateGtin(1, 2, { gtin13: ACTIVE })).rejects.toMatchObject({
       status: 502,
       message: "The catalog couldn't be reached; try again",
     });
-    expect(logged).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: "CatalogReader.getActiveItem not wired" }));
+    expect(logged).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: "catalog down" }));
     logged.mockRestore();
     expect(updateEditableLine).not.toHaveBeenCalled();
   });

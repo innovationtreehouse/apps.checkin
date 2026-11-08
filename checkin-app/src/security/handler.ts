@@ -20,7 +20,7 @@
  *   8. Wrap in envelope, emit.
  *
  * Errors thrown from the user fn are caught:
- *   - `ApiResponseError` → mapped to its declared status, message & optional code.
+ *   - `ApiResponseError` → mapped to its declared status, message, optional code & field names.
  *   - any other error    → opaque 500, so its message never reaches the client.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
@@ -37,16 +37,30 @@ import { stripBag } from './stripper';
 import './registry';
 
 export class ApiResponseError extends Error {
-    constructor(public readonly status: number, message: string, public readonly code?: string) {
+    constructor(
+        public readonly status: number,
+        message: string,
+        public readonly code?: string,
+        /** Names of the refused inputs, never their submitted values. */
+        public readonly fields?: readonly string[],
+    ) {
         super(message);
         this.name = 'ApiResponseError';
     }
 }
 
-/** The error body: `{ error }`, plus `code` only when the thrower set one. */
+/** The error body: `{ error }`, plus `code` and `fields` only when the thrower set them. */
 export function renderApiResponseError(err: ApiResponseError): NextResponse {
-    if (err.code === undefined) return apiError(err.message, err.status);
-    return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+    const hasFields = Boolean(err.fields?.length);
+    if (err.code === undefined && !hasFields) return apiError(err.message, err.status);
+    return NextResponse.json(
+        {
+            error: err.message,
+            ...(err.code === undefined ? {} : { code: err.code }),
+            ...(hasFields ? { fields: err.fields } : {}),
+        },
+        { status: err.status },
+    );
 }
 
 export const notFound = (message = 'Not found') => new ApiResponseError(404, message);

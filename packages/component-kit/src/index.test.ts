@@ -1,22 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   ComponentHttpError,
   NotWiredError,
   ServiceError,
   callerId,
+  catalogSettingsMessage,
   defineRuntime,
   httpError,
+  KindedError,
   isComponentHttpError,
+  isKindedError,
+  isNotWired,
+  kindOf,
   isServiceError,
   mapServiceErrors,
   orgEventStep,
   parseBody,
   parseId,
   readJson,
+  settleCounts,
   sweepOrgEvents,
   toHttpError,
   zodMessage,
+  type FailureReport,
+  type OnFailure,
 } from "./index";
 
 class LimitError extends ServiceError {
@@ -77,7 +85,12 @@ describe("mapServiceErrors", () => {
     const schema = z.object({ amount: z.number({ error: "amount must be a number" }) });
     const err = await mapServiceErrors(async () => schema.parse({ amount: "x" })).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ComponentHttpError);
-    expect(err).toMatchObject({ status: 400, message: "amount must be a number" });
+    expect(err).toMatchObject({ status: 400, message: "amount must be a number", fields: ["amount"] });
+  });
+
+  it("keeps a thrown ComponentHttpError's fields, and sets none on a ServiceError", () => {
+    expect(toHttpError(httpError(400, "bad", undefined, ["email"]))?.fields).toEqual(["email"]);
+    expect(toHttpError(new ServiceError(409, "taken"))?.fields).toBeUndefined();
   });
 });
 
@@ -103,6 +116,26 @@ describe("parseBody", () => {
 
   it("is a 400 with the first issue's message on a schema failure", async () => {
     await expect(parseBody(jsonRequest("{}"), schema)).rejects.toMatchObject({ status: 400, message: "name is required" });
+  });
+
+  it("names each refused top-level input once, and never a submitted value", async () => {
+    const nested = z.object({
+      name: z.string().min(3),
+      lines: z.array(z.object({ note: z.string() })),
+      extras: z.object({}).catchall(z.number()),
+    });
+    const secret = "secret-value";
+    const body = JSON.stringify({ name: "x", lines: [{ note: 1 }, { note: 2 }], extras: { [secret]: secret } });
+    const err = await parseBody(jsonRequest(body), nested).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 400, fields: ["name", "lines", "extras"] });
+    expect(JSON.stringify((err as ComponentHttpError).fields)).not.toContain(secret);
+  });
+
+  it("names nothing for an issue with an empty path or a numeric first segment", async () => {
+    const strict = await parseBody(jsonRequest('{"typo":1}'), z.object({}).strict()).catch((e: unknown) => e);
+    expect(strict).toMatchObject({ status: 400, fields: [] });
+    const list = await parseBody(jsonRequest('["a"]'), z.array(z.number())).catch((e: unknown) => e);
+    expect(list).toMatchObject({ status: 400, fields: [] });
   });
 
   it("is a 400 on a body that is not JSON", async () => {
@@ -135,6 +168,7 @@ describe("defineRuntime", () => {
     org?: () => Promise<{ id: string }>;
     auth?: { getPrincipal(): Promise<Principal | null> };
     port?: string;
+    onFailure?: OnFailure;
   }
   const runtime = defineRuntime<Config, Principal>("kit-test");
   const configured = (over: Partial<Config> = {}) =>
@@ -183,6 +217,68 @@ describe("defineRuntime", () => {
     configured();
     await expect(runtime.assertOrg("org-1")).resolves.toBeUndefined();
     await expect(runtime.assertOrg("org-2")).rejects.toThrow("orgId org-2 is not this org");
+  });
+
+  describe("failed", () => {
+    afterEach(() => vi.restoreAllMocks());
+    const logged = () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      return () => warn.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
+    };
+
+    it("returns the kind, logs one failure_kinded line and calls the bound port", () => {
+      const lines = logged();
+      const reports: FailureReport[] = [];
+      configured({ onFailure: (r) => void reports.push(r) });
+      const err = Object.assign(new KindedError("data", "refused"), { status: 400, requestId: "tid-1", codes: ["6000"] });
+
+      expect(runtime.failed("posting", err, "expense 7")).toBe("data");
+
+      const report = { lane: "posting", kind: "data", status: 400, faultCodes: ["6000"], requestId: "tid-1", detail: "expense 7" };
+      expect(reports).toEqual([report]);
+      expect(lines()).toEqual([expect.objectContaining({ event: "failure_kinded", library: "kit-test", ...report })]);
+    });
+
+    it("reads a plain error's kind with kindOf and leaves out what it doesn't carry", () => {
+      const lines = logged();
+      const reports: FailureReport[] = [];
+      configured({ onFailure: (r) => void reports.push(r) });
+
+      expect(runtime.failed("push", new ServiceError(403, "forbidden"))).toBe("bug");
+      expect(runtime.failed("push", new Error("boom"))).toBe("bug");
+
+      expect(reports).toEqual([{ lane: "push", kind: "bug", status: 403 }, { lane: "push", kind: "bug" }]);
+      expect(lines()).toHaveLength(2);
+    });
+
+    it("only logs when unbound or unconfigured, and survives a throwing port", () => {
+      const lines = logged();
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      configured();
+      expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
+      runtime.reset();
+      expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
+      configured({
+        onFailure: () => {
+          throw new Error("channel down");
+        },
+      });
+      expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
+      expect(lines()).toHaveLength(3);
+    });
+
+    it("hands off without waiting on an async port, and logs a port that rejects", async () => {
+      logged();
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      let settled = false;
+      configured({ onFailure: () => new Promise<void>((resolve) => setTimeout(() => { settled = true; resolve(); }, 0)) });
+      expect(runtime.failed("push", new Error("boom"))).toBe("bug");
+      expect(settled).toBe(false);
+
+      configured({ onFailure: async () => { throw new Error("channel down"); } });
+      runtime.failed("push", new Error("boom"));
+      await vi.waitFor(() => expect(error).toHaveBeenCalledWith("[kit-test] on-failure port threw:", expect.objectContaining({ message: "channel down" })));
+    });
   });
 });
 
@@ -280,5 +376,141 @@ describe("sweepOrgEvents", () => {
     expect(unreadable).toBe(1);
     expect(res).toMatchObject({ unreadable: true, needsAlert: true });
     expect(res.counts.failed).toBe(1);
+  });
+
+  it("an unbound event source is not connected: not unreadable, and no alert", async () => {
+    const res = await sweepOrgEvents<number>({
+      limit: 10,
+      failed: [],
+      readPage: async () => { throw new NotWiredError("CatalogEventSource.eventsSince"); },
+      idOf: (id) => id,
+      receivedIds: async () => [],
+      consume: async () => "processed",
+      onUnrecorded: () => {},
+      onUnreadable: () => {},
+    });
+    expect(res).toMatchObject({ notConnected: true, unreadable: false, needsAlert: false });
+  });
+
+  const sweepThrowing = (err: unknown) =>
+    sweepOrgEvents<number>({
+      limit: 10,
+      failed: [],
+      readPage: async () => { throw err; },
+      idOf: (id) => id,
+      receivedIds: async () => [],
+      consume: async () => "processed",
+      onUnrecorded: () => {},
+      onUnreadable: () => {},
+    });
+
+  it("an unbound event source from another copy of the kit is not connected", async () => {
+    expect(await sweepThrowing(foreignNotWired("CatalogEventSource.eventsSince"))).toMatchObject({ notConnected: true, unreadable: false, needsAlert: false });
+  });
+
+  it("a missing catalog database is unreadable and raises the alert, never not connected", async () => {
+    const missingDb = Object.assign(new Error("database does not exist"), { code: "P1003" });
+    expect(await sweepThrowing(missingDb)).toMatchObject({ notConnected: false, unreadable: true, needsAlert: true });
+  });
+});
+
+/** A NotWiredError from a second bundle: same brands, different class. */
+function foreignNotWired(port: string): Error {
+  return Object.assign(new Error(`${port} is not wired`), {
+    name: "NotWiredError",
+    kind: "settings",
+    [Symbol.for("@checkin/component-kit/KindedError")]: true,
+    [Symbol.for("@checkin/component-kit/NotWiredError")]: true,
+  });
+}
+
+describe("isNotWired", () => {
+  it("recognises an unbound port, from this copy of the kit or another", () => {
+    const foreign = foreignNotWired("catalog");
+    expect(foreign instanceof NotWiredError).toBe(false);
+    expect(isNotWired(foreign)).toBe(true);
+    expect(isNotWired(new NotWiredError("catalog"))).toBe(true);
+  });
+
+  it.each([
+    ["another settings failure", new KindedError("settings", "bad config")],
+    ["a missing database", Object.assign(new Error("no db"), { code: "P1003" })],
+    ["an unbranded error named NotWiredError", Object.assign(new Error("x"), { name: "NotWiredError" })],
+    ["a non-error", "NotWiredError"],
+  ])("is false for %s", (_label, err) => {
+    expect(isNotWired(err)).toBe(false);
+  });
+});
+
+describe("catalogSettingsMessage", () => {
+  it.each([
+    ["an unbound catalog", new NotWiredError("catalog"), "No catalog is connected"],
+    ["an unbound catalog from another copy of the kit", foreignNotWired("catalog"), "No catalog is connected"],
+    ["a missing catalog database", Object.assign(new Error("no db"), { code: "P1003" }), "The catalog database does not exist; the infra operator checks its settings"],
+    ["a catalog outage", Object.assign(new Error("down"), { code: "P1001" }), null],
+    ["a bug", new Error("boom"), null],
+  ])("%s", (_label, err, message) => {
+    expect(catalogSettingsMessage(err)).toBe(message);
+  });
+});
+
+describe("kindOf", () => {
+  const zodError = z.object({ a: z.string() }).safeParse({}).error;
+
+  it.each([
+    ["a KindedError keeps its kind", new KindedError("connection", "revoked"), "connection"],
+    ["a 5xx ServiceError is system", new ServiceError(503, "down"), "system"],
+    ["a 4xx ServiceError is data", new ServiceError(409, "taken"), "data"],
+    ["a 5xx http error is system", httpError(502, "bad gateway"), "system"],
+    ["a 4xx http error is data", httpError(400, "bad"), "data"],
+    ["a 401 ServiceError is a bug", new ServiceError(401, "Unauthorized"), "bug"],
+    ["a 401 http error is a bug", httpError(401, "Unauthorized"), "bug"],
+    ["a 403 ServiceError is a bug", new ServiceError(403, "Forbidden"), "bug"],
+    ["a 403 http error is a bug", httpError(403, "Forbidden"), "bug"],
+    ["a 429 ServiceError is system", new ServiceError(429, "limit"), "system"],
+    ["a 429 http error is system", httpError(429, "slow down"), "system"],
+    ["a zod error is data", zodError, "data"],
+    ["an unreachable database is system", Object.assign(new Error("Can't reach database server"), { code: "P1001" }), "system"],
+    ["a database socket timeout is system", Object.assign(new Error("timed out"), { code: "P1008" }), "system"],
+    ["a closed database connection is system", Object.assign(new Error("closed"), { code: "P1017" }), "system"],
+    ["too many database connections is system", Object.assign(new Error("too many"), { code: "P2037" }), "system"],
+    ["a database pool timeout is system", Object.assign(new Error("pool"), { code: "P2024" }), "system"],
+    ["failed database authentication is connection", Object.assign(new Error("auth"), { code: "P1000" }), "connection"],
+    ["denied database access is connection", Object.assign(new Error("denied"), { code: "P1010" }), "connection"],
+    ["a database TLS failure is connection", Object.assign(new Error("tls"), { code: "P1011" }), "connection"],
+    ["a missing database is settings", Object.assign(new Error("no db"), { code: "P1003" }), "settings"],
+    ["a NotWiredError is settings", new NotWiredError("receipt org"), "settings"],
+    ["a plain error is a bug", new Error("boom"), "bug"],
+    ["a unique violation is a bug", Object.assign(new Error("dup"), { code: "P2002" }), "bug"],
+    ["a non-error is a bug", "boom", "bug"],
+  ])("%s", (_label, err, kind) => {
+    expect(kindOf(err)).toBe(kind);
+  });
+
+  it("recognises a kinded error from another copy of the class by its brand", () => {
+    const foreign = Object.assign(new Error("x"), { [Symbol.for("@checkin/component-kit/KindedError")]: true, kind: "system" });
+    expect(isKindedError(foreign)).toBe(true);
+    expect(kindOf(foreign)).toBe("system");
+  });
+
+  it("keeps the cause", () => {
+    const cause = new Error("root");
+    expect(new KindedError("system", "wrapped", { cause }).cause).toBe(cause);
+  });
+});
+
+describe("settleCounts", () => {
+  it("keeps the counts that succeed and logs and leaves out the ones that fail", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = new Error("db down");
+    const counts = await settleCounts("demo", {
+      ok: async () => 3,
+      rejected: async () => { throw boom; },
+      thrown: () => { throw boom; },
+    });
+    expect(counts).toEqual({ ok: 3 });
+    expect(error).toHaveBeenCalledWith("nav counts: demo rejected failed", boom);
+    expect(error).toHaveBeenCalledWith("nav counts: demo thrown failed", boom);
+    error.mockRestore();
   });
 });

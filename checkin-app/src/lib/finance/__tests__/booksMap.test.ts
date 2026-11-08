@@ -4,11 +4,12 @@
 /**
  * The books map lists every role, set or not, and every live bucket's Class. A
  * role edit writes the row and one audit row together; a no-op writes nothing;
- * an unknown role or a non-numeric id is refused. A Class edit goes through the
- * bucket's own audited update. The port drops rows whose role is unknown.
+ * an unknown role, a non-numeric id, or an account QuickBooks lists under a type
+ * the role does not accept is refused. A Class edit goes through the bucket's own
+ * audited update. The port drops rows whose role is unknown.
  */
 import { BOOKS_MAP_ROLES } from '@checkin/quickbooks';
-import { booksMap, listBooksMap, listQuickBooksAccounts, LOCAL_QUICKBOOKS_ACCOUNTS, setBooksMapAccount, setBooksMapClass } from '../booksMap';
+import { booksMap, listBooksMap, listQuickBooksAccounts, LOCAL_QUICKBOOKS_ACCOUNTS, misTypedRoleAccounts, setBooksMapAccount, setBooksMapClass } from '../booksMap';
 import { updateBudgetOwner } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
 
@@ -29,8 +30,16 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
+const qbAccounts = [
+    { Id: '8001', FullyQualifiedName: 'Checking', AccountType: 'Bank', Active: true },
+    { Id: '8002', FullyQualifiedName: 'Sales:Shop sales', AccountType: 'Income', Active: true },
+    { Id: '8004', FullyQualifiedName: 'Merchant fees', AccountType: 'Expense', Active: true },
+    { Id: '8009', FullyQualifiedName: 'Kit materials', AccountType: 'Cost of Goods Sold', Active: true },
+];
+
 beforeEach(() => {
     jest.clearAllMocks();
+    (getQuickBooks as jest.Mock).mockResolvedValue({ accounts: async () => qbAccounts });
     tx.booksMapRoleAccount.findUnique.mockResolvedValue(null);
     accountRows.mockResolvedValue([]);
     bucketRows.mockResolvedValue([]);
@@ -47,7 +56,7 @@ describe('listBooksMap', () => {
         accountRows.mockResolvedValue([{ role: 'SHOPIFY_BANK', quickBooksAccountId: '35' }]);
         bucketRows.mockResolvedValue([{ id: 2, name: 'Robotics', quickBooksClassId: '9003' }]);
         const map = await listBooksMap();
-        expect(map.BooksMapAccount.map((r) => r.role)).toEqual([...BOOKS_MAP_ROLES]);
+        expect(map.BooksMapAccount.map((r) => r.role)).toEqual(BOOKS_MAP_ROLES.filter((r) => !['SHOPIFY_SALES', 'BENEVITY_DONATIONS', 'BENEVITY_MATCHES', 'BENEVITY_FEES', 'INKIND_EXPENSE', 'FIXED_ASSETS'].includes(r)));
         expect(map.BooksMapAccount.find((r) => r.role === 'SHOPIFY_BANK')?.quickBooksAccountId).toBe('35');
         expect(map.BooksMapAccount.find((r) => r.role === 'BENEVITY_BANK')?.quickBooksAccountId).toBeNull();
         expect(map.BooksMapClass).toEqual([{ budgetOwnerId: 2, budgetOwnerName: 'Robotics', quickBooksClassId: '9003' }]);
@@ -96,6 +105,44 @@ describe('setBooksMapAccount', () => {
         ['a non-string id', 'SHOPIFY_FEES', { quickBooksAccountId: 35 }],
     ])('refuses %s with a 400 and writes nothing', async (_label, role, body) => {
         await expect(setBooksMapAccount(1, role, body)).rejects.toMatchObject({ status: 400 });
+        nothingWritten();
+    });
+
+    it.each([
+        ['an Income account for Shopify: fees', 'SHOPIFY_FEES', '8002', 'Shopify: fees takes an Expense or Other Expense account; Sales:Shop sales is Income'],
+        ['a Cost of Goods Sold account for Shopify: fees', 'SHOPIFY_FEES', '8009', 'Shopify: fees takes an Expense or Other Expense account; Kit materials is Cost of Goods Sold'],
+        ['an Expense account for a bank role', 'BENEVITY_BANK', '8004', 'Benevity disbursements: bank account takes a Bank account; Merchant fees is Expense'],
+        ['an account QuickBooks does not list', 'SHOPIFY_FEES', '8099', 'QuickBooks has no account with id 8099'],
+    ])('refuses %s with a 400 and writes nothing', async (_label, role, id, error) => {
+        await expect(setBooksMapAccount(1, role, { quickBooksAccountId: id })).rejects.toMatchObject({ status: 400, message: error });
+        nothingWritten();
+    });
+
+    it('refuses a pick while QuickBooks cannot be read, and writes nothing', async () => {
+        (getQuickBooks as jest.Mock).mockResolvedValue(null);
+        await expect(setBooksMapAccount(1, 'SHOPIFY_FEES', { quickBooksAccountId: '8004' })).rejects.toMatchObject({ status: 503 });
+        nothingWritten();
+    });
+
+    it('clears a role without reading QuickBooks', async () => {
+        (getQuickBooks as jest.Mock).mockResolvedValue(null);
+        tx.booksMapRoleAccount.findUnique.mockResolvedValue({ quickBooksAccountId: '8004' });
+        tx.booksMapRoleAccount.deleteMany.mockResolvedValue({ count: 1 });
+        await expect(setBooksMapAccount(1, 'SHOPIFY_FEES', { quickBooksAccountId: null })).resolves.toEqual({ role: 'SHOPIFY_FEES', quickBooksAccountId: null });
+    });
+});
+
+describe('misTypedRoleAccounts', () => {
+    it('names each stored role whose account is of a type the role does not accept, or is gone, and rewrites nothing', async () => {
+        accountRows.mockResolvedValue([
+            { role: 'SHOPIFY_BANK', quickBooksAccountId: '8001' },
+            { role: 'SHOPIFY_FEES', quickBooksAccountId: '8002' },
+            { role: 'BENEVITY_BANK', quickBooksAccountId: '8099' },
+        ]);
+        await expect(misTypedRoleAccounts(qbAccounts)).resolves.toEqual([
+            'Shopify: fees (Sales:Shop sales is Income; takes Expense or Other Expense)',
+            'Benevity disbursements: bank account (id 8099 is not in QuickBooks; takes Bank)',
+        ]);
         nothingWritten();
     });
 });

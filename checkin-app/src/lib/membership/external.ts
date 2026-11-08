@@ -200,6 +200,25 @@ export async function markContractSigned(processId: number, actorId?: number, re
 }
 
 /**
+ * Asks Zoho about a stored request the app has no signature for, and records one it
+ * finds. The webhook cannot match a closed application, so this is how a signature
+ * made while closed reaches a reopened one. Attributed to the webhook actor: whoever
+ * triggered the check did not sign. Best-effort: on any failure the application
+ * stays unsigned and "Resume signing" asks again. A dead request is left for that
+ * click to replace. The mock answers "completed" for every request, so it is skipped.
+ */
+export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, "id" | "contractSignedAt" | "zohoEnvelopeId">) {
+    if (process.contractSignedAt || !process.zohoEnvelopeId || !config.zohoAvailable()) return;
+    try {
+        if (await signingMockActive()) return;
+        const token = await zohoSign.getAccessToken();
+        if ((await zohoSign.getRequestStatus(token, process.zohoEnvelopeId)) === "completed") await markContractSigned(process.id);
+    } catch (e) {
+        logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+/**
  * Records that the applicant submitted background-check consent, then maybe advance.
  * Only an open household application takes it, unless `kind` names the PERSON_BG
  * submit path, where consent is implicit in the external check.
@@ -459,6 +478,21 @@ async function assertSignerIs(signerId: number | null, userId: number) {
 const CONTRACT_EXPIRATION_DAYS = 15;
 
 /**
+ * A claim with no request ids this old has lost its holder and can be taken over.
+ * Far longer than the holder's Zoho calls, each capped by ZOHO_FETCH_TIMEOUT_MS.
+ */
+const SIGNING_CLAIM_WINDOW_MS = 5 * 60_000;
+
+/** Recall a request no one will ever be sent to, so it can't stay live beside the stored one. */
+async function recallUnstoredRequest(token: string, requestId: string, processId: number) {
+    try {
+        await zohoSign.recallRequest(token, requestId);
+    } catch (e) {
+        logger.error(`Could not recall unstored Zoho request ${requestId} for membership process ${processId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+/**
  * Applicant-facing "Sign your membership agreement" action. Idempotent: the Zoho
  * signing request/document is created at most once (its request + action ids are
  * stored on the process), then every call mints a fresh short-lived EMBEDDED sign
@@ -511,18 +545,27 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
     // A stored request may be dead — declined by the signer, or expired after
     // CONTRACT_EXPIRATION_DAYS — and Zoho can neither embed nor revive it. Check
     // before reusing: forget dead ids and fall through to the create path
-    // below, so the same button self-recovers. Best-effort — if the status read
+    // below, so the same button self-recovers. A request already signed gets its
+    // signature recorded instead of a link. Best-effort — if the status read
     // fails, proceed with the stored ids rather than blocking the click (worst
     // case the embed call fails).
-    if (requestId && actionId && !process.contractSignedAt) {
+    if (requestId && !process.contractSignedAt) {
+        let signedAtZoho = false;
         try {
-            if ((await zohoSign.getRequestStatus(token, requestId)) === "terminal") {
+            const state = await zohoSign.getRequestStatus(token, requestId);
+            signedAtZoho = state === "completed";
+            if (state === "terminal") {
                 await clearDeadSigningRequest(process.id, requestId, userId);
                 requestId = null;
                 actionId = null;
             }
         } catch (e) {
             logger.warn(`Zoho request-status check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        // The mock answers "completed" for every request; only its interstitial signs.
+        if (signedAtZoho && !(await signingMockActive())) {
+            await markContractSigned(process.id, userId);
+            throw new ExternalError("wrong_phase", "This agreement has already been signed.");
         }
     }
 
@@ -534,10 +577,16 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
         // instead of paying for an orphan. The claim matches an INCOMPLETE pair
         // (either id null), not just a null envelope: setZohoEnvelope (the
         // admin/email flow) stores an envelope WITHOUT an action id, which can't be
-        // embedded, so that state must stay claimable.
+        // embedded, so that state must stay claimable. A claim whose holder died
+        // before storing ids is claimable once past the window.
+        const claimedAt = new Date();
         const claim = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, zohoSignerPersonId: null, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoSignerPersonId: userId },
+            where: {
+                id: process.id,
+                OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }],
+                AND: [{ OR: [{ zohoSignerPersonId: null }, { zohoClaimedAt: { lt: new Date(claimedAt.getTime() - SIGNING_CLAIM_WINDOW_MS) } }] }],
+            },
+            data: { zohoSignerPersonId: userId, zohoClaimedAt: claimedAt },
         });
         if (claim.count === 0) {
             const current = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
@@ -550,6 +599,13 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             logger.info(`Concurrent signing request for membership process ${process.id}; reusing stored ${requestId}.`);
             return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
         }
+
+        // Matching on claimedAt stops a holder that was taken over from touching the newer claim.
+        const ownClaim = { id: process.id, zohoSignerPersonId: userId, zohoClaimedAt: claimedAt };
+        const releaseClaim = () => prisma.orgMembershipProcess.updateMany({
+            where: { ...ownClaim, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: null },
+        });
 
         let created: Awaited<ReturnType<typeof zohoSign.createRequest>>;
         try {
@@ -622,18 +678,24 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             });
         } catch (e) {
             // Release the claim so the next click can retry.
-            await prisma.orgMembershipProcess.updateMany({
-                where: { id: process.id, zohoSignerPersonId: userId, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-                data: { zohoSignerPersonId: null },
-            });
+            await releaseClaim();
             throw e;
         }
 
-        const stored = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, zohoSignerPersonId: userId },
-            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
-        });
+        let stored: { count: number };
+        try {
+            stored = await prisma.orgMembershipProcess.updateMany({
+                where: ownClaim,
+                data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+            });
+        } catch (e) {
+            await recallUnstoredRequest(token, created.requestId, process.id);
+            // If this fails too, the window frees the claim.
+            await releaseClaim().catch((releaseError) => logger.error(`Could not release signing claim for membership process ${process.id}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`));
+            throw e;
+        }
         if (stored.count === 0) {
+            await recallUnstoredRequest(token, created.requestId, process.id);
             throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
         }
         requestId = created.requestId;
@@ -676,6 +738,7 @@ export async function resetSigning(processId: number, actorId: number, reason: s
             // Zoho refuses to recall a request that is already dead or signed.
             const state = await zohoSign.getRequestStatus(token, requestId);
             if (state === "completed") {
+                await markContractSigned(processId);
                 throw new ExternalError("wrong_phase", "This agreement has already been signed. Refresh to see it.");
             }
             if (state !== "terminal") throw e;

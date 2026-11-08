@@ -95,7 +95,10 @@ unchanged and is retried on each run; the queue shows it as `QB_NO_CLASS`.
 
 The poster passes the rows through the outbound gateway (surface
 `quickbooks.create`) first, so `composeWrite` sees only the tiers that surface
-declares. A field it needs that did not pass fails the post.
+declares. A field it needs that did not pass fails the post. An expense whose own
+data cannot make an entry (no receipt date, no lines, or a line with no resolved
+account) goes to `NEEDS_FINANCE` at once with the reason, no attempt counted; the
+drain does not count it toward its failure stop.
 
 **The writer.** `QuickBooksClient` has one private `post`, reached through two
 symbol-keyed methods that `packages/quickbooks/src/internal.ts` keeps off the
@@ -145,6 +148,29 @@ those ids are unique per entity only. A claim covers expenses and lines alike, s
 two records never hold one entry. `ExpenseQbMatchExclusion` is unique on org and id
 with no entity, so an exclusion drops that id for both Purchases and Bills.
 
+### Voided entries
+
+QuickBooks keeps a voided entry's memo, and so the app's key, at a $0 total. Every
+lookup for a record's own entry therefore skips a keyed entry that totals $0:
+
+| Lane | Lookup | Skips a $0 keyed entry |
+|---|---|---|
+| Expense | `lookupOwnEntry`, and `findMatch` on its key hits | Unless the expense itself totals $0 |
+| Income | `ownEntry`, which finance's match and dismiss also call | Unless the payout nets to $0 |
+| In-kind | `lookupOwnJournal` | Always, since a gift worth $0 or less never posts |
+
+The orphan sweeps in all three lanes skip every $0 entry. So when finance voids an
+entry the app created and never linked, the record's next post books a replacement
+with no further step: the next drain for expense and in-kind, finance's retry for
+income. If finance voided it because the record should never be booked, finance skips
+or dismisses the record before that post. An entry a record is already linked to goes
+through the drift check instead, where a void shows as an amount change.
+
+The app tells a void only by its $0 total. A keyed entry that finance sets to $0 by
+hand, without voiding it, is treated the same way: the record gets a replacement
+booking. Finance that zeroes an entry to cancel a booking skips or dismisses the
+record, as for a void.
+
 ### Match states
 
 | `qbMatchState` | Means | What moves it |
@@ -155,8 +181,8 @@ with no entity, so an exclusion drops that id for both Purchases and Bills.
 | `MATCHED` | A hand-booked entry is linked, with a baseline for drift | Terminal |
 | `AMBIGUOUS` | Several candidates, or no Vendor | Finance |
 | `UNBOOKED` | Not in QuickBooks, and the app may not create it | Finance |
-| `POST_FAILED` | A post failed | The drain, up to five attempts |
-| `NEEDS_FINANCE` | Posts kept failing, or the app may already have booked it and cannot tell | Finance |
+| `POST_FAILED` | A post failed; `qbFailureKind` says how | The drain: a bug up to five attempts, an outage or a broken connection uncharged |
+| `NEEDS_FINANCE` | A bug failed five times, QuickBooks refused the entry, the expense's own data cannot make an entry, or the app may already have booked it and cannot tell | Finance |
 | `SKIPPED` | Finance skipped it, with a reason | Terminal |
 | `NOT_TEST_DATA`, `TEST_DATA_REFUSED` | Stopped by the test-data gate | Re-checked each run |
 
@@ -208,14 +234,28 @@ each also failing on its own:
 Expense's non-QuickBooks catch-up, `runExpenseCatchUp` (intake replay and catalog
 events), runs from `/api/cron/reconcile-shopify` instead.
 
+### Failures by kind
+
+A failed post is recorded by its kind (`kindOf`), stored in `qbFailureKind`.
+
+| Kind | Example | Charged a try | Expense | The run |
+|---|---|---|---|---|
+| System | QuickBooks 5xx, a timeout, a rate limit after its retry, the database down | No, unless QuickBooks answered an earlier expense in the run or an earlier read in the same post: then charged as a bug | `POST_FAILED`, retried next run | Counts toward the stop |
+| Connection | QuickBooks 401 or 403 | No | `POST_FAILED` | Stops at once |
+| Settings | A port not wired | No | Stays where it was, re-checked each run | Leaves the stop count alone |
+| Data | Any other QuickBooks 4xx on the create; a 4xx on a read is the app's own request at fault, so it is a bug | Once | `NEEDS_FINANCE` at once, "QuickBooks refused: code N (request R)" | Resets the stop count; the third refusal with one code in a run stops it |
+| Bug | Anything unrecognised | Yes | `POST_FAILED`, `NEEDS_FINANCE` at five | Counts toward the stop |
+
 ### Limits
 
 | Limit | Value | What happens |
 |---|---|---|
 | Entries created per drain | `qbMaxCreatesPerRun`, 25 by default | The run stops and logs; the rest wait |
 | Entries created per UTC day | `qbMaxCreatesPerDay`, 50 by default, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
-| Failures in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
-| Failed attempts on one expense | 5 | `NEEDS_FINANCE` |
+| Bugs or outages in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
+| Broken QuickBooks connections in one drain | 1 | The run stops |
+| Creates QuickBooks refuses with one fault code in one drain (a refusal counts toward each code it carries) | 3 | The code reads as a QuickBooks setting, such as an inactive account or class: the run stops, the three go back to `POST_FAILED` (`qbFailureKind` settings), each keeping the try its refusal charged, so one refused on every run reaches `NEEDS_FINANCE` at five, and the stop is logged with the code (`qb_drain_refusal_code`). The gift lane follows the same rule and alerts finance |
+| Failed attempts on one expense | 5 bugs, 1 refusal, or 5 refusals each returned by the same-code stop | `NEEDS_FINANCE` |
 | Drift reads per run | 25 | The slice moves each UTC day, so every entry is checked in turn |
 
 The two create limits and the match window are org settings, read once per drain run;

@@ -37,7 +37,7 @@ defineRoute({ endpoint: 'DELETE /api/budget-owners/[id]/treasurers/[personId]', 
 
 // Books map: which QuickBooks Class each bucket books to and which QuickBooks
 // account each named role (a bank account, an income or donation account) books
-// to (docs/in-design/QB_ENTRY_OWNERSHIP.md). FINANCE or BOARD reads it; FINANCE
+// to (docs/ops/quickbooks-go-live.md §5). FINANCE or BOARD reads it; FINANCE
 // alone edits it, and every edit is audited. quickbooks-accounts lists the
 // accounts for the role picker; the Class picker is quickbooks-classes above.
 defineRoute({ endpoint: 'GET /api/books-map', authorize: 'finance-or-board', envelope: null, returns: ['BooksMapClass', 'BooksMapAccount'], orderedView: FINANCE_OR_BOARD_VIEW });

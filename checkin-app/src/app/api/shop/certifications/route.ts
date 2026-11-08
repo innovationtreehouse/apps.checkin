@@ -5,7 +5,6 @@ import { Prisma, ToolLevel, type ToolStatus } from '@/generated/prisma/client';
 import prisma from "@/lib/prisma";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { isActiveOrgMember } from "@/lib/orgMembership";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
@@ -47,7 +46,6 @@ export const GET = handler('GET /api/shop/certifications', async ({ req, auth })
         const isAuthorized = user.isSysadmin || user.isBoardMember || user.isKeyholder || hasCertifierAuth;
         if (!isAuthorized) throw forbidden();
         const certifications = await prisma.toolStatus.findMany({
-            where: { person: LIVE_PERSON },
             orderBy: [{ tool: { name: 'asc' } }, { person: { name: 'asc' } }],
             include: {
                 tool: true,
@@ -59,7 +57,7 @@ export const GET = handler('GET /api/shop/certifications', async ({ req, auth })
 
     const targetUserId = personIdParam ? parseInt(personIdParam, 10) : user.id;
     const whereClause = toolIdParam
-        ? { toolId: parseInt(toolIdParam, 10), person: LIVE_PERSON }
+        ? { toolId: parseInt(toolIdParam, 10) }
         : { personId: targetUserId };
 
     const certifications = await prisma.toolStatus.findMany({

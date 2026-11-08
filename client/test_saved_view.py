@@ -237,6 +237,14 @@ class TestFilePermissions(SavedViewCase):
         Outbox(self.path)
         self.assertEqual(self.mode(self.path), 0o600)
 
+    def test_failed_chmod_logs_and_scanning_continues(self):
+        with patch("outbox.os.chmod", side_effect=PermissionError("denied")):
+            with self.assertLogs("kiosk", level="ERROR") as logs:
+                outbox = Outbox(self.path)
+        self.assertIn(f"ERROR:kiosk:Could not restrict {self.path}: denied", logs.output)
+        outbox.enqueue("after-failed-chmod", MEMBER, now_iso(), intent="IN")
+        self.assertEqual(outbox.pending_count(), 1)
+
 
 class TestOlderCodeAgainstNewerFile(SavedViewCase):
     """The statements the previous image runs, frozen here as that image's contract."""

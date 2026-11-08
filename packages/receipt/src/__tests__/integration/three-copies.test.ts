@@ -2,7 +2,7 @@ import { beforeEach, expect, it } from "vitest";
 import type { DuplicateMember } from "../../lib/duplicateGroup";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 // Three receipts for one purchase, A uploaded first, then B, then C. Each test drives finance's
 // decisions through the service and asserts the group behaviour of 2516_RECEIPT_DUPLICATES.md.
@@ -268,5 +268,74 @@ describeDb("when the group changes after the panel was drawn", () => {
       expect(states).not.toContain("rejected");
       expect((await receiptService.duplicateGroup(c.id)).dismissed.sort()).toEqual([a.id, b.id].sort());
     }
+  });
+});
+
+describeDb("what finance reads about a group", () => {
+  it("the queue has one row per group, and the tab and the pill both count groups", async () => {
+    const { a, b, c } = await sameFileThrice();
+    const otherPurchase = { details: manualDetails({ retailer: "Other Store" }) };
+    await receiptService.upload(textFile(), "text/plain", otherPurchase);
+    await receiptService.upload(textFile(), "text/plain", otherPurchase);
+
+    actAs(FINANCE);
+    const rows = await receiptService.duplicateQueue();
+    const row = rows.find((r) => r.id === b.id);
+    expect(row).toMatchObject({ memberCount: 3, includesRejected: false });
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.id === c.id || r.id === a.id)).toBe(false);
+    const { byState } = await receiptService.queueCounts(null);
+    expect(byState.duplicate_flagged).toBe(rows.length);
+    expect((await receiptService.countAwaitingFinance(FINANCE.id)).byState.duplicate_flagged).toBe(rows.length);
+  });
+
+  it("a queue row says when its group includes a rejected receipt", async () => {
+    const file = textFile();
+    const a = await receiptService.upload(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(a.id, "personal purchase");
+    actAs(ALICE);
+    const b = await upload(file);
+    actAs(FINANCE);
+    expect(await receiptService.duplicateQueue()).toEqual([expect.objectContaining({ id: b.id, memberCount: 2, includesRejected: true })]);
+  });
+
+  it("the org list names the receipt kept in place of one rejected as a copy", async () => {
+    const file = textFile();
+    const a = await uploadForReview(file);
+    const b = await upload(file);
+    actAs(FINANCE);
+    await receiptService.keepThisOne(b.id, [a.id, b.id]);
+    const row = (await receiptService.list({})).find((r) => r.id === a.id);
+    expect(row).toMatchObject({ copyOfId: b.id, copyOfLabel: expect.stringMatching(/, uploaded /) });
+  });
+
+  it("labels a finalized member whose expense finance rejected, and names each uploader", async () => {
+    const { a, b } = await sameFileThrice();
+    configure({
+      receiptSink: ports.receiptSink,
+      ocr: okOcr(),
+      purchaseOutcomes: { forReceipts: async () => new Map([[a.id, { receiving: null, money: { status: "line_rejected" as const, notes: ["personal purchase"] }, gift: null }]]) },
+      personNames: { namesOf: async (ids) => new Map(ids.map((id) => [id, `Person ${id}`])) },
+    });
+    actAs(FINANCE);
+    const member = (await receiptService.duplicateGroup(b.id)).members.find((m) => m.id === a.id);
+    expect(member?.label).toBe("Finalized · expense rejected by finance: personal purchase");
+    expect(member?.uploaderName).toBe(`Person ${ALICE.id}`);
+  });
+
+  it("tells an uploader about their own copy, and nothing when the only match is someone else's", async () => {
+    const file = textFile();
+    const a = await uploadForReview(file);
+    const b = await upload(file);
+    expect((await receiptService.get(b.id, "submitter")).duplicateNotice).toMatchObject({ matchId: a.id });
+
+    const purchase = { details: manualDetails({ retailer: "Other Store" }) };
+    actAs(BOB);
+    await receiptService.upload(textFile(), "text/plain", purchase);
+    actAs(ALICE);
+    const mine = await receiptService.upload(textFile(), "text/plain", purchase);
+    expect(mine.state).toBe("duplicate_flagged");
+    expect((await receiptService.get(mine.id, "submitter")).duplicateNotice).toBeNull();
   });
 });

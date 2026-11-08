@@ -257,8 +257,8 @@ export default function PendingParticipantsPage() {
     <Stack>
       <Text c="dimmed">
         Review pending participants who have requested a scholarship or payment plan.
-        Approving a request marks the user as ACTIVE and exempts them from the 7-day automated
-        removal cron job.
+        Approving a request sets the participant&apos;s enrollment to ACTIVE without a payment, and
+        they keep the seat they took when they asked.
       </Text>
 
       <AlertBanner message={message} tone="error" />
@@ -277,8 +277,8 @@ export default function PendingParticipantsPage() {
         centered
       >
         <Text mb="lg">
-          Approve this scholarship or payment plan? This sets the participant&apos;s status to ACTIVE and stops
-          automated unpaid warning emails.
+          Approve this scholarship or payment plan? This sets the participant&apos;s enrollment to ACTIVE without a
+          payment, and they keep the seat they took when they asked.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmApprove}>Cancel</Button>

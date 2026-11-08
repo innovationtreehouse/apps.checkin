@@ -29,6 +29,17 @@ export function createReceiveQueueService({
       return db.receiveQueue.count({ where: { orgId, fulfilledAt: null, cancelledAt: null } });
     },
 
+    /** Open lines per receipt, in one query; a receipt with none is left out. */
+    async openBackordersByReceipt(orgId: string, receiptIds: string[]): Promise<Map<string, number>> {
+      if (receiptIds.length === 0) return new Map();
+      const rows = await db.receiveQueue.groupBy({
+        by: ["receiptId"],
+        where: { orgId, receiptId: { in: receiptIds }, fulfilledAt: null, cancelledAt: null },
+        _count: { _all: true },
+      });
+      return new Map(rows.map((r) => [r.receiptId, r._count._all]));
+    },
+
     /**
      * Receive a queued line into stock. The open→fulfilled claim and the stock add commit in one
      * transaction, and the claim is conditional, so two concurrent fulfils add the stock once.

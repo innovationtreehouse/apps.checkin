@@ -50,7 +50,8 @@ export type MatchResult =
  * callers should pad the window with a grace on both sides; this function adds none.
  * A key hit that fails any check, an entry carrying the key beside another key, or a
  * matching entry carrying another record's key goes to a person: a copied or edited memo must never be taken as the app's own entry,
- * and must never fall through to a create.
+ * and must never fall through to a create. A voided entry keeps its memo at a zero total, so a $0
+ * entry does not count as the record's own unless the record's amount is $0 too.
  */
 export function findMatch(candidates: readonly MatchCandidate[], req: MatchRequest): MatchResult {
   qboDate(req.date);
@@ -65,7 +66,7 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
     (req.ref === undefined || c.ref === req.ref);
   const free = (c: MatchCandidate) => !req.excludedIds.has(c.id) && !req.claimedIds.has(c.id);
 
-  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key));
+  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key) && (c.amountCents !== 0 || req.amountCents === 0));
   if (own.length === 1 && own[0].appKey === req.key && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
   if (own.length > 0) return { kind: "ambiguous", ids: own.map((c) => c.id) };
 

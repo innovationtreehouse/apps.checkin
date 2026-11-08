@@ -83,10 +83,10 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 32 JSON routes (15 reads, 17 writes) and the blob file route', () => {
+    it('registers 32 JSON routes (14 reads, 18 writes) and the blob file route', () => {
         expect(endpoints).toHaveLength(32);
-        expect(reads).toHaveLength(15);
-        expect(writes).toHaveLength(17);
+        expect(reads).toHaveLength(14);
+        expect(writes).toHaveLength(18);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
@@ -98,6 +98,15 @@ describe('donation registry — shape', () => {
         expect(IN_KIND_MANUAL).toHaveLength(3);
         expect(endpoints.filter(e => e.includes('/qb-candidates') || e.includes('/qb-exclusions'))).toEqual([]);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
+    });
+
+    it('registers the fees-only hold release like resubmit: finance only, same models', () => {
+        const { authorize, returns, orderedView } = getRoute('POST /api/donations/disbursement-holds/[disbursementId]/release') ?? {};
+        expect({ authorize, returns, orderedView }).toEqual({
+            authorize: 'finance',
+            returns: ['DisbursementHold', 'DisbursementEvent'],
+            orderedView: [['isFinance', ['everyones:pii', 'everyones:internal', 'public']]],
+        });
     });
 
     it('no view on any donation route belongs to sysadmin', () => {

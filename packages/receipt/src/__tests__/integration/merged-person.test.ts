@@ -1,6 +1,7 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import type { OutcomeNotice, ReceiptConfig, ReceiptPrincipal } from "../../contract";
+import { inertReimbursees } from "../../runtime";
 import { sendOutcomeNotices } from "../../services/outcomeNotices";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
@@ -9,7 +10,9 @@ import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordi
 /** ALICE merged into SURVIVOR; GONE names nobody. */
 const SURVIVOR: ReceiptPrincipal = { id: 201, name: "sam", firstName: "Sam", lastName: "Stays", isAdult: true };
 const HOUSEMATE: ReceiptPrincipal = { id: 202, name: "hal", firstName: "Hal", lastName: "Stays", isAdult: true };
+const BOARD: ReceiptPrincipal = { id: 203, name: "bea", firstName: "Bea", lastName: "Board", isAdult: true, isBoardMember: true };
 const GONE = 999;
+const NO_ACCOUNT = 300;
 
 const personIds: NonNullable<ReceiptConfig["personIds"]> = {
   liveIds: async (ids) => new Map(ids.map((id) => [id, id === GONE ? null : id === ALICE.id ? SURVIVOR.id : id])),
@@ -54,6 +57,12 @@ async function aliceUploads(input: Record<string, unknown> = {}): Promise<string
 async function aliceOpenReceipt(): Promise<string> {
   const id = await aliceUploads({ needsReimbursement: true });
   await db.receiptDetail.update({ where: { id }, data: { state: "financial_review" } });
+  return id;
+}
+
+async function aliceIn(state: string, input: Record<string, unknown> = {}): Promise<string> {
+  const id = await aliceUploads(input);
+  await db.receiptDetail.update({ where: { id }, data: { state } });
   return id;
 }
 
@@ -151,6 +160,23 @@ describeDb("after merging A into B", () => {
     expect(ports.calls.pushes[0]).toMatchObject({ submitterId: SURVIVOR.id, submitterConfirmation: { confirmedByPersonId: SURVIVOR.id, onBehalfByPersonId: undefined } });
   });
 
+  it.each([
+    ["the survivor", ALICE.id, SURVIVOR.id],
+    ["the stored id when it names nobody live", GONE, GONE],
+  ])("an approval travels naming %s, and the push goes through", async (_label, stored, pushed) => {
+    const id = await aliceUploads();
+    await db.receipt.update({ where: { id }, data: { uploadedByUserId: BOB.id, pushedAt: null } });
+    await db.receiptDetail.update({ where: { id }, data: { state: "receipt_finalized" } });
+    await db.receiptFinanceReview.create({ data: { receiptId: id, outcome: "approved", reasons: ["tax"], decidedByUserId: stored } });
+    ports.calls.pushes.length = 0;
+    afterMerge();
+    actAs(FINANCE);
+    await receiptService.push(id);
+    expect(ports.calls.pushes[0].financeReview?.decidedByPersonId).toBe(pushed);
+    expect((await db.receipt.findUniqueOrThrow({ where: { id } })).pushedAt).not.toBeNull();
+    expect((await db.receiptFinanceReview.findUniqueOrThrow({ where: { receiptId: id } })).decidedByUserId).toBe(stored);
+  });
+
   it("an outcome notice names the survivor, once when they are both uploader and reimbursee", async () => {
     const id = await aliceUploads({ needsReimbursement: true });
     await db.receipt.update({ where: { id }, data: { reimburseePersonId: SURVIVOR.id } });
@@ -161,5 +187,51 @@ describeDb("after merging A into B", () => {
     await receiptService.rejectFinancial(id, "personal");
     await sendOutcomeNotices([id]);
     expect(sent.map((s) => [s.to, s.notice.uploaderPersonId])).toEqual([["uploader", SURVIVOR.id]]);
+  });
+
+  it("B's reimbursements include what was owed to A, and leave out what A uploaded", async () => {
+    const owed = await aliceIn("receipt_finalized", { needsReimbursement: true });
+    await db.receipt.update({ where: { id: owed }, data: { uploadedByUserId: BOB.id } });
+    await aliceIn("receipt_finalized", { needsReimbursement: true });
+    afterMerge();
+    actAs(SURVIVOR);
+    expect((await receiptService.listReimbursedToMe()).map((r) => [r.id, r.reimburseePersonId])).toEqual([[owed, SURVIVOR.id]]);
+    actAs(BOB);
+    expect(await receiptService.listReimbursedToMe()).toEqual([]);
+  });
+
+  it("B's pill counts what waits on A, less a reimbursement someone else confirms", async () => {
+    await aliceIn("submitter_review", { needsReimbursement: true });
+    await aliceIn("rejected");
+    const forBob = await aliceIn("submitter_review", { needsReimbursement: true });
+    await db.receipt.update({ where: { id: forBob }, data: { reimburseePersonId: BOB.id } });
+    afterMerge();
+    expect(await receiptService.countAwaitingSubmitter(SURVIVOR.id)).toBe(2);
+    expect(await receiptService.countAwaitingSubmitter(BOB.id)).toBe(0);
+  });
+
+  it("B's needs-attention list includes A's receipt, and an unrelated caller's does not", async () => {
+    const id = await aliceIn("validation_failed");
+    afterMerge();
+    actAs(SURVIVOR);
+    expect((await receiptService.listNeedsAttention("submitter")).map((r) => r.id)).toEqual([id]);
+    actAs(BOB);
+    expect(await receiptService.listNeedsAttention("submitter")).toEqual([]);
+  });
+
+  it("the Board cannot confirm on behalf of a reimbursee who names nobody live", async () => {
+    const noAccount = { reimbursees: { ...inertReimbursees, hasAccount: async () => false } };
+    const id = await aliceIn("submitter_review", { needsReimbursement: true });
+    await db.receipt.update({ where: { id }, data: { uploadedByUserId: BOB.id, reimburseePersonId: GONE } });
+    afterMerge(noAccount);
+    actAs(BOARD);
+    expect(await receiptService.listConfirmations()).toEqual([]);
+    expect(await receiptService.countToConfirm(BOARD.id, true)).toBe(0);
+    await expect(receiptService.confirmAsReimbursee(id, "no account")).rejects.toMatchObject({ status: 403 });
+    expect((await db.receiptDetail.findUniqueOrThrow({ where: { id } })).state).toBe("submitter_review");
+
+    await db.receipt.update({ where: { id }, data: { reimburseePersonId: NO_ACCOUNT } });
+    expect((await receiptService.listConfirmations()).map((c) => c.id)).toEqual([id]);
+    expect(await receiptService.countToConfirm(BOARD.id, true)).toBe(1);
   });
 });

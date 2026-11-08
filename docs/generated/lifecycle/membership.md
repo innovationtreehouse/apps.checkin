@@ -47,6 +47,7 @@ stateDiagram-v2
     PENDING_PAYMENT --> PENDING_BG_CLEARANCE: activate
     PENDING_RENEWAL --> ARCHIVED: archiveApplication
     PENDING_RENEWAL --> PENDING_EXTERNAL_ACTION: beginRenewal · RENEWAL
+    RENEWAL_PENDING_BG --> ARCHIVED: archiveApplication · legacy
     [*] --> INTAKE: startIntake · INITIAL
     [*] --> PENDING_BG_REVIEW: personBgTriggers · PERSON_BG
     [*] --> PENDING_EXTERNAL_ACTION: personAgreementTriggers · PERSON_AGREEMENT
@@ -70,14 +71,14 @@ A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, n
 | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | BLOCKED | — | — | — | — | PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | — | PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | — | ARCHIVED | — | — | — | — | — | — | — | — | — |
 | PENDING_RENEWAL | — | — | ARCHIVED | — | — | PENDING_EXTERNAL_ACTION | — | — | — | — | — | — | — | — | — | — | — | — |
-| RENEWAL_PENDING_BG | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| RENEWAL_PENDING_BG | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED, INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL |
 
 ## Reachability
 
 - **Initial:** INTAKE, PENDING_BG_REVIEW, PENDING_RENEWAL
 - **Reachable (9):** ACTIVE, ARCHIVED, BLOCKED, INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL
-- **Terminal (no outbound edge):** ACTIVE, RENEWAL_PENDING_BG
+- **Terminal (no outbound edge):** ACTIVE
 - **Accepting (designated resting states):** ACTIVE, ARCHIVED
 - **Dead-ends (reachable terminal, not accepting):** (none)
 - **Unreachable (declared but no legal path from ∅):** RENEWAL_PENDING_BG

@@ -75,7 +75,7 @@ async function trackOrder(shopifyOrderId: string): Promise<void> {
         select: { programId: true },
     });
     if (claimedProc || claimedEnroll) throw new ApiResponseError(409, "Order has since been claimed by an activation");
-    await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId });
+    await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId, reopen: true });
 }
 
 async function trackMembership(processId: number): Promise<void> {

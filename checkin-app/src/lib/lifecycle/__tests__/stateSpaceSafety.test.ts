@@ -17,10 +17,10 @@
 import { bfsStates, reachability, reachableStatesViolating } from '@/lib/lifecycle';
 import {
     classify as classifyEnrollment,
+    enumerateEnrollmentRows,
     validate as validateEnrollment,
     STATES as ENROLLMENT_STATES,
     TRANSITIONS as ENROLLMENT_TRANSITIONS,
-    type EnrollmentRow,
     type EnrollmentStateName,
 } from '@/lib/programs/enrollmentState';
 import {
@@ -48,31 +48,19 @@ describe('enrollment — exhaustive state space', () => {
     const realized = new Set<string>();
 
     test('every (status × held × req × den) tuple is on-diagram-clean or off-diagram-flagged', () => {
-        for (const status of ['PENDING', 'ACTIVE', 'WITHDRAWN'] as const) {
-            for (const inventoryHeldAt of BOOLS) {
-                for (const isPaymentPlanRequested of BOOLS) {
-                    for (const paymentPlanDeniedAt of BOOLS) {
-                        const row: EnrollmentRow = {
-                            status,
-                            inventoryHeldAt,
-                            isPaymentPlanRequested,
-                            paymentPlanDeniedAt,
-                        };
-                        const name = classifyEnrollment(row);
-                        if (name !== null) {
-                            // on-diagram ⟹ no invariant broken
-                            expect(validateEnrollment(row)).toBeNull();
-                            // classify agrees with the StateSet predicate for this tuple
-                            expect(ENROLLMENT_STATES[name as EnrollmentStateName].has(row)).toBe(true);
-                            // classifiable ⟹ a node the graph can reach (no off-diagram escapee)
-                            expect(reachable.has(name)).toBe(true);
-                            realized.add(name);
-                        } else {
-                            // off-diagram ⟹ validate flags exactly one invariant
-                            expect(validateEnrollment(row)).not.toBeNull();
-                        }
-                    }
-                }
+        for (const row of enumerateEnrollmentRows()) {
+            const name = classifyEnrollment(row);
+            if (name !== null) {
+                // on-diagram ⟹ no invariant broken
+                expect(validateEnrollment(row)).toBeNull();
+                // classify agrees with the StateSet predicate for this tuple
+                expect(ENROLLMENT_STATES[name as EnrollmentStateName].has(row)).toBe(true);
+                // classifiable ⟹ a node the graph can reach (no off-diagram escapee)
+                expect(reachable.has(name)).toBe(true);
+                realized.add(name);
+            } else {
+                // off-diagram ⟹ validate flags exactly one invariant
+                expect(validateEnrollment(row)).not.toBeNull();
             }
         }
     });

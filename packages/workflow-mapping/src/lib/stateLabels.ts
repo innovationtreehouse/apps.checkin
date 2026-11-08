@@ -5,3 +5,9 @@ export const STATE_LABEL: Record<string, string> = {
   apply_failed: "Apply failed",
   resolved: "Resolved",
 };
+
+/** The state label, with a resolved receipt's lines still open on the receive queue counted. */
+export function stateLabel(state: string, openBackorders: number): string {
+  if (state === "resolved" && openBackorders > 0) return `Received, ${openBackorders} on backorder`;
+  return STATE_LABEL[state] ?? state;
+}

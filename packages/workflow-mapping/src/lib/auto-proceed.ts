@@ -9,10 +9,11 @@ import {
 import { executePushAndSettle } from "./apply-receipt";
 import { insertAuditEvent } from "./audit";
 
+/** Sends the receipt to apply once every line is decided. A null actor is the system, such as the matching re-run. */
 export async function tryAutoProceedApply(
   receiptId: number,
   received: Pick<ReceivedReceipt, "id" | "orgId" | "state" | "receiptJson">,
-  actor: Actor,
+  actor: Actor | null,
 ): Promise<void> {
   if (!isWorkflowMappingTransitionLegal(received.state as ReceivedReceiptState, "PROCEED")) return;
 
@@ -27,19 +28,19 @@ export async function tryAutoProceedApply(
   // Compare-and-set: of concurrent callers that saw the last line resolve, only one pushes.
   const { count } = await db.receivedReceipt.updateMany({
     where: { id: receiptId, state: received.state },
-    data: { state: nextState },
+    data: { state: nextState, matchingPendingSince: null },
   });
   if (count !== 1) return;
 
   await insertAuditEvent(db, {
     orgId: received.orgId,
-    actorUserId: actor.id,
-    actorUsername: actor.name,
+    actorUserId: actor?.id ?? null,
+    actorUsername: actor?.name ?? null,
     eventType: "auto_proceed_triggered",
     receivedReceiptId: receiptId,
     fromState: received.state,
     toState: nextState,
   });
 
-  await executePushAndSettle(receiptId, received, actor.id, actor.name);
+  await executePushAndSettle(receiptId, received, actor?.id ?? null, actor?.name ?? null);
 }

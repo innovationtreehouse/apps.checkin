@@ -8,6 +8,7 @@ export const classifications = {
         requireFinanceReviewWithTax: 'internal',
         enforceReceiptAgeLimit: 'internal',
         receiptAgeLimitDays: 'internal',
+        ocrEnabled: 'internal',
     },
     Receipt: {
         id: 'internal',

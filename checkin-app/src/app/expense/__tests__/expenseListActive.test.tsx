@@ -4,11 +4,13 @@ import ExpensesPage from "@checkin/expense/pages/expenses";
 
 let mockSearch = new URLSearchParams();
 const mockReplace = jest.fn();
+const mockPush = jest.fn();
 const mockLoaded: string[] = [];
 
 jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearch,
-  useRouter: () => ({ replace: mockReplace }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
+  usePathname: () => "/expense/expenses",
 }));
 
 jest.mock("@checkin/expense/components/api", () => ({
@@ -32,6 +34,7 @@ beforeAll(() => {
 beforeEach(() => {
   mockLoaded.length = 0;
   mockReplace.mockClear();
+  mockPush.mockClear();
 });
 
 function renderList(search: string) {
@@ -50,7 +53,13 @@ describe("Only show active on the expense list", () => {
   it("turned off, lists every expense and keeps the choice in the URL", () => {
     renderList("view=all&page=3");
     fireEvent.click(screen.getByRole("checkbox", { name: "Only show active" }));
-    expect(mockReplace).toHaveBeenCalledWith("/expense/expenses?view=all&page=1&active=0", { scroll: false });
+    expect(mockReplace).toHaveBeenCalledWith("/expense/expenses?view=all&active=0", { scroll: false });
+  });
+
+  it("turned back on, drops the choice and the page from the URL", () => {
+    renderList("view=all&active=0&page=3");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Only show active" }));
+    expect(mockReplace).toHaveBeenCalledWith("/expense/expenses?view=all", { scroll: false });
   });
 
   it("off in the URL, loads closed expenses too", () => {

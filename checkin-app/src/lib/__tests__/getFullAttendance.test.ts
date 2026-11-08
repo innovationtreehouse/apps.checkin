@@ -241,7 +241,7 @@ describe("no-keyholder visits", () => {
         await getFullAttendance();
         expect(coverFindMany.mock.calls[0][0].where).toMatchObject({
             deletedAt: null,
-            person: { isKeyholder: true, mergedIntoId: null },
+            person: { isKeyholder: true },
             arrivedAt: { lte: new Date(rows[1].arrivedAt.getTime() + NO_KEYHOLDER_GRACE_MS) },
             OR: [{ departedAt: null }, { departedAt: { gte: rows[1].arrivedAt } }],
         });

@@ -16,12 +16,12 @@ const orgId = TEST_ORG_ID;
 const AUDIT = { actorUserId: 1, actorUsername: "testfinance", correlationId: "corr-intake" };
 
 const HEADER =
-  "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment";
+  "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment,Merchant Fee,Check Fee";
 const DONOR_FIELDS = ["Jane", "Doe", "Robotics team", "John", "Smith"];
 const DONOR_KEYS = ["donorFirstName", "donorLastName", "donorComment"];
 
 function csv(rows: string[]): Buffer {
-  return Buffer.from([HEADER, ...rows].join("\n"));
+  return Buffer.from([HEADER, ...rows.map((row) => `${row},0.00,0.00`)].join("\n"));
 }
 
 async function upload(rows: string[]) {

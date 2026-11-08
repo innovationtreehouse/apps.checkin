@@ -7,7 +7,6 @@ import { sendTemplated } from "@/lib/email-templates/send";
 import { logIntegrationError } from "@/lib/logger";
 import { redactSecrets } from "@checkin/utils";
 import { config } from "@/lib/config";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 let cachedToken: string | null = null;
 let tokenExpiresAt: number = 0;
@@ -120,7 +119,6 @@ export async function reportShopifyFailure(
             where: {
                 OR: [{ isSysadmin: true }, { isBoardMember: true }],
                 email: { not: null },
-                ...LIVE_PERSON,
             },
             select: { email: true }
         });

@@ -10,6 +10,13 @@ const problemFor = async (event: Parameters<ReturnType<typeof orgEventAlerts>["o
 };
 
 describe("orgEventAlerts", () => {
+  it("names a provisional by its short ID", async () => {
+    const stuckProvisionals = [{ gtin13: "0200002701237", name: "Widget" }];
+    expect(await problemFor({ failed: 0, unprocessed: 0, unreadable: false, stuckProvisionals })).toEqual({
+      problem: "could not apply the catalog's decision to 1 provisional item(s): Widget (P000123)",
+    });
+  });
+
   it("names events and provisionals, only those that apply", async () => {
     const base = { failed: 0, unprocessed: 0, unreadable: false };
     expect(await problemFor({ ...base, failed: 1, unprocessed: 2 })).toEqual({ problem: "found 1 newly failed and 2 unprocessed catalog event(s)" });

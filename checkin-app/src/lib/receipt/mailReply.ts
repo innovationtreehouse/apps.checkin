@@ -13,6 +13,7 @@ const REFUSAL_TEXT: Record<MailRefusalReason, string> = {
   empty: "the file is empty",
   forwarded: "it is an email attached as a file, which we do not open. Forward the receipt itself instead",
   ceiling: "our receipt queue is full. Please send it again in a few days",
+  no_receipt: "We found no receipt file or receipt text in it",
 };
 
 /** RFC 3834: marks our mail as automatic, so a well-behaved responder never answers it. */
@@ -23,6 +24,9 @@ const day = (d: Date) => d.toLocaleDateString("en-US", { month: "long", day: "nu
 /** Fixed text outside the editable templates, so a Board edit can never drop what was refused. */
 function refusedText(ack: MailAcknowledgement): string | undefined {
   if (ack.refused.length === 0) return undefined;
+  if (ack.refused.some((r) => r.reason === "no_receipt")) {
+    return `${REFUSAL_TEXT.no_receipt}. To send a receipt, send a new email with the receipt attached as a PDF or image file, or upload it at ${config.baseUrl()}/receipts/upload.`;
+  }
   const lines = ack.refused.map((r) => `${r.file}: ${REFUSAL_TEXT[r.reason]}`);
   return `We could not accept these files from your email of ${day(ack.receivedAt)}:\n${lines.join("\n")}`;
 }

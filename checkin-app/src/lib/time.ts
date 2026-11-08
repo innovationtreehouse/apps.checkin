@@ -119,6 +119,21 @@ export function parseDateOnly(value: string | null | undefined): Date | null {
     return value ? new Date(value) : null;
 }
 
+const YMD = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A "yyyy-mm-dd" day at a server-local wall-clock `time` ("hh:mm:ss.sss"), for a
+ * day-range filter's bounds. Null when the value is malformed or names a day the
+ * calendar lacks (`2026-02-31`), which `Date` would otherwise roll into March.
+ */
+export function parseDayAt(value: string, time: string): Date | null {
+    const m = YMD.exec(value);
+    if (!m) return null;
+    const d = new Date(`${value}T${time}`);
+    const [year, month, day] = m.slice(1).map(Number);
+    return d.getFullYear() === year && d.getMonth() + 1 === month && d.getDate() === day ? d : null;
+}
+
 /** Numeric y/m/d parts of an instant in the organisation's zone. */
 const ORG_DAY_PARTS = new Intl.DateTimeFormat('en-US', {
     timeZone: APP_TIMEZONE,

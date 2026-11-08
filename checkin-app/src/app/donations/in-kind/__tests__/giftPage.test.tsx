@@ -48,6 +48,7 @@ const base = {
   revenueBooking: null,
   expenseBooking: null,
   inventoryLoadedAt: "2026-10-02T12:00:01.000Z",
+  inventoryLoadFailureReason: null,
   lines: [{ id: 9, gtin13: "0011111111116", description: "Drill", quantity: 2, valueCents: 3500, suggestedValueCents: 4000 }],
   events: [
     { id: 1, eventType: "MANUAL_IN_KIND_RECORDED", actorUsername: "ops-pat", occurredAt: "2026-10-02T12:00:00.000Z", payload: "{}" },
@@ -107,17 +108,49 @@ describe("in-kind gift page", () => {
     expect(mockApi).toHaveBeenCalledWith("/in-kind/manual/4/load-inventory", { method: "POST" });
   });
 
-  it("keeps a failed retry's error up until dismissed", async () => {
+  it("shows why a failed inventory load failed", () => {
+    mockGift = { ...manual, inventoryLoadedAt: null, inventoryLoadFailureReason: "Not a provisional GTIN: 0011111111116" };
+    wrap(<ManualGiftPage />);
+    expect(screen.getByText("The load for donation:4 failed: Not a provisional GTIN: 0011111111116")).toBeInTheDocument();
+  });
+
+  it("keeps a failed retry's error up until dismissed, and lets it be tried again", async () => {
     mockGift = { ...manual, inventoryLoadedAt: null };
-    mockApi.mockRejectedValue(new HttpError("Catalog item 0011111111116 not found", 409));
+    mockApi.mockRejectedValue(new HttpError("Inventory is unavailable", 503));
     wrap(<ManualGiftPage />);
     fireEvent.click(screen.getByRole("button", { name: "Load again" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "Catalog item 0011111111116 not found", color: "red", autoClose: false }),
+        expect.objectContaining({ message: "Inventory is unavailable", color: "red", autoClose: false }),
       ),
     );
     expect(mockReload).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Load again" })).toBeEnabled();
+  });
+
+  it("turns the button off with the server's reason when inventory refuses the load", async () => {
+    mockGift = { ...manual, inventoryLoadedAt: null };
+    mockApi.mockRejectedValue(new HttpError("This source was already applied with a different inventory delta.", 409));
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    expect(await screen.findByRole("button", { name: "Can't be loaded: adjust stock by hand" })).toBeDisabled();
+    expect(screen.getByText("This source was already applied with a different inventory delta.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load again" })).not.toBeInTheDocument();
+    expect(mockReload).not.toHaveBeenCalled();
+  });
+
+  it("tells a viewer without permission they can't load, and keeps the load open for someone who can", async () => {
+    mockGift = { ...manual, inventoryLoadedAt: null };
+    mockApi.mockRejectedValue(new HttpError("Forbidden", 403));
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "You don't have permission to load goods into inventory.", color: "red" }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Can't be loaded: adjust stock by hand" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load again" })).toBeEnabled();
   });
 
   it("offers no retry to the Board, which cannot load inventory", () => {

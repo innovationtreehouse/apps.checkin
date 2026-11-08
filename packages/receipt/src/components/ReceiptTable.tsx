@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
 import { isDiscardedDuplicate, latestOutcome, receiptStateLabel, type ReceiptListRow } from "./api";
 import { formatCents } from "@checkin/money";
+import { REJECTED_AS_COPY } from "../lib/describeReceipt";
 import { SUBMITTER_ACTION_STATES } from "../nav";
 import { confirmedByReimbursee } from "./ConfirmationList";
 
@@ -11,7 +12,8 @@ import { confirmedByReimbursee } from "./ConfirmationList";
  * column; `flagMine` marks the rows that wait on their uploader and shows finance's reason on a
  * rejected one and where a finalized one's purchase stands; `delivery` adds each
  * undelivered receipt's latest push failure and whether catch-up has given up on it. A receipt
- * discarded as a duplicate says so, linking the receipt it duplicates when the view carries it.
+ * discarded as a duplicate says so, linking the receipt it duplicates when the view carries it,
+ * and one rejected as a copy links the receipt kept in its place.
  */
 export default function ReceiptTable({
   rows,
@@ -49,7 +51,11 @@ export default function ReceiptTable({
               <Table.Td>{r.retailer ?? "—"}{r.isInKind && <Badge ml="xs" size="xs">Donation</Badge>}</Table.Td>
               <Table.Td>{formatCents(r.receiptTotalCents)}</Table.Td>
               <Table.Td>
-                {receiptStateLabel(r)}
+                {r.copyOfId && r.copyOfLabel ? (
+                  <>{REJECTED_AS_COPY}<Anchor component={Link} href={detailHref(r.copyOfId)}>{r.copyOfLabel}</Anchor></>
+                ) : (
+                  receiptStateLabel(r)
+                )}
                 {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (
                   <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>
                 )}

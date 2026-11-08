@@ -121,6 +121,13 @@ model Transaction {
   ownerAssignedByUserId  Int?      @map("owner_assigned_by_user_id")
   /// @sensitivity:internal
   isOrganizationalLevel  Boolean   @default(false) @map("is_organizational_level")
+  /// When finance released this fees-only row, its fee booked by hand in QuickBooks; null while unreleased.
+  /// @sensitivity:internal
+  feeReleasedAt          DateTime? @map("fee_released_at")
+  /// @sensitivity:internal
+  feeReleasedByUserId    Int?      @map("fee_released_by_user_id")
+  /// @sensitivity:internal
+  feeReleasedByName      String?   @map("fee_released_by_name")
 
   disbursementHolds DisbursementHold[]
 
@@ -165,6 +172,12 @@ model AccountMap {
   matchAccount          String   @map("match_account")
   /// @sensitivity:internal
   feesAccount           String   @map("fees_account")
+  /// QuickBooks account id a matched gift's donation amount books to; null until finance picks one.
+  /// @sensitivity:internal
+  donationAccountId     String?  @map("donation_account_id")
+  /// QuickBooks account id a matched gift's employer match books to; null until finance picks one.
+  /// @sensitivity:internal
+  matchAccountId        String?  @map("match_account_id")
   /// @sensitivity:internal
   createdAt             DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal
@@ -197,8 +210,6 @@ model DisbursementHold {
   @@map("disbursement_holds")
 }
 
-// Income owns every deposit. The qb* columns are unmapped from the client until a release without
-// them is live, then dropped (QB_ENTRY_OWNERSHIP).
 model DisbursementEvent {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -210,26 +221,8 @@ model DisbursementEvent {
   payload        String
   /// @sensitivity:internal
   createdAt      DateTime @default(now()) @map("created_at")
-  /// @sensitivity:internal
-  qbMatchState   String   @default("UNMATCHED") @map("qb_match_state") @ignore
-  /// @sensitivity:internal
-  qbTxnId        String?  @map("qb_txn_id") @ignore
-  /// @sensitivity:internal
-  qbDepositTotalCents Int?    @map("qb_deposit_total_cents") @ignore
-  /// @sensitivity:internal
-  qbDepositTxnDate    String? @map("qb_deposit_txn_date") @ignore
-  /// @sensitivity:internal
-  qbDriftedTxnId      String? @map("qb_drifted_txn_id") @ignore
-  /// @sensitivity:internal
-  qbDriftCause        String? @map("qb_drift_cause") @ignore
-  /// @sensitivity:internal
-  qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at") @ignore
-  /// @sensitivity:internal
-  qbNote              String? @map("qb_note") @ignore
 
   @@unique([orgId, disbursementId])
-  @@unique([orgId, qbTxnId])
-  @@index([orgId, qbMatchState])
   @@map("disbursement_events")
 }
 
@@ -277,21 +270,17 @@ model WorkflowEvent {
 
   @@index([orgId, disbursementId, occurredAt])
   @@index([orgId, occurredAt])
+  @@index([orgId, entityType, entityId, occurredAt])
   @@map("workflow_events")
 }
 
-// The in-kind lane's QuickBooks settings, one row per org. qbPostingOnAt and
-// depositsHandedOverAt are unmapped from the client and dropped with the qb* event columns.
+// The in-kind lane's QuickBooks settings, one row per org.
 model DonationOrgSettings {
   /// @sensitivity:internal
   orgId         String    @id @map("org_id")
-  /// @sensitivity:internal
-  qbPostingOnAt DateTime? @map("qb_posting_on_at") @ignore
   // When the in-kind lane's posting switched on; set once, by its first run with QuickBooks and every in-kind books-map role.
   /// @sensitivity:internal
   inKindQbPostingOnAt DateTime? @map("in_kind_qb_posting_on_at")
-  /// @sensitivity:internal
-  depositsHandedOverAt DateTime? @map("deposits_handed_over_at") @ignore
   // Days either side of a gift's date a QuickBooks entry may match.
   /// @sensitivity:internal
   qbMatchWindowDays Int @default(7) @map("qb_match_window_days")
@@ -447,6 +436,9 @@ model ManualInKindDonationLine {
   /// The value ops suggested at recording; finance sees it and decides.
   /// @sensitivity:internal
   suggestedValueCents Int?         @map("suggested_value_cents")
+  /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
+  /// @sensitivity:internal
+  quickBooksAccountId String?      @map("quick_books_account_id")
   donation    ManualInKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
 
   @@index([donationId])
@@ -472,6 +464,9 @@ model InKindDonationLine {
   quantity          Float
   /// @sensitivity:internal
   valueCents        Int            @map("value_cents")
+  /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
+  /// @sensitivity:internal
+  quickBooksAccountId String?      @map("quick_books_account_id")
   donation          InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
 
   @@unique([donationId, receiptLineItemId])
@@ -499,6 +494,8 @@ model InKindBooking {
   qbEntity   String?  @map("qb_entity")
   /// @sensitivity:internal
   qbTxnId    String?  @map("qb_txn_id")
+  /// @sensitivity:internal
+  bookedTxnDate String? @map("booked_txn_date")
   /// @sensitivity:internal
   createdAt  DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal
@@ -528,6 +525,9 @@ model InKindPosting {
   qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
   /// @sensitivity:internal
   qbPostAttempts      Int       @default(0) @map("qb_post_attempts")
+  // The kind of the last failed post (system, connection, settings, data, bug); null when the last post did not fail.
+  /// @sensitivity:internal
+  qbFailureKind       String?   @map("qb_failure_kind")
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
   /// @sensitivity:internal

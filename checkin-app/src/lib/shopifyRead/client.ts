@@ -384,16 +384,17 @@ export async function orderLegacyIdsPresent(legacyIds: string[]): Promise<Set<st
 }
 
 /**
- * Order GIDs that have a chargeback/dispute balance transaction, among the given
- * GIDs. Shopify Payments surfaces a dispute as a signed balance transaction whose
- * `type` names the dispute — this distinguishes a chargeback (CRITICAL) from an
- * ordinary refund. Case-insensitive match so 'dispute'/'chargeback'/'adjustment'
- * variants all match. Only API-synced disputes on real, API-synced orders count.
+ * Chargeback/dispute balance transactions per order, among the given GIDs; an order
+ * with none is absent. Shopify Payments surfaces a dispute as a signed balance
+ * transaction whose `type` names the dispute — this distinguishes a chargeback
+ * (CRITICAL) from an ordinary refund, and a rising count is a new dispute event.
+ * Case-insensitive match so 'dispute'/'chargeback'/'adjustment' variants all match.
+ * Only API-synced disputes on real, API-synced orders count.
  */
-export async function disputedOrderGids(orderGids: string[]): Promise<Set<string>> {
-    if (orderGids.length === 0) return new Set();
+export async function orderDisputeCounts(orderGids: string[]): Promise<Map<string, number>> {
+    if (orderGids.length === 0) return new Map();
     const db = await getClient();
-    if (!db) return new Set();
+    if (!db) return new Map();
     const txns = await db.shopBalanceTransaction.findMany({
         where: {
             orderGid: { in: orderGids },
@@ -403,16 +404,19 @@ export async function disputedOrderGids(orderGids: string[]): Promise<Set<string
                 { type: { contains: "chargeback", mode: "insensitive" } },
             ],
         },
-        distinct: ["orderGid"],
         select: { orderGid: true },
     });
-    const disputed = txns.flatMap((t) => (t.orderGid === null ? [] : [t.orderGid]));
-    if (disputed.length === 0) return new Set();
+    const counts = new Map<string, number>();
+    for (const { orderGid } of txns) {
+        if (orderGid !== null) counts.set(orderGid, (counts.get(orderGid) ?? 0) + 1);
+    }
+    if (counts.size === 0) return counts;
     const real = await db.shopOrder.findMany({
-        where: { test: false, ...apiSource(), shopifyGid: { in: disputed } },
+        where: { test: false, ...apiSource(), shopifyGid: { in: [...counts.keys()] } },
         select: { shopifyGid: true },
     });
-    return new Set(real.map((o) => o.shopifyGid));
+    const realGids = new Set(real.map((o) => o.shopifyGid));
+    return new Map([...counts].filter(([gid]) => realGids.has(gid)));
 }
 
 /**

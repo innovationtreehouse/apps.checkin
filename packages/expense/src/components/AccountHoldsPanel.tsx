@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Badge, Button, Group, Paper, Select, Table, Text } from "@mantine/core";
 import { formatCents } from "@checkin/money";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { send, useLoad } from "./api";
 import NonInventoryBadge from "./NonInventoryBadge";
 
@@ -11,6 +12,7 @@ export interface HeldLine {
   totalPriceCents: number;
   manualQbAccount?: string | null;
   nonInventory?: boolean;
+  isCapital?: boolean;
 }
 export interface Hold {
   id: number;
@@ -23,6 +25,11 @@ interface QbAccount {
   id: number;
   name: string;
   qbAccount: string;
+}
+/** One account from QuickBooks' live list, as the host's books-map route returns it. */
+interface LiveAccount {
+  id: string;
+  accountType: string;
 }
 interface LookupContext {
   category: string | null;
@@ -74,18 +81,21 @@ export function matchedRulesOf(matchedRows: string): MatchedRule[] {
 
 /**
  * Lines the QuickBooks processor could not give an account. FINANCE sets one per line and resubmits;
- * Resubmit stays disabled while a held line has no account, and the server refuses it as well.
+ * Resubmit stays disabled while a held line has no account, and the server refuses it as well. A
+ * refused resubmit may still have moved the expense, so `onRefused` rereads it.
  */
-export default function AccountHoldsPanel({ expenseId, holds, lines, currency, isFinance, onChanged }: {
+export default function AccountHoldsPanel({ expenseId, holds, lines, currency, isFinance, onChanged, onRefused }: {
   expenseId: string;
   holds: Hold[];
   lines: HeldLine[];
   currency: string;
   isFinance: boolean;
   onChanged: () => void;
+  onRefused: () => void;
 }) {
   const pending = holds.filter((h) => h.status === "PENDING");
   const accounts = useLoad<QbAccount[]>(pending.length > 0 ? "/qb-accounts" : null);
+  const live = useLoad<LiveAccount[]>(isFinance && pending.length > 0 ? "/api/books-map/quickbooks-accounts" : null);
   const [picked, setPicked] = useState<Record<number, string | null>>({});
   if (pending.length === 0) return null;
 
@@ -93,7 +103,12 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
   const lineOf = new Map(lines.map((l) => [l.id, l]));
   const accountName = new Map((accounts.data ?? []).map((a) => [a.qbAccount, a.name]));
   const accountLabel = (code: string) => (accountName.has(code) ? `${accountName.get(code)} (${code})` : code);
-  const options = (accounts.data ?? []).map((a) => ({ value: a.qbAccount, label: `${a.name} (${a.qbAccount})` }));
+  const typeOf = new Map((live.data ?? []).map((a) => [a.id, a.accountType]));
+  /** A capital line books to a Fixed Asset account; any other line to an expense type. */
+  const optionsFor = (capital: boolean) => {
+    const allowed: readonly string[] = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
+    return (accounts.data ?? []).filter((a) => allowed.includes(typeOf.get(a.qbAccount) ?? "")).map((a) => ({ value: a.qbAccount, label: `${a.name} (${a.qbAccount})` }));
+  };
   const withoutAccount = pending.filter((h) => !lineOf.get(h.lineItemId)?.manualQbAccount).length;
 
   return (
@@ -110,7 +125,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
             <Button
               size="xs"
               disabled={withoutAccount > 0}
-              onClick={async () => { if (await send(`${base}/resubmit`, "POST", {}, "Resubmitted")) onChanged(); }}
+              onClick={async () => { if (await send(`${base}/resubmit`, "POST", {}, "Resubmitted")) onChanged(); else onRefused(); }}
             >Resubmit</Button>
           </Group>
         )}
@@ -146,7 +161,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                       <Select
                         size="xs"
                         aria-label="QuickBooks account"
-                        data={options}
+                        data={optionsFor(line?.isCapital ?? false)}
                         value={picked[h.id] ?? line?.manualQbAccount ?? null}
                         onChange={(v) => setPicked({ ...picked, [h.id]: v })}
                         placeholder="QB account"

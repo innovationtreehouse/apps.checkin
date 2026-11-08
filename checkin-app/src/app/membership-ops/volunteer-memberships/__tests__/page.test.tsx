@@ -66,7 +66,7 @@ describe("membership-ops/volunteer-memberships page", () => {
     mockFetchJson({}); // every fetch 404s
     renderWithProviders(<VolunteerMembershipsPage />);
 
-    expect(await screen.findByText(/Could not load the volunteer roster/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the volunteer roster")).toBeInTheDocument();
     expect(screen.queryByText("No volunteers or designations yet.")).not.toBeInTheDocument();
   });
 

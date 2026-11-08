@@ -1,3 +1,4 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { AuditLogPanel } from "../AuditLogPanel";
@@ -44,7 +45,8 @@ describe("AuditLogPanel", () => {
   it("shows a failure message when the fetch fails", async () => {
     mockFetchJson({});
     renderWithProviders(<AuditLogPanel />);
-    expect(await screen.findByText("Failed to load audit log.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the audit log")).toBeInTheDocument();
+    expect(screen.queryByText("No audit entries match these filters.")).not.toBeInTheDocument();
   });
 
   it("refetches with the from-date filter and resets to page 1", async () => {
