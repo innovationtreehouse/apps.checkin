@@ -325,9 +325,11 @@ async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor:
   if (outbox.count > 0) {
     // Finance's skip is final, so going back never makes the expense postable again.
     const qbMatchState = expense.qbMatchState === "SKIPPED" ? "SKIPPED" : "UNMATCHED";
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState, qbPostAttempts: 0, qbFailureKind: null } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState } });
     await writeAudit(tx, actor, { expenseId, action: "qb_outbox_cleared", fieldChanged: "qbMatchState", valueBefore: expense.qbMatchState, valueAfter: qbMatchState, notes: reason });
   }
+  // Going back leaves any QuickBooks step it failed, with or without an outbox row.
+  await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
 }
 
 /**

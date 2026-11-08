@@ -161,12 +161,19 @@ model Expense {
   qbTxnEntity        String?   @map("qb_txn_entity")
   /// @sensitivity:internal
   qbVendorId         String?   @map("qb_vendor_id")
-  // Failed QuickBooks posts since the last success or finance retry; at the limit the expense stops at NEEDS_FINANCE.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbPostAttempts     Int       @default(0) @map("qb_post_attempts")
-  // The kind of the last failed post (system, connection, settings, data, bug); null when the last post did not fail or none failed.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbFailureKind      String?   @map("qb_failure_kind")
+  // When the expense first failed to prepare for QuickBooks (qb_error) or to post; set while null,
+  // cleared when that step succeeds. Set means stuck.
+  /// @sensitivity:internal
+  qbFirstFailedAt    DateTime? @map("qb_first_failed_at")
+  // The latest error of that failed step, shown only on the expense's own page.
+  /// @sensitivity:personal
+  qbLastError        String?   @map("qb_last_error")
   // When a post claimed the expense (POSTING) before calling QuickBooks; cleared when it settles.
   /// @sensitivity:internal
   qbClaimedAt        DateTime? @map("qb_claimed_at")
@@ -572,9 +579,12 @@ model ReceivedExpensePayload {
   failureReason String?  @map("failure_reason")
   /// @sensitivity:internal
   receivedAt    DateTime @default(now()) @map("received_at")
-  // Replays run so far; at the cap the payload is given up for a developer.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   replayAttempts Int?    @map("replay_attempts")
+  // When the payload first failed to build; set while null, cleared when it applies.
+  /// @sensitivity:internal
+  firstFailedAt  DateTime? @map("first_failed_at")
 
   @@map("received_expense_payloads")
 }
@@ -595,6 +605,9 @@ model ExpenseReceivedOrgEvent {
   status        String   @default("pending")
   /// @sensitivity:personal
   failureReason String?  @map("failure_reason")
+  // When the event first failed to apply; set while null, cleared when it applies.
+  /// @sensitivity:internal
+  firstFailedAt DateTime? @map("first_failed_at")
 
   @@map("received_org_events")
 }

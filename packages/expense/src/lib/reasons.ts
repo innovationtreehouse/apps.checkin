@@ -20,8 +20,7 @@ export type ReasonCode =
   | "QB_UNBOOKED"
   | "QB_VENDOR_MISSING"
   | "QB_NO_CLASS"
-  | "QB_WAITING_ON_SETTING"
-  | "QB_WAITING_ON_CATALOG"
+  | "QB_PROCESSING_FAILED"
   | ReviewKind
   | "BOARD_APPROVAL"
   | "SIGNER_HELD";
@@ -51,7 +50,6 @@ export interface ReasonFacts {
     taxCents: number;
     receiptTotalCents: number;
     qbMatchState: string;
-    qbPostAttempts: number;
   };
   receiptReview: StoredReceiptReview | null;
   /** The tax finance approved on the expense, or null when it approved none. */
@@ -62,30 +60,16 @@ export interface ReasonFacts {
   boardApprovalNeeded: boolean;
   /** A seat no one without a conflict can fill. */
   signerHeld: boolean;
-  /** The error of the post that used up the retries. */
+  /** Why the expense last went to NEEDS_FINANCE: its failed post's error, or why it cannot post. */
   lastPostError: string | null;
   /**
    * An outboxed expense the drain stops because a line's bucket has no QuickBooks Class: that
    * bucket's name, or null for a line with no bucket. Undefined when nothing stops it for a Class.
    */
   missingClass?: { bucketName: string | null };
-  /**
-   * An outboxed expense whose last post a QuickBooks or books-map setting stopped: the setting, as
-   * its audit note names it, or null. Undefined when no setting stops it.
-   */
-  waitingOnSetting?: { detail: string | null };
-  /** An expense the catalog's outage parked in qb_error; the posting run's recovery retries it. */
-  waitingOnCatalog?: true;
   /** Whether the reimbursee has a linked QuickBooks Vendor; null when there is no reimbursee. */
   reimburseeVendorLinked: boolean | null;
   openReviews: { kind: ReviewKind; detail: string | null }[];
-}
-
-const SETTING_WAIT_NOTE = /^(?:not charged|attempt \d+ of \d+) \(settings\): /;
-
-/** The setting a settings wait's audit note names; null for any other note. */
-export function settingWaitDetail(notes: string | null | undefined): string | null {
-  return notes && SETTING_WAIT_NOTE.test(notes) ? notes.replace(SETTING_WAIT_NOTE, "") || null : null;
 }
 
 /** The tax finance approved covers this expense's tax only when the amounts match. */
@@ -122,14 +106,13 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
   }
 
   if (!e.backfill && e.state !== "rejected") {
-    if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "qb", { count: e.qbPostAttempts, detail: f.lastPostError }));
+    if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "qb", { detail: f.lastPostError }));
     if (e.qbMatchState === "UNBOOKED") out.push(reason("QB_UNBOOKED", "qb"));
     if (e.qbMatchState === "AMBIGUOUS") {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
     if (f.missingClass) out.push(reason("QB_NO_CLASS", "qb", { detail: f.missingClass.bucketName }));
-    if (f.waitingOnSetting) out.push(reason("QB_WAITING_ON_SETTING", "qb", { detail: f.waitingOnSetting.detail }));
-    if (f.waitingOnCatalog) out.push(reason("QB_WAITING_ON_CATALOG", "qb"));
+    if (e.state === "qb_error") out.push(reason("QB_PROCESSING_FAILED", "qb"));
   }
   for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 
