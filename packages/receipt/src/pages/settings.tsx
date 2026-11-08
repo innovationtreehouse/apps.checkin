@@ -8,17 +8,15 @@ interface Settings {
   requireFinanceReviewWithTax: boolean;
   enforceReceiptAgeLimit: boolean;
   receiptAgeLimitDays: number;
-  ocrEnabled: boolean;
 }
 
 const FLAGS = [
   { key: "taxExempt", label: "The organization is tax-exempt" },
   { key: "requireFinanceReviewWithTax", label: "Send receipts that charge tax to finance review" },
   { key: "enforceReceiptAgeLimit", label: "Send receipts older than the age limit to finance review" },
-  { key: "ocrEnabled", label: "Read receipts automatically. Turn this off to stop every automatic reading; uploads go straight to typing the details." },
 ] as const;
 
-/** /receipts/settings — tax-exempt, age-limit and automatic-reading settings. FINANCE edits; BOARD reads. */
+/** /receipts/settings — tax-exempt and age-limit settings. FINANCE edits; BOARD reads. */
 export default function ReceiptSettingsPage() {
   const { isFinance } = useRoles();
   const settings = useLoad<Settings>("/settings");

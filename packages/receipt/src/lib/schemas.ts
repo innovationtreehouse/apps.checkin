@@ -136,9 +136,10 @@ export const OrgSettingsSchema = z
     requireFinanceReviewWithTax: z.boolean().optional(),
     enforceReceiptAgeLimit: z.boolean().optional(),
     receiptAgeLimitDays: z.number().int().positive().optional(),
-    ocrEnabled: z.boolean().optional(),
   })
   .strict();
+
+export const OcrSwitchSchema = z.object({ ocrEnabled: z.boolean() }).strict();
 
 export const ImportLineItemSchema = z.object({
   lineNumber: z.number().int().positive(),

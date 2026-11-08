@@ -14,7 +14,7 @@ function withOcr(ocr = okOcr()) {
 
 async function turnOcrOff() {
   actAs(FINANCE);
-  await orgSettingsService.update({ ocrEnabled: false });
+  await orgSettingsService.setOcrSwitch({ ocrEnabled: false });
   actAs(ALICE);
 }
 
@@ -26,8 +26,17 @@ beforeEach(async () => {
 
 describeDb("automatic reading switch", () => {
   it("is on by default", async () => {
+    expect(await orgSettingsService.ocrSwitch()).toEqual({ ocrEnabled: true });
+  });
+
+  it("records who turned it off, and changes only through its own update", async () => {
+    await turnOcrOff();
+    expect(await orgSettingsService.ocrSwitch()).toEqual({ ocrEnabled: false });
+    expect(await db.receiptAuditLog.findMany({ where: { action: "settings_updated" } })).toEqual([
+      expect.objectContaining({ userId: FINANCE.id, fieldChanged: "ocrEnabled", valueBefore: "true", valueAfter: "false" }),
+    ]);
     actAs(FINANCE);
-    expect(await orgSettingsService.get()).toMatchObject({ ocrEnabled: true });
+    await expect(orgSettingsService.update({ ocrEnabled: true })).rejects.toMatchObject({ status: 400 });
   });
 
   it("while off, an upload calls no model, reserves no call and goes to manual entry with the note", async () => {
@@ -64,7 +73,7 @@ describeDb("automatic reading switch", () => {
     const extract = withOcr();
     await turnOcrOff();
     actAs(FINANCE);
-    await orgSettingsService.update({ ocrEnabled: true });
+    await orgSettingsService.setOcrSwitch({ ocrEnabled: true });
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).not.toBe("ocr_failed");

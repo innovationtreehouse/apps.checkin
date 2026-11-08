@@ -108,8 +108,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const { isFinance, isBoard } = useRoles();
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
-  // Only finance and the Board may read the settings; a submitter learns the switch is off from the retry's refusal.
-  const ocrOff = useLoad<{ ocrEnabled: boolean }>(isFinance || isBoard ? "/settings" : null).data?.ocrEnabled === false;
+  const ocrOff = useLoad<{ ocrEnabled: boolean }>("/settings/ocr").data?.ocrEnabled === false;
   const open = receipt.data != null && !TERMINAL.has(receipt.data.state);
   const held = receipt.data?.state === "duplicate_flagged";
   const group = useLoad<DuplicateGroup>((isFinance || isBoard) && open ? `/${id}/duplicate-group` : null);
