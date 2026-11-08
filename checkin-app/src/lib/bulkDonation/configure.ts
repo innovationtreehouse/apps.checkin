@@ -26,6 +26,7 @@ import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import { reportTo } from "@/lib/finishRun";
 
 /** What handing Benevity deposits to income lacks, in plain words; empty when it binds. Income's books map holds the bank. */
 export function donationPostingMissing(): string[] {
@@ -132,6 +133,7 @@ const partAccounts: InKindAccounts = {
 
 export function configureRuntime(): void {
   configureBulkDonation({
+    onFailure: reportTo("bulk-donation"),
     auth: { getPrincipal },
     org: getOrg,
     owners: budgetOwners,

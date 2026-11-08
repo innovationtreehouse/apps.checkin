@@ -23,6 +23,7 @@ import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
 import { outboundCall } from "@/security/outbound";
+import { reportTo } from "@/lib/finishRun";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -256,6 +257,7 @@ const outcomeMail: OutcomeMail = {
 
 export function configureRuntime(): void {
   configureExpense({
+    onFailure: reportTo("expense"),
     org: getOrg,
     budgetOwners,
     signoff,

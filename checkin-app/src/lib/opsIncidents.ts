@@ -1,6 +1,7 @@
 import type { FailureKind } from "@checkin/component-kit";
 import type { OpsIncident, Prisma } from "@/generated/prisma/client";
 import { config } from "@/lib/config";
+import type { TemplateCtx } from "@/lib/email-templates/registry";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { formatDateTime } from "@/lib/time";
@@ -36,7 +37,7 @@ export interface RunReport {
 export type OpsTemplate = "ops.incidentOpened" | "ops.incidentReminder" | "ops.incidentEscalated" | "ops.incidentRecovered";
 
 /** Sends one alert to one address; resolves true when it was handed to the mail service. */
-export type SendAlert = (to: string, template: OpsTemplate, ctx: Record<string, string>) => Promise<boolean>;
+export type SendAlert = (to: string, template: OpsTemplate, ctx: TemplateCtx<OpsTemplate>) => Promise<boolean>;
 
 export interface Delivery {
     send: SendAlert;
@@ -71,8 +72,12 @@ interface Observation {
     stopped: boolean;
 }
 
-const staleKey = (job: string) => `cron:${job}:stale`;
-const isStaleKey = (key: string) => key.startsWith("cron:") && key.endsWith(":stale");
+/** The key of a stopped job's incident. */
+export const staleKey = (job: string) => `cron:${job}:stale`;
+const STALE_KEY = /^cron:(.+):stale$/;
+/** The job a stopped-job incident's key names, or null for any other key. */
+export const staleJobOf = (key: string): string | null => key.match(STALE_KEY)?.[1] ?? null;
+const isStaleKey = (key: string) => staleJobOf(key) !== null;
 const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
 // Whole days, with a two-hour margin so a daily run that starts early, or after a 23-hour daylight-saving day, still counts its day.
 const DAY_MARGIN = 2 * HOUR;
@@ -114,6 +119,8 @@ const CAUSE_NAMES: Record<string, string> = {
     database: "the database",
     catalog: "catalog events",
     cron: "Scheduled job",
+    mapping: "receipt mapping",
+    intake: "expense intake",
 };
 
 const TODO: Record<string, string> = {
@@ -147,7 +154,7 @@ function status(template: OpsTemplate, row: OpsIncident, now: Date): string {
     }
 }
 
-function context(template: OpsTemplate, row: OpsIncident, delivery: Delivery, now: Date): Record<string, string> {
+function context(template: OpsTemplate, row: OpsIncident, delivery: Delivery, now: Date): TemplateCtx<OpsTemplate> {
     const cause = CAUSE_NAMES[row.cause] ?? row.cause;
     const lanes = row.lanes.join(", ");
     const recovered = template === "ops.incidentRecovered";

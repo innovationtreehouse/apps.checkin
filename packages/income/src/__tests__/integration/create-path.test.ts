@@ -439,6 +439,24 @@ describeDb("postPayout — claim, lookup and settle", () => {
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.lost_claim" } })).toBe(1);
   });
 
+  it("a refused create whose post lost its claim reports nothing", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "reject";
+    // Another post takes the payout over once this one holds the claim.
+    qbo.onWindowRead = async () => void (await db.payoutReconciliation.updateMany({
+      where: { orgId: ORG_A, source: "shopify", payoutGid: p, postClaimedAt: { not: null } },
+      data: { postClaimedAt: new Date(Date.now() + 60_000) },
+    }));
+
+    await drain();
+
+    expect(reports).toEqual([]);
+    expect(await rowFor(p)).not.toMatchObject({ kind: "POST_FAILED" });
+  });
+
   it("finance's dismiss takes over a stalled post; its late create leaves a note that keeps the payout in the queue", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
