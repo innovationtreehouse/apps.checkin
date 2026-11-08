@@ -27,7 +27,7 @@ export type InvokeRefresher = (functionName: string) => Promise<unknown>;
 export const QBO_RECONNECT = "QuickBooks needs reconnecting: its login was revoked. Finance reconnects it by re-running the QuickBooks consent.";
 
 const QBO_WRONG_COMPANY = "QuickBooks settings are wrong: the token refresher holds a different QuickBooks company than this instance's QBO_REALM_ID. Finance checks which company the consent was run for.";
-const QBO_MALFORMED = "QuickBooks settings are wrong: the token refresher's answer is not a QuickBooks token, so QBO_REFRESHER_FN may name the wrong function. Finance checks it with the infra operator.";
+const QBO_MALFORMED = "QuickBooks settings are wrong: the token refresher's answer is not a QuickBooks token, so QBO_REFRESHER_FN may name the wrong function. The infra operator checks it.";
 
 const invokeLambda: InvokeRefresher = (functionName) =>
   invokeRefresher({ functionName, service: "QBO token refresher", reconnect: QBO_RECONNECT, malformed: QBO_MALFORMED });

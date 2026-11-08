@@ -55,7 +55,7 @@ describe("lambdaAccessTokenSource", () => {
         const tokens = source(invoke);
         const err = await tokens.current().catch((e: unknown) => e);
         expect(kindOf(err)).toBe("settings");
-        expect((err as Error).message).toMatch(/QBO_REFRESHER_FN.*Finance/);
+        expect((err as Error).message).toMatch(/QBO_REFRESHER_FN may name the wrong function\. The infra operator checks it/);
         expect(await tokens.current()).toBe("tok-1");
     });
 });
