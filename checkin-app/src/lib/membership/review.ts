@@ -773,7 +773,7 @@ type BlockedResetRow = {
  * lists PENDING_PAYMENT/PENDING_BG_CLEARANCE rows WITH consent, so parking an
  * unconsented renewal there would strand it.
  */
-function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatus {
+export function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatus {
     return process.kind === "PERSON_BG" ? "PENDING_BG_REVIEW"
         : process.kind === "RENEWAL" && !process.bgConsentAt ? "PENDING_EXTERNAL_ACTION"
         : process.paidAt ? "PENDING_BG_CLEARANCE"

@@ -47,6 +47,7 @@ const ALLOWLIST: Entry[] = [
     { file: 'lib/membership/external.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
     { file: 'lib/membership/mergeBgAdvance.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
     { file: 'lib/membership/payment.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
+    { file: 'lib/membership/settleHouseholdBg.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only bgClearedAt stamp on a waiting step' },
 ];
 
 const CALL = /\b(programParticipant|orgMembership|orgMembershipProcess)\.(update|updateMany|upsert|create|createMany)\s*\(/g;
