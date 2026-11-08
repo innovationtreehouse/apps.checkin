@@ -1,4 +1,4 @@
-import { kindOf, NotWiredError } from "@checkin/component-kit";
+import { isKindedError, kindOf } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@checkin/receipt-types";
 import type { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
@@ -42,7 +42,7 @@ async function runRecognition(
       }
     }
   } catch (err) {
-    if (err instanceof NotWiredError) return { recognized, note: CATALOG_NOT_CONNECTED };
+    if (isKindedError(err) && err.name === "NotWiredError") return { recognized, note: CATALOG_NOT_CONNECTED };
     // A settings failure, such as a missing catalog database, needs someone to fix it: the sender retries.
     if (kindOf(err) === "settings") throw err;
     console.warn("[workflow-mapping/intake] catalog lookup failed (non-fatal):", err);

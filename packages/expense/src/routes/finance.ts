@@ -3,7 +3,7 @@
  * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
-import { httpError, kindOf, mapServiceErrors, NotWiredError, parseBody, parseId, query } from "@checkin/component-kit";
+import { httpError, isKindedError, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
@@ -13,7 +13,7 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { LISTED_TYPES, bookableTypes, refuseWrongType } from "../lib/account-types";
 import { writeOrgAudit } from "../lib/audit";
-import { getActiveItem, getItemNames } from "../lib/catalog";
+import { CATALOG_DB_MISSING, getActiveItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
 import { logError } from "../lib/logger";
 import { withLiveParties, withLiveParty } from "../lib/livePeople";
@@ -138,11 +138,9 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, princi
   return {};
 };
 
-const CATALOG_DB_MISSING = "The catalog database does not exist; the infra operator checks its settings";
-
 /** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
 function refuseCatalogSettings(err: unknown): void {
-  if (err instanceof NotWiredError) throw httpError(503, "No catalog is connected");
+  if (isKindedError(err) && err.name === "NotWiredError") throw httpError(503, "No catalog is connected");
   if (kindOf(err) === "settings") throw httpError(503, CATALOG_DB_MISSING);
 }
 
@@ -215,7 +213,7 @@ export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
   // An unbound or unreachable catalog shows the map without names.
   const names = await getItemNames(rows.map((r) => r.gtin13)).catch((err: unknown) => {
-    if (err instanceof NotWiredError) return [];
+    if (isKindedError(err) && err.name === "NotWiredError") return [];
     refuseCatalogSettings(err);
     if (kindOf(err) !== "system") throw err;
     logError("catalog_names_unavailable", { route: "ownership-map" }, err);
