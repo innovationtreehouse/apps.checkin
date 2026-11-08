@@ -57,6 +57,7 @@ const ORACLES = [
     'program-participant-pending-since-strip.test.ts',
     'program-scope-withdrawn.test.ts',
     'receipt-flow-status-routes.test.ts',
+    'receipt-ocr-switch-routes.test.ts',
     'receipt-routes.test.ts',
     'receipt-strip.test.ts',
     'reference-conflict-strip.test.ts',
