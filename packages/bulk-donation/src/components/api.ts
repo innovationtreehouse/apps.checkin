@@ -31,9 +31,14 @@ export function ownerName(owners: readonly OwnerOption[] | null, id: number | nu
   return owners?.find((o) => o.id === id)?.name ?? `Owner #${id}`;
 }
 
-/** A route that will never take this request: a 4xx other than 401 (our wiring) and 429 (a passing overload). */
+/** A route that will never take this request: a 4xx other than 401 (our wiring), 403 (the viewer's own permission) and 429 (a passing overload). */
 export function isRefusal(e: unknown): e is HttpError {
-  return e instanceof HttpError && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429;
+  return e instanceof HttpError && e.status >= 400 && e.status < 500 && ![401, 403, 429].includes(e.status);
+}
+
+/** A failed inventory load, with a 403 told to the viewer as their own permission. */
+export function loadError(e: unknown): unknown {
+  return e instanceof HttpError && e.status === 403 ? new HttpError("You don't have permission to load goods into inventory.", 403) : e;
 }
 
 export function when(iso: string | null | undefined): string {

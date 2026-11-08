@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useViewer } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { act, api, errorMessage, isRefusal, paged, useLoad, when } from "../components/api";
+import { act, api, errorMessage, isRefusal, loadError, paged, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError, Pager } from "@checkin/component-ui";
@@ -73,7 +73,7 @@ export default function ManualInKindPage() {
     const load = () =>
       api(`/in-kind/manual/${id}/load-inventory`, { method: "POST" }).catch((e: unknown) => {
         if (isRefusal(e)) setRefused((ids) => new Set(ids).add(id));
-        throw e;
+        throw loadError(e);
       });
     return act(load, "Loaded into inventory", rows.reload);
   }
