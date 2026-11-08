@@ -266,6 +266,21 @@ describeDb("Run matching now", () => {
     expect(reports).toEqual([]);
   });
 
+  it("past five days still leaves the receipt pending; the next daily run gives it up and reports it", async () => {
+    cat.state.down = new KindedError("system", "still down");
+    const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS + 1 });
+
+    expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "pending_review" } });
+
+    expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
+    expect(await auditsOf(r.id, "matching_gave_up")).toHaveLength(0);
+    expect(reports).toEqual([]);
+
+    expect(await retryPendingMatching()).toMatchObject({ gaveUp: 1 });
+    expect((await receiptRow(r.id)).matchingPendingSince).toBeNull();
+    expect(reports).toEqual([{ lane: "matching", kind: "system", detail: `receipt ${r.receiptId}` }]);
+  });
+
   it("refuses a receipt whose matching already ran", async () => {
     const r = await makeReceipt({ lineCount: 1 });
     await makeLineStatus(r.id, { receiptLineItemId: 1, recognitionStatus: "unrecognized" });
