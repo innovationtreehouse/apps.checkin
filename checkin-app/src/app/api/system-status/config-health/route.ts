@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { alertAddressCheck, getConfigHealth } from "@/lib/configHealth";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import { getActiveIncidents } from "@/lib/opsIncidentView";
+import { getProblems } from "@/lib/problems";
 import { getQuickBooksHealth } from "@/lib/quickbooks/health";
 import { getReceiptMailboxHealth } from "@/lib/receipt/mailboxHealth";
 
@@ -25,16 +26,19 @@ export const dynamic = "force-dynamic";
  *                  new registered route would need its registry entry landed separately.
  *   - `incidents` — incidents not yet closed (lib/opsIncidentView.ts), for the Open problems
  *                  panel. Rides here for the same reason.
+ *   - `problems` — the receipt flow's stuck items, oldest first, and any library whose
+ *                  items could not be read (lib/problems.ts). Rides here for the same reason.
  */
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     if (!(auth.user.isSysadmin || auth.user.isBoardMember)) return apiError("Forbidden", 403);
-    const [settings, quickBooks, mailbox, cronJobs, incidents] = await Promise.all([
+    const [settings, quickBooks, mailbox, cronJobs, incidents, problems] = await Promise.all([
         prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } }),
         getQuickBooksHealth(),
         getReceiptMailboxHealth(),
         getCronJobStatuses(),
         getActiveIncidents(),
+        getProblems(),
     ]);
-    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks], cronJobs, incidents });
+    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks], cronJobs, incidents, problems });
 });

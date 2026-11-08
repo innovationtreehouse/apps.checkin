@@ -235,6 +235,18 @@ export interface FailureReport {
 }
 
 /**
+ * One item a library's step left stuck, as its "stuck items" port answers. `error` is null when the
+ * library records no error text; `failedAt` is the first failure where the library records one, else
+ * the item's last change.
+ */
+export interface StuckItem {
+  id: string;
+  step: string;
+  error: string | null;
+  failedAt: Date;
+}
+
+/**
  * A library's "on failure" port. Unbound, a failure is only logged. The lane hands the report off
  * and goes on without waiting: a port that returns a promise finishes on its own, and its rejection
  * is logged.

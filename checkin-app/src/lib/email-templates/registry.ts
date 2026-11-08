@@ -226,6 +226,19 @@ export const REGISTRY = {
         defaultBody: OPS_BODY,
     },
 
+    // ── Problems list (lib/problems.ts) ─────────────────────────────────────
+    // Ids, steps and dates only: no error text, amounts, donor or vendor names.
+    "ops.problemsDigest": {
+        allowedTokens: { count: text, items: text, actionLink: link("Open System Status") },
+        sampleCtx: {
+            count: "2",
+            items: "expense, QuickBooks posting: 7f3c, stuck since Nov 6, 2026, 2:00 AM\nScheduled job qbo-posting: last ran Nov 5, 2026, 2:00 AM",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Receipt flow: {{count}} problem(s) waiting on a person",
+        defaultBody: "These have been waiting more than a day. System Status lists each one with its error.\n\n{{items}}\n\n{{actionLink}}",
+    },
+
     // ── finance ─────────────────────────────────────────────────────────────
     "finance.receiptMailCeiling": {
         allowedTokens: { unresolved: text, refused: text, actionLink: link("Open the incoming receipt queue") },

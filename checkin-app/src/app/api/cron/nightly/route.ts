@@ -11,6 +11,7 @@ import { systemActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
+import { sendProblemsDigest } from "@/lib/problems";
 
 /** A nightly run this soon after the last one is a retry of the same night. */
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
@@ -171,6 +172,9 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         if (personAgreements.opened > 0) {
             logger.info(`Nightly cron: opened ${personAgreements.opened} individual membership agreement(s).`);
         }
+
+        // 5. The receipt flow's daily Problems email.
+        await sendProblemsDigest(now);
 
         return NextResponse.json({
             success: true,
