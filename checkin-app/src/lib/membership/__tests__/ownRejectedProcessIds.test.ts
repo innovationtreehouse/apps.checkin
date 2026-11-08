@@ -14,7 +14,6 @@ const db = prisma as unknown as {
     orgMembershipProcess: { findMany: jest.Mock };
 };
 
-const householdRow = (id: number, status: string) => ({ id, subjectPersonId: null, subjectPerson: null, orgMembership: { status } });
 const personBgRow = (id: number, status: string | null) => ({
     id,
     subjectPersonId: 50 + id,
@@ -28,18 +27,16 @@ beforeEach(() => {
 });
 
 describe("ownRejectedProcessIds", () => {
-    it("leaves out applications whose household is denied", async () => {
+    it("lists only check reviews, and leaves out those whose person's household is denied", async () => {
         db.orgMembershipProcess.findMany.mockResolvedValue([
-            householdRow(1, "NONE"),
-            householdRow(2, "DENIED"),
             personBgRow(3, "ACTIVE"),
             personBgRow(4, "DENIED"),
             personBgRow(5, null),
         ]);
 
-        await expect(ownRejectedProcessIds(1)).resolves.toEqual([1, 3, 5]);
+        await expect(ownRejectedProcessIds(1)).resolves.toEqual([3, 5]);
         expect(db.orgMembershipProcess.findMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { status: "BLOCKED", attestations: { some: { reviewerId: 1, result: "REJECT" } } },
+            where: { kind: "PERSON_BG", status: "BLOCKED", attestations: { some: { reviewerId: 1, result: "REJECT" } } },
         }));
     });
 

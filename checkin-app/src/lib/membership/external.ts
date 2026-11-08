@@ -12,8 +12,10 @@ import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavaila
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
@@ -241,7 +243,7 @@ export async function markBgConsent(processId: number, actorId: number, kind: "h
     });
     if (kind === "household" && process.orgMembershipId) {
         const membership = await prisma.orgMembership.findUnique({ where: { id: process.orgMembershipId }, select: { householdId: true } });
-        if (membership) await settleHouseholdBg(membership.householdId);
+        if (membership) await (await settleModule()).settleHouseholdBg(membership.householdId);
     }
     return advanceExternalIfComplete(processId);
 }

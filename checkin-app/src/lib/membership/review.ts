@@ -19,8 +19,10 @@ import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership
 import { isOrderReversed, raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { householdHasDisputedCheck, sentBackForSubject } from "@/lib/membership/checkStanding";
-import { blockedByCheckReview, settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 /**
  * Background-check review: a check review (PERSON_BG) is about one person. Two
@@ -329,7 +331,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
 async function settleAfterReview(householdIds: readonly number[], opts: { reviewJustCleared?: boolean } = {}) {
     for (const householdId of householdIds) {
         try {
-            await settleHouseholdBg(householdId, opts);
+            await (await settleModule()).settleHouseholdBg(householdId, opts);
         } catch (error) {
             logger.error("settle after review failed:", { householdId }, error);
             await logBackendError(error, "settle after review", { householdId });
@@ -725,7 +727,7 @@ export async function boardResetReview(processId: number, actorId: number, opts:
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ReviewError("not_found", "Application not found.");
     const isReview = process.kind === "PERSON_BG";
-    if (!isReview && (process.status !== "BLOCKED" || await blockedByCheckReview(prisma, processId))) {
+    if (!isReview && (process.status !== "BLOCKED" || await (await settleModule()).blockedByCheckReview(prisma, processId))) {
         throw new ReviewError("wrong_phase", "This application is decided by its people's check reviews. Reset the person's check review instead.");
     }
     if (opts.wrongPerson && (!isReview || process.requestedForHouseholdId === null || process.subjectPersonId === null)) {

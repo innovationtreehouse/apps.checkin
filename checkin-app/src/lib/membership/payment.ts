@@ -15,8 +15,10 @@ import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import type { Prisma } from "@/generated/prisma/client";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 /**
  * Payment phase (PENDING_PAYMENT -> ACTIVE).
@@ -281,7 +283,7 @@ async function settle(
     if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
     if ("disputed" in result && result.disputed && result.householdId !== undefined) {
         const { householdId } = result;
-        await afterActivationCommitted("background-check settle", processId, householdId, () => settleHouseholdBg(householdId));
+        await afterActivationCommitted("background-check settle", processId, householdId, async () => (await settleModule()).settleHouseholdBg(householdId));
     }
     return result;
 }

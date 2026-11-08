@@ -95,21 +95,7 @@ const rows = [
         attestations: [],
         orgMembership: { householdId: 2, isVolunteerFamily: true, household: household("Payment Family", 2) },
     },
-    {
-        id: 5,
-        kind: "PERSON_BG",
-        status: "PENDING_BG_REVIEW",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        zohoEnvelopeId: null,
-        contractSignedAt: null,
-        bgConsentAt: "2026-01-02T00:00:00.000Z",
-        bgClearedAt: null,
-        paidAt: null,
-        attestations: [{ id: 1, result: "APPROVE", subjectPersonId: 21, isMarkedVolunteerFamily: false }],
-        requestedForHouseholdId: 2,
-        subjectPerson: { id: 21, name: "Robin Payment", householdId: 2 },
-        orgMembership: null,
-    },
+
     {
         id: 3,
         kind: "NEW",
@@ -124,6 +110,23 @@ const rows = [
         orgMembership: { householdId: 3, isVolunteerFamily: false, household: household("Blocked Family", 3) },
     },
 ];
+
+// A check review a household asked for, named and holding one approval.
+const reviewRow = {
+    id: 5,
+    kind: "PERSON_BG",
+    status: "PENDING_BG_REVIEW",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    zohoEnvelopeId: null,
+    contractSignedAt: null,
+    bgConsentAt: "2026-01-02T00:00:00.000Z",
+    bgClearedAt: null,
+    paidAt: null,
+    attestations: [{ id: 1, result: "APPROVE", subjectPersonId: 21, isMarkedVolunteerFamily: false }],
+    requestedForHouseholdId: 2,
+    subjectPerson: { id: 21, name: "Robin Payment", householdId: 2 },
+    orgMembership: null,
+};
 
 describe("AdminMembershipPage", () => {
     it("renders in-flight applications and their status counts", async () => {
@@ -213,7 +216,7 @@ describe("AdminMembershipPage", () => {
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Certified — membership activated." })));
 
         fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
-        const dialog = await screen.findByRole("dialog");
+        const dialog = await screen.findByRole("dialog", { name: "Start this background-check review over?" });
         fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "reviewed the wrong report" } });
         fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
@@ -233,7 +236,7 @@ describe("AdminMembershipPage", () => {
     it("clears a still-open check review's approvals, with a reason, as the wrong person", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         const fetchMock = mockFetchJson({
-            "/api/membership-ops/applications": { processes: rows },
+            "/api/membership-ops/applications": { processes: [...rows, reviewRow] },
             "/api/membership-ops/applications/review-override": { ok: true },
         });
         renderPage();

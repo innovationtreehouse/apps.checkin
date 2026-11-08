@@ -2,12 +2,14 @@ import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold, isSentBack, reviewHouseholds } from "@/lib/membership/review";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 // Code says "archive"; the board sees "Close application" / "Reopen". "Archive" is
 // reserved for archiving a household.
@@ -203,6 +205,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         throw e;
     }
     await pickUpMissedSignature(process);
+    const { settleHouseholdBg } = await settleModule();
     for (const id of await reviewHouseholds(prisma, process)) await settleHouseholdBg(id);
     const advanced = await advanceExternalIfComplete(processId);
     return { status: advanced?.status ?? target };
