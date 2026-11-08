@@ -98,6 +98,7 @@ describe("runtime", () => {
     ["giftsAwaitingCapitalReview", () => giftsAwaitingCapitalReview("org-other")],
     ["donatedAssetLineIds", () => donatedAssetLineIds("org-other", { giftSource: "receipt", giftId: 1 })],
     ["qbPostingOnAt", () => qbPostingOnAt("org-other")],
+    ["resolveDonatedPartAccounts", () => resolveDonatedPartAccounts("org-other", [])],
   ])("%s refuses another org as a wiring bug, before any read", async (_name, call) => {
     const err = await call().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
