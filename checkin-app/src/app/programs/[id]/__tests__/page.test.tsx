@@ -983,6 +983,42 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
     });
 
+    it("keeps an unpaid claim payable on a running program whose enrollment has closed", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                phase: "RUNNING",
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: "SALE_ENDED",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    });
+
+    it("offers no payment once the program has ended and sends the household to the board", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                phase: "FINISHED",
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: "SALE_ENDED",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.queryByRole("button", { name: "Continue enrollment" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Enrollment Closed/ })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+        expect(screen.getByText(/This program has ended; ask the board about payment\./)).toBeInTheDocument();
+    });
+
     it("offers no new claim after the off-sale sweep to a household with nothing unpaid", async () => {
         setSession({ id: 100, householdId: 7, ageBand: 'adult' });
         mockFetchJson({

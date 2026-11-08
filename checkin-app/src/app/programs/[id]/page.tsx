@@ -66,8 +66,10 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     : program.phase === 'UPCOMING' ? 'Upcoming'
     : program.phase === 'FINISHED' ? 'Ended'
     : null;
-  // A household with an unpaid claim keeps its way to pay however enrollment closed; the server refuses only new claims.
-  const canResume = !viewerIsYouth && myEnrolled.some((m) => m.unpaid);
+  // An ended program offers no payment; the board settles a late one by hand.
+  const hasEnded = program.phase === 'FINISHED';
+  // Until then a household with an unpaid claim keeps its way to pay however enrollment closed; the server refuses only new claims.
+  const canResume = !viewerIsYouth && !hasEnded && myEnrolled.some((m) => m.unpaid);
   const closedSuffix = closedReason && <Text component="span" c="white"> ({closedReason})</Text>;
 
   return (
@@ -93,6 +95,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           myEnrolled={myEnrolled}
           viewerIsYouth={viewerIsYouth}
           isClosed={isClosed}
+          hasEnded={hasEnded}
           onPayNow={startEnrollmentProcess}
         />
 
