@@ -1224,7 +1224,9 @@ model ProgramVolunteer {
   programId     Int
   /// @sensitivity:public
   personId Int
-  /// @sensitivity:internal
+  /// Program staff see who else is core on their own program. Personal, so a
+  /// lead or core-volunteer view needs no internal grant to carry it.
+  /// @sensitivity:personal
   isCore        Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
@@ -1316,7 +1318,9 @@ model Event {
   /// @sensitivity:public
   description String?
 
-  /// @sensitivity:internal
+  /// The session page shows its staff whether attendance is confirmed. Personal,
+  /// so a lead or core-volunteer view needs no internal grant to carry it.
+  /// @sensitivity:personal
   attendanceConfirmedAt   DateTime?
   /// @sensitivity:internal
   attendanceConfirmedById Int?
