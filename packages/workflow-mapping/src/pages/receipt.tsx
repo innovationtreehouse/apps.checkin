@@ -403,11 +403,9 @@ function LineForm({ busy, onSubmit, onCancel }: {
               </Radio.Group>
             </ScrollArea.Autosize>
           )}
-          {found.answered && !found.error && (
-            <Group>
-              <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
-            </Group>
-          )}
+          <Group>
+            <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+          </Group>
         </>
       ) : (
         <>
