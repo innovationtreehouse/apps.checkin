@@ -66,7 +66,7 @@ const FLAGGED = {
   receiptDate: "2026-10-01",
   receiptTotalCents: 1000,
   state: "duplicate_flagged",
-  duplicateSuspectReceiptId: "r-orig",
+  copyOfId: "r-orig",
   lineItems: [{ id: 1, receiptId: "r-dup", description: "Arduino", quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000 }],
   financialReviewReasons: [],
 };
@@ -80,27 +80,27 @@ describe("GET /api/receipts/[id] gives the compare what it reads", () => {
   it.each<[string, Record<string, boolean>]>([
     ["FINANCE", { isFinance: true }],
     ["BOARD", { isBoardMember: true }],
-  ])("returns %s the suspect id, the file hash and the lines", async (_who, flags) => {
+  ])("returns %s the kept receipt's id, the file hash and the lines", async (_who, flags) => {
     signIn(flags);
     service.get.mockResolvedValue(FLAGGED);
     const res = await get(req("/r-dup"), params());
     expect(res.status).toBe(200);
     expect(service.get).toHaveBeenCalledWith("r-dup", "finance");
     expect(await res.json()).toMatchObject({
-      duplicateSuspectReceiptId: "r-orig",
+      copyOfId: "r-orig",
       fileHash: "abc123",
       lineItems: [{ description: "Arduino", totalPriceCents: 1000 }],
     });
   });
 
-  it("keeps the suspect id off the uploader's own view", async () => {
+  it("keeps the kept receipt's id off the uploader's own view", async () => {
     signIn({ id: 7, ageBand: "adult", isActiveOrgMember: true });
     service.get.mockResolvedValue(FLAGGED);
     const res = await get(req("/r-dup"), params());
     expect(res.status).toBe(200);
     expect(service.get).toHaveBeenCalledWith("r-dup", "submitter");
     const body = await res.json();
-    expect(body).not.toHaveProperty("duplicateSuspectReceiptId");
+    expect(body).not.toHaveProperty("copyOfId");
     expect(body.state).toBe("duplicate_flagged");
   });
 });

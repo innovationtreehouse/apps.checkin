@@ -16,8 +16,8 @@
  *   3. FINANCE-only routes refuse a non-finance session; BOARD reads with
  *      FINANCE's view on every finance-or-board route but does not act; a
  *      sysadmin gets nothing beyond the submitter view.
- *   4. The submitter view never returns donor or reimbursee names, or the id
- *      or rejection status of a suspected duplicate (another person's
+ *   4. The submitter view never returns donor or reimbursee names, or the
+ *      receipt kept in place of one rejected as a copy (another person's
  *      receipt); FINANCE sees both.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
@@ -451,15 +451,13 @@ describe('the submitter view', () => {
         expect(out).toEqual({ lineItems: [{}] });
     });
 
-    it('strips the suspected-duplicate receipt id and rejection status from the uploader on every receipt route', () => {
-        const flagged = { ...row, duplicateSuspectReceiptId: 'r-other', duplicateSuspectIsRejected: true, duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
+    it("returns the uploader the duplicate flag's time on every receipt route", () => {
+        const flagged = { ...row, duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
         for (const endpoint of jsonRoutes) {
             const views = new Map(getRoute(endpoint)!.orderedView);
             const submitter = views.get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
             const out = stripValue('ReceiptView', flagged, submitter, ctx) as Record<string, unknown>;
-            expect({ endpoint, leaked: 'duplicateSuspectReceiptId' in out }).toEqual({ endpoint, leaked: false });
-            expect({ endpoint, leaked: 'duplicateSuspectIsRejected' in out }).toEqual({ endpoint, leaked: false });
             expect(out.duplicateFlaggedAt).toBe(flagged.duplicateFlaggedAt);
         }
     });
@@ -473,13 +471,6 @@ describe('the submitter view', () => {
             expect({ endpoint, leaked: 'copyOfId' in out || 'copyOfLabel' in out }).toEqual({ endpoint, leaked: false });
             expect(out.duplicateNotice).toEqual(copy.duplicateNotice);
         }
-    });
-
-    it('returns the suspected-duplicate receipt id and rejection status to FINANCE', () => {
-        const finance = new Map(getRoute('GET /api/receipts/[id]')!.orderedView).get('isFinance')!;
-        const out = stripValue('ReceiptView', { ...row, duplicateSuspectReceiptId: 'r-other', duplicateSuspectIsRejected: true }, finance, { selfId: 5 } as CallerContext) as Record<string, unknown>;
-        expect(out.duplicateSuspectReceiptId).toBe('r-other');
-        expect(out.duplicateSuspectIsRejected).toBe(true);
     });
 
     it('drops a line item missing its owner stamp (fails closed)', () => {
