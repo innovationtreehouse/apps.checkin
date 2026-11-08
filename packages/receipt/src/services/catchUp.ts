@@ -83,17 +83,21 @@ export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
  * latest MAX_CONSECUTIVE_PUSH_FAILURES catch-up bug failures run unbroken; a success or a manual
  * push (one with an acting user) ends the run. An outage (system, connection, settings) is never
  * charged to the receipt: it neither counts nor ends a run. A `push_failed` row with no kind
- * predates kinds and reads as an outage.
+ * predates kinds and reads as an outage. A receipt whose donor sync catch-up gave up on is given
+ * up too, since its push waits on the donor.
  */
 export async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
-  const log = await db.receiptAuditLog.findMany({
-    where: { receiptId: { in: ids }, receipt: { orgId }, action: { in: ["pushed", "push_failed", "push_refused"] } },
-    select: { receiptId: true, action: true, userId: true, valueBefore: true },
-    orderBy: { id: "desc" },
-  });
+  const [log, donorStopped] = await Promise.all([
+    db.receiptAuditLog.findMany({
+      where: { receiptId: { in: ids }, receipt: { orgId }, action: { in: ["pushed", "push_failed", "push_refused"] } },
+      select: { receiptId: true, action: true, userId: true, valueBefore: true },
+      orderBy: { id: "desc" },
+    }),
+    donorSyncGivenUp(orgId, ids),
+  ]);
   const run = new Map<string, number>();
   const ended = new Set<string>();
-  const out = new Set<string>();
+  const out = new Set<string>(donorStopped);
   for (const { receiptId, action, userId, valueBefore } of log) {
     if (!receiptId || ended.has(receiptId)) continue;
     if (action !== "push_failed" || userId !== null) {
@@ -105,6 +109,41 @@ export async function givenUp(orgId: string, ids: string[]): Promise<Set<string>
     const failures = (run.get(receiptId) ?? 0) + 1;
     run.set(receiptId, failures);
     if (failures >= MAX_CONSECUTIVE_PUSH_FAILURES) {
+      out.add(receiptId);
+      ended.add(receiptId);
+    }
+  }
+  return out;
+}
+
+/** Catch-up stops resending a receipt's donor after this many catch-up bug failures in a row. */
+export const MAX_CONSECUTIVE_DONOR_SYNC_FAILURES = 5;
+
+/**
+ * Ids of pending donor syncs catch-up has given up on: their latest
+ * MAX_CONSECUTIVE_DONOR_SYNC_FAILURES catch-up bug failures run unbroken. A donor edit or a send
+ * with an acting user ends the run. An outage is never charged: it neither counts nor ends a run.
+ * A `donor_sync_failed` row with no kind predates kinds and reads as an outage.
+ */
+export async function donorSyncGivenUp(orgId: string, ids: string[]): Promise<Set<string>> {
+  const log = await db.receiptAuditLog.findMany({
+    where: { receiptId: { in: ids }, receipt: { orgId, donorSync: "pending" }, action: { in: ["donor_sync_failed", "in_kind_updated"] } },
+    select: { receiptId: true, action: true, userId: true, valueBefore: true },
+    orderBy: { id: "desc" },
+  });
+  const run = new Map<string, number>();
+  const ended = new Set<string>();
+  const out = new Set<string>();
+  for (const { receiptId, action, userId, valueBefore } of log) {
+    if (!receiptId || ended.has(receiptId)) continue;
+    if (action !== "donor_sync_failed" || userId !== null) {
+      ended.add(receiptId);
+      continue;
+    }
+    if (valueBefore !== "bug") continue;
+    const failures = (run.get(receiptId) ?? 0) + 1;
+    run.set(receiptId, failures);
+    if (failures >= MAX_CONSECUTIVE_DONOR_SYNC_FAILURES) {
       out.add(receiptId);
       ended.add(receiptId);
     }
@@ -125,7 +164,7 @@ export async function pushRecords(orgId: string, ids: string[]): Promise<Map<str
   const [skip, failures] = await Promise.all([
     givenUp(orgId, ids),
     db.receiptAuditLog.findMany({
-      where: { receiptId: { in: ids }, action: { in: ["push_failed", "push_refused"] } },
+      where: { receiptId: { in: ids }, action: { in: ["push_failed", "push_refused", "donor_sync_failed"] } },
       select: { receiptId: true, changedAt: true, valueAfter: true },
       orderBy: [{ receiptId: "asc" }, { id: "desc" }],
       distinct: ["receiptId"],
@@ -142,11 +181,14 @@ export async function pushRecords(orgId: string, ids: string[]): Promise<Map<str
   );
 }
 
-/** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
+/**
+ * S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. A
+ * receipt whose donor sync is pending is left to resendDonorSync, so a run tries its donor once.
+ */
 export async function repushUnpushed(): Promise<{ pushed: number; failed: number; skipped: number }> {
   const orgId = await getOrgId();
   const rows = await db.receipt.findMany({
-    where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } },
+    where: { orgId, pushedAt: null, donorSync: { not: "pending" }, details: { state: "receipt_finalized" } },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
   });
@@ -157,15 +199,17 @@ export async function repushUnpushed(): Promise<{ pushed: number; failed: number
   return { pushed, failed: due.length - pushed, skipped: skip.size };
 }
 
-/** X13 re-send for receipts whose donor change donations has not heard. */
-export async function resendDonorSync(): Promise<{ resent: number; failed: number }> {
+/** X13 re-send for receipts whose donor change donations has not heard, skipping ones catch-up has given up on. */
+export async function resendDonorSync(): Promise<{ resent: number; failed: number; skipped: number }> {
+  const orgId = await getOrgId();
   const rows = await db.receipt.findMany({
-    where: { orgId: await getOrgId(), donorSync: "pending" },
+    where: { orgId, donorSync: "pending" },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
-    take: CATCH_UP_CAP,
   });
+  const skip = await donorSyncGivenUp(orgId, rows.map((r) => r.id));
+  const due = rows.filter((r) => !skip.has(r.id)).slice(0, CATCH_UP_CAP);
   let resent = 0;
-  for (const { id } of rows) if (await sendDonorSync(id, null)) resent++;
-  return { resent, failed: rows.length - resent };
+  for (const { id } of due) if (await sendDonorSync(id, null)) resent++;
+  return { resent, failed: due.length - resent, skipped: skip.size };
 }

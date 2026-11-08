@@ -37,7 +37,7 @@ const RECEIVING_APPLY = { resolved: 1, failed: 0, applying: 0, skipped: 0, error
 const RECEIPT = { swept: 2, failed: 0 };
 const RECEIPT_STUCK = { swept: 1, failed: 0 };
 const RECEIPT_PUSH = { pushed: 2, failed: 0, skipped: 1 };
-const DONOR_SYNC = { resent: 1, failed: 0 };
+const DONOR_SYNC = { resent: 1, failed: 0, skipped: 0 };
 const RECEIPT_MAIL = { status: 'unbound' as const };
 const RECEIPT_OUTCOMES = { sent: 1, failed: 0 };
 // The one expense result every case uses; a new catch-up step adds its key here.
@@ -87,7 +87,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('runs every step in order when each one throws, logging each and reporting it as an error', async () => {
-        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, repushUnpushed, resendDonorSync, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
+        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, resendDonorSync, repushUnpushed, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
         for (const step of steps) step.mockRejectedValue(new Error('step down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 

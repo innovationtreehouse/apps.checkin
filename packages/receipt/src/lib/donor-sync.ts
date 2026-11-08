@@ -1,3 +1,4 @@
+import { kindOf } from "@checkin/component-kit";
 import { db } from "../db";
 import { InKindDonorSchema } from "../contract";
 import { audit, type Actor } from "../repositories/receipt";
@@ -11,7 +12,8 @@ const MAX_SENDS = 3;
  * `none` receipt (never in-kind) sends nothing. The receipt flips to `synced` only if what was
  * sent is still current; a change made during the call is sent again. Each call carries the
  * receipt's donorSyncSeq, and the callee drops one older than it has seen, so a slow send can
- * never overwrite a newer one. After MAX_SENDS it stays `pending` for the catch-up step. Never throws.
+ * never overwrite a newer one. After MAX_SENDS it stays `pending` for the catch-up step. Never throws:
+ * a failure is audited as `donor_sync_failed` with its kind in `valueBefore`.
  */
 export async function sendDonorSync(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
@@ -30,12 +32,14 @@ export async function sendDonorSync(receiptId: string, actor: Actor | null): Pro
         donorSyncSeq: row.donorSyncSeq,
       };
       if (sent.isInKind) {
-        const donor = InKindDonorSchema.parse({
+        const donor = InKindDonorSchema.safeParse({
           firstName: sent.donorFirstName,
           lastName: sent.donorLastName,
           companyName: sent.donorCompanyName ?? null,
         });
-        await ports().donorSink.recordInKindDonor(orgId, receiptId, donor, sent.donorSyncSeq);
+        // Upload checks the donor with the same rule, so a stored donor that fails it is a bug.
+        if (!donor.success) throw new Error(`stored donor fails the donor check: ${donor.error.issues.map((i) => i.path.join(".")).join(", ")}`);
+        await ports().donorSink.recordInKindDonor(orgId, receiptId, donor.data, sent.donorSyncSeq);
       } else {
         await ports().donorSink.withdrawInKind(orgId, receiptId, sent.donorSyncSeq);
       }
@@ -48,8 +52,11 @@ export async function sendDonorSync(receiptId: string, actor: Actor | null): Pro
     await audit(db, receiptId, actor, { action: "donor_sync_failed", valueAfter: "donor kept changing during send" });
     return false;
   } catch (err) {
+    // Donations checks the donor with the same rule as upload, so its refusal of a stored donor is a bug.
+    const kind = kindOf(err);
     await audit(db, receiptId, actor, {
       action: "donor_sync_failed",
+      valueBefore: kind === "data" ? "bug" : kind,
       valueAfter: err instanceof Error ? err.message : String(err),
     }).catch(() => undefined);
     return false;
