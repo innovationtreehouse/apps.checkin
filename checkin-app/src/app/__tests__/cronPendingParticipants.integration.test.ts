@@ -331,4 +331,40 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             expect(digest[0].html).toContain('action needed: remove the enrollment or contact the household');
         });
     });
+    describe('an ended program', () => {
+        let programId: number;
+        let householdId: number;
+
+        beforeAll(async () => {
+            await prisma.program.deleteMany({ where: { name: 'Pending Cron Ended Test Program' } });
+            const program = await prisma.program.create({
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-06-30'), name: 'Pending Cron Ended Test Program', phase: 'FINISHED', enrollmentStatus: 'CLOSED' }
+            });
+            programId = program.id;
+            const household = await prisma.household.create({ data: { name: 'Ended Test HH' } });
+            householdId = household.id;
+            const lead = await prisma.person.create({
+                data: { email: 'lead-pending-cron-ended-test@example.com', name: 'Ended Lead', householdId, isHouseholdLead: true }
+            });
+            await prisma.programParticipant.create({
+                data: { programId, personId: lead.id, status: 'PENDING', pendingSince: daysAgo(Date.now(), 6) }
+            });
+        });
+
+        afterAll(async () => {
+            await prisma.programParticipant.deleteMany({ where: { programId } });
+            await prisma.person.deleteMany({ where: { householdId } });
+            await prisma.program.deleteMany({ where: { id: programId } });
+            await prisma.household.deleteMany({ where: { id: householdId } });
+        });
+
+        it('sends the family no payment reminder', async () => {
+            process.env.CRON_SECRET = 'test-secret';
+            const res = await GET(mkReq('Bearer test-secret'));
+            expect(res.status).toBe(200);
+
+            const sent = __getSentEmails();
+            expect(sent.filter((e) => e.subject.includes('Pending Cron Ended Test Program'))).toHaveLength(0);
+        });
+    });
 });

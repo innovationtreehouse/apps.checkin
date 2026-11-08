@@ -281,6 +281,22 @@ describeDb("S5 catch-up: stored resolutions", () => {
     expect(await qty(REAL)).toBe(10);
   });
 
+  it("leaves a provisional whose decision is held by a failed event for that event's Retry", async () => {
+    // The handler stores the resolution before the merge, so a merge that throws leaves both behind.
+    await pendingProvisionalWithStock(3);
+    await db.inventoryProvisionalResolution.create({ data: { orgId: TEST_ORG_ID, provisionalGtin13: PROV, kind: "approved", realGtin13: REAL, sourceEventId: 5 } });
+    await db.inventoryReceivedOrgEvent.create({ data: { id: 5, orgId: TEST_ORG_ID, eventType: "provisional_approved", payload: approved(5).payload, receivedAt: new Date(), status: "failed", failureReason: "boom", firstFailedAt: new Date() } });
+    const reconcile = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate");
+
+    try {
+      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 0 });
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending", reconcileFirstFailedAt: null });
+    } finally {
+      reconcile.mockRestore();
+    }
+  });
+
   it("leaves a pending provisional with no resolution alone", async () => {
     await pendingProvisionalWithStock(2);
 

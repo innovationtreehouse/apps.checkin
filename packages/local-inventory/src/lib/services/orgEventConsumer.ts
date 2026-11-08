@@ -79,10 +79,26 @@ export async function retryOrgEvent(id: number): Promise<void> {
   await consumeOrgEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload, createdAt: row.receivedAt });
 }
 
+/** The provisional GTINs that this org's failed catalog events decide; those events' Retry applies them. */
+async function provisionalsHeldByFailedEvents(orgId: string): Promise<Set<string>> {
+  const failed = await db.inventoryReceivedOrgEvent.findMany({ where: { orgId, status: "failed" }, select: { payload: true } });
+  const held = new Set<string>();
+  for (const { payload } of failed) {
+    try {
+      const gtin: unknown = JSON.parse(payload)?.provisionalGtin13;
+      if (typeof gtin === "string") held.add(gtin);
+    } catch {
+      // An unreadable payload decides no provisional.
+    }
+  }
+  return held;
+}
+
 /**
  * Apply stored resolutions to provisionals still pending whose reconcile after the creating commit
- * never ran. One with a recorded failure waits for Retry instead. Idempotent, since reconcile skips
- * a provisional that already left pending. Capped.
+ * never ran. One with a recorded failure, or whose decision is held by a failed catalog event,
+ * waits for Retry instead, so one failure is one stuck item. Idempotent, since reconcile skips a
+ * provisional that already left pending. Capped.
  */
 async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; reconcileFailed: number }> {
   // ponytail: loads every pending GTIN for the org; page it if pending provisionals reach thousands.
@@ -91,8 +107,9 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
     select: { provisionalGtin13: true },
   });
   if (pending.length === 0) return { reconciled: 0, reconcileFailed: 0 };
+  const held = await provisionalsHeldByFailedEvents(orgId);
   const resolved = await db.inventoryProvisionalResolution.findMany({
-    where: { orgId, provisionalGtin13: { in: pending.map((p) => p.provisionalGtin13) } },
+    where: { orgId, provisionalGtin13: { in: pending.map((p) => p.provisionalGtin13).filter((gtin) => !held.has(gtin)) } },
     select: { provisionalGtin13: true },
     orderBy: { id: "asc" },
     take: limit,
