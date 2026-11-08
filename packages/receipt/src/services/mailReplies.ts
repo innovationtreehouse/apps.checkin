@@ -63,6 +63,7 @@ async function owedSends(out: ReceiptReplies, id: number, receiptId: string | nu
   const row = await db.receiptMailReply.findUniqueOrThrow({ where: { id } });
   const refused = row.refusalSentAt || !row.replyToSender ? [] : (row.refusals as unknown as MailRefusal[]);
   const base = { senderAddress: row.senderAddress, receivedAt: row.receivedAt };
+  const noticeId = (field: Send["fields"][number]) => `${row.gmailMessageId}.${field}`;
   const notice = refused.length > 0 ? ["refusalSentAt" as const] : [];
   const sends: Send[] = [];
 
@@ -75,15 +76,15 @@ async function owedSends(out: ReceiptReplies, id: number, receiptId: string | nu
     if (row.replyToSender && !row.senderSentAt) {
       sends.push({
         fields: ["senderSentAt", ...notice],
-        ack: { ...ack, refused, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null },
+        ack: { ...ack, refused, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null, noticeId: noticeId("senderSentAt") },
       });
     }
     if (credited && !sameAsSender && !row.creditedSentAt) {
-      sends.push({ fields: ["creditedSentAt"], ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name } });
+      sends.push({ fields: ["creditedSentAt"], ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name, noticeId: noticeId("creditedSentAt") } });
     }
   }
   if (refused.length > 0 && !sends.some((s) => s.fields.includes("refusalSentAt"))) {
-    sends.push({ fields: notice, ack: { ...base, receiptId: null, refused, to: row.senderAddress, mine: false, creditedName: null } });
+    sends.push({ fields: notice, ack: { ...base, receiptId: null, refused, to: row.senderAddress, mine: false, creditedName: null, noticeId: noticeId("refusalSentAt") } });
   }
   return sends;
 }

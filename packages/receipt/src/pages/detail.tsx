@@ -106,7 +106,10 @@ function DonationPanel({ receipt, onSaved }: { receipt: Receipt; onSaved: () => 
   const donor = donation.isInKind ? donorInput(donation) : null;
   const save = async () => {
     const body = donation.isInKind ? { isInKind: true, donor } : { isInKind: false };
-    if (await send(`/${receipt.id}/in-kind`, "PUT", body, "Donation saved", "Couldn't change the donation")) onSaved();
+    if (await send(`/${receipt.id}/in-kind`, "PUT", body, "Donation saved", "Couldn't change the donation")) {
+      setTouched(false);
+      onSaved();
+    }
   };
   return (
     <Paper withBorder p="sm">

@@ -1,6 +1,7 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import type { MailAcknowledgement, MailboxReader, MailMessage, MailPart, ReceiptConfig } from "../../contract";
+import { noticeMessageId } from "../../contract";
 import { MAIL_CAP, MAIL_HELD_CEILING, readMailbox } from "../../services/mailIntake";
 import { mailQueueService } from "../../services/mailQueueService";
 import { REPLY_ATTEMPTS, sendMailReplies } from "../../services/mailReplies";
@@ -267,14 +268,21 @@ describeDb("mailed receipt acknowledgements", () => {
     expect(await db.receiptMailReply.findFirstOrThrow()).toMatchObject({ refusalSentAt: expect.any(Date), doneAt: expect.any(Date) });
   });
 
-  it("tells nobody about a reply, or a copy on which the receipt mailbox is only in Cc", async () => {
+  it("tells nobody about a reply to its own notice, or a copy on which the receipt mailbox is only in Cc", async () => {
     const empty = [{ mimeType: "text/plain", body: { data: b64("thanks, see you Tuesday") } }];
     mailWith("cc", empty, { headers: [{ name: "To", value: "bob@example.org" }, { name: "Cc", value: "receipts@example.org" }] });
-    mailWith("reply", empty, { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: "<a1@example.org>" }] });
+    mailWith("reply", empty, { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: noticeMessageId("a1.refusalSentAt", "receipts@example.org") }] });
     await readMailbox();
     await sendMailReplies();
     expect(sent).toEqual([]);
     expect(await db.receiptMailReply.count()).toBe(0);
+  });
+
+  it("tells a sender who forwards a message with no receipt, though the forward keeps its In-Reply-To", async () => {
+    mailWith("fwd", [{ mimeType: "text/plain", body: { data: b64("see below") } }], { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: "<a1@example.org>" }] });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", refused: [NO_RECEIPT], noticeId: "fwd.refusalSentAt" })]);
   });
 
   it("still tells a sender who mailed an alias of the receipt mailbox that no receipt was found", async () => {

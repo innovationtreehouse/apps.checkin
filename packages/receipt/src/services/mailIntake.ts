@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isServiceError, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipal } from "../contract";
+import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
@@ -117,11 +117,12 @@ function listedAddresses(headers: Headers | undefined, name: string): string[] {
 }
 
 /**
- * A reply, or a copy on which the mailbox is only in Cc: talk between people that a "no receipt"
- * notice would interrupt. Mail to an alias of the mailbox lists it nowhere, so it is not a side copy.
+ * A reply to one of the mailbox's own notices, or a copy on which the mailbox is only in Cc: mail a
+ * "no receipt" notice would only interrupt. A forward can keep the In-Reply-To of the mail it
+ * forwards, so only one naming our notice counts. Mail to an alias lists the mailbox nowhere.
  */
 export function isSideCopy(headers: Headers | undefined, mailboxAddress: string): boolean {
-  if (headerValues(headers, "In-Reply-To").length > 0) return true;
+  if (headerValues(headers, "In-Reply-To").some((id) => isNoticeMessageId(id, mailboxAddress))) return true;
   const mine = mailboxAddress.toLowerCase();
   return listedAddresses(headers, "Cc").includes(mine) && !listedAddresses(headers, "To").includes(mine);
 }

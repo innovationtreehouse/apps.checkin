@@ -94,6 +94,17 @@ describe("marking a receipt as a donation after upload", () => {
     expect(sendMock.mock.calls[0][2]).toEqual({ isInKind: true, donor: { firstName: "Ada", lastName: "Lovelace", companyName: null } });
   });
 
+  it("holds Save after a save that keeps the donation mark on", async () => {
+    mockReceipt = { ...receipt, isInKind: true };
+    renderPage();
+    fireEvent.click(screen.getByText("Someone else donated"));
+    fireEvent.change(screen.getByLabelText("Donor first name", { exact: false }), { target: { value: "Ada" } });
+    fireEvent.change(screen.getByLabelText("Donor last name", { exact: false }), { target: { value: "Lovelace" } });
+    fireEvent.click(saveDonation());
+    await waitFor(() => expect(saveDonation()).toBeDisabled());
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
   it("clears the mark on a donation", async () => {
     mockReceipt = { ...receipt, isInKind: true };
     renderPage();
