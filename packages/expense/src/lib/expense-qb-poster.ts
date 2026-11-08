@@ -9,7 +9,7 @@ import {
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
-import { getExpenseRuntime, getOrgId } from "../runtime";
+import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import {
   appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
 } from "../services/qbMatchService";
@@ -59,6 +59,7 @@ export type PostOutcome =
 
 /** When the lane's posting switched on, or null while it is off. */
 export async function qbPostingOnAt(orgId: string, client: Db = db): Promise<Date | null> {
+  await assertOrg(orgId);
   return (await client.expenseOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true } }))?.qbPostingOnAt ?? null;
 }
 

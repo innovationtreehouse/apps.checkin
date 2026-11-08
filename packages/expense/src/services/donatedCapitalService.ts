@@ -62,6 +62,7 @@ export async function submitDonatedLines(orgId: string, lines: DonatedLine[]): P
 
 /** The gifts with a line still waiting on capital review. */
 export async function giftsAwaitingCapitalReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]> {
+  await assertOrg(orgId);
   return db.donatedCapitalLine.findMany({
     where: { orgId, isCapital: null },
     select: { giftSource: true, giftId: true },
@@ -71,6 +72,7 @@ export async function giftsAwaitingCapitalReview(orgId: string): Promise<{ giftS
 
 /** The gift's lines finance's review made assets. */
 export async function donatedAssetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]> {
+  await assertOrg(orgId);
   const rows = await db.donatedCapitalLine.findMany({ where: { orgId, ...gift, isCapital: true }, select: { giftLineId: true } });
   return rows.map((r) => r.giftLineId);
 }
