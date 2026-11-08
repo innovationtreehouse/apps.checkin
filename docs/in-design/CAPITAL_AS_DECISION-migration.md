@@ -25,7 +25,7 @@ delete both files".
 | `CapitalAsset` with `sourceLineItemId` | expense database | `sourceKind = expense_line`; `unitIndex` by id order. |
 | `CapitalAsset` seeded | expense database | Untouched: its number is the item's label (CAD-12). `sourceKind` stays null until finance links a backfilled line to it. |
 | A backfilled expense's minted asset that duplicates a seeded one (B8) | expense database | Listed for finance with the seeded row it may duplicate. Neither number changes and the script deletes nothing. |
-| Asset numbers deleted by past clearings | expense audit log | Numbers are physical labels and are never reused. The `capital_asset_cleared` rows name every number deleted so far; the next number is read from the register **and** those rows from step 2 on, so a deleted number is not issued again. A number already reissued (B7) is listed for finance, not changed. |
+| Asset numbers deleted by past clearings | expense audit log | Numbers are physical labels and are never reused. The `capital_asset_cleared` rows name every number deleted so far. They are read twice, by migration only: to set each org's high-water mark in step 2, and again in step 3 to cover the drain. No app code reads them. A number already reissued (B7) is listed for finance, not changed. |
 
 ## Order
 
@@ -38,8 +38,12 @@ release reads.
    columns and `unitIndex` on `CapitalAsset`. The unique index on (org, source,
    unit index) is created only after step 3 fills it. Safe against old code:
    nothing it writes conflicts.
-2. **Next number and register; expense capital becomes final.** The next asset
-   number counts deleted numbers too (see the table). Expense gains `register`;
+2. **High-water mark and register; expense capital becomes final.** The
+   migration adds `CapitalAssetSequence` and sets each org's mark to the highest
+   of the register and the cleared numbers in the audit log. While old and new
+   releases both serve, the new code takes the next number as one more than the
+   higher of the mark and the register's highest, so a number an old release
+   mints is never issued again. Expense gains `register`;
    both mint paths go through it and fill the new columns. The capital steps do
    not open while the reimbursee is unknown, and the send-back edges out of
    them, with the asset deletion, go. The gift path still copies, and **at
@@ -49,7 +53,10 @@ release reads.
    old release can still mint assets with no `sourceKind`, which the backfill
    would miss and `register` would mint again, or delete one. The script above,
    idempotent, with a dry run that prints the counts per row of the table and
-   the lists for finance. Then the unique index.
+   the lists for finance. It raises each mark once more from the audit log, to
+   cover any number an old release minted and deleted during the drain. Then
+   the unique index, and the next-number read drops the register scan and reads
+   the mark alone.
 4. **The review module.** The two purchase steps' logic moves into the shared
    module behind the line store; the purchase routes bind it and behave as
    before. Expense only.
@@ -74,10 +81,12 @@ release reads.
 
 ## What each step must be safe against
 
-- Step 2 against step 1's old code: an old release can still send an expense
-  back out of a capital step and delete its assets during the drain. The
-  deletion writes `capital_asset_cleared`, which the next-number read counts, so
-  the number is still not reused.
+- Step 2 against step 1's old code: an old release still mints by scanning the
+  register and can still send an expense back and delete its assets during the
+  drain. New mints read the higher of the mark and the register, so they never
+  collide with an old mint; a number an old release mints and then deletes is
+  caught by step 3's second read of the audit log, before anything relies on the
+  mark alone.
 - Step 6 against step 4's code: an old release still copying lines while the
   new one reads the gift line. The copy is ignored by the new reads and dropped
   in step 7.
