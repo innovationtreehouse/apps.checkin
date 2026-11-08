@@ -186,6 +186,21 @@ describe("createAnthropicOcr — failure kinds, from the SDK's error classes", (
       "connection",
     ],
     [
+      "a billing error, in any words",
+      APIError.generate(
+        400,
+        { type: "error", error: { type: "billing_error", message: "This organization cannot make requests right now." }, request_id: "req_2" },
+        undefined,
+        headers,
+      ),
+      "connection",
+    ],
+    [
+      "a billing error sent as a 402",
+      APIError.generate(402, { type: "error", error: { type: "billing_error", message: "Payment required." }, request_id: "req_3" }, undefined, headers),
+      "connection",
+    ],
+    [
       "a bad request in the API's own words",
       APIError.generate(
         400,

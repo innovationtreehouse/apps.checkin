@@ -178,6 +178,9 @@ export type OcrData = z.infer<typeof OcrDataSchema>;
 /** A failure carries its kind and a short reason in plain words, never the service's own text. */
 export type OcrResult = { success: true; data: OcrData } | { success: false; kind: FailureKind; error: string };
 
+/** The reason of a `data` failure the reading service refused outright, so a run of them across receipts can be told apart. */
+export const OCR_FILE_REFUSED = "the reading service refused the file";
+
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
   extract(file: Buffer, mimeType: string): Promise<OcrResult>;

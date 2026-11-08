@@ -4,8 +4,9 @@ import { db } from "../../db";
 import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
+import { OCR_FILE_REFUSED } from "../../contract";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, TEST_ORG_ID, actAs, clearAll, configure, failingOcr, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, TEST_ORG_ID, actAs, actions, clearAll, configure, failingOcr, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 const LOOSE: ReceiptLimits = {
   uploadsPerPersonPerDay: 100,
@@ -172,5 +173,73 @@ describeDb("OCR call quota", () => {
     await manual();
     await manual();
     await receiptService.upload(textFile(), "text/plain", {});
+  });
+});
+
+describeDb("a run of files the reading service refused", () => {
+  const refusing = (failures: FailureReport[]) =>
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("data", OCR_FILE_REFUSED), onFailure: (f) => void failures.push(f), limits: LOOSE });
+  const refused = () => receiptService.upload(textFile(), "text/plain", {});
+
+  it("charges and keeps quiet about three different receipts, then reports and refunds the next as ours", async () => {
+    const failures: FailureReport[] = [];
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    refusing(failures);
+    const first = [await refused(), await refused()];
+    actAs(BOB);
+    first.push(await refused());
+    for (const r of first) expect(await actions(r.id)).toContain("ocr_failed:data");
+    expect(failures).toEqual([]);
+    expect(await db.receiptAuditLog.count({ where: { action: "ocr_call_refunded" } })).toBe(0);
+
+    const next = await refused();
+    expect(next.validationNotes).toMatch(/until an administrator reconnects it: the reading service refused several receipts in a row/);
+    expect(await actions(next.id)).toEqual(expect.arrayContaining(["ocr_failed:connection", "ocr_call_refunded"]));
+    expect(failures).toEqual([{ lane: "ocr", kind: "connection", detail: `receipt ${next.id}` }]);
+
+    const after = await refused();
+    expect(await actions(after.id)).toContain("ocr_failed:connection");
+  });
+
+  it("keeps one submitter's run of refused files as theirs", async () => {
+    const failures: FailureReport[] = [];
+    refusing(failures);
+    for (let i = 0; i < 4; i++) expect(await actions((await refused()).id)).toContain("ocr_failed:data");
+    expect(failures).toEqual([]);
+  });
+
+  it("ends the run at a successful reading", async () => {
+    refusing([]);
+    await refused();
+    actAs(BOB);
+    await refused();
+    await refused();
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: LOOSE });
+    await receiptService.upload(textFile(), "text/plain", {});
+    refusing([]);
+    expect(await actions((await refused()).id)).toContain("ocr_failed:data");
+  });
+
+  it("counts one receipt refused again on retry once", async () => {
+    refusing([]);
+    const r = await refused();
+    await receiptService.retryOcr(r.id, "submitter");
+    await receiptService.retryOcr(r.id, "submitter");
+    actAs(BOB);
+    await refused();
+    expect(await actions((await refused()).id)).toContain("ocr_failed:data");
+  });
+
+  it("does not count other unreadable files, or refusals older than the window", async () => {
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("data", "no line items were found"), limits: LOOSE });
+    await refused();
+    await refused();
+    await refused();
+    refusing([]);
+    const old = [await refused(), await refused()];
+    await db.receiptAuditLog.updateMany({ where: { receiptId: { in: old.map((r) => r.id) } }, data: { changedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) } });
+    actAs(BOB);
+    await refused();
+    expect(await actions((await refused()).id)).toContain("ocr_failed:data");
   });
 });
