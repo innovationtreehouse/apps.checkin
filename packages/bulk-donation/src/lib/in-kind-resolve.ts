@@ -56,8 +56,8 @@ async function heldPosting(orgId: string, source: InKindSource, id: number, stat
   return posting;
 }
 
-/** Everything a book or match reads: refused while QuickBooks is off or the books map lacks an in-kind account. */
-async function openRun(orgId: string, actor: Actor): Promise<Run> {
+/** Everything a book, match or retry reads: refused while QuickBooks is off or the books map lacks an in-kind account. */
+export async function openRun(orgId: string, actor: AuditContext, mode: "book" | "retry" = "book"): Promise<Run> {
   const binding = getInKindQbPosting();
   const client = await binding?.client();
   if (!binding || !client) throw new ServiceError(503, "QuickBooks is not connected");
@@ -65,7 +65,7 @@ async function openRun(orgId: string, actor: Actor): Promise<Run> {
   if (!inKindAccountsReady(accounts)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
   const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness(orgId)]);
   const { open } = await inKindReadiness.giftsToBook(orgId, ctx);
-  return { orgId, book: true, actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId), qbAccounts: chartOfAccounts(client) };
+  return { orgId, book: mode === "book", retry: mode === "retry", actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId), qbAccounts: chartOfAccounts(client) };
 }
 
 /** The gift as its booking would carry it, refused unless booking is all it waits on. */
@@ -90,7 +90,7 @@ async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, 
       if (posting.matchState === QB_MATCH_STATE.DRIFT && s.entries.length > 0) {
         await tx.inKindBooking.deleteMany({ where: { orgId, source: gift.source, giftId: gift.id } });
       }
-      await writeSettlement(tx, orgId, gift, posting.id, s, actor, { from: posting.matchState, manual: true, ...payload });
+      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, `QuickBooks ${s.entries.map((e) => `${e.entity} ${e.id}`).join(", ")} is already held by another gift`);
@@ -109,7 +109,7 @@ async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, act
   if (!client) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnJournal({ orgId, client }, gift, read.qbCreateAttemptedAt);
   if (!own) return false;
-  if (own.state === QB_MATCH_STATE.POST_FAILED) throw new ServiceError(503, "QuickBooks did not answer the check for the app's own entry; try again shortly");
+  if (own.failure) throw new ServiceError(503, "The QuickBooks check for the app's own entry failed; try again shortly");
   if (own.state !== QB_MATCH_STATE.CREATED) throw new ServiceError(409, own.note ?? "The app may already have booked this gift");
   await settleByFinance(orgId, gift, read, own, actor, { note: "the app had already booked this gift" });
   return true;
@@ -204,6 +204,7 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
   const outcome = await postGift(run, source, id);
   if (outcome === "not_ready") throw new ServiceError(409, "This gift waits on more than booking");
   if (outcome === "busy") throw new ServiceError(409, "The gift is being posted; try again shortly");
+  if (outcome === "failed") throw new ServiceError(503, "QuickBooks failed while booking; the gift can be booked again");
   const saved = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source, giftId: id } } });
   switch (saved.matchState) {
     case QB_MATCH_STATE.CREATED:
@@ -211,8 +212,6 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
       return;
     case QB_MATCH_STATE.UNBOOKED:
       throw new ServiceError(409, "The gift is dated in closed books; it can only be skipped");
-    case QB_MATCH_STATE.POST_FAILED:
-      throw new ServiceError(503, "QuickBooks failed while booking; the gift can be booked again");
     default:
       throw new ServiceError(409, `Not booked: the gift now waits as ${saved.matchState}${saved.qbNote ? ` (${saved.qbNote})` : ""}`);
   }

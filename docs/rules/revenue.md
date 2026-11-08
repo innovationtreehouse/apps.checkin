@@ -428,9 +428,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   board. Each change is recorded. Gifts of goods have no daily or dollar limit.
   [Decision — owner]
 
-- A gift of goods that keeps failing to book stops retrying and goes to finance,
-  so it can't hold back newer gifts. When a run stops because several gifts in a
-  row failed, finance is alerted.  [Decision]
+- A gift of goods that fails to book goes to finance at once and waits there,
+  stuck, until finance books it or a person retries it from the Problems list.
+  The app never retries it by itself, and it never holds back newer gifts.
+  [Decision — owner, 2026-11-08]
 
 - A gift of goods whose entry in the books is removed, voided or changed after it
   booked goes back to finance, which matches it again or skips it with a reason.
