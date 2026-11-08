@@ -3,8 +3,8 @@
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { NotWiredError, type FailureReport } from "@checkin/component-kit";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import type { FailureReport } from "@checkin/component-kit";
+import { MAX_CREATES_PER_DAY, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
@@ -14,12 +14,13 @@ import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { expenseReasons } from "../../services/reasonService";
 import {
-  drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
+  drainExpenseOutbox, postExpenseToQb, retryFailedPost, sweepExpenseQbStrays,
 } from "../../lib/expense-qb-poster";
 import { matchExpenseToQb, skipExpenseQb } from "../../services/qbMatchService";
 import { POSTED_CHECK_OFF, SKIPPED_CHECK_OFF } from "../../services/flagService";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { runExpenseQbPosting } from "../../services/sweeps";
+import { retryStuckItem } from "../../stuckItems";
 
 const PAYMENT_ACCOUNT = "41";
 const VENDOR = "77";
@@ -255,7 +256,7 @@ describeDb("QB-2 posting — outbound gateway", () => {
 
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
     expect(qbo.posts).toHaveLength(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: expect.any(String) });
   });
 });
 
@@ -364,35 +365,62 @@ describeDb("QB-2 posting — match before create", () => {
   });
 });
 
-describeDb("QB-2 posting — retries and recovery", () => {
+describeDb("QB-2 posting — a failed post is stuck until a retry", () => {
   it("a retry after QBO accepted but the response was lost finds the entry by key, never a second booking", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
 
     qbo.mode = "accept-then-drop";
-    // QuickBooks answered the match read in this post, so the lost create is charged as a bug.
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: "QBO create Purchase failed: socket hang up" });
 
     qbo.mode = "ok";
-    const counts = await drainExpenseOutbox();
-    expect(counts).toMatchObject({ posted: 1, failed: 0 });
+    await retryStuckItem({ id, step: "QuickBooks posting" });
     expect(qbo.posts).toHaveLength(1);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id, qbFirstFailedAt: null, qbLastError: null });
   });
 
-  it("QuickBooks down leaves the expense postable, and the catch-up sweep posts it", async () => {
+  it("QuickBooks down leaves the expense stuck: the daily run does not retry it, a retry posts it", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
 
     qbo.mode = "down";
-    expect(await postExpenseToQb(ORG, id)).toBe("outage");
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbTxnId: null, qbPostAttempts: 0, qbFailureKind: "system" });
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbTxnId: null });
 
     qbo.mode = "ok";
-    const result = await runExpenseQbPosting();
-    expect(result.qbPost).toMatchObject({ posted: 1 });
+    expect((await runExpenseQbPosting()).qbPost).toMatchObject({ posted: 0 });
+    expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
+
+    await retryStuckItem({ id, step: "QuickBooks posting" });
     expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("a retry that fails again keeps the first failure time and records the new error", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.mode = "down";
+    await postExpenseToQb(ORG, id);
+    const { qbFirstFailedAt } = await expenseRow(id);
+
+    qbo.mode = "accept-then-drop";
+    await new Promise((r) => setTimeout(r, 5));
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("failed again") });
+
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: "QBO create Purchase failed: socket hang up" });
+  });
+
+  it("a drain goes on past failures: every due expense is tried once and the stuck ones are left", async () => {
+    await handMatched("2026-08-01");
+    const ids = [await outboxed("2026-09-10"), await outboxed("2026-09-11"), await outboxed("2026-09-12"), await outboxed("2026-09-13")].map((o) => o.id);
+    qbo.mode = "down";
+
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: 4, posted: 0 });
+    for (const id of ids) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
+
+    qbo.mode = "ok";
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: 0, posted: 0 });
+    expect(qbo.posts).toHaveLength(0);
   });
 
   it("a second drain posts nothing more", async () => {
@@ -511,9 +539,9 @@ describeDb("QB-2 posting — bounded retry", () => {
     return { id, line };
   }
 
-  it("a refusal holds for finance after one try, naming its code and request, raising no flag, and the drain stops calling QuickBooks", async () => {
+  it("a refusal is stuck for finance at once, naming its code and request, raising no flag, and the drain stops calling QuickBooks", async () => {
     const { id } = await outboxedManual(UNKNOWN_ACCOUNT);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: "QuickBooks refused: code 2500 (request tid)" });
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
     const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" } });
     expect(last.notes).toBe("QuickBooks refused: code 2500 (request tid)");
@@ -521,7 +549,7 @@ describeDb("QB-2 posting — bounded retry", () => {
 
     const windowReads = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("TxnDate")).length;
     const reads = windowReads();
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refused: 0, failed: 0 });
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, failed: 0 });
     expect(windowReads()).toBe(reads);
   });
 
@@ -548,7 +576,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     qbo.mode = "down";
 
-    expect(await postExpenseToQb(ORG, id)).toBe("outage");
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
 
     expect(reports).toEqual([expect.objectContaining({ lane: "posting", kind: "system", detail: `expense ${id}` })]);
   });
@@ -561,13 +589,13 @@ describeDb("QB-2 posting — bounded retry", () => {
     await setHeldLineAccount(finance, id, line, "60");
     await resubmitHeldExpense(finance, id);
 
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbPostAttempts: 0 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbFirstFailedAt: null, qbLastError: null });
     expect((await expenseReasons(finance, id)).map((r) => r.code)).not.toContain("QB_POST_FAILED");
     expect(qbo.posts).toHaveLength(1);
     expect(qbo.posts[0].body.Line[0].AccountBasedExpenseLineDetail.AccountRef).toEqual({ value: "60" });
   });
 
-  it("an error thrown inside the post counts as an attempt, so it too stops at NEEDS_FINANCE", async () => {
+  it("an error thrown inside the post is stuck at NEEDS_FINANCE too", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
     // Another expense already holding the entry id QuickBooks hands out makes the settle throw after QuickBooks answers.
@@ -575,35 +603,36 @@ describeDb("QB-2 posting — bounded retry", () => {
     await db.expense.update({ where: { id: holder }, data: { qbTxnEntity: "Purchase", qbTxnId: "5000" } });
 
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbTxnId: null });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbTxnId: null });
 
     // The retry finds the app's own entry, held by the other expense: finance decides, nothing is created again.
-    expect(await drainExpenseOutbox()).toMatchObject({ needs_finance: 1 });
-    expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
-    const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" } });
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("still needs finance") });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: null });
+    const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" }, orderBy: { id: "desc" } });
     expect(last.notes).toBe(`app entry Purchase 5000 is held by expense ${holder}`);
     expect(qbo.posts).toHaveLength(1);
   });
 
-  it("a retry QuickBooks refuses again holds for finance again, raising no flag", async () => {
+  it("a retry QuickBooks refuses again stays stuck from its first failure, raising no flag", async () => {
     const { id } = await outboxedManual(UNKNOWN_ACCOUNT);
+    const { qbFirstFailedAt } = await expenseRow(id);
     await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({
-      status: 409,
-      message: expect.stringContaining("QuickBooks refused"),
+      status: 503,
+      message: expect.stringContaining("failed again"),
     });
 
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt });
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
   });
 
-  it("a retry while QuickBooks is down waits as POST_FAILED with no try used up", async () => {
+  it("a retry while QuickBooks is down stays stuck", async () => {
     const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     const finance = principal(500, { isFinance: true });
     await setHeldLineAccount(finance, id, line, "60");
     qbo.mode = "down";
 
-    await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("did not answer") });
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "system" });
+    await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("failed again") });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
   });
 
   it("a retry while QuickBooks is not connected answers 503 and changes nothing", async () => {
@@ -615,7 +644,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("isn't connected") });
 
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -630,7 +659,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
 
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -645,7 +674,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: "The catalog is unavailable; try again" });
 
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -656,7 +685,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({ status: 409 });
 
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
   });
 
   it("an accepted retry records who asked", async () => {
@@ -698,7 +727,7 @@ describeDb("QB-2 posting — daily ceiling", () => {
     });
   }
 
-  it("at the ceiling nothing is sent: the expense waits, no attempt counted, and the drain logs the cap once", async () => {
+  it("at the ceiling nothing is sent: the expense waits, not stuck, and the drain logs the cap once", async () => {
     await createdAt(MAX_CREATES_PER_DAY, new Date());
     const a = await outboxed("2026-09-10");
     await outboxed("2026-09-11");
@@ -708,7 +737,7 @@ describeDb("QB-2 posting — daily ceiling", () => {
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, failed: 0, capped: "day" });
 
     expect(qbo.posts).toHaveLength(0);
-    expect(await expenseRow(a.id)).toMatchObject({ qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
+    expect(await expenseRow(a.id)).toMatchObject({ qbMatchState: "UNMATCHED", qbFirstFailedAt: null });
     expect(warn.mock.calls.filter(([m]) => String(m).includes('"qb_daily_cap"'))).toHaveLength(1);
     warn.mockRestore();
   });
@@ -769,7 +798,7 @@ describeDb("QB-2 posting — daily ceiling", () => {
     await checkAndProcessExpense(ORG, id);
 
     expect(qbo.posts).toHaveLength(0);
-    expect(await expenseRow(id)).toMatchObject({ state: "qb_complete", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
+    expect(await expenseRow(id)).toMatchObject({ state: "qb_complete", qbMatchState: "UNMATCHED", qbFirstFailedAt: null });
   });
 });
 
@@ -954,172 +983,24 @@ describeDb("QB-2 posting — claim, call, settle", () => {
   });
 });
 
-describeDb("QB-2 posting — drain failure streak", () => {
-  it("stops after consecutive outages, charging none, leaving the rest for the next run", async () => {
-    const ids = [];
-    for (let d = 10; d < 10 + MAX_CONSECUTIVE_FAILURES + 2; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
-    qbo.mode = "down";
-
-    expect(await drainExpenseOutbox()).toMatchObject({ outage: MAX_CONSECUTIVE_FAILURES, failed: 0, stoppedAfterFailures: true });
-    const rows = await Promise.all(ids.map(expenseRow));
-    expect(rows.filter((r) => r.qbMatchState === "POST_FAILED" && r.qbPostAttempts === 0 && r.qbFailureKind === "system")).toHaveLength(MAX_CONSECUTIVE_FAILURES);
-    expect(rows.filter((r) => r.qbMatchState === "UNMATCHED")).toHaveLength(2);
-  });
-
-  it("an outage on every run never sends the expense to finance", async () => {
-    const { id } = await outboxed("2026-09-10");
-    qbo.mode = "down";
-    for (let i = 0; i <= MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 0 });
-  });
-
-  /** QuickBooks answers every request but the window read starting `from`. */
-  const downFor = (from: string) =>
-    vi.mocked(fetch).mockImplementation(async (input, init) =>
-      new URL(String(input)).searchParams.get("query")?.includes(`TxnDate >= '${from}'`) ? new Response("{}", { status: 503 }) : qbo.handle(input, init),
-    );
-
-  it("an outage after QuickBooks answered an earlier expense in the run is charged as a bug", async () => {
-    const { id: up } = await outboxed("2026-09-10");
-    const { id: down } = await outboxed("2026-09-20");
-    downFor("2026-09-13");
-
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, outage: 0, failed: 1 });
-    expect(await expenseRow(down)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
-    expect((await expenseRow(up)).qbMatchState).toBe("CREATED");
-  });
-
-  it("an outage before QuickBooks answered anything in the run is not charged, though a later expense posts", async () => {
-    const { id: down } = await outboxed("2026-09-10");
-    const { id: up } = await outboxed("2026-09-20");
-    downFor("2026-09-03");
-
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, outage: 1, failed: 0 });
-    expect(await expenseRow(down)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "system" });
-    expect((await expenseRow(up)).qbMatchState).toBe("CREATED");
-  });
-
-  it("an outage after a lookup read answered in the same post is charged as a bug", async () => {
-    const { id } = await outboxed("2026-09-10");
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbCreateAttemptedAt: new Date(Date.now() - 60_000) } });
-    downFor("2026-09-03");
-
-    expect(await postExpenseToQb(ORG, id)).toBe("failed");
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
-  });
-
-  it("a revoked QuickBooks login stops the run at the first expense, charging nothing", async () => {
-    const ids = [];
-    for (let d = 10; d < 13; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
-    qbo.mode = "revoked";
-
-    expect(await drainExpenseOutbox()).toMatchObject({ disconnected: 1, stoppedOnConnection: true, stoppedAfterFailures: false });
-    expect(await expenseRow(ids[0])).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "connection" });
-    expect((await Promise.all(ids.slice(1).map(expenseRow))).map((r) => r.qbMatchState)).toEqual(["UNMATCHED", "UNMATCHED"]);
-  });
-
-  it("a match read QuickBooks refuses is the app's bug, not the expense's: each is charged, none held at once, and the run stops", async () => {
-    const ids = [];
-    for (let d = 10; d < 10 + MAX_CONSECUTIVE_FAILURES + 1; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
-    vi.mocked(fetch).mockImplementation(async (input, init) =>
-      new URL(String(input)).searchParams.get("query")?.includes("TxnDate >=") ? new Response("{}", { status: 400 }) : qbo.handle(input, init),
-    );
-
-    expect(await drainExpenseOutbox()).toMatchObject({ failed: MAX_CONSECUTIVE_FAILURES, refused: 0, needs_finance: 0, stoppedAfterFailures: true });
-    const rows = await Promise.all(ids.slice(0, MAX_CONSECUTIVE_FAILURES).map(expenseRow));
-    expect(rows.every((r) => r.qbMatchState === "POST_FAILED" && r.qbPostAttempts === 1 && r.qbFailureKind === "bug")).toBe(true);
-  });
-
-  it("a refusal resets the streak: the run goes on past it", async () => {
+describeDb("QB-2 posting — a drain never stops on failures", () => {
+  it("a refusal is stuck and the run goes on past it", async () => {
     await outboxed("2026-09-10");
     const { id: refused } = await outboxed("2026-09-11");
     await db.expenseLineItem.updateMany({ where: { expenseId: refused }, data: { resolvedQbAccount: UNKNOWN_ACCOUNT } });
     await outboxed("2026-09-12");
 
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 2, refused: 1, stoppedAfterFailures: false });
-    expect(await expenseRow(refused)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 2, failed: 1 });
+    expect(await expenseRow(refused)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: "QuickBooks refused: code 2500 (request tid)" });
   });
 
-  /** An outboxed expense dated `day` whose lines QuickBooks refuses through `account`. */
-  const refusedBy = async (day: string, account: string) => {
-    const { id } = await outboxed(day);
-    await db.expenseLineItem.updateMany({ where: { expenseId: id }, data: { resolvedQbAccount: account } });
-    return id;
-  };
-
-  it("two refusals with one code hold both for finance and the run goes on", async () => {
-    const held = [await refusedBy("2026-09-10", UNKNOWN_ACCOUNT), await refusedBy("2026-09-11", UNKNOWN_ACCOUNT)];
-    await outboxed("2026-09-12");
-
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, refused: 2, refusalStop: null });
-    for (const id of held) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
-  });
-
-  it("a third refusal with one code stops the run and returns all three to try again, each charged its try", async () => {
-    expect(MAX_SAME_CODE_REFUSALS).toBe(3);
-    const refused = [];
-    for (let d = 10; d < 13; d++) refused.push(await refusedBy(`2026-09-${d}`, UNKNOWN_ACCOUNT));
-    const { id: rest } = await outboxed("2026-09-20");
-
-    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, posted: 0, refusalStop: { code: "2500", returned: 3 } });
-    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "settings" });
-    expect((await expenseRow(rest)).qbMatchState).toBe("UNMATCHED");
-    const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: refused[0] }, orderBy: { id: "desc" } });
-    expect(last).toMatchObject({ action: "qb_post_failed", valueBefore: "NEEDS_FINANCE", valueAfter: "POST_FAILED" });
-    expect(last.notes).toContain("code 2500");
-
-    // Fixed in QuickBooks: the next run posts them.
-    await db.expenseLineItem.updateMany({ where: { expenseId: { in: refused } }, data: { resolvedQbAccount: "60" } });
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 4, refusalStop: null });
-  });
-
-  it("expenses refused with one code on every run reach finance at the attempt limit, and the lane moves on", async () => {
-    const refused = [];
-    for (let d = 10; d < 13; d++) refused.push(await refusedBy(`2026-09-${d}`, UNKNOWN_ACCOUNT));
-    const { id: rest } = await outboxed("2026-09-20");
-
-    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
-      expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refusalStop: { code: "2500", returned: 3 } });
-    }
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refusalStop: { code: "2500", returned: 0 } });
-    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbFailureKind: "data" });
-
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, refused: 0, refusalStop: null });
-    expect((await expenseRow(rest)).qbMatchState).toBe("CREATED");
-  });
-
-  it("a refusal carrying several fault codes counts toward each of them", async () => {
-    const both = await refusedBy("2026-09-10", UNKNOWN_ACCOUNT);
-    const [line] = await db.expenseLineItem.findMany({ where: { expenseId: both }, orderBy: { id: "asc" } });
-    await db.expenseLineItem.update({ where: { id: line.id }, data: { resolvedQbAccount: INACTIVE_ACCOUNT } });
-    await refusedBy("2026-09-11", UNKNOWN_ACCOUNT);
-    await refusedBy("2026-09-12", UNKNOWN_ACCOUNT);
-
-    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, refusalStop: { code: "2500", returned: 3 } });
-    expect(await expenseRow(both)).toMatchObject({ qbMatchState: "POST_FAILED", qbFailureKind: "settings" });
-  });
-
-  it("three refusals with mixed codes do not stop the run", async () => {
-    await refusedBy("2026-09-10", UNKNOWN_ACCOUNT);
-    await refusedBy("2026-09-11", INACTIVE_ACCOUNT);
-    await refusedBy("2026-09-12", UNKNOWN_ACCOUNT);
-    await outboxed("2026-09-13");
-
-    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, posted: 1, refusalStop: null });
-  });
-
-  it("a missing setting leaves the expense where it was, uncharged, and does not count toward the stop", async () => {
+  it("a revoked QuickBooks login leaves every due expense stuck", async () => {
     const ids = [];
-    for (let d = 10; d <= 10 + MAX_CONSECUTIVE_FAILURES; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
-    bindPorts({ quickbooks: { posting: async () => posting() }, outbound: async () => { throw new NotWiredError("quickbooks.create"); } });
+    for (let d = 10; d < 13; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
+    qbo.mode = "revoked";
 
-    expect(await drainExpenseOutbox()).toMatchObject({ waiting_on_settings: ids.length, stoppedAfterFailures: false });
-    const rows = await Promise.all(ids.map(expenseRow));
-    expect(rows.every((r) => r.qbMatchState === "UNMATCHED" && r.qbPostAttempts === 0 && r.qbFailureKind === "settings")).toBe(true);
-
-    bindQbo();
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: ids.length });
-    expect(await expenseRow(ids[0])).toMatchObject({ qbMatchState: "CREATED", qbFailureKind: null });
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: 3 });
+    for (const id of ids) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
   });
 });
 
@@ -1158,15 +1039,17 @@ describeDb("QB-2 posting — a line's account after posting", () => {
     expect(postedAccounts()).toEqual(["62", "61"]);
   });
 
-  it("the regular drain's retry of a failed post uses an account set after the failure", async () => {
+  it("a retry of a failed post uses an account set after the failure", async () => {
     const { id, lines } = await outboxed("2026-09-10");
     qbo.mode = "down";
-    expect(await postExpenseToQb(ORG, id)).toBe("outage");
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
     qbo.mode = "ok";
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() } });
+    await db.expenseLineItem.update({ where: { id: lines[1] }, data: { manualQbAccount: "61" } });
 
     await setHeldLineAccount(finance, id, lines[0], "62");
+    await retryStuckItem({ id, step: "QuickBooks posting" });
 
-    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1 });
     expect(postedAccounts()).toEqual(["62", "61"]);
   });
 
@@ -1195,7 +1078,7 @@ describeDb("QB-2 posting — a line's account after posting", () => {
     expect(postedAccounts()).toEqual(["62", "61"]);
   });
 
-  it("finance's retry posts an account set after the attempts ran out", async () => {
+  it("finance's retry posts an account set while the expense waited on finance", async () => {
     const { id, lines } = await outboxed("2026-09-10");
     await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
     bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() } });
@@ -1260,14 +1143,14 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     expect(classesOf(0)).toEqual(["9101", "9200"]);
   });
 
-  it("a line whose bucket has no Class is not posted: state stays postable, no attempt counted, no flag raised", async () => {
+  it("a line whose bucket has no Class is not posted: state stays postable, not stuck, no flag raised", async () => {
     await handMatched("2026-08-01");
     await bucket100Unclassed();
     const { id } = await outboxed("2026-09-10");
 
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, failed: 0, no_class: 1 });
     expect(qbo.posts).toHaveLength(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNMATCHED", qbTxnId: null, qbPostAttempts: 0 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNMATCHED", qbTxnId: null, qbFirstFailedAt: null });
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
   });
 
@@ -1277,17 +1160,6 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
 
     expect(await postExpenseToQb(ORG, id)).toBe("no_class");
     expect(qbo.posts).toHaveLength(0);
-  });
-
-  it("an unclassed expense neither counts toward nor breaks the consecutive-failure stop", async () => {
-    await handMatched("2026-08-01");
-    await bucket100Unclassed();
-    qbo.mode = "down";
-    await outboxed("2026-09-10", { buckets: [7, 7] });
-    await outboxed("2026-09-11");
-    for (let d = 12; d < 12 + MAX_CONSECUTIVE_FAILURES; d++) await outboxed(`2026-09-${d}`, { buckets: [7, 7] });
-
-    expect(await drainExpenseOutbox()).toMatchObject({ outage: MAX_CONSECUTIVE_FAILURES, no_class: 1, stoppedAfterFailures: true });
   });
 
   it("an unclassed expense does not count toward the run cap, so the rest of the run still posts", async () => {
@@ -1342,38 +1214,38 @@ describeDb("QB-2 posting — an expense whose own data cannot post", () => {
     ["no receipt date", withoutReceiptDate, "the expense has no receipt date"],
     ["no lines", outboxedWithoutLines, "the expense has no lines"],
     ["a line with no resolved account", withUnresolvedLine, "has no resolved QuickBooks account"],
-  ] as const)("an expense with %s goes to finance at once: no attempt counted, the reason shown, nothing sent", async (_case, seed, reason) => {
+  ] as const)("an expense with %s goes to finance at once, not stuck: the reason shown, nothing sent", async (_case, seed, reason) => {
     await handMatched("2026-08-01");
     const id = await seed("2026-09-10");
 
     expect(await postExpenseToQb(ORG, id)).toBe("unpostable");
     expect(qbo.posts).toHaveLength(0);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 0, qbClaimedAt: null });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: null, qbClaimedAt: null });
     const audit = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" } });
     expect(audit.notes).toContain(reason);
     const shown = (await expenseReasons(finance, id)).find((r) => r.code === "QB_POST_FAILED");
     expect(shown?.detail).toContain(reason);
   });
 
-  it("several in a row neither stop the drain nor count toward its failure stop", async () => {
+  it("several in a row leave the rest of the drain posting", async () => {
     await handMatched("2026-08-01");
-    for (let d = 10; d < 10 + MAX_CONSECUTIVE_FAILURES; d++) await withUnresolvedLine(`2026-09-${d}`);
+    for (let d = 10; d < 13; d++) await withUnresolvedLine(`2026-09-${d}`);
     const good = await outboxed("2026-09-20");
 
-    expect(await drainExpenseOutbox()).toMatchObject({ unpostable: MAX_CONSECUTIVE_FAILURES, failed: 0, needs_finance: 0, posted: 1, stoppedAfterFailures: false });
+    expect(await drainExpenseOutbox()).toMatchObject({ unpostable: 3, failed: 0, needs_finance: 0, posted: 1 });
     expect((await expenseRow(good.id)).qbMatchState).toBe("CREATED");
   });
 
-  it("a field the gateway stripped still counts as a failed attempt toward the drain's stop", async () => {
+  it("a field the gateway stripped is a failed post, stuck", async () => {
     await handMatched("2026-08-01");
-    for (let d = 10; d < 11 + MAX_CONSECUTIVE_FAILURES; d++) await outboxed(`2026-09-${d}`);
+    for (let d = 10; d < 14; d++) await outboxed(`2026-09-${d}`);
     const withoutDate: Outbound = (_surface, bag, send) => {
       const { receiptDate: _date, ...expense } = bag.Expense as Expense;
       return send({ ...bag, Expense: expense });
     };
     bindPorts({ quickbooks: { posting: async () => posting() }, outbound: withoutDate });
 
-    expect(await drainExpenseOutbox()).toMatchObject({ failed: MAX_CONSECUTIVE_FAILURES, unpostable: 0, stoppedAfterFailures: true });
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: 4, unpostable: 0 });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -1388,7 +1260,7 @@ describeDb("QB-2 posting — an expense whose own data cannot post", () => {
     await setHeldLineAccount(finance, id, lines[0], "62");
     await resubmitHeldExpense(finance, id);
 
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbPostAttempts: 0 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED" });
     expect(qbo.posts[0].body.Line.map((l) => l.AccountBasedExpenseLineDetail.AccountRef.value)).toEqual(["62", "61"]);
   });
 });
@@ -1489,7 +1361,7 @@ describeDb("QB closed books — a create that may have landed", () => {
     qbo.purchases[0].TxnDate = "2026-11-30";
 
     qbo.mode = "ok";
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id });
   });
@@ -1506,31 +1378,14 @@ describeDb("QB closed books — a create that may have landed", () => {
     return id;
   }
 
-  it("an attempted expense whose created-since read QuickBooks refuses creates nothing and goes to finance as a bug", async () => {
-    const id = await attemptedWithLookup(400);
+  it.each([400, 500, 401])("a retry whose created-since read fails with %i creates nothing and stays stuck from its first failure", async (status) => {
+    const id = await attemptedWithLookup(status);
+    const { qbFirstFailedAt } = await expenseRow(id);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("failed again") });
+
     expect(qbo.posts).toHaveLength(1);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFailureKind: "bug" });
-  });
-
-  it("an attempted expense whose created-since read meets an outage creates nothing and waits, uncharged", async () => {
-    const id = await attemptedWithLookup(500);
-    const before = (await expenseRow(id)).qbPostAttempts;
-
-    expect(await postExpenseToQb(ORG, id)).toBe("outage");
-    expect(qbo.posts).toHaveLength(1);
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: before, qbFailureKind: "system" });
-  });
-
-  it("an attempted expense whose created-since read meets a revoked login stops the drain, uncharged", async () => {
-    const id = await attemptedWithLookup(401);
-    const before = (await expenseRow(id)).qbPostAttempts;
-    const later = (await outboxed("2026-09-20")).id;
-
-    expect(await drainExpenseOutbox()).toMatchObject({ disconnected: 1, stoppedOnConnection: true });
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: before, qbFailureKind: "connection" });
-    expect((await expenseRow(later)).qbMatchState).toBe("UNMATCHED");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: expect.stringContaining("the app may already have booked this expense") });
   });
 
   it("finance's match on an attempted expense links the app's own entry instead", async () => {
@@ -1663,7 +1518,8 @@ describeDb("QB closed books — a create that may have landed", () => {
       const skipping = skipExpenseQb(finance, id, "why");
       while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
 
-      await db.expense.update({ where: { id }, data: { qbPostAttempts: { increment: 1 } } });
+      // A failed post meanwhile writes its audit row and leaves the state as it was.
+      await db.expenseAuditLog.create({ data: { expenseId: id, userId: 0, action: "qb_needs_finance", notes: "timeout" } });
       release();
 
       await expect(skipping).rejects.toMatchObject({ status: 409 });
@@ -1816,7 +1672,7 @@ describeDb("QB posting — an entry finance voided", () => {
     const { id, first } = await landed();
     voidEntry(first);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
 
     expect(qbo.posts).toHaveLength(2);
     const replacement = qbo.purchases[1];
@@ -1830,7 +1686,7 @@ describeDb("QB posting — an entry finance voided", () => {
     const live = secondKeyedEntry(first);
     voidEntry(first);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
 
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: live.Id });
@@ -1840,7 +1696,7 @@ describeDb("QB posting — an entry finance voided", () => {
     const { id, first } = await landed();
     secondKeyedEntry(first);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    expect(await retryFailedPost(ORG, id)).toBe("needs_finance");
     expect(qbo.posts).toHaveLength(1);
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
   });
@@ -1848,7 +1704,7 @@ describeDb("QB posting — an entry finance voided", () => {
   it("finance's match links the live entry of an expense stuck on two keyed entries once one is voided", async () => {
     const { id, first } = await landed();
     const live = secondKeyedEntry(first);
-    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    expect(await retryFailedPost(ORG, id)).toBe("needs_finance");
     voidEntry(first);
 
     await matchExpenseToQb(finance, id, "hand-1");
@@ -1878,7 +1734,7 @@ describeDb("QB posting — an entry finance voided", () => {
   it("a $0 expense's retry links its own $0 entry, never a second booking", async () => {
     const { id, first } = await landed([0, 0]);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
 
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: first.Id });

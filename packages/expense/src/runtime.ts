@@ -12,7 +12,6 @@ import {
   inertSignoffDirectory,
   type CatalogEventSource,
   type CatalogReader,
-  type ExpenseAlerts,
   type OrgIdentity,
   type OutcomeMail,
   type Outbound,
@@ -45,7 +44,6 @@ export interface ExpenseConfig {
   signoff?: SignoffDirectory;
   catalog?: CatalogReader;
   catalogEvents?: CatalogEventSource;
-  alerts?: ExpenseAlerts;
   /** Display names, for showing who a reimbursee is. */
   people?: PeopleDirectory;
   quickbooks?: Partial<QuickBooksPorts>;
@@ -62,7 +60,6 @@ export interface ExpenseRuntime {
   signoff: SignoffDirectory;
   catalog: CatalogReader;
   catalogEvents: CatalogEventSource;
-  alerts?: ExpenseAlerts;
   people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
   outbound: Outbound;
@@ -80,7 +77,6 @@ export function configureExpense(config: ExpenseConfig): void {
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
     catalogEvents: config.catalogEvents ?? inertCatalogEventSource,
-    alerts: config.alerts,
     people: config.people ?? inertPeopleDirectory,
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,

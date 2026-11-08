@@ -1,5 +1,5 @@
 import { logger } from "@/lib/logger";
-import { finishRun, inRun, laneReached, laneStopped, newRun, stepCrashed } from "@/lib/finishRun";
+import { finishRun, inRun, laneReached, newRun, stepCrashed } from "@/lib/finishRun";
 import { getOrg } from "@/lib/components/host";
 import { handler } from "@/security/handler";
 import { runExpenseQbPosting } from "@checkin/expense";
@@ -9,36 +9,13 @@ import { drainIncomeOutbox, runIncomeOrphanSweep } from "@checkin/income";
 /** The run ledger's name for this job: the route's last path segment. */
 const JOB = "qbo-posting";
 
-/**
- * The counts of a drain that ran: how it stopped, and whether its duplicate check could read
- * QuickBooks. Expense says a connection stop with `stoppedOnConnection`; in-kind's drain never
- * stops on failures.
- */
-type DrainRun = {
-    stoppedAfterFailures?: boolean;
-    stoppedOnConnection?: boolean;
-    stopKind?: string | null;
-    refusalStop?: { code: string } | null;
-    sweep: { full: boolean } | { failed: true };
-};
+/** The counts of a drain that ran: whether its duplicate check could read QuickBooks. No drain stops on failures. */
+type DrainRun = { sweep: { full: boolean } | { failed: true } };
 
-function stopProblem(lane: string, drain: DrainRun): string | null {
-    if (drain.refusalStop) return `${lane} refusal stop (code ${drain.refusalStop.code})`;
-    if (drain.stoppedOnConnection || drain.stopKind === "connection") return `${lane} connection stop`;
-    return drain.stoppedAfterFailures ? `${lane} streak stop` : null;
-}
-
-/** `lane` is the drain's lane as the run names it: the drain ran, so the run reached it; a stop marks it stopped. */
+/** `lane` is the drain's lane as the run names it: the drain ran, so the run reached it. */
 function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
     laneReached(lane);
-    const problems: string[] = [];
-    const stop = stopProblem(label, drain);
-    if (stop) {
-        problems.push(stop);
-        laneStopped(lane);
-    }
-    if ("failed" in drain.sweep) problems.push(`${label} duplicate check`);
-    return problems;
+    return "failed" in drain.sweep ? [`${label} duplicate check`] : [];
 }
 
 /**
@@ -47,9 +24,8 @@ function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
  * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the
- * run as its error. So is expense's drain stopped by its failure streak, a broken QuickBooks
- * connection or a fault code QuickBooks refused three times; a duplicate check that could not read QuickBooks;
- * and an in-kind lane missing a books-map role while gifts wait. The run ends in finishRun, which
+ * run as its error. So is a duplicate check that could not read QuickBooks, and an in-kind lane
+ * missing a books-map role while gifts wait. The run ends in finishRun, which
  * hands the lanes' kinded failures to the incident engine. Counts go to the log only; the
  * response body is `{}`.
  */

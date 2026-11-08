@@ -18,7 +18,6 @@ describe("bookRefusal", () => {
   it.each([
     ["UNBOOKED", "waiting", 409, "a sign-off is missing"],
     ["UNBOOKED", "queued", 409, "closed books"],
-    ["POST_FAILED", "failed", 503, "QuickBooks failed while booking"],
     ["AMBIGUOUS", "queued", 409, "now waits as AMBIGUOUS"],
   ] as const)("keeps the %s / %s answer", (state, outcome, status, words) => {
     expect(bookRefusal(state, outcome, null)).toMatchObject({ status, message: expect.stringContaining(words) });
@@ -35,17 +34,13 @@ describe("retryRefusal", () => {
   });
 
   it.each([
-    ["failed", 503, "QuickBooks failed again"],
+    ["failed", 503, "the post failed again"],
     ["waiting", 409, "Not posted yet"],
     ["queued", 409, "waits for finance"],
     ["not_sent", 409, "test-data"],
     ["needs_finance", 409, "still needs finance"],
     ["no_class", 409, "QuickBooks Class"],
     ["unpostable", 409, "own data"],
-    ["outage", 503, "no try used up"],
-    ["disconnected", 503, "connection needs to be renewed"],
-    ["waiting_on_settings", 409, "QuickBooks setting"],
-    ["refused", 409, "QuickBooks refused"],
   ] as const)("names where a %s retry leaves the expense", (outcome, status, words) => {
     expect(retryRefusal(outcome)).toMatchObject({ status, message: expect.stringContaining(words) });
   });
