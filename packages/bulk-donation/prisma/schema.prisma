@@ -170,6 +170,9 @@ model AccountMap {
   donationAccount       String   @map("donation_account")
   /// @sensitivity:internal
   matchAccount          String   @map("match_account")
+  /// Unread: fees reduce income. Kept, with a default so new rules insert, until it can be dropped.
+  /// @sensitivity:internal
+  feesAccount           String   @default("") @map("fees_account") @ignore
   /// QuickBooks account id a matched gift's donation amount books to; null until finance picks one.
   /// @sensitivity:internal
   donationAccountId     String?  @map("donation_account_id")
