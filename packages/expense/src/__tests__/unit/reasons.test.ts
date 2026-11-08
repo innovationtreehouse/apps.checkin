@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveReasons, taxWaitsOnFinance, type QueueReason, type ReasonFacts } from "../../lib/reasons";
+import { deriveReasons, settingWaitDetail, taxWaitsOnFinance, type QueueReason, type ReasonFacts } from "../../lib/reasons";
 import { REVIEW_KINDS, reviewKindOf } from "../../lib/flags";
 import { reasonText } from "../../lib/reasonWords";
 import { backToQueue } from "../../lib/backToQueue";
@@ -82,6 +82,14 @@ describe("deriveReasons", () => {
     expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
   });
 
+  it("reads an expense a setting stops as a QuickBooks reason naming the setting", () => {
+    expect(deriveReasons(facts({ waitingOnSetting: { detail: "the books map has no payment account" } }))).toEqual([
+      { code: "QB_WAITING_ON_SETTING", tab: "qb", amountCents: null, count: null, detail: "the books map has no payment account" },
+    ]);
+    expect(codes(facts({ waitingOnSetting: { detail: null } }))).toEqual(["QB_WAITING_ON_SETTING"]);
+    expect(codes(facts({ expense: { state: "rejected" }, waitingOnSetting: { detail: null } }))).toEqual([]);
+  });
+
   it("a closed expense keeps its QuickBooks reasons and reviews, and drops the rest", () => {
     const closed = facts({
       expense: { state: "qb_complete", qbMatchState: "NEEDS_FINANCE", taxCents: 100, needsReimbursement: true },
@@ -111,6 +119,16 @@ describe("deriveReasons", () => {
   });
 });
 
+describe("settingWaitDetail", () => {
+  it("reads the setting from the note a settings wait writes, and nothing from any other note", () => {
+    expect(settingWaitDetail("not charged (settings): Account 61 is inactive")).toBe("Account 61 is inactive");
+    expect(settingWaitDetail("attempt 2 of 5 (settings): QuickBooks refused 3 expenses with code 6000 in one run; likely a books-map setting"))
+      .toBe("QuickBooks refused 3 expenses with code 6000 in one run; likely a books-map setting");
+    expect(settingWaitDetail("attempt 2 of 5: timeout")).toBeNull();
+    expect(settingWaitDetail(null)).toBeNull();
+  });
+});
+
 describe("reviewKindOf", () => {
   it("names the three reviews, and nothing for a retired kind", () => {
     for (const kind of REVIEW_KINDS) expect(reviewKindOf({ kind })).toBe(kind);
@@ -134,6 +152,8 @@ describe("reasonText", () => {
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
     expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
     expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
+    expect(reasonText(r({ code: "QB_WAITING_ON_SETTING", detail: "Account 61 is inactive" }), "USD")).toBe("Waiting on a setting: Account 61 is inactive");
+    expect(reasonText(r({ code: "QB_WAITING_ON_SETTING" }), "USD")).toBe("Waiting on a QuickBooks setting");
   });
 });
 
