@@ -177,6 +177,21 @@ describe('settleHouseholdBg — clearing', () => {
         expect((await row(id)).bgClearedAt).toBeNull();
     });
 
+    it('opens no review while someone is disputed, and opens one once the dispute settles with no lead cleared', async () => {
+        const f = await family({ leadCheck: null });
+        const reviewId = await checkReview(f.otherId, 'BLOCKED', 'board reset');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect(await prisma.orgMembershipProcess.count({ where: { requestedForHouseholdId: f.householdId } })).toBe(0);
+
+        await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { status: 'ACTIVE', bgClearedAt: new Date() } });
+        await prisma.person.update({ where: { id: f.otherId }, data: { lastBackgroundCheck: new Date() } });
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['opened']);
+        const [opened] = await prisma.orgMembershipProcess.findMany({ where: { requestedForHouseholdId: f.householdId } });
+        expect(opened).toMatchObject({ kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', subjectPersonId: null });
+        expect((await row(id)).bgClearedAt).toBeNull();
+    });
+
     it('holds the clearance after a change to approve was undone', async () => {
         const f = await family();
         await checkReview(f.leadId, 'BLOCKED', 'rejector changed to approve');
