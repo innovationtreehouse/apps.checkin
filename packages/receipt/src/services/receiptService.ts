@@ -40,6 +40,7 @@ import {
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
 import { getOrgId, limits, ports, receiptRuntime, requireActor } from "../runtime";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
+import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
@@ -294,19 +295,27 @@ const toLine = (li: { description: string; partNumber?: string | null; manufactu
 
 const OCR_CALL = "ocr_call";
 const OCR_CALL_REFUNDED = "ocr_call_refunded";
+const OCR_ALLOWANCE_RESET = "ocr_allowance_reset";
 
 /**
  * Spends one of the caller's daily model calls, or refuses with 429. Each call is an audit row,
  * so the count survives restarts and is shared by every app process; a per-person lock keeps
- * concurrent requests from all passing the same check. A refund row names the call it gives back,
+ * concurrent requests from all passing the same check. The window starts a day ago, or at the
+ * person's latest allowance reset if that is later. A refund row names the call it gives back,
  * and counts only while that call is in the window. Returns the call's row id.
  */
 async function reserveOcrCall(actor: ReceiptPrincipal): Promise<number> {
   const { ocrCallsPerPersonPerDay } = limits();
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`receipt-ocr:${actor.id}`}, 0))`;
+    const dayAgo = new Date(Date.now() - DAY_MS);
+    const reset = await tx.receiptAuditLog.findFirst({
+      where: { action: OCR_ALLOWANCE_RESET, fieldChanged: "person", valueBefore: String(actor.id), changedAt: { gt: dayAgo } },
+      orderBy: { changedAt: "desc" },
+      select: { changedAt: true },
+    });
     const calls = await tx.receiptAuditLog.findMany({
-      where: { userId: actor.id, action: OCR_CALL, changedAt: { gt: new Date(Date.now() - DAY_MS) } },
+      where: { userId: actor.id, action: OCR_CALL, changedAt: { gt: reset?.changedAt ?? dayAgo } },
       select: { id: true },
     });
     const refunds = await tx.receiptAuditLog.count({
@@ -318,6 +327,22 @@ async function reserveOcrCall(actor: ReceiptPrincipal): Promise<number> {
     const call = await tx.receiptAuditLog.create({ data: { receiptId: null, userId: actor.id, username: actor.name, action: OCR_CALL } });
     return call.id;
   });
+}
+
+const ResetReasonSchema = z.object({ reason: z.string().trim().min(1, "A reason is required").max(500) }).strict();
+
+/**
+ * Finance or the Board gives `personId` a full reading allowance from now: one audit row naming
+ * the person, the actor and the reason, which `reserveOcrCall` counts from.
+ */
+async function resetOcrAllowance(personId: number, raw: unknown): Promise<{ personId: number }> {
+  const parsed = ResetReasonSchema.safeParse(raw);
+  if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => i.message).join("; "));
+  const actor = await requireActor();
+  await db.receiptAuditLog.create({
+    data: { receiptId: null, userId: actor.id, username: actor.name, action: OCR_ALLOWANCE_RESET, fieldChanged: "person", valueBefore: String(personId), valueAfter: parsed.data.reason },
+  });
+  return { personId };
 }
 
 /** Gives back `callId` to its person's daily allowance; `receiptId` is null when no receipt was made. */
@@ -525,7 +550,7 @@ export async function intakeMailedReceipt(
     await failOcr(id, actor, {
       notes: `Today's automatic reading allowance is used up. Type the details, or press "Read it again" tomorrow.`,
       action: "ocr_failed",
-      reason: "daily limit reached",
+      reason: DAILY_LIMIT_REACHED,
       refundCallId: null,
     });
     return id;
@@ -865,6 +890,8 @@ async function copiesOf(orgId: string, rows: ReceiptRow[]): Promise<Map<string, 
 }
 
 export const receiptService = {
+  resetOcrAllowance,
+
   /**
    * Upload a receipt. With `details` it is manual: insert at `uploaded` and run the pipeline.
    * Without, it is auto: insert at `auto_upload` and read it with OCR in this request.
