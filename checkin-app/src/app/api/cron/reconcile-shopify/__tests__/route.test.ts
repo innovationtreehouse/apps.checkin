@@ -103,7 +103,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         await GET(req());
 
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay', 'receipt push']);
+        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay', 'workflow-mapping matching', 'receipt push']);
         expect(run.failures).toEqual([
             { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1, stopped: false },
             { lane: 'receipt push', cause: 'mapping', kind: 'connection', code: 'connection', count: 1, stopped: false },
@@ -127,6 +127,25 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(jest.mocked(evaluateRun).mock.calls[2][0].lanes).not.toContain('receipt mail-listing');
     });
 
+    it('covers the matching lane when the re-run ran, and files a crashed re-run under it', async () => {
+        jest.mocked(retryPendingMatching).mockImplementationOnce(async () => {
+            reportTo('workflow-mapping')({ lane: 'matching', kind: 'system', detail: 'receipt 7' });
+            return { ...RECEIVING_MATCHING, gaveUp: 1 };
+        });
+        await GET(req());
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toContain('workflow-mapping matching');
+        expect(run.failures).toEqual([{ lane: 'workflow-mapping matching', cause: 'mapping', kind: 'system', code: 'system', count: 1, stopped: false }]);
+
+        jest.mocked(retryPendingMatching).mockRejectedValueOnce(new Error('catalog down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+        await GET(req());
+        const crashedRun = jest.mocked(evaluateRun).mock.calls[1][0];
+        expect(crashedRun.lanes).not.toContain('workflow-mapping matching');
+        expect(crashedRun.failures).toEqual([{ lane: 'workflow-mapping matching', cause: 'mapping', kind: 'bug', code: 'workflow-mapping pending matching crashed', count: 1, stopped: false }]);
+        logged.mockRestore();
+    });
+
     it('files a crashed step under the lane it runs and leaves that lane uncovered, so its incident stays open', async () => {
         jest.mocked(repushUnpushed).mockRejectedValue(new Error('mapping down'));
         jest.mocked(runExpenseCatchUp).mockResolvedValue({ ...EXPENSE, intake: { error: true } });
@@ -135,7 +154,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         await GET(req());
 
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify']);
+        expect(run.lanes).toEqual(['reconcile-shopify', 'workflow-mapping matching']);
         expect(run.failures).toEqual([{ lane: 'receipt push', cause: 'mapping', kind: 'bug', code: 'receipt push crashed', count: 1, stopped: false }]);
         logged.mockRestore();
     });

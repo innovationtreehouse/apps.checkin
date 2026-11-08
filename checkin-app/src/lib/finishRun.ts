@@ -26,6 +26,7 @@ const CAUSES: Record<string, string> = {
     "expense posting": "quickbooks",
     "bulk-donation in-kind-posting": "quickbooks",
     "income deposit-build": "quickbooks",
+    "workflow-mapping matching": "mapping",
 };
 
 export const newRun = (): Run => ({ reports: [], reached: new Set(), stopped: new Set() });
