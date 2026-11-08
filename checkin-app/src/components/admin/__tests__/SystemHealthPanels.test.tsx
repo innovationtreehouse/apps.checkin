@@ -248,4 +248,10 @@ describe("OpenProblemsBox", () => {
     renderWithProviders(<OpenProblemsBox />);
     expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
   });
+
+  it("shows the failed state, not Checking forever, when the answer has no incidents", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { checks: [] } });
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
+  });
 });

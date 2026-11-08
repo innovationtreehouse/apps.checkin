@@ -445,6 +445,8 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored, refused } = mailFiles(msg, reader);
+    // Nothing to read and nothing refused: the sender is told on the refusal notice that no receipt was found.
+    if (files.length === 0 && refused.length === 0) refused.push({ file: "your email", reason: "no_receipt" });
     // Every file already in the ledger: nothing to download.
     const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
     const ledgered = files.length > 0 && rows.length >= files.length;

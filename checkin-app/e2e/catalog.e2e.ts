@@ -82,7 +82,10 @@ test.describe("the catalog in the browser", () => {
     await itemRow(page, name).getByRole("button").nth(2).click();
     await page.getByRole("dialog").getByRole("button", { name: "Archive", exact: true }).click();
     await expect(itemRow(page, name)).toHaveCount(0);
-    await page.getByLabel("Show archived parts").check();
+    // The checkbox mirrors the URL, so it shows checked once the router's replace lands.
+    const showArchived = page.getByLabel("Show archived parts");
+    await showArchived.click();
+    await expect(showArchived).toBeChecked();
     await expect(itemRow(page, name).getByText("Archived", { exact: true })).toBeVisible();
     // An archived row's actions are View references, Edit, Unarchive.
     await itemRow(page, name).getByRole("button").nth(2).click();
