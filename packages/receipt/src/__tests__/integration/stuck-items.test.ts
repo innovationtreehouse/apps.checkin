@@ -1,5 +1,7 @@
 /** The Problems list's read and retry ports: receipts stuck in the flow or on a failed push, timed by their first failure. */
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { receiptService } from "../../services/receiptService";
@@ -112,6 +114,50 @@ describeDb("stuckItems", () => {
   it("refuses a step it does not know", async () => {
     const id = await makeReceipt("flow_error", { firstFailedAt: new Date() });
     await expect(retryStuckItem({ id, step: "elsewhere" })).rejects.toThrow();
+  });
+});
+
+const SINCE_SUCCESS_SQL = readFileSync(join(__dirname, "../../../prisma/migrations/20261108140000_stuck_failure_since_success/migration.sql"), "utf8");
+
+/** Runs the corrective backfill's update outside its BEGIN/COMMIT, one statement per call. */
+async function retimeStuck(): Promise<void> {
+  const statements = SINCE_SUCCESS_SQL.replace(/^\s*--.*$/gm, "").split(";").map((s) => s.trim());
+  for (const statement of statements.filter((s) => s && s !== "BEGIN" && s !== "COMMIT")) await db.$executeRawUnsafe(statement);
+}
+
+async function history(receiptId: string, rows: Array<[action: string, at: string]>): Promise<void> {
+  for (const [action, at] of rows) await db.receiptAuditLog.create({ data: { receiptId, action, changedAt: new Date(at) } });
+}
+
+describeDb("first failure backfill since the last success", () => {
+  const OLD = "2026-09-01T10:00:00.000Z";
+  const NEW = "2026-11-07T10:00:00.000Z";
+
+  it("times a stuck receipt from its failure after its last success, not an older resolved one", async () => {
+    const flow = await makeReceipt("flow_error", { firstFailedAt: new Date(OLD) });
+    await history(flow, [["pipeline_failed", OLD], ["pipeline_transition", "2026-09-02T10:00:00.000Z"], ["pipeline_failed", NEW]]);
+    const push = await makeReceipt("receipt_finalized", { firstFailedAt: new Date(OLD) });
+    await history(push, [["donor_sync_failed", OLD], ["finalized", "2026-09-02T10:00:00.000Z"], ["push_failed", NEW], ["push_failed", "2026-11-08T10:00:00.000Z"]]);
+
+    await retimeStuck();
+
+    expect((await failure(flow)).firstFailedAt).toEqual(new Date(NEW));
+    expect((await failure(push)).firstFailedAt).toEqual(new Date(NEW));
+  });
+
+  it("leaves a receipt that is not stuck, or has no failure since its last success, as it was", async () => {
+    const pushed = await makeReceipt("receipt_finalized", { pushed: true, firstFailedAt: new Date(OLD) });
+    await history(pushed, [["push_failed", NEW]]);
+    const noneSince = await makeReceipt("flow_error", { firstFailedAt: new Date(OLD) });
+    await history(noneSince, [["pipeline_failed", OLD], ["pipeline_transition", NEW]]);
+    const neverFailed = await makeReceipt("flow_error");
+    await history(neverFailed, [["pipeline_failed", NEW]]);
+
+    await retimeStuck();
+
+    expect(await failure(pushed)).toEqual({ firstFailedAt: new Date(OLD), lastError: "failure text" });
+    expect(await failure(noneSince)).toEqual({ firstFailedAt: new Date(OLD), lastError: "failure text" });
+    expect(await failure(neverFailed)).toEqual({ firstFailedAt: null, lastError: null });
   });
 });
 
