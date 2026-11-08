@@ -24,6 +24,7 @@ interface Receipt {
   inventoryUnconfirmedAt: string | null;
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
+  matchingPendingSince?: string | null;
 }
 interface LineItem {
   receiptLineItemId: number;
@@ -160,7 +161,10 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           <Title order={3}>{parsed.vendorName ?? "Receipt"} · {formatCents(parsed.receiptTotalCents, parsed.currency)}</Title>
           <Text size="sm" c="dimmed">{parsed.receiptDate ?? "No date"}</Text>
         </Stack>
-        <Badge size="lg" variant="light" color={stateColor(receipt.state, parsed.openBackorders)}>{stateLabel(receipt.state, parsed.openBackorders)}</Badge>
+        <Group gap="xs">
+          {receipt.matchingPendingSince && <Badge size="lg" variant="light" color="yellow">Matching pending</Badge>}
+          <Badge size="lg" variant="light" color={stateColor(receipt.state, parsed.openBackorders)}>{stateLabel(receipt.state, parsed.openBackorders)}</Badge>
+        </Group>
       </Group>
       <Group gap="xl" align="start" my="md">
         <Field label="Total" value={formatCents(parsed.receiptTotalCents, parsed.currency)} money />
@@ -170,6 +174,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Receipt id" value={parsed.receiptId ?? "—"} mono />
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
+      {receipt.matchingPendingSince && (
+        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. It retries daily."}</Text>
+      )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && (
         <Text size="sm" c="dimmed" mb="md">Applying — the system retries this automatically.</Text>

@@ -138,7 +138,7 @@ export const receiptService = {
     // Compare-and-set: a concurrent proceed (manual or auto) that already moved it wins.
     const { count } = await db.receivedReceipt.updateMany({
       where: { id: receiptId, state: received.state },
-      data: { state: nextState },
+      data: { state: nextState, matchingPendingSince: null },
     });
     if (count !== 1) throw httpError(409, "Receipt was already proceeded");
 

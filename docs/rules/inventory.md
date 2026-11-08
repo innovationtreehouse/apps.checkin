@@ -142,6 +142,14 @@ How the pieces are built is described in
   changes a receipt whose goods are already in stock.
   `[Decision — deliberate limit]`
 
+- When a receipt arrives while the catalog is unavailable, its lines are not
+  matched and the receipt shows "Matching pending". Matching that couldn't run
+  is retried once a day while the receipt waits for review, for up to five
+  days; it fills only lines nobody has decided, and a receipt whose every line
+  is then decided is sent to apply, as on arrival. After five days the lines
+  are left for mapping by hand and finance is alerted once.
+  `[Decision — owner]`
+
 - A receipt's lines can be edited only while it waits for review. Once it is
   sent to apply, its lines can't be edited, even when the apply fails. A
   failure that may be temporary is retried automatically once a day, up to

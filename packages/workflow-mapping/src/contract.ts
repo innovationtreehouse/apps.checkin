@@ -4,7 +4,7 @@
  * sibling library. Every crossing is one port; flipping a crossing swaps one
  * binding. Unbound ports fall back to the inert adapters below.
  */
-import { NotWiredError } from "@checkin/component-kit";
+import { NotWiredError, type OnFailure } from "@checkin/component-kit";
 import { z } from "zod";
 import type {
   CatalogCheckReferences,
@@ -175,4 +175,6 @@ export interface WorkflowRuntimeConfig {
   inventorySink?: InventorySink;
   catalogEventSource?: CatalogEventSource;
   alerts?: WorkflowAlerts;
+  /** Lane "matching": a receipt whose matching stopped retrying because the catalog stayed unavailable. */
+  onFailure?: OnFailure;
 }
