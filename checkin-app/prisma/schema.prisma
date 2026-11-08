@@ -376,6 +376,7 @@ model Household {
   orgMembership     OrgMembership?
   trustedAdults     TrustedAdult[]
   emergencyContacts EmergencyContact[]
+  personBgRequests  OrgMembershipProcess[] @relation("PersonBgRequestedForHousehold")
 }
 
 /// An emergency contact for a household. Modeled as a separate entity (1 household
@@ -548,6 +549,12 @@ model OrgMembershipProcess {
   /// @sensitivity:public
   subjectPersonId       Int?
   subjectPerson         Person?                    @relation("PersonBgSubject", fields: [subjectPersonId], references: [id])
+  /// The household whose consent opened this PERSON_BG review, set once at opening
+  /// and never changed. Null on every other kind.
+  /// @sensitivity:public
+  requestedForHouseholdId Int?
+  // Restrict, as on orgMembershipId: a household is archived, never deleted.
+  requestedForHousehold Household?               @relation("PersonBgRequestedForHousehold", fields: [requestedForHouseholdId], references: [id], onDelete: Restrict)
   /// @sensitivity:public
   kind                  OrgMembershipProcessKind
   /// @sensitivity:internal
@@ -638,6 +645,7 @@ model OrgMembershipProcess {
   attestations BackgroundCheckAttestation[]
 
   @@index([orgMembershipId])
+  @@index([requestedForHouseholdId])
   @@index([status])
 }
 

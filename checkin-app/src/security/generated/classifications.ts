@@ -93,6 +93,7 @@ export const classifications = {
         id: 'public',
         orgMembershipId: 'public',
         subjectPersonId: 'public',
+        requestedForHouseholdId: 'public',
         kind: 'public',
         status: 'internal',
         archivedFromStatus: 'internal',
@@ -620,6 +621,7 @@ export const relations = {
         orgMembership: { model: 'OrgMembership', isList: false },
         trustedAdults: { model: 'TrustedAdult', isList: true },
         emergencyContacts: { model: 'EmergencyContact', isList: true },
+        personBgRequests: { model: 'OrgMembershipProcess', isList: true },
     },
     EmergencyContact: {
         household: { model: 'Household', isList: false },
@@ -631,6 +633,7 @@ export const relations = {
     OrgMembershipProcess: {
         orgMembership: { model: 'OrgMembership', isList: false },
         subjectPerson: { model: 'Person', isList: false },
+        requestedForHousehold: { model: 'Household', isList: false },
         zohoSigner: { model: 'Person', isList: false },
         noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
