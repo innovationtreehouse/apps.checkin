@@ -5,7 +5,7 @@ import { systemActor } from "@/lib/auditActor";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
-import { householdCheckStandings, householdQualifies, liveBgThreshold } from "@/lib/membership/checkStanding";
+import { householdCheckStandings, householdQualifies, jsonField, liveBgThreshold } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess, type ProcessStatus } from "@/lib/membership/lifecycle";
@@ -82,8 +82,8 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     if (!process?.orgMembershipId) return { steps: [] };
     const orgMembershipId = process.orgMembershipId;
 
-    const members = await householdCheckStandings(tx, householdId, threshold);
-    const blockingNow = members.flatMap((m) => m.disputing.filter((r) => r.status === "BLOCKED").map((r) => r.id));
+    const standings = await householdCheckStandings(tx, householdId, threshold);
+    const blockingNow = standings.members.flatMap((m) => m.disputing.filter((r) => r.status === "BLOCKED").map((r) => r.id));
     const steps: SettleStep[] = [];
     let status: OrgMembershipProcessStatus = process.status;
     let cleared = !!process.bgClearedAt;
@@ -112,7 +112,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         return { steps: ["blocked"], paidReject: !!process.paidAt };
     }
 
-    if (cleared || !householdQualifies(members)) return { steps };
+    if (cleared || !householdQualifies(standings)) return { steps };
     const now = new Date();
 
     if (STAMPS.includes(status)) {
@@ -157,17 +157,13 @@ async function recordedBlockers(tx: TxClient, processId: number): Promise<number
     });
     const ids: number[] = [];
     for (const row of rows) {
-        const recorded = field(row.newData, "blockingReviewIds");
+        const recorded = jsonField(row.newData, "blockingReviewIds");
         if (Array.isArray(recorded)) ids.push(...recorded.filter((v): v is number => typeof v === "number"));
-        if (field(row.newData, "status") === "BLOCKED" && field(row.oldData, "status") !== "BLOCKED") {
-            return field(row.newData, "reason") === BLOCK_REASON ? ids : null;
+        if (jsonField(row.newData, "status") === "BLOCKED" && jsonField(row.oldData, "status") !== "BLOCKED") {
+            return jsonField(row.newData, "reason") === BLOCK_REASON ? ids : null;
         }
     }
     return null;
-}
-
-function field(json: Prisma.JsonValue | null, key: string): Prisma.JsonValue | undefined {
-    return json !== null && typeof json === "object" && !Array.isArray(json) ? json[key] : undefined;
 }
 
 function audit(tx: TxClient, processId: number, householdId: number, oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) {
