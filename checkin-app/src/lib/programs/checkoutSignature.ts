@@ -9,6 +9,9 @@ import { config } from "@/lib/config";
  * it names were put in the cart by their own household.
  */
 
+/** Why an ended program's checkout is refused: no payment is offered, the Board settles by hand. */
+export const PROGRAM_ENDED_PAYMENT = "This program has ended. The board will contact you about payment.";
+
 function hmacKey(): Buffer {
     // A key derived for this use only, so no other NEXTAUTH_SECRET-keyed token can stand in for it.
     return crypto.createHash("sha256").update(`program-checkout:${config.nextAuthSecret()}`).digest();

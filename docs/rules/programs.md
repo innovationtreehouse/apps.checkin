@@ -357,6 +357,12 @@ Things the app takes as true because they are handled outside it.
 - One week after the off-sale date the board is emailed the claims still unpaid,
   once per program.  [Decision]
 
+- An ended program offers no payment. The app signs no checkout for it and sends
+  its families no reminder to pay, and the next daily run takes both store items
+  off sale, retrying each day until the store confirms. The Board settles a
+  claim still unpaid by hand. A payment that arrives anyway, from a checkout
+  opened before the end, still activates the claim it pays for.  [Decision — Owner ruling, 2026-11-08]
+
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]
 
