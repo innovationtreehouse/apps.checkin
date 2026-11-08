@@ -587,6 +587,18 @@ describeDb("capital review", () => {
     expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
   });
 
+  it("a 403 from capital review is our bug, not the accepting person's permission", async () => {
+    const id = await receiptGift();
+    capital = { submit: async () => { throw new ServiceError(403, "Forbidden"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
+    configure();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
+    logged.mockRestore();
+    expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/accepted.*fault in our software/) });
+    expect((failed as Error).message).not.toMatch(/Forbidden|accept it again/);
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
+  });
+
   it("a gift with a line in capital review waits on it before booking", async () => {
     const id = await receiptGift();
     captureCapital([{ giftSource: "receipt", giftId: id }]);

@@ -139,6 +139,20 @@ describe("in-kind gift page", () => {
     expect(mockReload).not.toHaveBeenCalled();
   });
 
+  it("tells a viewer without permission they can't load, and keeps the load open for someone who can", async () => {
+    mockGift = { ...manual, inventoryLoadedAt: null };
+    mockApi.mockRejectedValue(new HttpError("Forbidden", 403));
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "You don't have permission to load goods into inventory.", color: "red" }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Can't be loaded: adjust stock by hand" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load again" })).toBeEnabled();
+  });
+
   it("offers no retry to the Board, which cannot load inventory", () => {
     mockCanWrite = false;
     mockGift = { ...manual, inventoryLoadedAt: null };

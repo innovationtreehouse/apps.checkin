@@ -66,4 +66,17 @@ describe("in-kind gifts without a receipt: retrying a failed load", () => {
     );
     expect(mockReload).not.toHaveBeenCalled();
   });
+
+  it("tells a viewer without permission they can't load, and keeps the load open for someone who can", async () => {
+    mockApi.mockRejectedValue(new HttpError("Forbidden", 403));
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Retry load" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "You don't have permission to load goods into inventory.", color: "red" }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Can't be loaded: adjust stock by hand" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry load" })).toBeEnabled();
+  });
 });

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
-import { api, errorMessage, isRefusal, useCanWrite, useLoad, when } from "../components/api";
+import { api, errorMessage, isRefusal, loadError, useCanWrite, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError } from "@checkin/component-ui";
@@ -110,7 +110,7 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
       onReload();
     } catch (e) {
       if (isRefusal(e)) setRefusal(e.message);
-      else notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(e), color: "red", autoClose: false });
+      else notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(loadError(e)), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }
