@@ -28,8 +28,8 @@ model WorkflowAppliedOrgEvent {
   @@map("applied_org_events")
 }
 
-// A catalog OrgEvent whose reaction failed (id = the catalog event id). Catch-up retries it by
-// id; the row is deleted once it applies.
+// A catalog OrgEvent whose reaction failed (id = the catalog event id). It waits for a person's
+// retry; the row is deleted once it applies. failedAt is its first failure, failureReason its latest.
 model WorkflowFailedOrgEvent {
   /// @sensitivity:public
   id            Int      @id
@@ -70,13 +70,17 @@ model ReceivedReceipt {
   // Lease held while one caller pushes; cleared when the push settles, reclaimable once stale.
   /// @sensitivity:public
   applyClaimedAt     DateTime? @map("apply_claimed_at")
-  // Sweep attempts in a row that left the receipt applying; the sweep moves it to apply_failed at the cap.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:public
   applySweepAttempts Int       @default(0) @map("apply_sweep_attempts")
-  // Set when inventory may have taken the delta without its stamp (a lost stamp, or a sweep give-up); never cleared, so lines stay locked.
+  // When a push first failed; set while null, cleared when the receipt resolves. Set means stuck,
+  // with its latest error in validationNotes.
+  /// @sensitivity:public
+  applyFirstFailedAt DateTime? @map("apply_first_failed_at")
+  // Set when inventory may have taken the delta without its stamp; never cleared, so lines stay locked.
   /// @sensitivity:public
   inventoryUnconfirmedAt DateTime? @map("inventory_unconfirmed_at")
-  // Set when matching was deferred because the catalog was unreachable; a daily step re-runs it.
+  // Set when matching was deferred because the catalog was unreachable; cleared when a person runs it or sends the receipt.
   /// @sensitivity:internal
   matchingPendingSince   DateTime? @map("matching_pending_since")
   /// @sensitivity:public

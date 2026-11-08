@@ -11,7 +11,7 @@ function provisionalsProblem(items: { gtin13: string; name: string }[]): string 
 
 /** The alert port a catalog-event consumer library binds: an email to the Board. */
 export function orgEventAlerts(
-  template: "board.inventoryEventsStuck" | "board.receiptMappingEventsStuck",
+  template: "board.inventoryEventsStuck",
   errorLabel: string,
 ) {
   return {

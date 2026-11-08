@@ -4,7 +4,7 @@
  * sibling library. Every crossing is one port; flipping a crossing swaps one
  * binding. Unbound ports fall back to the inert adapters below.
  */
-import { NotWiredError, type OnFailure } from "@checkin/component-kit";
+import { NotWiredError } from "@checkin/component-kit";
 import { z } from "zod";
 import type {
   CatalogCheckReferences,
@@ -120,12 +120,6 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]>;
 }
 
-/** Alerts the host binds to reach a person. */
-export interface WorkflowAlerts {
-  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
-  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
-}
-
 // ── Inert adapters ───────────────────────────────────────────────────────────
 // A port that is not wired throws NotWiredError: a push leaves the receipt waiting in apply_failed,
 // and a catalog read says "not connected" rather than "no match". None reports success or an empty answer.
@@ -174,7 +168,4 @@ export interface WorkflowRuntimeConfig {
   donationSink?: DonationSink;
   inventorySink?: InventorySink;
   catalogEventSource?: CatalogEventSource;
-  alerts?: WorkflowAlerts;
-  /** Lane "matching": a receipt whose matching stopped retrying because the catalog stayed unavailable. */
-  onFailure?: OnFailure;
 }

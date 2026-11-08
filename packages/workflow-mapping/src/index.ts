@@ -10,11 +10,10 @@ export * from "./workflows";
 export { ingestReceipt, type IngestResult } from "./services/receiptIntakeService";
 export * from "./services/receiptService";
 export * from "./services/lineItemService";
-export { retryPendingMatching, MATCHING_RETRY_DAYS } from "./services/pendingMatching";
 export { receivingOutcomes, type ReceivingOutcome } from "./services/receivingOutcomes";
 export { receivingStateCounts, type ReceivingStateCount } from "./services/stateCounts";
 export { orgEventConsumer, catchUpOrgEvents } from "./services/orgEventConsumer";
 export * as routes from "./routes";
 export type { WorkflowRouteCtx, WorkflowBag, WorkflowRouteHandler } from "./routes";
 
-export { stuckItems } from "./stuckItems";
+export { retryStuckItem, stuckItems } from "./stuckItems";
