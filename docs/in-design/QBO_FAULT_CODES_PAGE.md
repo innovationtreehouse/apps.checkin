@@ -169,9 +169,10 @@ Three PRs, in order. None is stacked on another.
 - **FC2. Closed books on the page.** Fault 6210 (closed books) ends as "Not
   booked", not as a kinded failure, so it never reaches the port and never shows
   here. Should it be recorded too, under its own "closed books" pill?
-- **FC3. Reclassifying from the page.** The code table stays in code, edited by a PR
-  with a test per entry. Should finance instead mark a code settings or data on the
-  page? That would make the table data, not code, and needs its own design.
-- **FC4. Counts after a reclassification.** Counts keep running across a change to
-  the code table. Should the page show counts since the code was last classified
-  instead? Recommended: no; the last-seen date already shows recent activity.
+
+## Rulings
+
+| Q | Ruling |
+|---|---|
+| FC3. Reclassifying from the page | No. The code table stays in the QuickBooks package, edited by a PR with a test per entry. The page only reads it. |
+| FC4. Counts after a reclassification | No reset. Counts keep running across a change to the code table; the last-seen date shows recent activity. |
