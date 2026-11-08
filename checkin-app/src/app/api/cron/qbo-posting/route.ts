@@ -11,14 +11,14 @@ const JOB = "qbo-posting";
 
 /**
  * The counts of a drain that ran: how it stopped, and whether its duplicate check could read
- * QuickBooks. Expense says a connection stop with `stoppedOnConnection`; in-kind says every stop's
- * kind with `stopKind`, and sets `stoppedAfterFailures` for each.
+ * QuickBooks. Expense says a connection stop with `stoppedOnConnection`; in-kind's drain never
+ * stops on failures.
  */
 type DrainRun = {
-    stoppedAfterFailures: boolean;
+    stoppedAfterFailures?: boolean;
     stoppedOnConnection?: boolean;
     stopKind?: string | null;
-    refusalStop: { code: string } | null;
+    refusalStop?: { code: string } | null;
     sweep: { full: boolean } | { failed: true };
 };
 
@@ -47,8 +47,8 @@ function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
  * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the
- * run as its error. So is a drain stopped by its failure streak, a broken QuickBooks connection or
- * a fault code QuickBooks refused three times; a duplicate check that could not read QuickBooks;
+ * run as its error. So is expense's drain stopped by its failure streak, a broken QuickBooks
+ * connection or a fault code QuickBooks refused three times; a duplicate check that could not read QuickBooks;
  * and an in-kind lane missing a books-map role while gifts wait. The run ends in finishRun, which
  * hands the lanes' kinded failures to the incident engine. Counts go to the log only; the
  * response body is `{}`.

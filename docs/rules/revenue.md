@@ -74,7 +74,10 @@ Things the app takes as true because they are handled outside it.
 - Apart from the payment-plan read below, Finance Ops belongs to the board alone,
   and the board approves payment plans.  [Unsettled — which superuser]
 
-- Only the board and finance read membership and program payment plans.  [Decision — owner]
+- Only the board and finance read a scholarship or payment-plan request, for a
+  membership or a program: that one was asked for, which kind, its seat hold, and
+  whether it was approved or refused. No other staff role sees one by default. A
+  household's leads read their own household's requests.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
 
 - The store is the source of truth for what was paid. The app records no
   payment fact of its own.  [Decision]
@@ -428,9 +431,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   board. Each change is recorded. Gifts of goods have no daily or dollar limit.
   [Decision — owner]
 
-- A gift of goods that keeps failing to book stops retrying and goes to finance,
-  so it can't hold back newer gifts. When a run stops because several gifts in a
-  row failed, finance is alerted.  [Decision]
+- A gift of goods that fails to book goes to finance at once and waits there,
+  stuck, until finance books it or a person retries it from the Problems list.
+  The app never retries it by itself, and it never holds back newer gifts.
+  [Decision — owner, 2026-11-08]
 
 - A gift of goods whose entry in the books is removed, voided or changed after it
   booked goes back to finance, which matches it again or skips it with a reason.

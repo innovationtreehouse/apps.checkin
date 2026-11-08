@@ -80,6 +80,19 @@ describeDb("submitter review", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     const after = await receiptService.setReimbursement(r.id, { needsReimbursement: false });
     expect(after).toMatchObject({ needsReimbursement: false, reimburseePersonId: null, reimbursementFor: null });
+    const rows = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: "reimbursement_updated" }, orderBy: { id: "asc" } });
+    expect(rows).toMatchObject([
+      { userId: ALICE.id, fieldChanged: "needsReimbursement", valueBefore: "true", valueAfter: "false" },
+      { userId: ALICE.id, fieldChanged: "reimburseePersonId", valueBefore: String(ALICE.id), valueAfter: null },
+    ]);
+  });
+
+  it("ticking the reimbursement audits the uploader named as reimbursee", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    await receiptService.setReimbursement(r.id, { needsReimbursement: false });
+    await receiptService.setReimbursement(r.id, { needsReimbursement: true });
+    const last = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, fieldChanged: "reimburseePersonId", action: "reimbursement_updated" }, orderBy: { id: "desc" } });
+    expect(last).toMatchObject({ valueBefore: null, valueAfter: String(ALICE.id) });
   });
 });
 

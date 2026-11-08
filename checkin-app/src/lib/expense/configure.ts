@@ -103,9 +103,9 @@ export const signoff: SignoffDirectory = {
     return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ personId: id, name }));
   },
 
-  async addNonMemberAdult(name) {
+  async addNonMemberAdult(name, actorId) {
     const { addNonMemberAdult } = await import("@/lib/person/ownHousehold");
-    return (await addNonMemberAdult(await db(), name)).id;
+    return (await addNonMemberAdult(await db(), name, actorId)).id;
   },
 };
 

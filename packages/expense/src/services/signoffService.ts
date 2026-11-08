@@ -214,7 +214,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, pri
   if ("newPerson" in choice && await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: null }, actor.userId)) {
     throw new ServiceError(403, conflicted);
   }
-  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim());
+  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim(), actor.userId);
   if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
   if (!(await dir.isAdult(personId))) throw new ServiceError(400, "Only an adult can be named as reimbursee");
   if (await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: personId }, actor.userId)) {

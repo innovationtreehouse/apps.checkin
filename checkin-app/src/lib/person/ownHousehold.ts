@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { personActor } from "@/lib/auditActor";
 import { withTx, type DbClient } from "@/lib/db-client";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { mintPersonId } from "@/lib/person/mintId";
@@ -24,8 +25,22 @@ export async function createInOwnHousehold(db: DbClient, data: OwnHouseholdPerso
     return person;
 }
 
-/** Adds a non-member adult known only by name, declared an adult by whoever adds them. */
-export async function addNonMemberAdult(db: DbClient, name: string): Promise<{ id: number; name: string }> {
-    const person = await createInOwnHousehold(db, { name: name.trim(), isDeclaredAdult: true });
+/** Adds a non-member adult known only by name, declared an adult by `actorId`, who is audited as adding them. */
+export async function addNonMemberAdult(db: DbClient, name: string, actorId: number): Promise<{ id: number; name: string }> {
+    const actor = personActor(actorId);
+    const person = await withTx(db, async (tx) => {
+        const created = await createInOwnHousehold(tx, { name: name.trim(), isDeclaredAdult: true });
+        await tx.auditLog.create({
+            data: {
+                ...actor,
+                action: "CREATE",
+                tableName: "Person",
+                affectedEntityId: created.id,
+                secondaryAffectedEntity: created.householdId,
+                newData: { name: created.name, isDeclaredAdult: true, isHouseholdLead: true },
+            },
+        });
+        return created;
+    });
     return { id: person.id, name: person.name };
 }

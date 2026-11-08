@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import type { FailureKind, OnFailure } from "@checkin/component-kit";
+import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
@@ -214,8 +214,8 @@ export interface ReceiptReimbursees {
   byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
   /** Whether this person has an account to sign in with, and so confirms for themself. */
   hasAccount(personId: number): Promise<boolean>;
-  /** Adds a non-member adult known only by name, in a household of their own. */
-  addNonMemberAdult(name: string): Promise<ReimburseeOption>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`. */
+  addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
 
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
@@ -356,7 +356,6 @@ export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
   org: () => Promise<OrgIdentity>;
-  onFailure?: OnFailure;
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
