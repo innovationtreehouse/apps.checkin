@@ -12,6 +12,7 @@ import {
   type QboRealm,
   type RefresherToken,
 } from "@checkin/quickbooks";
+import { KindedError } from "@checkin/component-kit";
 import { logger } from "@/lib/logger";
 import { invokeRefresher } from "@/lib/tokenRefresher";
 
@@ -25,6 +26,9 @@ export type InvokeRefresher = (functionName: string) => Promise<unknown>;
 /** Shown on System Status and carried by every QuickBooks call while the login is revoked. */
 export const QBO_RECONNECT = "QuickBooks needs reconnecting: its login was revoked. Finance reconnects it by re-running the QuickBooks consent.";
 
+const QBO_WRONG_COMPANY = "QuickBooks settings are wrong: the token refresher holds a different QuickBooks company than this instance's QBO_REALM_ID. Finance checks which company the consent was run for.";
+const QBO_MALFORMED = "QuickBooks settings are wrong: the token refresher's answer is not a QuickBooks token, so QBO_REFRESHER_FN may name the wrong function. Finance checks it with the infra operator.";
+
 const invokeLambda: InvokeRefresher = (functionName) =>
   invokeRefresher({ functionName, service: "QBO token refresher", reconnect: QBO_RECONNECT });
 
@@ -32,7 +36,7 @@ function parseRefresherToken(value: unknown): RefresherToken {
   const v = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
   const { accessToken, expiresAt, realmId, clientId } = v;
   if (typeof accessToken !== "string" || !accessToken || typeof expiresAt !== "number" || typeof realmId !== "string" || typeof clientId !== "string") {
-    throw new Error("QBO token refresher returned a malformed answer");
+    throw new KindedError("settings", QBO_MALFORMED);
   }
   return { accessToken, expiresAt, realmId, clientId };
 }
@@ -57,7 +61,7 @@ export function lambdaAccessTokenSource(opts: {
 
   const fetchToken = async (): Promise<RefresherToken> => {
     const token = parseRefresherToken(await invoke(opts.functionName));
-    if (token.realmId !== opts.realmId) throw new Error("QBO token refresher holds a different realm");
+    if (token.realmId !== opts.realmId) throw new KindedError("settings", QBO_WRONG_COMPANY);
     assertQboClientId(opts.checkinEnv, token.clientId, opts.devClientId);
     return token;
   };

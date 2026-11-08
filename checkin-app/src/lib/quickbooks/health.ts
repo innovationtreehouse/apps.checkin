@@ -37,7 +37,8 @@ async function connectionChecks(): Promise<ConfigCheck[]> {
     try {
         await withTimeout(built.tokens.current(), "The token refresher");
     } catch (err) {
-        const detail = kindOf(err) === "connection" ? message(err) : `Off: the token refresher failed (${message(err)}).`;
+        const kind = kindOf(err);
+        const detail = kind === "connection" || kind === "settings" ? message(err) : `Off: the token refresher failed (${message(err)}).`;
         return [{ id, label, ok: false, detail }, ...notRead(false)];
     }
     const company = built.env === "production" ? "production" : "sandbox";

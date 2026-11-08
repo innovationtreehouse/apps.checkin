@@ -36,6 +36,13 @@ describe("receipt mailbox connection row", () => {
         expect(row).toMatchObject({ ok: false, detail: expect.stringMatching(/needs reconnecting.*Ops reconnects/) });
     });
 
+    it("says what ops must check when the refresher points at the wrong mailbox", async () => {
+        const wrong = new KindedError("settings", "The receipt mailbox settings are wrong: the Gmail token refresher holds a different mailbox than RECEIPT_MAILBOX_ADDRESS. Ops checks which mailbox the consent was run for.");
+        current.mockRejectedValue(wrong);
+        const [row] = await getReceiptMailboxHealth();
+        expect(row).toMatchObject({ ok: false, detail: wrong.message });
+    });
+
     it("says the refresher failed on any other failure", async () => {
         current.mockRejectedValue(new KindedError("system", "Gmail token refresher gmail-refresher failed"));
         const [row] = await getReceiptMailboxHealth();
