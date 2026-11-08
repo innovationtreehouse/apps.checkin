@@ -53,6 +53,15 @@ describe('refused files', () => {
     });
 });
 
+describe('a message with no receipt', () => {
+    it('says no receipt was found and how to send one, naming no file', async () => {
+        const html = await htmlFor({ receiptId: null, mine: false, creditedName: null, refused: [{ file: 'your email', reason: 'no_receipt' }] });
+        expect(html).toContain('We found no receipt in it');
+        expect(html).toContain('https://app.example.org/receipts/upload');
+        expect(html).not.toContain('We could not accept these files');
+    });
+});
+
 describe('the acknowledgement body', () => {
     it("tells the credited sender it is theirs, links it, and says how to say 'not me'", async () => {
         const html = await htmlFor();
