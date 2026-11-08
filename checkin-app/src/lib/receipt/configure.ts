@@ -80,6 +80,13 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
   return { id, name, firstName: given, lastName, isAdult };
 }
 
+/** Each person's name; the library passes ids already resolved through merges. */
+async function personNames(personIds: number[]): Promise<Map<number, string>> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
+  return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
+}
+
 /**
  * The one live, sign-in-verified person whose email or approved mail alias is exactly this
  * address and who would pass the `receipt-submitter` gate if signed in, else null. Claims come
@@ -88,13 +95,6 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
  * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
  * holder who typed it.
  */
-/** Each person's name; the library passes ids already resolved through merges. */
-async function personNames(personIds: number[]): Promise<Map<number, string>> {
-  const { default: prisma } = await import("@/lib/prisma");
-  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
-  return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
-}
-
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
   const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
