@@ -591,6 +591,21 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("a retry while the catalog database does not exist answers 503 naming who fixes it and changes nothing", async () => {
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, line, "60");
+    await db.expenseLineItem.update({ where: { id: line }, data: { partNumber: "PN-1" } });
+    const missing = async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); };
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: missing }, quickbooks: { posting: async () => posting() } });
+
+    await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
   it("a refused retry answers 409 and records no retry", async () => {
     const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     await db.expenseLineItem.update({ where: { id: line }, data: { manualQbAccount: null } });

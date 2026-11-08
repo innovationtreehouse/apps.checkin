@@ -13,6 +13,10 @@ setupIntegrationDb();
 const CATALOG_GTIN = "4006381333931";
 const PROVISIONAL = buildProvisionalGtin13(123);
 
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true });
+
 const post = (gtin13: string) =>
   create({ req: new Request("http://test/api/inventory/org-items", { method: "POST", body: JSON.stringify({ gtin13 }) }), params: {} });
 
@@ -67,6 +71,16 @@ describeDb("POST org-items", () => {
     configureLocalInventory({
       auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
       org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+    });
+    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(await db.orgItem.count()).toBe(0);
+  });
+
+  it("answers 503 \"No catalog is connected\" for an unbound catalog from another copy of the kit", async () => {
+    configureLocalInventory({
+      auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
+      org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+      catalog: { getActiveItem: async () => { throw foreignNotWired("catalog.getActiveItem"); } },
     });
     await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
     expect(await db.orgItem.count()).toBe(0);
