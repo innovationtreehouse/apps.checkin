@@ -373,7 +373,7 @@ describe('in-kind decision routes', () => {
 describe('in-kind settle route', () => {
     it('replies to finance with the settle result and no donor', async () => {
         signIn(7, { isFinance: true });
-        const settled = { id: 1, kind: 'withdrawal', settledAt: '2026-10-17T00:00:00.000Z' };
+        const settled = { id: 1, kind: 'replay', settledAt: '2026-10-17T00:00:00.000Z' };
         const impl = jest.fn(async () => ({ InKindSettleResult: { ...settled, donorLastName: 'Doe' } }));
         const res = await handler(SETTLE, impl)(
             new NextRequest('http://localhost/api/donations/in-kind/receipt/1/settle', { method: 'POST' }),

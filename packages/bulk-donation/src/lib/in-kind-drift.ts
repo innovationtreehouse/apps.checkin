@@ -25,11 +25,10 @@ interface ReadEntry {
 export async function checkInKindQbDrift(orgId: string, client: QuickBooksClient, now = new Date()): Promise<InKindDriftCounts> {
   const [postings, receipts] = await Promise.all([
     db.inKindPosting.findMany({ where: { orgId, matchState: { in: [QB_MATCH_STATE.CREATED, QB_MATCH_STATE.MATCHED] } }, orderBy: { id: "asc" } }),
-    db.inKindDonation.findMany({ where: { orgId }, select: { id: true, receiptId: true, withdrawnAfterMoneyAt: true } }),
+    db.inKindDonation.findMany({ where: { orgId }, select: { id: true, receiptId: true } }),
   ]);
   const receiptOf = new Map(receipts.map((r) => [r.id, r]));
-  const checkable = postings.filter((p) => p.source !== "receipt" || !receiptOf.get(p.giftId)?.withdrawnAfterMoneyAt);
-  const slice = todaysSlice(checkable, MAX_DRIFT_CHECKS_PER_RUN, now);
+  const slice = todaysSlice(postings, MAX_DRIFT_CHECKS_PER_RUN, now);
   if (slice.length === 0) return { checked: 0, drifted: 0 };
 
   const bookings = await db.inKindBooking.findMany({ where: { orgId, OR: slice.map((p) => ({ source: p.source, giftId: p.giftId })) } });
