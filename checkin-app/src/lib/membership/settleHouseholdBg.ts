@@ -30,8 +30,9 @@ import {
  *   from (`resumeStatus`);
  * - the household qualifies and the application is waiting on its check → its
  *   check is stamped cleared and it converges on payment;
- * - otherwise, consent is recorded and no review is open for the household → a
- *   check review with no person is opened for it (`openRequestedReview`).
+ * - otherwise, consent is recorded, no lead is cleared, nobody is disputed and no
+ *   review is open for the household → a check review with no person is opened for it
+ *   (`openRequestedReview`).
  *
  * A sent-back review keeps its person DISPUTED, which holds the clearance but does
  * not block: blocking on it would undo the resume a reset exists to give. A denied
@@ -70,7 +71,7 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
  */
 export async function settleApplicationsAwaitingCheck(): Promise<{ households: number; opened: number; failed: number }> {
     const apps = await prisma.orgMembershipProcess.findMany({
-        where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgConsentAt: { not: null }, bgClearedAt: null, ...openProcess.where, NOT: { status: "BLOCKED" } },
+        where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgConsentAt: { not: null }, bgClearedAt: null, ...openProcess.where },
         select: { orgMembership: { select: { householdId: true } } },
     });
     const households = [...new Set(apps.flatMap((a) => (a.orgMembership ? [a.orgMembership.householdId] : [])))];
@@ -146,6 +147,8 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
 
     if (cleared) return { steps };
     if (!householdQualifies(standings)) {
+        // A new review helps only a household lacking a cleared lead; it cannot lift a dispute.
+        if (standings.members.some((m) => m.standing === "DISPUTED" || (m.isHouseholdLead && m.standing === "CLEARED"))) return { steps };
         return (await openRequestedReview(tx, { ...process, status }, householdId)) ? { steps: [...steps, "opened"] } : { steps };
     }
     const now = new Date();

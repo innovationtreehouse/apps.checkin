@@ -136,7 +136,7 @@ describe('settleHouseholdBg — clearing', () => {
     it('does not clear on an expired lead check, nor on a cleared non-lead alone', async () => {
         const f = await family({ leadCheck: EXPIRED, otherCheck: FRESH });
         const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
-        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['opened']);
         expect((await row(id)).bgClearedAt).toBeNull();
     });
 

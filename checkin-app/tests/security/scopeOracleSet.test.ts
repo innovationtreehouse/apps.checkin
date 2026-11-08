@@ -67,6 +67,7 @@ const ORACLES = [
     'receipt-routes.test.ts',
     'receipt-strip.test.ts',
     'reference-conflict-strip.test.ts',
+    'review-queue-strip.test.ts',
     'rsvp-program-scope.test.ts',
     'scopeValidators.test.ts',
     'shop-certifications-strip.test.ts',

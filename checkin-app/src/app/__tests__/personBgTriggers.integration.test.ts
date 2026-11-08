@@ -234,7 +234,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         const subject = await makePerson('subj-rev-subject', hh.id, { dateOfBirth: ADULT_DOB });
         const insider = await makePerson('subj-rev-insider', hh.id, { isBackgroundCheckReviewer: true });
         const proc = await prisma.orgMembershipProcess.create({
-            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
         });
         await expect(attest(insider.id, proc.id, { result: 'APPROVE' })).rejects.toMatchObject({
             code: 'same_household_applicant',
