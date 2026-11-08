@@ -554,7 +554,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
  * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
  * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
  * A send the callee refuses would be refused again, so finance sees why instead of being told to resend.
- * A 401 or 403 from the callee is our wiring, never the accepting person's permission: a 500 that says so.
+ * A bug, such as a 401 or 403 from the callee, is our wiring, never the accepting person's permission: a 500 that says so.
  */
 async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
   try {
@@ -565,8 +565,8 @@ async function sendToCapitalReview(orgId: string, source: InKindSource, id: numb
     if (kind === "data") {
       throw new ServiceError(answered?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${answered?.message ?? (err instanceof Error ? err.message : String(err))}`, answered?.code);
     }
-    if (kind === "bug" && answered) {
-      console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; capital review answered ${answered.status}, a fault in our wiring`, err);
+    if (kind === "bug") {
+      console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
       const fault = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
       fault.cause = err;
       throw fault;

@@ -559,7 +559,7 @@ describeDb("capital review", () => {
 
   it("a failed send keeps the accept, waits on capital review, and accepting again resends", async () => {
     const id = await receiptGift();
-    capital = { submit: async () => { throw new Error("expense down"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
+    capital = { submit: async () => { throw new ServiceError(503, "expense down"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
     configure();
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
@@ -587,15 +587,19 @@ describeDb("capital review", () => {
     expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
   });
 
-  it("a 403 from capital review is our bug, not the accepting person's permission", async () => {
+  it.each([
+    ["a 401", new ServiceError(401, "Unauthorized")],
+    ["a 403", new ServiceError(403, "Forbidden")],
+    ["an unbranded error", new Error("Forbidden")],
+  ])("%s from capital review is our bug, not the accepting person's permission", async (_, thrown) => {
     const id = await receiptGift();
-    capital = { submit: async () => { throw new ServiceError(403, "Forbidden"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
+    capital = { submit: async () => { throw thrown; }, awaitingReview: async () => [], assetLineIds: async () => [] };
     configure();
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
     logged.mockRestore();
     expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/accepted.*fault in our software/) });
-    expect((failed as Error).message).not.toMatch(/Forbidden|accept it again/);
+    expect((failed as Error).message).not.toMatch(/Unauthorized|Forbidden|accept it again/);
     expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
   });
 
