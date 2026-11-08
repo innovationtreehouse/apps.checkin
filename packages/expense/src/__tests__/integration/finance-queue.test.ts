@@ -36,8 +36,14 @@ describeDb("finance queue — expenses tab", () => {
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02" });
+    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
+  });
+
+  it("carries no stored reason on an expense's row", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    const row = (await financeQueueRows(FINANCE, "expenses")).find((r) => r.expenseId === id);
+    expect(row).not.toHaveProperty("failureReason");
   });
 
   it("shows a failed intake's currency as a code: trimmed and upper-cased, or the default when it is not one", async () => {
