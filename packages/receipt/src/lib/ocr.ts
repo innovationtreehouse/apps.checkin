@@ -117,6 +117,8 @@ function complete(data: OcrData): boolean {
 /** The kind of a failed model call, from the SDK's error classes. Rate limits arrive after the SDK's own retries. */
 export function ocrKind(err: unknown): FailureKind {
   if (err instanceof AuthenticationError || err instanceof PermissionDeniedError) return "connection";
+  // The API reports a used-up credit balance as a 400, which is ours to fix, not the file's.
+  if (err instanceof BadRequestError && /credit balance/i.test(err.message)) return "connection";
   if (err instanceof RateLimitError || err instanceof InternalServerError || err instanceof APIConnectionError) return "system";
   if (err instanceof BadRequestError || (err instanceof APIError && err.status === 413)) return "data";
   return "bug";
@@ -124,7 +126,7 @@ export function ocrKind(err: unknown): FailureKind {
 
 const CALL_FAILED: Record<FailureKind, string> = {
   system: "the reading service did not answer",
-  connection: "the reading service refused our key",
+  connection: "the reading service refused our account",
   settings: "OCR is not configured",
   data: "the reading service refused the file",
   bug: "the call to the reading service failed unexpectedly",

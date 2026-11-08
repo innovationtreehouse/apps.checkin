@@ -158,6 +158,16 @@ describe("createAnthropicOcr — failure kinds, from the SDK's error classes", (
     ["a connection error", new APIConnectionError({ message: "socket hang up" }), "system"],
     ["a timeout", new APIConnectionTimeoutError(), "system"],
     ["a bad request about the file", status(400), "data"],
+    [
+      "a used-up credit balance",
+      APIError.generate(
+        400,
+        { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } },
+        undefined,
+        headers,
+      ),
+      "connection",
+    ],
     ["a file too large", status(413), "data"],
     ["a model that is not found", status(404), "bug"],
     ["anything else", new TypeError("x is undefined"), "bug"],
