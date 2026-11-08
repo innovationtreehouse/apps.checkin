@@ -9,13 +9,13 @@ import { getProblems, sendProblemsDigest } from "../problems";
 
 jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
-jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn() }));
+jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn() }));
 jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn() }));
 jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn() }));
 jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn() }));
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn() }));
 
-const receipt = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/receipt");
+const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/expense");
 const gifts = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/bulk-donation");
 const mapping = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/workflow-mapping");
@@ -32,6 +32,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     for (const name of ENV) process.env[name] = "postgres://test";
     for (const lib of [receipt, expense, gifts, mapping, inventory]) lib.stuckItems.mockResolvedValue([]);
+    receipt.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
@@ -47,11 +48,23 @@ describe("getProblems", () => {
         expense.stuckItems.mockResolvedValue([{ id: "e1", step: "QuickBooks posting", href: null, failedAt: hoursAgo(5) }]);
         mapping.stuckItems.mockResolvedValue([{ id: "r1", step: "apply", href: null, failedAt: hoursAgo(50) }]);
 
-        const { items, unread } = await getProblems();
+        const { items, unread, notices } = await getProblems();
 
         expect(items.map((i) => [i.library, i.id])).toEqual([["workflow mapping", "r1"], ["expense", "e1"]]);
         expect(items[1]).toMatchObject({ step: "QuickBooks posting" });
         expect(unread).toEqual([]);
+        expect(notices).toEqual([]);
+    });
+
+    it("carries a library's own lines, such as repeated reading failures", async () => {
+        receipt.problemNotices.mockResolvedValue(["Receipt reading failed 3 times in the last day"]);
+        expect((await getProblems()).notices).toEqual(["Receipt reading failed 3 times in the last day"]);
+    });
+
+    it("names a library whose lines cannot be read", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        receipt.problemNotices.mockRejectedValue(new Error("db down"));
+        expect(await getProblems()).toMatchObject({ unread: ["receipt"], notices: [] });
     });
 
     it("names a library whose read fails and still lists the others", async () => {
@@ -96,6 +109,15 @@ describe("sendProblemsDigest", () => {
         expect(ctx.count).toBe("1");
         expect(ctx.items).toContain("old");
         expect(ctx.items).not.toContain("new");
+    });
+
+    it("emails the alert address a library's line on its own, without copying the Board", async () => {
+        receipt.problemNotices.mockResolvedValue(["Receipt reading failed 3 times in the last day"]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Receipt reading failed 3 times in the last day");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {

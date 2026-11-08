@@ -153,7 +153,7 @@ describe('receipt donor and reimbursee names', () => {
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         // ReceiptRow omits these columns (repositories/receipt.ts listShape).
-        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq');
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq', 'firstFailedAt', 'lastError');
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         // The three old duplicate columns are still on ReceiptDetail, but no response carries them.

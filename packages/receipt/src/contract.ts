@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import type { FailureKind, OnFailure } from "@checkin/component-kit";
+import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
@@ -356,7 +356,6 @@ export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
   org: () => Promise<OrgIdentity>;
-  onFailure?: OnFailure;
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;

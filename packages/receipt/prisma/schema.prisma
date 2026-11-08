@@ -85,6 +85,12 @@ model Receipt {
   // Stamped when the S1 push returns; null means not yet delivered.
   /// @sensitivity:internal
   pushedAt           DateTime? @map("pushed_at")
+  // When the step it is stuck in first failed; null while nothing is stuck. Times the Problems list.
+  /// @sensitivity:internal
+  firstFailedAt      DateTime? @map("first_failed_at")
+  // The latest failure's error, shown on the receipt's own page only.
+  /// @sensitivity:personal
+  lastError          String?   @map("last_error")
 
   details       ReceiptDetail?
   financeReview ReceiptFinanceReview?
