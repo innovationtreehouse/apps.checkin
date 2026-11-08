@@ -59,8 +59,8 @@ Things the app takes as true because they are handled outside it.
   conflict-of-interest rule on that vote, and the requirement that program money
   flows through the Treehouse.
 
-- The giving platform sends each batch of gifts whole. A gift that turns up
-  after its batch is finished is rare, and finance books it by hand.
+- The giving platform sends each batch of gifts whole. Finance books by hand
+  a gift that turns up after its batch is finished.
 
 - Gifts of goods received before the app started recording them stay in
   the books only.

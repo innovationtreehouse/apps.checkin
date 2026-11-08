@@ -252,9 +252,8 @@ Things the app takes as true because they are handled outside it.
   [Decision — deliberate limit]
 
 - A receipt's file hash is deliberately not unique, so two receipts may hold the
-  same file: the second is stored and flagged for finance. A unique hash would
-  refuse it before a person could look. Reading the same file from the same
-  mailed message again makes no second receipt.
+  same file: the second is stored and flagged for finance. Reading the same file
+  from the same mailed message again makes no second receipt.
   [Decision — deliberate limit]
 
 - An automatic reading of a receipt is kept whole or not at all. When a reading
