@@ -18,8 +18,9 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { DEFAULT_CURRENCY, DONOR_COMPANY_MAX, DONOR_NAME_MAX } from "@checkin/receipt-types";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { api, errorMessage, upload } from "../components/api";
+import DonationFields, { donorInput, NO_DONATION } from "../components/DonationFields";
 import { CURRENCY_CODE } from "../lib/schemas";
 import { listWords, missingDetails } from "../lib/missingDetails";
 
@@ -89,11 +90,11 @@ export default function UploadPage() {
   const pickedLabel = reimbursee ? reimbursee.name : SELF_LABEL;
   const found = useReimburseeSearch(reimburseeSearch === pickedLabel ? "" : reimburseeSearch);
   const [newPerson, setNewPerson] = useState<{ name: string; isAdult: boolean } | null>(null);
-  const [isInKind, setIsInKind] = useState(false);
-  const [selfDonor, setSelfDonor] = useState(true);
-  const [donor, setDonor] = useState({ firstName: "", lastName: "", companyName: "" });
+  const [donation, setDonation] = useState(NO_DONATION);
   const [busy, setBusy] = useState(false);
 
+  const isInKind = donation.isInKind;
+  const donor = isInKind ? donorInput(donation) : null;
   const reimbursing = isAdult && !isInKind && needsReimbursement;
   const newPersonIncomplete = reimbursing && newPerson !== null && (!newPerson.name.trim() || !newPerson.isAdult);
   const currencyCode = currency.trim().toUpperCase() || DEFAULT_CURRENCY;
@@ -113,7 +114,7 @@ export default function UploadPage() {
       ...(reimbursing && newPerson ? { newReimbursee: { name: newPerson.name.trim(), isAdult: true } } : {}),
       ...(reimbursing && !newPerson && reimbursee ? { reimburseePersonId: reimbursee.id } : {}),
       isInKind,
-      ...(isInKind ? { donor: selfDonor ? { self: true } : { ...donor, companyName: donor.companyName || null } } : {}),
+      ...(donor ? { donor } : {}),
       ...(mode === "manual"
         ? {
             details: {
@@ -193,23 +194,7 @@ export default function UploadPage() {
               <Button variant="light" size="xs" w="fit-content" onClick={() => setLines([...lines, blankLine()])}>Add item</Button>
             </>
           )}
-          <Checkbox label="This is a donation" checked={isInKind} onChange={(e) => setIsInKind(e.currentTarget.checked)} />
-          {isInKind && (
-            <>
-              <SegmentedControl
-                value={selfDonor ? "self" : "other"}
-                onChange={(v) => setSelfDonor(v === "self")}
-                data={[{ value: "self", label: "I am the donor" }, { value: "other", label: "Someone else donated" }]}
-              />
-              {!selfDonor && (
-                <Group grow>
-                  <TextInput label="Donor first name" value={donor.firstName} onChange={(e) => setDonor({ ...donor, firstName: e.currentTarget.value })} maxLength={DONOR_NAME_MAX} required />
-                  <TextInput label="Donor last name" value={donor.lastName} onChange={(e) => setDonor({ ...donor, lastName: e.currentTarget.value })} maxLength={DONOR_NAME_MAX} required />
-                  <TextInput label="Company (optional)" value={donor.companyName} onChange={(e) => setDonor({ ...donor, companyName: e.currentTarget.value })} maxLength={DONOR_COMPANY_MAX} />
-                </Group>
-              )}
-            </>
-          )}
+          <DonationFields value={donation} onChange={setDonation} />
           {isAdult && !isInKind && (
             <Checkbox label="Someone needs to be reimbursed" checked={needsReimbursement} onChange={(e) => setNeedsReimbursement(e.currentTarget.checked)} />
           )}
@@ -254,7 +239,7 @@ export default function UploadPage() {
               <Checkbox label="They are an adult (18 or over)" checked={newPerson.isAdult} onChange={(e) => setNewPerson({ ...newPerson, isAdult: e.currentTarget.checked })} />
             </>
           )}
-          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError || newPersonIncomplete}>Upload</Button>
+          <Button onClick={() => void submit()} loading={busy} disabled={!file || !!currencyError || newPersonIncomplete || (isInKind && !donor)}>Upload</Button>
         </Stack>
       </Paper>
     </>
