@@ -14,6 +14,7 @@ import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
+import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -68,14 +69,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
         }
 
-        // A family that claimed in time can always pay: an existing PENDING
-        // claim skips every limit below (capacity would count its own row) and
-        // gets the 409 the program page folds back into its checkout.
+        // A family that claimed in time can pay until the program ends: an existing
+        // PENDING claim skips every limit below (capacity would count its own row) and
+        // gets the 409 the program page folds back into its checkout. Once ended, the
+        // Board settles it by hand.
         const existingClaim = await prisma.programParticipant.findUnique({
             where: { programId_personId: { programId, personId: participantId } },
             select: { status: true },
         });
         if (existingClaim?.status === 'PENDING') {
+            if (currentProgram.phase === 'FINISHED') return apiError(PROGRAM_ENDED_PAYMENT, 400);
             return apiError("Participant is already enrolled in this program.", 409);
         }
 

@@ -288,10 +288,10 @@ Things the app takes as true because they are handled outside it.
 - The self-approval bar covers deciding a request, not repairing one. Confirming
   a hold somebody's failed store call never made benefits nobody.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
-- A family that holds a place can always pay for it. Each paid program has a
-  second, hidden "reserved seat" item in the store besides its public one, and
-  every checkout the app sends a family to uses it — in the app a checkout only
-  ever follows a claim. It does not count stock, so it never sells out: the
+- A family that holds a place can pay for it until the program ends. Each paid
+  program has a second, hidden "reserved seat" item in the store besides its
+  public one, and every checkout the app sends a family to uses it — in the app
+  a checkout only ever follows a claim. It does not count stock, so it never sells out: the
   family's place is already counted by the app, and the app's own count is the
   only gate. A program without one falls back to the public item.  [Decision]
 
@@ -335,7 +335,7 @@ Things the app takes as true because they are handled outside it.
   ended sale.  [Decision]
 
 - A family whose unpaid claim was made in time can still pay it through the
-  reserved-seat item, whether enrollment was closed by the off-sale date's daily
+  reserved-seat item until the program ends, whether enrollment was closed by the off-sale date's daily
   run or by the Board by hand. It may also still request a scholarship or payment
   plan after the off-sale date, and the request takes its seat as any request
   does.  [Decision — Owner ruling, 2026-11-08]
@@ -356,6 +356,12 @@ Things the app takes as true because they are handled outside it.
 
 - One week after the off-sale date the board is emailed the claims still unpaid,
   once per program.  [Decision]
+
+- An ended program offers no payment. The app signs no checkout for it and sends
+  its families no reminder to pay, and the next daily run takes both store items
+  off sale, retrying each day until the store confirms. The Board settles a
+  claim still unpaid by hand. A payment that arrives anyway, from a checkout
+  opened before the end, still activates the claim it pays for.  [Decision — Owner ruling, 2026-11-08]
 
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]

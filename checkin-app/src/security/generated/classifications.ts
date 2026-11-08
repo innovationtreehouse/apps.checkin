@@ -265,6 +265,7 @@ export const classifications = {
         shopifyVariantId: 'public',
         claimantShopifyProductId: 'public',
         claimantShopifyVariantId: 'public',
+        claimantProductHiddenAt: 'internal',
         shopifyStockPushNeededAt: 'internal',
         shopifyStockPendingWrite: 'internal',
         shopifyStockCarry: 'internal',
