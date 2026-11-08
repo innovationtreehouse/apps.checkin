@@ -8,6 +8,7 @@ import { act, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import { pinTimezone } from "@/test-helpers/tz";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import MergeParticipants from "../page";
 
 beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
@@ -151,7 +152,7 @@ describe("membership-ops/participants/merge page", () => {
     function mockSlowFirstAnalysis() {
       let release = () => {};
       const held = new Promise<void>((resolve) => { release = resolve; });
-      const respond = (body: unknown) => ({ ok: true, json: async () => body }) as Response;
+      const respond = (body: unknown) => ({ ok: true, ...jsonBody(body) }) as Response;
       const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
         if (url.includes("q=Alice")) return respond({ people: [participantA] });
@@ -273,8 +274,8 @@ describe("membership-ops/participants/merge page", () => {
     setSession({ id: 1, isSysadmin: true });
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("q=Alice")) return { ok: true, json: async () => ({ people: [participantA] }) } as Response;
-      if (url.includes("q=Bob")) return { ok: true, json: async () => ({ people: [participantB] }) } as Response;
+      if (url.includes("q=Alice")) return { ok: true, ...jsonBody({ people: [participantA] }) } as Response;
+      if (url.includes("q=Bob")) return { ok: true, ...jsonBody({ people: [participantB] }) } as Response;
       if (url.includes("merge/analyze")) throw new Error("boom");
       return { ok: false, json: async () => ({}) } as Response;
     }) as unknown as typeof fetch;
@@ -536,5 +537,27 @@ describe("membership-ops/participants/merge page", () => {
 
     expect(screen.queryByPlaceholderText("Search by name, email, or ID...")).not.toBeInTheDocument();
     expect(screen.queryByText("Keep and augment")).not.toBeInTheDocument();
+  });
+});
+
+describe("a search that answers after a newer one", () => {
+  it("keeps the latest query's results when an earlier query answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let finishAli: () => void = () => {};
+    const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const q = new URL(String(input), "http://localhost").searchParams.get("q");
+      if (q === "Ali") return new Promise<Response>((resolve) => { finishAli = () => resolve(answer({ people: [participantA, participantB] })); });
+      return answer({ people: [participantA] });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<MergeParticipants />);
+
+    const box = screen.getAllByPlaceholderText("Search by name, email, or ID...")[0];
+    fireEvent.change(box, { target: { value: "Ali" } });
+    fireEvent.change(box, { target: { value: "Alice" } });
+    expect(await screen.findByText("Alice Adams", { exact: false })).toBeInTheDocument();
+
+    await act(async () => { finishAli(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.queryByText("Bob Adams", { exact: false })).not.toBeInTheDocument();
   });
 });
