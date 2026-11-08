@@ -1577,42 +1577,71 @@ model AuditLog {
 }
 
 /// One view of finance records other than the viewer's own (docs/rules/revenue.md).
-/// Records who looked at which records through which endpoint, never what the
-/// records said. Written by `recordFinanceView` (lib/finance/financeViewLog.ts);
-/// read only by the Board. Kept indefinitely.
+/// Records who looked at which records, on which page or through which API call,
+/// and which marked fields of each, never what the records said. Written by
+/// lib/finance/financeViewLog.ts; read only by the Board. Kept indefinitely.
 model FinanceViewLog {
   /// @sensitivity:internal
   id        Int      @id @default(autoincrement())
+  /// The first call's time on a page-view row.
   /// @sensitivity:internal
   viewedAt  DateTime
   /// The viewer's person id. No FK, as on AuditLog: the row outlives the person.
   /// @sensitivity:internal
   actorId   Int
-  /// The role the view was chosen under; null only on rows copied from the
-  /// bulk-donation donor-read audit, which did not record it.
+  /// The role the view was chosen under (a page-view row: its first call's);
+  /// null only on rows copied from the bulk-donation donor-read audit.
   /// @sensitivity:internal
   role      String?
-  /// The registry key, e.g. `GET /api/receipts/[id]`.
+  /// The registry key, e.g. `GET /api/receipts/[id]`. Null on rows that carry `calls`.
   /// @sensitivity:internal
-  endpoint  String
-  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string.
+  endpoint  String?
+  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string. Null on rows that carry `calls`.
   /// @sensitivity:internal
-  params    Json
+  params    Json?
+  /// Record refs (`Expense:e_123`) on rows that carry `records`; bare ids on older rows.
   /// @sensitivity:internal
   recordIds String[]
+  /// Null on rows that carry `calls`; those use `recordCount`.
   /// @sensitivity:internal
-  rowCount  Int
+  rowCount  Int?
   /// `viewedAt` rounded down to fifteen minutes (UTC); repeats within it collapse.
   /// @sensitivity:internal
   window    DateTime
-  /// Hex SHA-256 of the endpoint, the params with keys sorted, and the sorted record ids.
+  /// Hex SHA-256 of what the row showed; `open:<uuid>` while a page view is still merging.
   /// @sensitivity:internal
   viewKey   String
+  /// The page path the browser claimed, e.g. `/expense/expenses/e_123`; null on an untagged row.
+  /// @sensitivity:internal
+  pagePath    String?
+  /// The browser's page-view id; null on an untagged row.
+  /// @sensitivity:internal
+  pageViewId  String?
+  /// Each call in the row: `{ endpoint, path, query, role }`, query holding only declared parameters.
+  /// @sensitivity:internal
+  calls       Json?
+  /// Each record: `{ ref: "Expense:e_123", fields: ["submitterId"] }`. Field names, never values.
+  /// @sensitivity:internal
+  records     Json?
+  /// The number of distinct records.
+  /// @sensitivity:internal
+  recordCount Int?
+  /// On a page-view row still taking calls: its first call's time plus 30 s. Null once closed, and on other rows.
+  /// @sensitivity:internal
+  closesAt    DateTime?
+  /// Page-view ids of identical rows collapsed into this one, so each id's first user stays known.
+  /// @sensitivity:internal
+  mergedPageViewIds String[] @default([])
 
   @@unique([actorId, viewKey, window])
   @@index([viewedAt])
   @@index([actorId, viewedAt])
   @@index([recordIds], type: Gin)
+  // Page id first: the writer also looks an id up alone, to find who first used it.
+  @@index([pageViewId, actorId])
+  // Closing reads only one person's open rows.
+  @@index([actorId, closesAt])
+  @@index([mergedPageViewIds], type: Gin)
 }
 
 model Account {

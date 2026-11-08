@@ -404,6 +404,13 @@ export const classifications = {
         rowCount: 'internal',
         window: 'internal',
         viewKey: 'internal',
+        pagePath: 'internal',
+        pageViewId: 'internal',
+        calls: 'internal',
+        records: 'internal',
+        recordCount: 'internal',
+        closesAt: 'internal',
+        mergedPageViewIds: 'internal',
     },
     Account: {
         id: 'internal',
