@@ -4,6 +4,7 @@
  * Real Postgres; describeDb skips without one.
  */
 import { beforeEach, expect, it, vi } from "vitest";
+import { BUG_TRY_LIMIT } from "@checkin/component-kit";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
 import type { CatalogEventSource, InventoryAlerts, OrgEventRecord } from "../../contract";
@@ -382,5 +383,47 @@ describeDb("S5 catch-up: stored resolutions", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describeDb("S5 catch-up: failure kinds", () => {
+  const malformed = (id: number) => event(id, "provisional_approved", { provisionalGtin13: PROV, realGtin13: 123 });
+  const unparsable = (id: number): OrgEventRecord => ({ ...rejected(id), payload: "{not json" });
+  const ledgerRow = (id: number) => db.inventoryReceivedOrgEvent.findFirst({ where: { id } });
+  const bind = (events: OrgEventRecord[], alerts: InventoryAlerts, onFailure = vi.fn()) =>
+    configureLocalInventory({
+      auth: { getPrincipal: async () => null },
+      org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+      catalogEventSource: pagedSource(events),
+      alerts,
+      onFailure,
+    });
+
+  it("records a refusal's kind, retries it every sweep with no try charged, alerts once and reports each failure", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    const onFailure = vi.fn();
+    bind([malformed(1)], { orgEventsStuck }, onFailure);
+
+    await catchUpOrgEvents();
+    expect(await catchUpOrgEvents()).toMatchObject({ failed: 1 });
+
+    expect(await ledgerRow(1)).toMatchObject({ status: "failed", failureKind: "data", attempts: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(onFailure).toHaveBeenCalledTimes(2);
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ lane: "catalog-events", kind: "data", detail: "catalog event 1" }));
+  });
+
+  it("charges a bug one try per sweep, alerts on the last try, then stops retrying it", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    bind([unparsable(1)], { orgEventsStuck });
+
+    for (let run = 1; run < BUG_TRY_LIMIT; run++) await catchUpOrgEvents();
+    expect(orgEventsStuck).not.toHaveBeenCalled();
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false, stuckProvisionals: [] });
+
+    expect(await catchUpOrgEvents()).toMatchObject({ failed: 0, processed: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(await ledgerRow(1)).toMatchObject({ status: "failed", failureKind: "bug", attempts: BUG_TRY_LIMIT });
   });
 });

@@ -1,3 +1,4 @@
+import { BUG_TRY_LIMIT } from "@checkin/component-kit";
 import type { Prisma } from "../../generated/prisma/client";
 import type { Db } from "../db/index";
 import type { InventoryReceivedOrgEvent, ReceivedOrgEventStatus } from "../db/schema";
@@ -30,11 +31,13 @@ export function createOrgEventsRepository(db: Db) {
       });
     },
 
+    /** Events not yet processed, leaving out those whose bug tries reached the limit. */
     async findPending(orgId: string): Promise<InventoryReceivedOrgEvent[]> {
       return db.inventoryReceivedOrgEvent.findMany({
         where: {
           orgId,
           OR: [{ status: "pending" }, { status: "failed" }],
+          attempts: { lt: BUG_TRY_LIMIT },
         },
         orderBy: { id: "asc" },
       });

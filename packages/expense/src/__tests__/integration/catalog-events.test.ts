@@ -4,6 +4,7 @@
  * provisional dance (event after ingest, event before ingest).
  */
 import { describe, it, expect, vi } from "vitest";
+import { BUG_TRY_LIMIT } from "@checkin/component-kit";
 import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -219,6 +220,39 @@ describeDb("S5 consumer — catch-up alerts", () => {
   it("finishes the sweep when one event can't be recorded", async () => {
     bindPorts({ catalogEvents: paged([{ ...envelope(itemRef, 1), orgId: "org-other" }, envelope(itemRef, 2)]) });
     expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, failed: 1, processed: 1 });
+  });
+});
+
+describeDb("S5 consumer — failure kinds", () => {
+  const unparsable = (id: number) => ({ ...envelope(itemRef, id), payload: "{not json" });
+  const ledgerRow = (id: number) => db.expenseReceivedOrgEvent.findFirst({ where: { id } });
+
+  it("records a refusal's kind, retries it every sweep with no try charged, alerts once and reports each failure", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    const onFailure = vi.fn();
+    bindPorts({ catalogEvents: paged([malformed(1)]), alerts: { orgEventsStuck }, onFailure });
+
+    await catchUpCatalogEvents();
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, failed: 1 });
+
+    expect(await ledgerRow(1)).toMatchObject({ status: "failed", failureKind: "data", attempts: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(onFailure).toHaveBeenCalledTimes(2);
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ lane: "catalog-events", kind: "data", detail: "catalog event 1" }));
+  });
+
+  it("charges a bug one try per sweep, alerts on the last try, then stops retrying it", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    bindPorts({ catalogEvents: paged([unparsable(1)]), alerts: { orgEventsStuck } });
+
+    for (let run = 1; run < BUG_TRY_LIMIT; run++) await catchUpCatalogEvents();
+    expect(orgEventsStuck).not.toHaveBeenCalled();
+    await catchUpCatalogEvents();
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
+
+    expect(await catchUpCatalogEvents()).toEqual(CLEAN);
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(await ledgerRow(1)).toMatchObject({ status: "failed", failureKind: "bug", attempts: BUG_TRY_LIMIT });
   });
 });
 

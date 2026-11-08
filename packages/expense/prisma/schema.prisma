@@ -595,6 +595,10 @@ model ExpenseReceivedOrgEvent {
   status        String   @default("pending")
   /// @sensitivity:personal
   failureReason String?  @map("failure_reason")
+  /// @sensitivity:public
+  failureKind   String?  @map("failure_kind")
+  /// @sensitivity:public
+  attempts      Int      @default(0)
 
   @@map("received_org_events")
 }

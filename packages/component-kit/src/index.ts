@@ -329,6 +329,31 @@ export function defineRuntime<Config extends RuntimeShape<Principal>, Principal 
 /** What consuming one catalog org event came to. */
 export type OrgEventOutcome = "processed" | "duplicate" | "failed" | "skipped";
 
+/** A failed event a person must hear about now: refused for the first time, or a bug on its last try. */
+type StepOutcome = OrgEventOutcome | "alerted";
+
+/** Tries a bug gets before the sweep stops retrying its event. Only a bug is charged a try. */
+export const BUG_TRY_LIMIT = 5;
+
+/** One failure, as the consumer records it on the event's ledger row. */
+export interface OrgEventFailure {
+  reason: string;
+  kind: FailureKind;
+  /** Add one to the row's tries: true for a bug only. */
+  chargeTry: boolean;
+}
+
+/** The event's failure row after the write: its tries so far and the kind it held before. */
+export interface OrgEventFailureRow {
+  attempts: number;
+  previousKind: string | null;
+}
+
+function alertsNow(kind: FailureKind, row: OrgEventFailureRow): boolean {
+  if (kind === "data") return row.previousKind !== "data";
+  return kind === "bug" && row.attempts === BUG_TRY_LIMIT;
+}
+
 export interface OrgEventStep<E, S extends "duplicate" | "skipped"> {
   /** An outcome that settles the event without applying it, such as a ledger row already processed. */
   check?(event: E): Promise<S | null>;
@@ -340,22 +365,28 @@ export interface OrgEventStep<E, S extends "duplicate" | "skipped"> {
   apply(event: E): Promise<void>;
   /** A ledger write after `apply` whose throw reaches the caller instead of recording a failure. */
   recordProcessed?(event: E): Promise<void>;
-  /** Records the failure. False when an overlapping consumer's processed outcome stands. */
-  recordFailure(event: E, failureReason: string): Promise<boolean>;
+  /** Records the failure. Null when an overlapping consumer's processed outcome stands. */
+  recordFailure(event: E, failure: OrgEventFailure): Promise<OrgEventFailureRow | null>;
   onFailure(event: E, err: unknown): void;
 }
 
-/** One event's consume step. A failed reaction is recorded, not thrown; a failed ledger write is thrown. */
+/**
+ * One event's consume step. A failed reaction is recorded with its kind, not thrown; a failed
+ * ledger write is thrown. An outage is retried with no try charged; a bug is charged one.
+ */
 export function orgEventStep<E, S extends "duplicate" | "skipped" = never>(step: OrgEventStep<E, S>) {
-  return async (event: E): Promise<"processed" | "failed" | "duplicate" | S> => {
+  return async (event: E): Promise<"processed" | "failed" | "alerted" | "duplicate" | S> => {
     const settled = await step.check?.(event);
     if (settled) return settled;
     try {
       await step.apply(event);
     } catch (err) {
       step.onFailure(event, err);
-      const failureReason = err instanceof Error ? err.message : String(err);
-      return (await step.recordFailure(event, failureReason)) ? "failed" : "duplicate";
+      const kind = kindOf(err);
+      const reason = err instanceof Error ? err.message : String(err);
+      const row = await step.recordFailure(event, { reason, kind, chargeTry: kind === "bug" });
+      if (!row) return "duplicate";
+      return alertsNow(kind, row) ? "alerted" : "failed";
     }
     await step.recordProcessed?.(event);
     return "processed";
@@ -364,26 +395,28 @@ export function orgEventStep<E, S extends "duplicate" | "skipped" = never>(step:
 
 export interface OrgEventSweep<E> {
   limit: number;
-  /** Events recorded as failed, oldest first. */
+  /** Events recorded as failed and still under the bug try limit, oldest first. */
   failed: E[];
   /** The page of the org's events after an id, oldest first. Empty ends the read. */
   readPage(afterId: number): Promise<E[]>;
   idOf(event: E): number;
   /** Those of `ids` already in the consumer's ledger, whatever their status. */
   receivedIds(ids: number[]): Promise<number[]>;
-  consume(event: E): Promise<OrgEventOutcome>;
+  consume(event: E): Promise<StepOutcome>;
   onUnrecorded(event: E, err: unknown): void;
   onUnreadable(err: unknown): void;
 }
 
 export interface OrgEventSweepResult {
+  /** An alerted event counts as failed. */
   counts: Record<OrgEventOutcome, number>;
-  newlyFailed: number;
+  /** Failed events a person must hear about now. */
+  alerted: number;
   unprocessed: number;
   unreadable: boolean;
   /** No event source is bound: a settings problem the run records, not a catalog outage to alert on. */
   notConnected: boolean;
-  /** An event newly failed, an unreadable catalog, or a capped run that processed nothing. */
+  /** An alerted event, an unreadable catalog, or a capped run that processed nothing. */
   needsAlert: boolean;
 }
 
@@ -396,13 +429,17 @@ const RETRY_FIRST_SHARE = 0.1;
  * from the start means no event is missed however late it committed or however many later ids were
  * received. What stays undone is retried on the next run: an event that can't be recorded counts as
  * failed and, with no ledger row, is read again. A capped run that made progress drains itself on
- * later runs, so it needs no alert, and a retry that fails again only stays failed in the ledger.
+ * later runs, so it needs no alert. Only an alerted failure alerts, whether new or a retry.
  */
 export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEventSweepResult> {
   const counts: Record<OrgEventOutcome, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
+  let alerted = 0;
   const consume = async (event: E): Promise<OrgEventOutcome> => {
     try {
-      return await sweep.consume(event);
+      const outcome = await sweep.consume(event);
+      if (outcome !== "alerted") return outcome;
+      alerted++;
+      return "failed";
     } catch (err) {
       sweep.onUnrecorded(event, err);
       return "failed";
@@ -418,7 +455,6 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
   let unreadable = false;
   let notConnected = false;
   let budget = sweep.limit - firstRetries.length;
-  let newlyFailed = 0;
   try {
     // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
     let after = 0;
@@ -431,9 +467,7 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
         if (received.has(ids[i])) continue;
         if (budget > 0) {
           budget--;
-          const outcome = await consume(event);
-          counts[outcome]++;
-          if (outcome === "failed") newlyFailed++;
+          counts[await consume(event)]++;
         } else {
           unprocessed++;
         }
@@ -450,6 +484,6 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
   await retry(laterRetries);
   unprocessed += sweep.failed.length - firstRetries.length - laterRetries.length;
 
-  const needsAlert = newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0);
-  return { counts, newlyFailed, unprocessed, unreadable, notConnected, needsAlert };
+  const needsAlert = alerted > 0 || unreadable || (unprocessed > 0 && counts.processed === 0);
+  return { counts, alerted, unprocessed, unreadable, notConnected, needsAlert };
 }

@@ -3,7 +3,7 @@
  * configureLocalInventory() once at boot; the library reads the configured
  * runtime and never imports the host.
  */
-import { NotWiredError } from "@checkin/component-kit";
+import { NotWiredError, type OnFailure } from "@checkin/component-kit";
 
 /** The acting host user, projected to what inventory rows stamp. */
 export interface InventoryPrincipal {
@@ -40,6 +40,7 @@ export interface InventoryRuntimeConfig {
   /** Active catalog item read; unbound, a catalog part is refused as unreachable. */
   catalog?: CatalogItemReader;
   alerts?: InventoryAlerts;
+  onFailure?: OnFailure;
 }
 
 /** The approved, non-archived catalog item with this GTIN, or null. */

@@ -1,5 +1,6 @@
 /** S5 consumer: remap on editable receipts, audit-only rejection, org check, applied ledger, catch-up. */
 import { beforeEach, expect, it, vi } from "vitest";
+import { BUG_TRY_LIMIT } from "@checkin/component-kit";
 import { fixturesForSeam } from "@checkin/receipt-contract-fixtures";
 import { db } from "../../db";
 import type { OrgEventRecord } from "../../contract";
@@ -309,5 +310,38 @@ describeDb("first-run replay", () => {
     expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, applied: 4 });
 
     expect(await snapshot()).toEqual(before);
+  });
+});
+
+describeDb("catch-up failure kinds", () => {
+  const unparsable = (id: number): OrgEventRecord => ({ ...rejected(id), payload: "{not json" });
+  const failedRow = (id: number) => db.workflowFailedOrgEvent.findUnique({ where: { id } });
+
+  it("records a refusal's kind, retries it every sweep with no try charged, alerts once and reports each failure", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    const onFailure = vi.fn();
+    configure({ catalogEventSource: paged([malformed(1)]), alerts: { orgEventsStuck }, onFailure });
+
+    await catchUpOrgEvents();
+    expect(await catchUpOrgEvents()).toEqual({ ...CLEAN, failed: 1 });
+
+    expect(await failedRow(1)).toMatchObject({ failureKind: "data", attempts: 0 });
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(onFailure).toHaveBeenCalledTimes(2);
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ lane: "catalog-events", kind: "data", detail: "catalog event 1" }));
+  });
+
+  it("charges a bug one try per sweep, alerts on the last try, then stops retrying it", async () => {
+    const orgEventsStuck = vi.fn(async () => {});
+    configure({ catalogEventSource: paged([unparsable(1)]), alerts: { orgEventsStuck } });
+
+    for (let run = 1; run < BUG_TRY_LIMIT; run++) await catchUpOrgEvents();
+    expect(orgEventsStuck).not.toHaveBeenCalled();
+    await catchUpOrgEvents();
+    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
+
+    expect(await catchUpOrgEvents()).toEqual(CLEAN);
+    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(await failedRow(1)).toMatchObject({ failureKind: "bug", attempts: BUG_TRY_LIMIT });
   });
 });

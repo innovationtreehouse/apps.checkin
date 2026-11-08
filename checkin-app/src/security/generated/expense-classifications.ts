@@ -233,6 +233,8 @@ export const classifications = {
         receivedAt: 'internal',
         status: 'internal',
         failureReason: 'personal',
+        failureKind: 'public',
+        attempts: 'public',
     },
     CapitalAsset: {
         id: 'internal',

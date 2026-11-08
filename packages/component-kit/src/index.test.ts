@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
+  BUG_TRY_LIMIT,
   ComponentHttpError,
   NotWiredError,
   ServiceError,
@@ -23,6 +24,7 @@ import {
   sweepOrgEvents,
   toHttpError,
   zodMessage,
+  type FailureKind,
   type FailureReport,
   type OnFailure,
 } from "./index";
@@ -283,7 +285,8 @@ describe("defineRuntime", () => {
 });
 
 describe("orgEventStep", () => {
-  const base = { onFailure: () => undefined, recordFailure: async () => true };
+  const row = { attempts: 0, previousKind: null };
+  const base = { onFailure: () => undefined, recordFailure: async () => row };
 
   it("returns the check's outcome without applying", async () => {
     let applied = false;
@@ -295,10 +298,40 @@ describe("orgEventStep", () => {
   it("records a failed apply, and defers to an overlapping processed outcome", async () => {
     const boom = async () => { throw new Error("boom"); };
     const reasons: string[] = [];
-    const stands = orgEventStep<number>({ ...base, apply: boom, recordFailure: async (_e, reason) => { reasons.push(reason); return true; } });
+    const stands = orgEventStep<number>({ ...base, apply: boom, recordFailure: async (_e, f) => { reasons.push(f.reason); return row; } });
     expect(await stands(1)).toBe("failed");
     expect(reasons).toEqual(["boom"]);
-    expect(await orgEventStep<number>({ ...base, apply: boom, recordFailure: async () => false })(1)).toBe("duplicate");
+    expect(await orgEventStep<number>({ ...base, apply: boom, recordFailure: async () => null })(1)).toBe("duplicate");
+  });
+
+  const failingWith = (err: unknown, after: { attempts: number; previousKind: string | null }) => {
+    const recorded: { kind: FailureKind; chargeTry: boolean }[] = [];
+    const step = orgEventStep<number>({
+      ...base,
+      apply: async () => { throw err; },
+      recordFailure: async (_e, f) => { recorded.push({ kind: f.kind, chargeTry: f.chargeTry }); return after; },
+    });
+    return { outcome: step(1), recorded };
+  };
+
+  it("records an outage's kind without charging a try, and alerts nobody", async () => {
+    const { outcome, recorded } = failingWith(new ServiceError(503, "catalog down"), { attempts: 0, previousKind: null });
+    expect(await outcome).toBe("failed");
+    expect(recorded).toEqual([{ kind: "system", chargeTry: false }]);
+  });
+
+  it("alerts a refusal the first time it is refused, not when it is refused again", async () => {
+    const first = failingWith(new ServiceError(400, "bad gtin"), { attempts: 0, previousKind: "system" });
+    expect(await first.outcome).toBe("alerted");
+    expect(first.recorded).toEqual([{ kind: "data", chargeTry: false }]);
+    expect(await failingWith(new ServiceError(400, "bad gtin"), { attempts: 0, previousKind: "data" }).outcome).toBe("failed");
+  });
+
+  it("charges a bug a try, and alerts only on the try that reaches the limit", async () => {
+    const early = failingWith(new Error("boom"), { attempts: BUG_TRY_LIMIT - 1, previousKind: "bug" });
+    expect(await early.outcome).toBe("failed");
+    expect(early.recorded).toEqual([{ kind: "bug", chargeTry: true }]);
+    expect(await failingWith(new Error("boom"), { attempts: BUG_TRY_LIMIT, previousKind: "bug" }).outcome).toBe("alerted");
   });
 
   it("throws a recordProcessed failure instead of recording it", async () => {
@@ -307,7 +340,7 @@ describe("orgEventStep", () => {
       ...base,
       apply: async () => undefined,
       recordProcessed: async () => { throw new Error("ledger down"); },
-      recordFailure: async () => { recorded = true; return true; },
+      recordFailure: async () => { recorded = true; return row; },
     });
     await expect(step(1)).rejects.toThrow("ledger down");
     expect(recorded).toBe(false);
@@ -315,7 +348,7 @@ describe("orgEventStep", () => {
 });
 
 describe("sweepOrgEvents", () => {
-  function run(opts: { all: number[]; failed?: number[]; received?: number[]; limit?: number; bad?: number[]; pageSize?: number }) {
+  function run(opts: { all: number[]; failed?: number[]; received?: number[]; limit?: number; bad?: number[]; alerting?: number[]; pageSize?: number }) {
     const order: number[] = [];
     const result = sweepOrgEvents<number>({
       limit: opts.limit ?? 100,
@@ -325,6 +358,7 @@ describe("sweepOrgEvents", () => {
       receivedIds: async (ids) => ids.filter((id) => opts.received?.includes(id)),
       consume: async (id) => {
         order.push(id);
+        if (opts.alerting?.includes(id)) return "alerted";
         return opts.bad?.includes(id) ? "failed" : "processed";
       },
       onUnrecorded: () => undefined,
@@ -350,12 +384,18 @@ describe("sweepOrgEvents", () => {
     const progressed = await run({ all: [1, 2, 3], limit: 1 }).result;
     expect(progressed).toMatchObject({ unprocessed: 2, needsAlert: false });
     const stalled = await run({ all: [1, 2], limit: 1, bad: [1] }).result;
-    expect(stalled).toMatchObject({ newlyFailed: 1, unprocessed: 1, needsAlert: true });
+    expect(stalled).toMatchObject({ alerted: 0, unprocessed: 1, needsAlert: true });
   });
 
-  it("a retry failing again is counted but is not newly failed", async () => {
-    const res = await run({ all: [1], failed: [1], received: [1], bad: [1] }).result;
-    expect(res).toMatchObject({ newlyFailed: 0, needsAlert: false });
+  it("a failure that alerts nobody is counted, and raises no alert", async () => {
+    const res = await run({ all: [1, 2], failed: [1], received: [1], bad: [1, 2] }).result;
+    expect(res).toMatchObject({ alerted: 0, needsAlert: false });
+    expect(res.counts.failed).toBe(2);
+  });
+
+  it("an alerting failure counts as failed and raises the alert, on a retry too", async () => {
+    const res = await run({ all: [1], failed: [1], received: [1], alerting: [1] }).result;
+    expect(res).toMatchObject({ alerted: 1, needsAlert: true });
     expect(res.counts.failed).toBe(1);
   });
 

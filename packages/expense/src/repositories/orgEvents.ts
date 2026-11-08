@@ -1,3 +1,4 @@
+import { BUG_TRY_LIMIT } from "@checkin/component-kit";
 import type { Db } from "../db";
 import type { ExpenseReceivedOrgEvent, ReceivedOrgEventStatus, NewReceivedOrgEvent } from "../db/schema";
 
@@ -29,11 +30,13 @@ export function createOrgEventsRepository(db: Db) {
       });
     },
 
+    /** Events not yet processed, leaving out those whose bug tries reached the limit. */
     async findPending(orgId: string): Promise<ExpenseReceivedOrgEvent[]> {
       return db.expenseReceivedOrgEvent.findMany({
         where: {
           orgId,
           status: { in: ["pending", "failed"] },
+          attempts: { lt: BUG_TRY_LIMIT },
         },
         orderBy: { id: "asc" },
       });

@@ -98,6 +98,8 @@ export const classifications = {
         receivedAt: 'public',
         status: 'public',
         failureReason: 'internal',
+        failureKind: 'public',
+        attempts: 'public',
     },
     ProvisionalItemLog: {
         id: 'public',

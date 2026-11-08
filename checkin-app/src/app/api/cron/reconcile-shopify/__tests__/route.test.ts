@@ -30,6 +30,8 @@ jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify/stock', () => ({ healProgramStock: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 
+const CATALOG_EVENT_LANES = ['expense catalog-events', 'local-inventory catalog-events', 'workflow-mapping catalog-events'];
+
 const SECRET = 'cron-secret-under-test';
 const RECONCILED = { configured: true, ordersScanned: 2, reversalsRaised: 0, failed: 0 };
 const SALE_SWEEP = { salesEnded: 0, productsHidden: 0, unpaidNotified: 0 };
@@ -103,7 +105,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         await GET(req());
 
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay', 'workflow-mapping matching', 'receipt push']);
+        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay', 'workflow-mapping matching', ...CATALOG_EVENT_LANES, 'receipt push']);
         expect(run.failures).toEqual([
             { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1, stopped: false },
             { lane: 'receipt push', cause: 'mapping', kind: 'connection', code: 'connection', count: 1, stopped: false },
@@ -146,6 +148,28 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         logged.mockRestore();
     });
 
+    it('covers each catalog-event lane its catch-up reached, and files a crashed catch-up under its lane', async () => {
+        jest.mocked(catchUpWorkflowEvents).mockImplementationOnce(async () => {
+            reportTo('workflow-mapping')({ lane: 'catalog-events', kind: 'system', detail: 'catalog event 3' });
+            return WORKFLOW_EVENTS;
+        });
+        jest.mocked(catchUpInventoryEvents).mockRejectedValueOnce(new Error('inventory db down'));
+        jest.mocked(runExpenseCatchUp).mockResolvedValueOnce({ ...EXPENSE, catalogEvents: { error: true } });
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toContain('workflow-mapping catalog-events');
+        expect(run.lanes).not.toContain('local-inventory catalog-events');
+        expect(run.lanes).not.toContain('expense catalog-events');
+        expect(run.failures).toEqual([
+            { lane: 'local-inventory catalog-events', cause: 'catalog', kind: 'bug', code: 'inventory events crashed', count: 1, stopped: false },
+            { lane: 'workflow-mapping catalog-events', cause: 'catalog', kind: 'system', code: 'system', count: 1, stopped: false },
+        ]);
+        logged.mockRestore();
+    });
+
     it('files a crashed step under the lane it runs and leaves that lane uncovered, so its incident stays open', async () => {
         jest.mocked(repushUnpushed).mockRejectedValue(new Error('mapping down'));
         jest.mocked(runExpenseCatchUp).mockResolvedValue({ ...EXPENSE, intake: { error: true } });
@@ -154,7 +178,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         await GET(req());
 
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify', 'workflow-mapping matching']);
+        expect(run.lanes).toEqual(['reconcile-shopify', 'workflow-mapping matching', ...CATALOG_EVENT_LANES]);
         expect(run.failures).toEqual([{ lane: 'receipt push', cause: 'mapping', kind: 'bug', code: 'receipt push crashed', count: 1, stopped: false }]);
         logged.mockRestore();
     });

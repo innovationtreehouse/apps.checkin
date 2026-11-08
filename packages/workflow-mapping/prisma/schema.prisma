@@ -43,6 +43,10 @@ model WorkflowFailedOrgEvent {
   failureReason String   @map("failure_reason")
   /// @sensitivity:public
   failedAt      DateTime @default(now()) @map("failed_at")
+  /// @sensitivity:public
+  failureKind   String?  @map("failure_kind")
+  /// @sensitivity:public
+  attempts      Int      @default(0)
 
   @@map("failed_org_events")
 }

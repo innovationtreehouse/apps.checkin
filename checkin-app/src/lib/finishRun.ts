@@ -28,6 +28,9 @@ const CAUSES: Record<string, string> = {
     "bulk-donation in-kind-posting": "quickbooks",
     "income deposit-build": "quickbooks",
     "workflow-mapping matching": "mapping",
+    "expense catalog-events": "catalog",
+    "local-inventory catalog-events": "catalog",
+    "workflow-mapping catalog-events": "catalog",
 };
 
 export const newRun = (): Run => ({ reports: [], reached: new Set(), stopped: new Set() });

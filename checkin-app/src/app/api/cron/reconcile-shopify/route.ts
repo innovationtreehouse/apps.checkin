@@ -116,8 +116,8 @@ export const GET = withCron(async () => {
     const income = await isolated("income", "income reconciliation", async () => runIncomeReconcile((await getOrg()).id));
     const expense = await isolated("expense", "expense catch-up", runExpenseCatchUp, ["expense intake", "expense intake-replay"]);
     const programStock = await isolated("program stock", "program stock heal", healProgramStock);
-    const inventoryEvents = await isolated("inventory events", "inventory event catch-up", catchUpInventoryEvents);
-    const workflowEvents = await isolated("workflow-mapping events", "workflow-mapping event catch-up", catchUpWorkflowEvents);
+    const inventoryEvents = await isolated("inventory events", "inventory event catch-up", catchUpInventoryEvents, ["local-inventory catalog-events"]);
+    const workflowEvents = await isolated("workflow-mapping events", "workflow-mapping event catch-up", catchUpWorkflowEvents, ["workflow-mapping catalog-events"]);
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
     const receivingMatching = await isolated("workflow-mapping pending matching", "workflow-mapping matching re-run", retryPendingMatching, ["workflow-mapping matching"]);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
@@ -137,6 +137,9 @@ export const GET = withCron(async () => {
     // Expense's replay re-runs the receipts live intake could not take, so it reaches both intake lanes.
     if ("intake" in expense && !crashed(expense.intake)) laneReached("expense intake", "expense intake-replay");
     if (!crashed(receivingMatching)) laneReached("workflow-mapping matching");
+    if ("catalogEvents" in expense && !crashed(expense.catalogEvents)) laneReached("expense catalog-events");
+    if (!crashed(inventoryEvents)) laneReached("local-inventory catalog-events");
+    if (!crashed(workflowEvents)) laneReached("workflow-mapping catalog-events");
     if (!crashed(receiptPush)) laneReached("receipt push");
     if (receiptMail.status === "ok") {
         laneReached("receipt mail-listing");

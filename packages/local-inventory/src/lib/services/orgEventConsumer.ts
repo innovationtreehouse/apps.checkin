@@ -1,14 +1,16 @@
 // S5 consumer: catalog provisional-resolution events. The reaction runs first and the
 // ledger row (InventoryReceivedOrgEvent) records its outcome; every reaction is idempotent
 // (resolution upsert, status short-circuit), so a crash between the two replays safely.
-import { orgEventStep, sweepOrgEvents } from "@checkin/component-kit";
+import { isNotWired, orgEventStep, sweepOrgEvents, type OrgEventOutcome } from "@checkin/component-kit";
 import { parseOrgEvent } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { InventoryAlerts, OrgEventRecord } from "../../contract";
-import { getCatalogEventSource, getInventoryAlerts, getOrgId, getServices } from "../../runtime";
+import { getCatalogEventSource, getInventoryAlerts, getOrgId, getServices, localInventoryRuntime } from "../../runtime";
 import { createOrgEventsRepository } from "../repositories/orgEventsRepository";
 
-export type ConsumeResult = "processed" | "duplicate" | "failed" | "skipped";
+export type ConsumeResult = "processed" | "duplicate" | "failed" | "alerted" | "skipped";
+
+const LANE = "catalog-events";
 
 async function react(ev: OrgEventRecord): Promise<void> {
   const service = getServices().provisionalItemService;
@@ -26,13 +28,19 @@ async function react(ev: OrgEventRecord): Promise<void> {
   }
 }
 
+interface Outcome {
+  status: "processed" | "failed";
+  failureReason: string | null;
+  failureKind: string | null;
+}
+
 /** Writes the event's ledger row. An overlapping consumer may have processed it; its outcome stands. Returns whether this write landed. */
-async function recordOutcome(ev: OrgEventRecord, status: "processed" | "failed", failureReason: string | null): Promise<boolean> {
+async function recordOutcome(ev: OrgEventRecord, outcome: Outcome, chargeTry = false): Promise<boolean> {
   const row = { id: ev.id, orgId: ev.orgId, eventType: ev.eventType, payload: ev.payload, receivedAt: ev.createdAt };
-  await db.inventoryReceivedOrgEvent.createMany({ data: [{ ...row, status, failureReason }], skipDuplicates: true });
+  await db.inventoryReceivedOrgEvent.createMany({ data: [{ ...row, ...outcome }], skipDuplicates: true });
   const { count } = await db.inventoryReceivedOrgEvent.updateMany({
     where: { id: ev.id, status: { not: "processed" } },
-    data: { status, failureReason },
+    data: { ...outcome, ...(chargeTry && { attempts: { increment: 1 } }) },
   });
   return count > 0;
 }
@@ -49,10 +57,15 @@ export const consumeOrgEvent: (ev: OrgEventRecord) => Promise<ConsumeResult> = o
   },
   apply: react,
   recordProcessed: async (ev) => {
-    await recordOutcome(ev, "processed", null);
+    await recordOutcome(ev, { status: "processed", failureReason: null, failureKind: null });
   },
-  recordFailure: (ev, failureReason) => recordOutcome(ev, "failed", failureReason),
+  async recordFailure(ev, { reason, kind, chargeTry }) {
+    const before = await db.inventoryReceivedOrgEvent.findFirst({ where: { id: ev.id }, select: { failureKind: true, attempts: true } });
+    if (!(await recordOutcome(ev, { status: "failed", failureReason: reason, failureKind: kind }, chargeTry))) return null;
+    return { attempts: (before?.attempts ?? 0) + (chargeTry ? 1 : 0), previousKind: before?.failureKind ?? null };
+  },
   onFailure(ev, err) {
+    localInventoryRuntime.failed(LANE, err, `catalog event ${ev.id}`);
     console.error(`[local-inventory/org-events] event ${ev.id} failed`, err);
   },
 });
@@ -71,7 +84,7 @@ export const orgEventConsumer = {
   async onOrgEvents(events: OrgEventRecord[]): Promise<void> {
     let failed = 0;
     for (const ev of [...events].sort((a, b) => a.id - b.id)) {
-      if ((await consumeOrgEvent(ev)) === "failed") failed++;
+      if ((await consumeOrgEvent(ev)) === "alerted") failed++;
     }
     if (failed > 0) await alertStuck({ failed, unprocessed: 0, unreadable: false });
   },
@@ -117,7 +130,7 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
  * row, so it alerts on every run until it applies. The host's daily reconcile cron step calls it.
  * Capped; counts only.
  */
-export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean; notConnected?: true }> {
+export async function catchUpOrgEvents(limit = 200): Promise<Record<OrgEventOutcome | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean; notConnected?: true }> {
   const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
   const failed = await repo.findPending(orgId);
@@ -128,13 +141,19 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
     idOf: (ev) => ev.id,
     receivedIds: (ids) => repo.idsIn(ids),
     consume: consumeOrgEvent,
-    onUnrecorded: (ev, err) => console.error(`[local-inventory/org-events] event ${ev.id} could not be recorded`, err),
-    onUnreadable: (err) => console.error("[local-inventory/org-events] catalog events could not be read", err),
+    onUnrecorded: (ev, err) => {
+      localInventoryRuntime.failed(LANE, err, `catalog event ${ev.id}`);
+      console.error(`[local-inventory/org-events] event ${ev.id} could not be recorded`, err);
+    },
+    onUnreadable: (err) => {
+      if (!isNotWired(err)) localInventoryRuntime.failed(LANE, err);
+      console.error("[local-inventory/org-events] catalog events could not be read", err);
+    },
   });
 
   const { reconciled, stuck } = await reconcilePendingProvisionals(orgId, limit);
   if (sweep.needsAlert || stuck.length > 0) {
-    await alertStuck({ failed: sweep.newlyFailed, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, stuckProvisionals: stuck });
+    await alertStuck({ failed: sweep.alerted, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, stuckProvisionals: stuck });
   }
   return {
     ...sweep.counts,

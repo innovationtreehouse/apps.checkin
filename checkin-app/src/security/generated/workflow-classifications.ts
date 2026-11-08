@@ -13,6 +13,8 @@ export const classifications = {
         payload: 'internal',
         failureReason: 'internal',
         failedAt: 'public',
+        failureKind: 'public',
+        attempts: 'public',
     },
     ReceivedReceipt: {
         id: 'public',
