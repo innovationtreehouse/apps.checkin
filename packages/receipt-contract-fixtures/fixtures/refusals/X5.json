@@ -6,10 +6,10 @@
     { "name": "the payload as sent", "expect": "accepted" },
     { "name": "the same payload again, answered as already applied", "expect": "accepted", "after": "base" },
     { "name": "a resend that differs after apply, answered as already applied", "expect": "accepted", "after": "base", "set": { "receiptTotalCents": 1 } },
-    { "name": "no line items", "expect": "refused", "set": { "lineItems": [] } },
-    { "name": "a negative total", "expect": "refused", "set": { "receiptTotalCents": -1 } },
-    { "name": "a quantity over the cap", "expect": "refused", "set": { "lineItems.0.quantity": 100001 } },
-    { "name": "a currency that is not an ISO code", "expect": "refused", "set": { "currency": "US Dollars" } },
-    { "name": "a receipt for another org, a wiring bug", "expect": "bug", "set": { "orgId": "another-org" } }
+    { "name": "no line items", "expect": "refused", "status": 400, "message": "expected array to have >=1 items", "set": { "lineItems": [] } },
+    { "name": "a negative total", "expect": "refused", "status": 400, "message": "expected number to be >=0", "set": { "receiptTotalCents": -1 } },
+    { "name": "a quantity over the cap", "expect": "refused", "status": 400, "message": "expected number to be <=100000", "set": { "lineItems.0.quantity": 100001 } },
+    { "name": "a currency that is not an ISO code", "expect": "refused", "status": 400, "message": "must match pattern", "set": { "currency": "US Dollars" } },
+    { "name": "a receipt for another org, a wiring bug", "expect": "bug", "status": 500, "message": "is not this org", "set": { "orgId": "another-org" } }
   ]
 }
