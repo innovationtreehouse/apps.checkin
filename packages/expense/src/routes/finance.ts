@@ -211,15 +211,23 @@ export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView
 
 export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
-  // An unbound or unreachable catalog shows the map without names.
-  const names = await getItemNames(rows.map((r) => r.gtin13)).catch((err: unknown) => {
-    if (isKindedError(err) && err.name === "NotWiredError") return [];
-    refuseCatalogSettings(err);
-    if (kindOf(err) !== "system") throw err;
-    logError("catalog_names_unavailable", { route: "ownership-map" }, err);
-    return [];
-  });
-  return { PartOwnerMap: rows, Item: names, ExpenseBucketView: await buckets() };
+  // An unbound catalog shows the map without names; an unreachable one also flags the names unavailable.
+  const names = await getItemNames(rows.map((r) => r.gtin13)).then(
+    (items) => ({ items, unavailable: false }),
+    (err: unknown) => {
+      if (isKindedError(err) && err.name === "NotWiredError") return { items: [], unavailable: false };
+      refuseCatalogSettings(err);
+      if (kindOf(err) !== "system") throw err;
+      logError("catalog_names_unavailable", { route: "ownership-map" }, err);
+      return { items: [], unavailable: true };
+    },
+  );
+  return {
+    PartOwnerMap: rows,
+    Item: names.items,
+    ExpenseBucketView: await buckets(),
+    ...(names.unavailable && { ExpenseCatalogNames: { unavailable: true } }),
+  };
 };
 
 /**

@@ -27,6 +27,7 @@ describeDb("GET ownership-map", () => {
       PartOwnerMap: [{ gtin13: NAMED }, { gtin13: UNNAMED }],
       Item: [{ gtin13: NAMED, name: "Hex bolt M6" }],
     });
+    expect(res).not.toHaveProperty("ExpenseCatalogNames");
   });
 
   it("carries only each item's GTIN and name, whatever else the catalog returns", async () => {
@@ -47,12 +48,13 @@ describeDb("GET ownership-map", () => {
     expect(getItemNames).not.toHaveBeenCalled();
   });
 
-  it("shows the map without names when no catalog is connected", async () => {
+  it("shows the map without names and no unavailable flag, when no catalog is connected", async () => {
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
 
     const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
 
     expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
+    expect(res).not.toHaveProperty("ExpenseCatalogNames");
   });
 
   it("shows the map without names when an unbound catalog comes from another copy of the kit", async () => {
@@ -64,14 +66,14 @@ describeDb("GET ownership-map", () => {
     expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
   });
 
-  it("shows the map without names when the catalog database is unreachable", async () => {
+  it("shows the map without names, flagged unavailable, when the catalog database is unreachable", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
     bindPorts({ catalog: { ...catalogResolving({}), getItemNames: async () => { throw catalogDown(); } } });
 
     const res = await finance.ownershipMap({ req: new Request("http://test/api/expense/ownership-map"), params: {}, principal: principal(3, { isFinance: true }) });
 
-    expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [] });
+    expect(res).toMatchObject({ PartOwnerMap: [{ gtin13: NAMED }], Item: [], ExpenseCatalogNames: { unavailable: true } });
   });
   it("answers 503 naming who fixes it when the catalog database does not exist, not a map without names", async () => {
     await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: NAMED, ownerId: 100 } });
