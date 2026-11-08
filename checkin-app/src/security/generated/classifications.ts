@@ -294,7 +294,7 @@ export const classifications = {
     ProgramVolunteer: {
         programId: 'public',
         personId: 'public',
-        isCore: 'internal',
+        isCore: 'personal',
     },
     ProgramParticipant: {
         programId: 'public',
@@ -318,7 +318,7 @@ export const classifications = {
         startAt: 'public',
         endAt: 'public',
         description: 'public',
-        attendanceConfirmedAt: 'internal',
+        attendanceConfirmedAt: 'personal',
         attendanceConfirmedById: 'internal',
         postEventEmailSent: 'internal',
         postEventEmailClaimedAt: 'internal',
