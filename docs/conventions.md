@@ -245,11 +245,14 @@ missed a row stored at a different time of day.
 - **At a crossing, a callee's 4xx means refused for good.** When one library
   calls another, a `ServiceError` or http error in the 4xx range, or a
   validation error (400), means the item will never pass: the caller stops
-  retrying and shows a person. A 401 and a 429 are not refusals: a 401 is a bug
-  in our wiring, a 429 a passing overload. Anything else means try again. A
+  retrying and shows a person. A 401, a 403 and a 429 are not refusals: a 401
+  or 403 is a bug in our wiring or the system actor's permissions, a 429 a
+  passing overload. Anything else means try again. A
   callee never throws a 4xx for something that could pass later, nor a plain
   error for an item it will never take. "Already done" is a return value, never
-  a throw. The kit's `kindOf` reads errors this way.
+  a throw. The kit's `kindOf` reads errors this way, at system-actor crossings;
+  a 403 for a person's own permission is shown to that person as a refusal and
+  is not read through `kindOf`.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race
   it can tolerate is caught where it happens and re-read or thrown as

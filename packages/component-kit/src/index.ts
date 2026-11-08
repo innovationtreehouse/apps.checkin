@@ -174,9 +174,10 @@ export function isKindedError(err: unknown): err is KindedError {
 }
 
 /**
- * The kind of any error. A library's 4xx is data, except 401 (our wiring lost the caller: bug)
- * and 429 (a passing overload: system). A database connection error takes the kind pg-kit's
- * `dbFailureKind` gives it. Anything unrecognised is a bug, which keeps today's retry-then-hold.
+ * The kind of any error. A library's 4xx is data, except 401 and 403 (our wiring or the system
+ * actor's permissions are wrong: bug) and 429 (a passing overload: system). A database
+ * connection error takes the kind pg-kit's `dbFailureKind` gives it. Anything unrecognised is a
+ * bug, which keeps today's retry-then-hold.
  */
 export function kindOf(err: unknown): FailureKind {
   if (isKindedError(err)) return err.kind;
@@ -186,7 +187,7 @@ export function kindOf(err: unknown): FailureKind {
 }
 
 function statusKind(status: number): FailureKind {
-  if (status === 401) return "bug";
+  if (status === 401 || status === 403) return "bug";
   if (status === 429 || status >= 500) return "system";
   return "data";
 }

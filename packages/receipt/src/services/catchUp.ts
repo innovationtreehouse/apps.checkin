@@ -75,38 +75,33 @@ export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: num
   return { swept, failed };
 }
 
-/** Catch-up stops retrying a receipt after this many catch-up push failures in a row. */
+/** Catch-up stops retrying a receipt after this many catch-up bug failures in a row. */
 export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
 
 /**
- * Ids catch-up has given up on. A refusal gives up at once. Otherwise a receipt is given up once
- * its latest MAX_CONSECUTIVE_PUSH_FAILURES push attempts are all catch-up failures. A success or a
- * manual push (one with an acting user) ends the run. A delivery anywhere in the org since also
- * ends an outage's run, since the receiver accepting a push means it may accept these too; it does
- * not end a bug's. A `push_failed` row with no kind predates kinds and reads as an outage.
+ * Ids catch-up has given up on. A refusal gives up at once. A bug gives up a receipt once its
+ * latest MAX_CONSECUTIVE_PUSH_FAILURES catch-up bug failures run unbroken; a success or a manual
+ * push (one with an acting user) ends the run. An outage (system, connection, settings) is never
+ * charged to the receipt: it neither counts nor ends a run. A `push_failed` row with no kind
+ * predates kinds and reads as an outage.
  */
 export async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
-  const lastDelivery = await db.receiptAuditLog.findFirst({
-    where: { action: "pushed", receipt: { orgId } },
-    select: { id: true },
-    orderBy: { id: "desc" },
-  });
   const log = await db.receiptAuditLog.findMany({
-    where: { receiptId: { in: ids }, action: { in: ["pushed", "push_failed", "push_refused"] } },
-    select: { id: true, receiptId: true, action: true, userId: true, valueBefore: true },
+    where: { receiptId: { in: ids }, receipt: { orgId }, action: { in: ["pushed", "push_failed", "push_refused"] } },
+    select: { receiptId: true, action: true, userId: true, valueBefore: true },
     orderBy: { id: "desc" },
   });
   const run = new Map<string, number>();
   const ended = new Set<string>();
   const out = new Set<string>();
-  for (const { id, receiptId, action, userId, valueBefore } of log) {
+  for (const { receiptId, action, userId, valueBefore } of log) {
     if (!receiptId || ended.has(receiptId)) continue;
     if (action !== "push_failed" || userId !== null) {
       ended.add(receiptId);
       if (action === "push_refused") out.add(receiptId);
       continue;
     }
-    if (valueBefore !== "bug" && id <= (lastDelivery?.id ?? 0)) continue;
+    if (valueBefore !== "bug") continue;
     const failures = (run.get(receiptId) ?? 0) + 1;
     run.set(receiptId, failures);
     if (failures >= MAX_CONSECUTIVE_PUSH_FAILURES) {

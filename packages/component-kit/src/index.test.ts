@@ -337,6 +337,8 @@ describe("kindOf", () => {
     ["a 4xx http error is data", httpError(400, "bad"), "data"],
     ["a 401 ServiceError is a bug", new ServiceError(401, "Unauthorized"), "bug"],
     ["a 401 http error is a bug", httpError(401, "Unauthorized"), "bug"],
+    ["a 403 ServiceError is a bug", new ServiceError(403, "Forbidden"), "bug"],
+    ["a 403 http error is a bug", httpError(403, "Forbidden"), "bug"],
     ["a 429 ServiceError is system", new ServiceError(429, "limit"), "system"],
     ["a 429 http error is system", httpError(429, "slow down"), "system"],
     ["a zod error is data", zodError, "data"],
