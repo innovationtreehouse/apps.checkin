@@ -18,16 +18,15 @@ The page reads live rows, so a code seen this morning is on it this morning.
 
 ## Executive summary
 
-- **Finance and the board** get a page under the Finance tab. Sysadmins get the
-  same panel under System Status.
-- **Stored:** one small row per code and kind, holding a count and two dates. No
-  fault text, no request ids, no item ids. Rows are kept, not pruned.
+- **Finance, the board and sysadmins** see one page, under System Status.
+- **Stored:** one small row per code and kind, holding only the code, the kind, a
+  count, first and last seen, and a lane name. Rows are kept, not pruned.
 - **Recorded** by the host's binding of each library's "on failure" port, which
   already receives every kinded failure with its fault codes. No lane's behaviour
   changes, and a failed write never fails the lane.
 - **Unchanged:** how a code is sorted, the run-level rule (three refusals with one
   code in a run stop it as a setting), and what finance is told about a held item.
-- **Cost:** one new table, one route, two thin pages, and a registry entry that
+- **Cost:** one new table, one route, one page, and a registry entry that
   ships alone first.
 
 ## Rules this relies on
@@ -61,10 +60,15 @@ A row per kind, not per code, because one code can arrive under different status
 a 401 with a code is connection, a 400 with the same code is data. The page shows
 each.
 
+Those six columns are the whole row. It holds no detail text, no fault text, no
+request id, no item id, no amount and no name of a person, vendor or donor. The
+report's request id and detail stay where they already are: the log line and the
+held item. This limit is the basis for sysadmin access (below), so a later column
+outside it is an access change, not a schema tweak.
+
 **Retention.** Rows are never pruned. The set is bounded by the codes QuickBooks
 uses times five kinds, so a few dozen rows, and an old code's last-seen date is
-itself useful. Nothing here identifies a person, an item or an amount; the request
-id and the item stay where they already are (the log line and the held item).
+itself useful.
 
 ### How it is recorded
 
@@ -96,9 +100,9 @@ keeps a future service's codes off this page.
 | Board | Finance's superuser |
 | Sysadmin | Maintains the code table in the QuickBooks package and the sorting rules |
 
-The page holds no finance content: codes, kinds, counts, dates and lane names. No
-amount, vendor, donor or person. So a sysadmin reading it gains no finance access,
-and the read is not an audited finance view.
+The page shows only what the row holds: codes, kinds, counts, dates and lane
+names. With no amount, detail, request id or name on it, a sysadmin reading it
+gains no finance access, and the read is not an audited finance view.
 
 ### Route and registry entry
 
@@ -126,9 +130,15 @@ defineRoute({
 
 ### How the page reads
 
-One panel, rendered at `/finance/qbo-codes` (Finance strip, "QuickBooks codes") and
-at `/system-status/qbo-codes` (System Status strip). Each page file only mounts the
-panel; both are added to the page registry.
+One page, `/system-status/qbo-codes`, a "QuickBooks codes" tab in the System
+Status strip, added to the page registry.
+
+System Status is sysadmin and board today, so finance is admitted to this tab only:
+
+- The section becomes visible to finance too; every existing tab gets a sysadmin
+  or board gate of its own, so finance's strip shows this one tab.
+- The System Status layout admits finance on this path only, as it already admits
+  keyholders on Unsynced Scans.
 
 A line at the top: "Every fault code QuickBooks has sent us, and how the app sorted
 it. A code marked unclassified is treated as the item's data, unless three items in
@@ -159,13 +169,10 @@ Three PRs, in order. None is stacked on another.
    toward each, a non-QuickBooks lane ignored, a failed write not thrown.
    Depends on the host binding the on-failure port, which is in flight.
 2. **Registry entry**, alone (boundary PR).
-3. **Route and pages**, with the nav links and page-registry entries.
+3. **Route and page**, with the System Status nav changes and the page-registry entry.
 
 ## Open questions
 
-- **FC1. Sysadmin access.** Sysadmins see the page under System Status, on the
-  reasoning that it holds no finance content. Confirm, or keep it to finance and
-  board?
 - **FC2. Closed books on the page.** Fault 6210 (closed books) ends as "Not
   booked", not as a kinded failure, so it never reaches the port and never shows
   here. Should it be recorded too, under its own "closed books" pill?
@@ -174,5 +181,6 @@ Three PRs, in order. None is stacked on another.
 
 | Q | Ruling |
 |---|---|
+| FC1. Who sees the page | Sysadmins, finance and the board, under System Status. Sysadmin access rests on the row holding only code, kind, counts, first and last seen, and lane names. |
 | FC3. Reclassifying from the page | No. The code table stays in the QuickBooks package, edited by a PR with a test per entry. The page only reads it. |
 | FC4. Counts after a reclassification | No reset. Counts keep running across a change to the code table; the last-seen date shows recent activity. |
