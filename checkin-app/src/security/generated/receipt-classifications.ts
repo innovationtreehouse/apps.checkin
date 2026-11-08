@@ -91,8 +91,8 @@ export const classifications = {
         changedAt: 'internal',
         action: 'internal',
         fieldChanged: 'internal',
-        valueBefore: 'personal',
-        valueAfter: 'personal',
+        valueBefore: 'pii',
+        valueAfter: 'pii',
         lineItemId: 'internal',
     },
     ReceiptPairDecision: {

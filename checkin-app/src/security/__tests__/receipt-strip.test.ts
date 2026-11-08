@@ -16,11 +16,13 @@
  *      only each member's state, and a submitter's view never holds the uploader.
  *   6. A duplicates queue row reaches FINANCE whole; an internal-only view loses
  *      its receipt id and rejected marker.
+ *   7. Audit change values are `pii`: finance and the Board keep them on the
+ *      audit-log route; a view holding `personal` but not `pii` loses them.
  */
 import '@/security/registry';
 import { stripValue } from '@/security/stripper';
+import { getRoute, type Role, type Token } from '@/security/core';
 import type { CallerContext } from '@/security/access-resolvers';
-import type { Token } from '@/security/core';
 import * as receiptGenerated from '@/security/generated/receipt-classifications';
 import * as receiptSynthetic from '@/security/receiptSyntheticClassifications';
 
@@ -147,6 +149,31 @@ describe('receipt donor and reimbursee names', () => {
         expect(stripValue('ReceiptAuditLog', log, INTERNAL_ONLY, ctx())).toEqual({ id: 1, receiptId: 'r-1', userId: 7, action: 'field_edit' });
         const mail = { id: 1, senderAddress: 'sam@example.com', status: 'held' };
         expect(stripValue('ReceiptMailItem', mail, INTERNAL_ONLY, ctx())).toEqual({ id: 1, status: 'held' });
+    });
+});
+
+describe('receipt audit change values', () => {
+    const AUDIT_LOGS = 'GET /api/receipts/[id]/audit-logs';
+    const PERSONAL_ONLY: readonly Token[] = ['everyones:personal', 'everyones:internal', 'public'];
+    const log = { id: 1, receiptId: 'r-1', userId: 7, username: 'Sam Lee', action: 'in_kind_updated', fieldChanged: 'donorCompanyName', valueBefore: 'Acme', valueAfter: 'Doe Hardware' };
+
+    function tokensFor(role: Role): readonly Token[] {
+        const entry = getRoute(AUDIT_LOGS)?.orderedView.find(([r]) => r === role);
+        if (!entry) throw new Error(`no orderedView entry for ${role} on ${AUDIT_LOGS}`);
+        return entry[1];
+    }
+
+    it('are pii', () => {
+        expect(receiptGenerated.classifications.ReceiptAuditLog.valueBefore).toBe('pii');
+        expect(receiptGenerated.classifications.ReceiptAuditLog.valueAfter).toBe('pii');
+    });
+
+    it.each(['isFinance', 'isBoardMember'] as const)('%s keeps them on the audit-log route', (role) => {
+        expect(stripValue('ReceiptAuditLog', log, tokensFor(role), ctx())).toEqual(log);
+    });
+
+    it('a personal-only view loses them', () => {
+        expect(stripValue('ReceiptAuditLog', log, PERSONAL_ONLY, ctx())).toEqual({ id: 1, receiptId: 'r-1', userId: 7, action: 'in_kind_updated', fieldChanged: 'donorCompanyName' });
     });
 });
 

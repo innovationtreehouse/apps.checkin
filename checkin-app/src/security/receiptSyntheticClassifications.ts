@@ -8,8 +8,8 @@
  * paid status (`reimbursement`: `{ paidOn }` or null), and on a finalized receipt
  * not yet delivered to receiving its push record: whether catch-up has given up
  * (`pushGivenUp`), and the latest failure's time and message (`lastPushFailedAt`,
- * `lastPushFailure`). The message is the latest push_failed or push_refused audit
- * row's `valueAfter`, so it keeps that column's `personal` tier. A finalized receipt also carries its
+ * `lastPushFailure`). The message is the receipt's `lastError`, so it keeps that
+ * column's `personal` tier. A finalized receipt also carries its
  * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
  * expense's status with each rejected line's note, and an in-kind gift's
  * decision. The line notes are approvers' free text, so the field is `personal`,
