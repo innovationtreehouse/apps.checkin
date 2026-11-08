@@ -121,9 +121,11 @@ describeDb("finance queue — QuickBooks tab", () => {
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_POST_FAILED", "Not posted"]]]);
   });
 
-  it("lists no qb_error expense: it is on the Problems list", async () => {
-    await seedExpense({ state: "qb_error" });
-    expect(await financeQueueRows(FINANCE, "quickbooks")).toEqual([]);
+  it("shows a qb_error expense as waiting for Retry, with nothing for finance to act on", async () => {
+    const id = await seedExpense({ state: "qb_error" });
+    const rows = await financeQueueRows(FINANCE, "quickbooks");
+    expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => [x.code, x.text])])).toEqual([[id, [["QB_PROCESSING_FAILED", "Could not be prepared for QuickBooks; it waits for Retry on the Problems list"]]]]);
+    expect((await financeQueueCounts(FINANCE)).quickbooks).toMatchObject({ actionable: 0, total: 1 });
   });
 
 });

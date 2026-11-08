@@ -91,7 +91,8 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const conflicted = await isConflicted(expense, me);
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
-    if (!principal.isFinance) return false;
+    // The Problems list's Retry answers it, not a queue action.
+    if (!principal.isFinance || r.code === "QB_PROCESSING_FAILED") return false;
     if (BOOKKEEPING.has(r.code) || BUCKET_CHOICE.has(r.code)) return true;
     if (conflicted || r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.

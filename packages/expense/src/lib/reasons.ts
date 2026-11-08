@@ -20,6 +20,7 @@ export type ReasonCode =
   | "QB_UNBOOKED"
   | "QB_VENDOR_MISSING"
   | "QB_NO_CLASS"
+  | "QB_PROCESSING_FAILED"
   | ReviewKind
   | "BOARD_APPROVAL"
   | "SIGNER_HELD";
@@ -111,6 +112,7 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
     if (f.missingClass) out.push(reason("QB_NO_CLASS", "qb", { detail: f.missingClass.bucketName }));
+    if (e.state === "qb_error") out.push(reason("QB_PROCESSING_FAILED", "qb"));
   }
   for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 

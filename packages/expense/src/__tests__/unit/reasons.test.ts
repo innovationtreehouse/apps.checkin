@@ -81,8 +81,8 @@ describe("deriveReasons", () => {
     expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
   });
 
-  it("gives a qb_error expense no queue reason: it is on the Problems list", () => {
-    expect(codes(facts({ expense: { state: "qb_error" } }))).toEqual([]);
+  it("reads a qb_error expense as waiting for Retry", () => {
+    expect(codes(facts({ expense: { state: "qb_error" } }))).toEqual(["QB_PROCESSING_FAILED"]);
   });
 
   it("a closed expense keeps its QuickBooks reasons and reviews, and drops the rest", () => {
@@ -136,6 +136,7 @@ describe("reasonText", () => {
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 1 }), "USD")).toBe("1 line has no account rule");
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
     expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
+    expect(reasonText(r({ code: "QB_PROCESSING_FAILED" }), "USD")).toBe("Could not be prepared for QuickBooks; it waits for Retry on the Problems list");
     expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
   });
 });
