@@ -7,6 +7,7 @@ import { db, type Db } from "../db";
 import { CatalogOrgEventSchema, type CatalogOrgEvent } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
+import { FAILED_AGAIN } from "../lib/retry";
 import { createOrgEventsRepository } from "../repositories/orgEvents";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
@@ -83,11 +84,12 @@ export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> 
   return recordCatalogEvent(raw);
 }
 
-/** Retry of a failed event: applies it once from its stored row. 404 when no event of this org is failed. */
+/** Retry of a failed event: applies it once from its stored row. 404 when no event of this org is failed, 409 when it fails again. */
 export async function retryCatalogEvent(id: number): Promise<void> {
   const row = await db.expenseReceivedOrgEvent.findFirst({ where: { id, orgId: await getOrgId(), status: "failed" } });
   if (!row) throw new ServiceError(404, "No failed catalog event with this id");
-  await recordCatalogEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload, createdAt: row.receivedAt });
+  const result = await recordCatalogEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload, createdAt: row.receivedAt });
+  if (result === "failed") throw new ServiceError(409, FAILED_AGAIN);
 }
 
 /**

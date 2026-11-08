@@ -355,7 +355,7 @@ describeDb("checkAndProcessExpense — failure path", () => {
     const { qbFirstFailedAt } = await db.expense.findUniqueOrThrow({ where: { id } });
 
     await new Promise((r) => setTimeout(r, 5));
-    await retryStuckItem({ id, step: "QuickBooks processing" });
+    await expect(retryStuckItem({ id, step: "QuickBooks processing" })).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
 
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "qb_error", qbFirstFailedAt });
     expect(await stuckItems()).toEqual([{ id, step: "QuickBooks processing", href: `/expense/expenses/${id}`, failedAt: qbFirstFailedAt }]);

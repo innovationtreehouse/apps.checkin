@@ -304,7 +304,7 @@ describeDb("S2 intake — applied is written only after processing commits", () 
       data: { orgId: allRecognized.orgId, receiptId: allRecognized.receiptId, payloadJson: JSON.stringify({ ...allRecognized, currency: "$" }), status: "failed" },
     });
 
-    await retryFailedPayload(allRecognized.receiptId);
+    await expect(retryFailedPayload(allRecognized.receiptId)).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
 
     const s = await snapshot(allRecognized.receiptId);
     expect(s.expenses).toBe(0);
@@ -348,7 +348,7 @@ describeDb("S2 intake — expense owns a payload once it is stored", () => {
     const [{ firstFailedAt }] = (await snapshot(allRecognized.receiptId)).payloads;
 
     failingLookup(new ServiceError(422, "reimbursee cannot be read"));
-    await retryFailedPayload(allRecognized.receiptId);
+    await expect(retryFailedPayload(allRecognized.receiptId)).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
     await receiveCompletedReceipt(withReimbursee);
 
     expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "failed", failureReason: "reimbursee cannot be read", firstFailedAt })]);
@@ -375,7 +375,7 @@ describeDb("S2 intake — expense owns a payload once it is stored", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     await receiveCompletedReceipt(withReimbursee);
-    await retryFailedPayload(allRecognized.receiptId);
+    await expect(retryFailedPayload(allRecognized.receiptId)).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
 
     const detail = `receipt ${allRecognized.receiptId}`;
     expect(reports).toEqual([

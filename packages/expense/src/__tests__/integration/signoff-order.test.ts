@@ -164,6 +164,14 @@ describeDb("going back clears every later step of the expense", () => {
   const reopen = (id: string, li: number) =>
     db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "finance changed the receipt"));
 
+  it("a qb_error expense, which has no outbox row, leaves its failed step when it goes back", async () => {
+    const { id, li } = await capitalExpense();
+    await db.expenseEvent.deleteMany({ where: { expenseId: id } });
+    await db.expense.update({ where: { id }, data: { state: "qb_error", qbMatchState: "UNMATCHED" } });
+    await reopen(id, li);
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbFirstFailedAt: null, qbLastError: null });
+  });
+
   it("a skipped expense stays skipped when it goes back", async () => {
     const { id, li } = await capitalExpense("SKIPPED");
     await reopen(id, li);

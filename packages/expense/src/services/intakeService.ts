@@ -4,6 +4,7 @@ import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-
 import { db, isUniqueConstraintError } from "../db";
 import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
+import { FAILED_AGAIN } from "../lib/retry";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
 import { withinEverydayLimits } from "../lib/signoff";
@@ -91,11 +92,11 @@ export async function replayReceivedPayloads(limit = 50): Promise<{ applied: num
   return counts;
 }
 
-/** Retry of a failed payload: builds its expense once from the stored payload. 404 when no payload of this org is failed. */
+/** Retry of a failed payload: builds its expense once from the stored payload. 404 when no payload of this org is failed, 409 when it fails again. */
 export async function retryFailedPayload(receiptId: string): Promise<void> {
   const row = await db.receivedExpensePayload.findFirst({ where: { receiptId, orgId: await getOrgId(), status: "failed" }, select: { receiptId: true, payloadJson: true } });
   if (!row) throw new ServiceError(404, "No failed intake for this receipt");
-  await replayOne(row);
+  if (!(await replayOne(row))) throw new ServiceError(409, FAILED_AGAIN);
 }
 
 /** True when the stored payload built its expense; a failure is recorded on the row. Never throws. */

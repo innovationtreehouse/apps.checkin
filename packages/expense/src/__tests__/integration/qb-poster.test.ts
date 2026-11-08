@@ -405,7 +405,7 @@ describeDb("QB-2 posting — a failed post is stuck until a retry", () => {
 
     qbo.mode = "accept-then-drop";
     await new Promise((r) => setTimeout(r, 5));
-    await retryStuckItem({ id, step: "QuickBooks posting" });
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("failed again") });
 
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: "QBO create Purchase failed: socket hang up" });
   });
@@ -606,7 +606,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbTxnId: null });
 
     // The retry finds the app's own entry, held by the other expense: finance decides, nothing is created again.
-    await retryStuckItem({ id, step: "QuickBooks posting" });
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 409, message: expect.stringContaining("still needs finance") });
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: null });
     const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" }, orderBy: { id: "desc" } });
     expect(last.notes).toBe(`app entry Purchase 5000 is held by expense ${holder}`);
@@ -1382,7 +1382,7 @@ describeDb("QB closed books — a create that may have landed", () => {
     const id = await attemptedWithLookup(status);
     const { qbFirstFailedAt } = await expenseRow(id);
 
-    await retryStuckItem({ id, step: "QuickBooks posting" });
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("failed again") });
 
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: expect.stringContaining("the app may already have booked this expense") });

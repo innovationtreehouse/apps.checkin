@@ -37,6 +37,17 @@ describeDb("stuckItems", () => {
     ]));
   });
 
+  it("lists a QuickBooks post only while it waits at NEEDS_FINANCE, and times a qb_error expense with no stamp from its submission", async () => {
+    const at = new Date("2026-11-01T10:00:00Z");
+    for (const data of [{ qbMatchState: "UNMATCHED" }, { qbMatchState: "POST_FAILED" }, { state: "rejected", qbMatchState: "NEEDS_FINANCE" }]) {
+      const id = await seedExpense();
+      await db.expense.update({ where: { id }, data: { ...data, qbFirstFailedAt: new Date() } });
+    }
+    const unstamped = await seedExpense({ state: "qb_error", submittedAt: at });
+
+    expect(await stuckItems()).toEqual([{ id: unstamped, step: "QuickBooks processing", href: `/expense/expenses/${unstamped}`, failedAt: at }]);
+  });
+
   it("carries no error text", async () => {
     await db.receivedExpensePayload.create({ data: { orgId: ORG, receiptId: "r1", payloadJson: "{}", status: "failed", failureReason: "personal detail", firstFailedAt: new Date() } });
     const id = await seedExpense();
@@ -55,7 +66,7 @@ describeDb("stuckItems", () => {
     const [before] = await stuckItems();
 
     await new Promise((r) => setTimeout(r, 5));
-    await retryStuckItem({ id: before.id, step: before.step });
+    await expect(retryStuckItem({ id: before.id, step: before.step })).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
     await receiveCompletedReceipt(receipt);
 
     expect(await stuckItems()).toEqual([before]);

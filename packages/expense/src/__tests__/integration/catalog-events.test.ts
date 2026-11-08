@@ -184,7 +184,7 @@ describeDb("S5 consumer — a failed event", () => {
     await consumeCatalogEvent(malformed(1));
     const { firstFailedAt } = await db.expenseReceivedOrgEvent.findFirstOrThrow({ where: { id: 1 } });
 
-    await retryCatalogEvent(1);
+    await expect(retryCatalogEvent(1)).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
 
     expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed", firstFailedAt });
   });
