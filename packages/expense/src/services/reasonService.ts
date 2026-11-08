@@ -5,7 +5,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
 import { REVIEW_KINDS, reviewKindOf } from "../lib/flags";
-import { deriveReasons, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
+import { deriveReasons, settingWaitDetail, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, isConflicted, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { POSTABLE_QB_STATES, lastPostError } from "../lib/expense-qb-poster";
@@ -35,6 +35,17 @@ async function missingClass(expense: { id: string; backfill: boolean; qbTxnId: s
   const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
   const unclassed = ownerIds.find((id) => id !== null && !buckets.get(id)?.quickBooksClassId);
   return unclassed == null ? undefined : { bucketName: buckets.get(unclassed)?.name ?? null };
+}
+
+/** Why a setting stops an outboxed, postable expense, or undefined when none does. */
+async function waitingOnSetting(expense: { id: string; backfill: boolean; qbTxnId: string | null; qbMatchState: string; qbFailureKind: string | null }) {
+  if (expense.qbFailureKind !== "settings" || expense.backfill || expense.qbTxnId || !POSTABLE_QB_STATES.includes(expense.qbMatchState)) return undefined;
+  const last = await db.expenseAuditLog.findFirst({
+    where: { expenseId: expense.id, action: { in: ["qb_waiting_on_settings", "qb_post_failed"] } },
+    orderBy: { changedAt: "desc" },
+    select: { notes: true },
+  });
+  return { detail: settingWaitDetail(last?.notes) };
 }
 
 /**
@@ -76,6 +87,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     lastPostError: lastFailure,
     reimburseeVendorLinked: vendorLinked,
     missingClass: await missingClass(expense, expense.approvals.map((a) => a.ownerId)),
+    waitingOnSetting: await waitingOnSetting(expense),
     openReviews: expense.flags.flatMap((flag) => {
       const kind = reviewKindOf(flag);
       return kind ? [{ kind, detail: flag.detail }] : [];

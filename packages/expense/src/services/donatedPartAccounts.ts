@@ -1,5 +1,5 @@
 // Gifts of goods book each part where the same purchase would (docs/rules/expenses.md): through expense's account rules.
-import { NotWiredError } from "@checkin/component-kit";
+import { isKindedError } from "@checkin/component-kit";
 import { db } from "../db";
 import { donatedPartAccount } from "../lib/account-rules";
 import { getItem, listCategories, listSubcategories } from "../lib/catalog";
@@ -18,7 +18,7 @@ export async function resolveDonatedPartAccounts(orgId: string, parts: DonatedPa
   await assertOrg(orgId);
   if (parts.length === 0) return [];
   const catalog = await Promise.all([listCategories(), listSubcategories()]).catch((err: unknown) => {
-    if (err instanceof NotWiredError) return null;
+    if (isKindedError(err) && err.name === "NotWiredError") return null;
     throw err;
   });
   if (!catalog) return parts.map((p) => ({ lineId: p.lineId, reason: "catalog not connected" }));

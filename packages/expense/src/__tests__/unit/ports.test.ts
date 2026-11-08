@@ -17,6 +17,10 @@ import { bindPorts, catalogResolving, ORG, principal } from "../helpers/seed";
 /** What the catalog client throws when its configured database does not exist. */
 const catalogDbMissing = () => Object.assign(new Error("Database does not exist"), { code: "P1003" });
 
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true });
+
 describe("callerId", () => {
   it("returns an integer id", () => {
     expect(callerId({ id: 12 })).toBe(12);
@@ -63,6 +67,18 @@ describe("runtime", () => {
   });
 
   it("matching carries on without the catalog and records that it is not connected", async () => {
+    const line = { id: 1, partNumber: "P1", manufacturer: null, description: "drill", nonInventory: false };
+    expect(await lookupCatalogInfo([line], "Acme")).toEqual({ gtin13ByItemId: new Map(), info: new Map(), catalogNotConnected: true });
+    expect(await resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).toEqual([
+      { lineId: 7, reason: "catalog not connected" },
+    ]);
+  });
+
+  it("an unbound catalog from another copy of the kit still reads as not connected", async () => {
+    const unbound = async () => { throw foreignNotWired("catalog"); };
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: unbound } });
+    const ctx = { req: new Request("http://test/api/expense/mapping-catalog"), params: {}, principal: principal(3, { isFinance: true }) };
+    await expect(finance.mappingCatalog(ctx)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
     const line = { id: 1, partNumber: "P1", manufacturer: null, description: "drill", nonInventory: false };
     expect(await lookupCatalogInfo([line], "Acme")).toEqual({ gtin13ByItemId: new Map(), info: new Map(), catalogNotConnected: true });
     expect(await resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).toEqual([

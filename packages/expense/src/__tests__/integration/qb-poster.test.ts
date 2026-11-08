@@ -3,7 +3,7 @@
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { NotWiredError } from "@checkin/component-kit";
+import { NotWiredError, type FailureReport } from "@checkin/component-kit";
 import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
@@ -525,6 +525,34 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(windowReads()).toBe(reads);
   });
 
+  it("hands a refused create to the on-failure port with its fault codes and request id", async () => {
+    const reports: FailureReport[] = [];
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: async () => posting() }, onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
+    const line = await seedLineItem(id, { manualQbAccount: UNKNOWN_ACCOUNT, totalPriceCents: 500 });
+    await seedApproval(id, line, { ownerId: 7, status: "approved" });
+    await signAllLines(id);
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(reports).toEqual([{ lane: "posting", kind: "data", faultCodes: ["2500"], requestId: "tid", detail: `expense ${id}` }]);
+  });
+
+  it("hands an outage to the on-failure port as system", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    const reports: FailureReport[] = [];
+    bindPorts({ quickbooks: { posting: async () => posting() }, onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "down";
+
+    expect(await postExpenseToQb(ORG, id)).toBe("outage");
+
+    expect(reports).toEqual([expect.objectContaining({ lane: "posting", kind: "system", detail: `expense ${id}` })]);
+  });
+
   it("finance fixes the account and retries: the account is re-resolved, the expense posts and the posting reason clears", async () => {
     const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
@@ -585,6 +613,21 @@ describeDb("QB-2 posting — bounded retry", () => {
     bindPorts({ catalog: catalogResolving({}) });
 
     await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("isn't connected") });
+
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a retry while the catalog database does not exist answers 503 naming who fixes it and changes nothing", async () => {
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, line, "60");
+    await db.expenseLineItem.update({ where: { id: line }, data: { partNumber: "PN-1" } });
+    const missing = async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); };
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: missing }, quickbooks: { posting: async () => posting() } });
+
+    await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
 
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });

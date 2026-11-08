@@ -1,5 +1,5 @@
 import { isServiceError, KindedError, ServiceError, type FailureKind } from "@checkin/component-kit";
-import { DEFAULT_CURRENCY, type ReceiptState } from "@checkin/receipt-types";
+import { DEFAULT_CURRENCY, DONOR_NAME_MAX, InKindDonorSchema, type ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
@@ -257,14 +257,14 @@ async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput },
   if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
 }
 
-/** Donations needs a first and last name, so "I am the donor" is refused when the profile lacks either. */
+/** "I am the donor" checks the profile name with the donor schema donations uses, and stores it as parsed. */
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
-  if ("self" in donor && (!actor.firstName.trim() || !actor.lastName.trim())) {
-    throw new ServiceError(400, "Your profile is missing a first or last name, so you can't be the donor. Add your full name to your profile, or enter the donor's name.");
+  if (!("self" in donor)) return { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
+  const profile = InKindDonorSchema.safeParse({ firstName: actor.firstName, lastName: actor.lastName, companyName: null });
+  if (!profile.success) {
+    throw new ServiceError(400, `Your profile name can't be used as the donor: it needs a first and last name, each up to ${DONOR_NAME_MAX} characters. Fix your profile name, or enter the donor's name.`);
   }
-  return "self" in donor
-    ? { donorFirstName: actor.firstName, donorLastName: actor.lastName, donorCompanyName: null }
-    : { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
+  return { donorFirstName: profile.data.firstName, donorLastName: profile.data.lastName, donorCompanyName: null };
 }
 
 function ocrDetail(data: OcrData) {

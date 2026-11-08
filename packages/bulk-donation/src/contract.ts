@@ -1,6 +1,7 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
+import type { OnFailure } from "@checkin/component-kit";
 import type { BooksMap, BooksMapRole, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
@@ -36,12 +37,7 @@ export interface OwnerDirectory {
 }
 
 /** The in-kind donor entered at receipt upload (X13). Never null: upload requires a donor. */
-export const InKindDonorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  companyName: z.string().nullable(),
-});
-export type InKindDonor = z.infer<typeof InKindDonorSchema>;
+export { InKindDonorSchema, type InKindDonor } from "@checkin/receipt-types";
 
 /** A catalog item as the no-receipt in-kind picker shows it (X10). */
 export const CatalogItemSummarySchema = z.object({
@@ -185,6 +181,7 @@ export interface BulkDonationConfig {
   auth: BulkDonationAuth;
   /** Called once per request: the host may resolve it from its own store, so never at boot. */
   org: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   owners?: OwnerDirectory;
   catalog?: CatalogLookup;
   inventory?: InventoryApply;

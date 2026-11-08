@@ -1,4 +1,5 @@
 import { KindedError, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { DONOR_NAME_MAX } from "@checkin/receipt-types";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { CATCH_UP_CAP, MAX_CONSECUTIVE_DONOR_SYNC_FAILURES, repushUnpushed, resendDonorSync } from "../../services/catchUp";
@@ -79,17 +80,15 @@ describeDb("in-kind mark and donor (X13)", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
-  it("refuses \"I am the donor\" from a person whose profile has no first or last name", async () => {
+  it("refuses \"I am the donor\" from a person whose profile name donations would refuse", async () => {
     const self = { isInKind: true, donor: { self: true } };
     const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    const refused = { status: 400, message: expect.stringContaining("Your profile name can't be used as the donor") };
     const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
-    for (const blank of [{ firstName: "" }, { lastName: "  " }]) {
-      actAs({ ...ALICE, ...blank });
-      await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...self })).rejects.toMatchObject({
-        status: 400,
-        message: expect.stringContaining("Your profile is missing a first or last name"),
-      });
-      await expect(receiptService.setInKind(r.id, self)).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Your profile is missing a first or last name") });
+    for (const bad of [{ firstName: "" }, { lastName: "  " }, { firstName: "x".repeat(DONOR_NAME_MAX + 1) }]) {
+      actAs({ ...ALICE, ...bad });
+      await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...self })).rejects.toMatchObject(refused);
+      await expect(receiptService.setInKind(r.id, self)).rejects.toMatchObject(refused);
     }
     expect(await db.receipt.count()).toBe(1);
     expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: false, donorSync: "none" });
@@ -98,6 +97,12 @@ describeDb("in-kind mark and donor (X13)", () => {
     const gift = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...typed });
     await receiptService.setInKind(r.id, typed);
     expect(ports.calls.donors.map((c) => c.receiptId)).toEqual([gift.id, r.id]);
+  });
+
+  it("\"I am the donor\" stores the profile name as donations receives it", async () => {
+    actAs({ ...ALICE, firstName: " Ann ", lastName: "Lee " });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorFirstName: "Ann", donorLastName: "Lee", donorSync: "synced" });
   });
 
   it("'I am the donor' sends the uploader's names; the push carries only isInKind", async () => {

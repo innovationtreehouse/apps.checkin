@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
-import type { CompletedReceipt } from "@checkin/receipt-types";
+import { DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
-import { inventorySourceKey } from "../../contract";
+import { InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -45,6 +45,10 @@ const configure = (extra: Partial<Parameters<typeof configureBulkDonation>[0]> =
     org: async () => ({ id: ORG, name: "Test Org" }),
     ...extra,
   });
+
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -91,6 +95,15 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
 
   it("rejects a blank donor name", async () => {
     await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "" }, 0)).rejects.toBeInstanceOf(ZodError);
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, lastName: "   " }, 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("rejects a donor name over the shared limit", async () => {
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "x".repeat(DONOR_NAME_MAX + 1) }, 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("checks the donor with the shared schema", () => {
+    expect(BulkDonorSchema).toBe(InKindDonorSchema);
   });
 
   it("rejects an empty receipt id", async () => {
@@ -118,6 +131,14 @@ describe("caller ports", () => {
   });
 
   it("an unbound catalog is a 503 saying none is connected, never \"no item\"", async () => {
+    const notConnected = { status: 503, message: "No catalog is connected" };
+    await expect(searchCatalog("drill")).rejects.toMatchObject(notConnected);
+    await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(notConnected);
+  });
+
+  it("an unbound catalog from another copy of the kit is still a 503 saying none is connected", async () => {
+    const unbound = async () => { throw foreignNotWired("catalog"); };
+    configure({ catalog: { search: unbound, getItem: unbound } });
     const notConnected = { status: 503, message: "No catalog is connected" };
     await expect(searchCatalog("drill")).rejects.toMatchObject(notConnected);
     await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(notConnected);

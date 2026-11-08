@@ -54,6 +54,10 @@ export type {
   FinancialReviewReason,
 } from "./completed-receipt";
 
+// X13 — receipt → donations in-kind donor contract
+export { InKindDonorSchema, DONOR_NAME_MAX, DONOR_COMPANY_MAX } from "./in-kind-donor";
+export type { InKindDonor } from "./in-kind-donor";
+
 export {
   RECEIPT_CONTRACT_VERSION,
   majorVersion,

@@ -1,0 +1,17 @@
+{
+  "crossing": "S1",
+  "callee": "workflow-mapping ingestReceipt",
+  "base": { "fixture": "S1-completed-receipt/single-item-recognized" },
+  "cases": [
+    { "name": "the payload as sent", "expect": "accepted" },
+    { "name": "a lower-case currency, which the contract normalizes", "expect": "accepted", "set": { "currency": "usd" } },
+    { "name": "a fractional quantity", "expect": "accepted", "set": { "lineItems.0.quantity": 6.002 } },
+    { "name": "a resend that differs, answered with the stored receipt", "expect": "accepted", "after": "base", "set": { "vendorName": "Different" } },
+    { "name": "a receipt for another org", "expect": "refused", "set": { "orgId": "another-org" } },
+    { "name": "no receiptId", "expect": "refused", "unset": ["receiptId"] },
+    { "name": "no line items", "expect": "refused", "set": { "lineItems": [] } },
+    { "name": "a negative tax", "expect": "refused", "set": { "taxCents": -1 } },
+    { "name": "a zero quantity", "expect": "refused", "set": { "lineItems.0.quantity": 0 } },
+    { "name": "a submission time that is not ISO", "expect": "refused", "set": { "submittedAt": "yesterday" } }
+  ]
+}

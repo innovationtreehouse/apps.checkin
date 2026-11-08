@@ -12,7 +12,7 @@ import { MAX_REPLAY_ATTEMPTS, receiveCompletedReceipt, replayReceivedPayloads } 
 import { updateExpenseSettings } from "../../services/settingsService";
 import { storedTaxNeedsFinance } from "../../services/flagService";
 import { financeQueueRows } from "../../services/financeQueueService";
-import { KindedError, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { KindedError, NotWiredError, ServiceError, type FailureReport } from "@checkin/component-kit";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -354,6 +354,22 @@ describeDb("S2 intake — expense owns a payload once it is stored", () => {
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"intake_replay_given_up","receiptId":"' + allRecognized.receiptId + '","attempts":5'));
     const [row] = await financeQueueRows(principal(3, { isFinance: true }), "expenses");
     expect(row).toMatchObject({ expenseId: null, reasons: [expect.objectContaining({ code: "INTAKE_FAILED" })] });
+  });
+
+  it("hands an arrival's and each replay's build failure to the on-failure port", async () => {
+    const reports: FailureReport[] = [];
+    bindPorts({ signoff: { ...directory({}), personExists: async () => { throw new ServiceError(503, "directory down"); } }, onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await receiveCompletedReceipt(withReimbursee);
+    await replayReceivedPayloads();
+
+    const detail = `receipt ${allRecognized.receiptId}`;
+    expect(reports).toEqual([
+      { lane: "intake", kind: "system", status: 503, detail },
+      { lane: "intake-replay", kind: "system", status: 503, detail },
+    ]);
   });
 
   it("a resend of a given-up payload starts its tries from zero", async () => {

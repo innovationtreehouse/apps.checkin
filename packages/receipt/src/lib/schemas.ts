@@ -1,6 +1,6 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { CURRENCY_CODE, DEFAULT_CURRENCY, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { CURRENCY_CODE, DEFAULT_CURRENCY, InKindDonorSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
 
 export { CURRENCY_CODE };
@@ -56,13 +56,7 @@ export const ManualDetailsSchema = z.object({
 /** "I am the donor", or the donor's name. */
 export const DonorInputSchema = z.union([
   z.object({ self: z.literal(true) }).strict(),
-  z
-    .object({
-      firstName: z.string().trim().min(1).max(100),
-      lastName: z.string().trim().min(1).max(100),
-      companyName: z.string().trim().max(200).nullable().optional(),
-    })
-    .strict(),
+  InKindDonorSchema.extend({ companyName: InKindDonorSchema.shape.companyName.optional() }).strict(),
 ]);
 export type DonorInput = z.infer<typeof DonorInputSchema>;
 

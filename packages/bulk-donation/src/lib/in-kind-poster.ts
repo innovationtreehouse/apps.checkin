@@ -1,7 +1,7 @@
 // The in-kind drain (docs/rules/revenue.md, Donations): each accepted gift books as one QuickBooks JournalEntry,
 // unless finance already booked it by hand as a Deposit into and a Purchase out of the in-kind
 // clearing account, which the drain matches instead. Claim, call, settle, as the other lanes.
-import { kindOf, type FailureKind } from "@checkin/component-kit";
+import { KindedError, kindOf, type FailureKind } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
 import {
   MAX_CONSECUTIVE_FAILURES,
@@ -28,7 +28,7 @@ import {
   type QuickBooksClient,
 } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type DbOrTx } from "../db";
-import { getInKindAccounts, getInKindCapital, getInKindQbPosting } from "../runtime";
+import { bulkDonationRuntime, getInKindAccounts, getInKindCapital, getInKindQbPosting } from "../runtime";
 import type { InKindQbPosting, InKindStopKind } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import { readDonationSettings, type DonationSettings } from "../services/settingsService";
@@ -201,6 +201,7 @@ export async function lookupOwnJournal(run: Pick<Run, "orgId" | "client">, gift:
   return { state: QB_MATCH_STATE.CREATED, note: null, entries: [{ side: "journal", entity: "JournalEntry", id: own.Id, txnDate: own.TxnDate }], booked: { totalCents: dollarsToCents(own.TotalAmt), txnDate: own.TxnDate } };
 }
 
+const giftDetail = (source: GiftToBook["source"], id: number) => `${source} gift ${id}`;
 const needsFinance = (note: string): Settlement => ({ state: QB_MATCH_STATE.NEEDS_FINANCE, note, entries: [] });
 const heldNoCall = (note: string): Settlement => ({ ...needsFinance(note), noCall: true });
 /** Only a refused create is about the gift; a read every gift shares, refused, is the app's fault. */
@@ -431,6 +432,9 @@ async function postGiftSettled(run: Run, source: GiftToBook["source"], id: numbe
     saved = await settle(run, claimed.gift, now, needsFinance(`QuickBooks ${ids} is already held by another gift${voidIt}`));
   }
   if (!saved) return { outcome: "waiting" };
+  if (saved.failure) {
+    bulkDonationRuntime.failed("in-kind-posting", Object.assign(new KindedError(saved.failure, saved.note ?? ""), { codes: saved.codes ?? [] }), giftDetail(source, id));
+  }
   const outcome = outcomeOf(saved);
   if (ANSWERED.includes(outcome) && (saved.failure === undefined || saved.failure === "data")) run.qbAnswered = true;
   return { outcome, failure: saved.failure, codes: saved.failure === "data" ? saved.codes : undefined };
@@ -638,7 +642,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
         // The entry may already be in QuickBooks, so the gift keeps its claim: a post taking over the stale claim looks for the entry by key first.
         console.warn(`[bulk-donation] in-kind post failed for ${gift.source} gift ${gift.id}`, err);
         outcome = "failed";
-        failure = kindOf(err);
+        failure = bulkDonationRuntime.failed("in-kind-posting", err, giftDetail(gift.source, gift.id));
       }
       if (outcome === "failed" || outcome === "exhausted") streak.push(failure ?? "bug");
       else if (outcome !== "held" && outcome !== "settings") streak = [];

@@ -3,7 +3,7 @@ import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
-import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
+import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
@@ -393,6 +393,13 @@ describe("findOrCreate", () => {
       error: "QBO create failed 400 (intuit_tid=t1): codes 2500", failure: "data", codes: ["2500"], requestId: "t1",
     });
     expect(postFailure(new Error("boom"))).toEqual({ error: "boom", failure: "bug" });
+  });
+
+  it("postFailureError keeps a failure's kind, fault codes and request id", () => {
+    const err = postFailureError({ error: "refused", failure: "data", codes: ["2500"], requestId: "t1" });
+    expect(kindOf(err)).toBe("data");
+    expect(err).toMatchObject({ message: "refused", codes: ["2500"], requestId: "t1" });
+    expect(postFailureError({ error: "boom", failure: "system" })).not.toHaveProperty("requestId");
   });
 
   it("failed: a create that fails after the match read answered says QuickBooks answered", async () => {

@@ -1,0 +1,13 @@
+{
+  "crossing": "X9",
+  "callee": "bulk-donation ingestInKind",
+  "base": { "fixture": "S1-completed-receipt/single-item-recognized", "set": { "isInKind": true } },
+  "cases": [
+    { "name": "the payload as sent", "expect": "accepted" },
+    { "name": "a resend that differs, kept out and raised for finance", "expect": "accepted", "after": "base", "set": { "receiptTotalCents": 1 } },
+    { "name": "a receipt for another org", "expect": "refused", "set": { "orgId": "another-org" } },
+    { "name": "a receipt not marked in-kind", "expect": "refused", "set": { "isInKind": false } },
+    { "name": "an empty receiptId", "expect": "refused", "set": { "receiptId": "" } },
+    { "name": "no line items", "expect": "refused", "set": { "lineItems": [] } }
+  ]
+}

@@ -99,3 +99,101 @@ export function fixture<T = unknown>(id: string): T {
 export function fixturesForSeam<T = unknown>(seam: Seam): Array<{ id: string; value: T }> {
   return FIXTURE_MANIFEST.filter((e) => e.seam === seam).map((e) => ({ id: e.id, value: loadValidated<T>(e) }));
 }
+
+/** A crossing between libraries that has a refusals fixture under `fixtures/refusals/`. */
+export type Crossing = "S1" | "X13" | "X5" | "X9" | "X4" | "gift-load" | "capital-send";
+
+export const CROSSINGS: Crossing[] = ["S1", "X13", "X5", "X9", "X4", "gift-load", "capital-send"];
+
+/** What the callee must answer: a normal return, a refusal for good (`kindOf` "data"), or a wiring bug (`kindOf` "bug"). */
+export type RefusalExpectation = "accepted" | "refused" | "bug";
+
+interface PayloadEdit {
+  /** Dotted paths into the payload, array indexes included (`lineItems.0.quantity`). */
+  set?: Record<string, unknown>;
+  unset?: string[];
+}
+
+interface RefusalsFile {
+  crossing: Crossing;
+  callee: string;
+  base: ({ fixture: string } | { payload: Record<string, unknown> }) & PayloadEdit;
+  cases: Array<PayloadEdit & { name: string; expect: RefusalExpectation; after?: "base" }>;
+}
+
+export interface RefusalCase<P> {
+  name: string;
+  expect: RefusalExpectation;
+  /** The base payload is sent first, so the case is a resend. */
+  afterBase: boolean;
+  payload: P;
+}
+
+export interface Refusals<P> {
+  crossing: Crossing;
+  callee: string;
+  base: P;
+  cases: Array<RefusalCase<P>>;
+}
+
+const REFUSALS_DIR = join(FIXTURES_DIR, "refusals");
+
+/** The raw refusals file for a crossing, edits unapplied (use in guard tests). */
+export function loadRefusalsFile(crossing: Crossing): RefusalsFile {
+  return JSON.parse(readFileSync(join(REFUSALS_DIR, `${crossing}.json`), "utf8")) as RefusalsFile;
+}
+
+/** Walks a dotted path to its parent container and last key; throws when a step is missing. */
+function locate(root: unknown, path: string): { parent: Record<string, unknown>; key: string } {
+  const keys = path.split(".");
+  let node = root;
+  for (const k of keys.slice(0, -1)) {
+    if (typeof node !== "object" || node === null || !(k in node)) throw new Error(`No ${path} in the payload`);
+    node = (node as Record<string, unknown>)[k];
+  }
+  if (typeof node !== "object" || node === null) throw new Error(`No ${path} in the payload`);
+  return { parent: node as Record<string, unknown>, key: keys[keys.length - 1] };
+}
+
+/** True when every edited path names a field the payload already has, so a typo can't leave a case equal to its base. */
+export function editTargetsExist(payload: unknown, edit: PayloadEdit): boolean {
+  const paths = [...Object.keys(edit.set ?? {}), ...(edit.unset ?? [])];
+  return paths.every((p) => {
+    try {
+      const { parent, key } = locate(payload, p);
+      return key in parent;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function applyEdit<T>(payload: T, edit: PayloadEdit): T {
+  const copy = structuredClone(payload);
+  for (const [path, value] of Object.entries(edit.set ?? {})) {
+    const { parent, key } = locate(copy, path);
+    parent[key] = value;
+  }
+  for (const path of edit.unset ?? []) {
+    const { parent, key } = locate(copy, path);
+    delete parent[key];
+  }
+  return copy;
+}
+
+/**
+ * A crossing's refusals fixture with every payload built: the base (a seam fixture or an inline
+ * payload) with its `orgId` set to the callee's org, then each case's edits. A callee test sends
+ * each case and checks the answer against `expect`.
+ */
+export function refusals<P = Record<string, unknown>>(crossing: Crossing, opts: { orgId: string }): Refusals<P> {
+  const file = loadRefusalsFile(crossing);
+  const start = "fixture" in file.base ? loadRaw(find(file.base.fixture)) : file.base.payload;
+  const base = applyEdit({ ...(start as Record<string, unknown>), orgId: opts.orgId }, file.base) as P;
+  return {
+    crossing: file.crossing,
+    callee: file.callee,
+    base,
+    cases: file.cases.map((c) => ({ name: c.name, expect: c.expect, afterBase: c.after === "base", payload: applyEdit(base, c) })),
+  };
+}

@@ -1,0 +1,26 @@
+{
+  "crossing": "capital-send",
+  "callee": "expense submitDonatedLines",
+  "base": {
+    "payload": {
+      "orgId": "org-1",
+      "lines": [
+        {
+          "giftSource": "receipt",
+          "giftId": 41,
+          "giftLineId": 1,
+          "description": "Table saw",
+          "quantity": 1,
+          "costCents": 250000,
+          "acquisitionDate": "2026-05-01",
+          "budgetOwnerId": 7
+        }
+      ]
+    }
+  },
+  "cases": [
+    { "name": "the payload as sent", "expect": "accepted" },
+    { "name": "the same lines again, skipped", "expect": "accepted", "after": "base" },
+    { "name": "lines for another org, a wiring bug", "expect": "bug", "set": { "orgId": "another-org" } }
+  ]
+}
