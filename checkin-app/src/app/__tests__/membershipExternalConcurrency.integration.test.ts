@@ -5,8 +5,8 @@
  * Concurrency test for the EXTERNAL-phase advance: markContractSigned and
  * markBgConsent both call advanceExternalIfComplete. Two concurrent callers (the
  * Zoho webhook signing the contract + a board "mark bg consent" action) must
- * advance the process to PENDING_BG_REVIEW exactly once — one audit row, one
- * reviewer notification — and must never regress a process already past
+ * advance the process to PENDING_PAYMENT exactly once — one audit row, one
+ * check review opened and one reviewer notification — and must never regress a process already past
  * PENDING_EXTERNAL_ACTION. Guards the check-then-act window in lib/membership/external.ts.
  */
 
@@ -47,7 +47,7 @@ async function wipe() {
     const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
     const ids = hhs.map((h) => h.id);
     if (ids.length) {
-        await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+        await prisma.orgMembershipProcess.deleteMany({ where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
     }
@@ -73,8 +73,10 @@ describe('EXTERNAL advance concurrency', () => {
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_PAYMENT');
 
-        // Exactly one advance audit row + exactly one reviewer ping.
+        // Exactly one advance audit row, one check review opened for the household, and one reviewer ping.
         expect(await advanceAudits(processId)).toBe(1);
+        const app = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId }, select: { orgMembership: { select: { householdId: true } } } });
+        expect(await prisma.orgMembershipProcess.count({ where: { kind: 'PERSON_BG', requestedForHouseholdId: app.orgMembership!.householdId } })).toBe(1);
         expect(notifyReviewers as jest.Mock).toHaveBeenCalledTimes(1);
 
         // Each mutation's audit row carries its own actor: SYSTEM_ACTOR for the contract sign

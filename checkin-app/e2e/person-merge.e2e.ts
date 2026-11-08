@@ -8,7 +8,7 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { api, loginAs } from "../flow-tests/helpers";
-import { applicationAtPayment, asViewer, REVIEWER, review, settledFamily } from "./support/families";
+import { applicationAtPayment, asViewer, checkReviewOf, REVIEWER, review, settledFamily } from "./support/families";
 import { persona } from "./support/kiosk";
 import { BOARD, send } from "./support/seedState";
 
@@ -21,7 +21,7 @@ const RECHECK_MONTHS = 24;
 const MERGE_REFUSED = /merge/i;
 
 type Settings = { settings: { BoardSettings: { bgRecheckMonths: number } } };
-type Application = { id: number; status: string; bgClearedAt: string | null; attestations: Array<{ result: string }> };
+type Application = { id: number; status: string; bgClearedAt: string | null };
 
 let originalRecheckMonths = 0;
 
@@ -97,7 +97,7 @@ test.describe("person merge carrying a background check", () => {
     await setRecheckMonths(originalRecheckMonths);
   });
 
-  test("P1: a merged-in check clears an application with approvals only, keeping the approval", async ({ browser }) => {
+  test("P1: a merged-in check clears an application with approvals only", async ({ browser }) => {
     const source = await clearedFamily();
     const email = await settledFamily();
     const processId = await applicationAtPayment(email);
@@ -110,9 +110,7 @@ test.describe("person merge carrying a background check", () => {
       await expect(heading(page, "Membership fee")).toBeVisible();
       await expect(page.getByText(STILL_REVIEWING)).toHaveCount(0);
     });
-    const after = await application(processId);
-    expect(after.bgClearedAt).not.toBeNull();
-    expect(after.attestations.map((a) => a.result)).toEqual(["APPROVE"]);
+    expect((await application(processId)).bgClearedAt).not.toBeNull();
   });
 
   test("P2: a standing rejection refuses a merge that would carry in a check", async ({ browser }) => {
@@ -120,10 +118,11 @@ test.describe("person merge carrying a background check", () => {
     const email = await settledFamily();
     const processId = await applicationAtPayment(email);
     await review(BOARD, processId, email);
+    const reviewId = await checkReviewOf(processId);
     await review(REVIEWER, processId, email, "REJECT");
     const [kept, merged] = [await persona(email), await persona(source)];
 
-    const refusal = `Cannot merge: this person's background check is disputed by review #${processId}`;
+    const refusal = `Cannot merge: this person's background check is disputed by review #${reviewId}`;
     await asViewer(browser, BOARD, async (page) => {
       await requestMerge(page, email, source);
       await expect(page.locator(".mantine-Alert-root").filter({ hasText: refusal })).toBeVisible();
@@ -145,15 +144,17 @@ test.describe("person merge carrying a background check", () => {
     const email = await settledFamily();
     const processId = await applicationAtPayment(email);
     await review(BOARD, processId, email);
+    const reviewId = await checkReviewOf(processId);
     await review(REVIEWER, processId, email, "REJECT");
-    expect((await send(await loginAs(BOARD), "POST", "/api/membership-ops/applications/review-override", { processId, action: "reset" })).status).toBe(200);
+    expect((await send(await loginAs(BOARD), "POST", "/api/membership-ops/applications/review-override", { processId: reviewId, action: "reset", reason: "A second look." })).status).toBe(200);
     await review(BOARD, processId, email);
 
     await asViewer(browser, BOARD, (page) => requestMerge(page, email, source), MERGE_REFUSED);
 
+    const lead = await persona(email);
     await asViewer(browser, REVIEWER, async (page) => {
       await page.goto("/membership-ops/review");
-      await expect(card(page, email)).toContainText("1/2 approvals so far.");
+      await expect(card(page, `Background check for ${lead.name}`)).toContainText("1/2 approvals so far.");
     });
 
     await asViewer(browser, email, async (page) => {
@@ -164,22 +165,20 @@ test.describe("person merge carrying a background check", () => {
     expect((await application(processId)).bgClearedAt).toBeNull();
   });
 
-  test("P4: a rejection changed to approve and then undone no longer stands, so a merge clears", async ({ browser }) => {
+  // Owner ruling A (2026-11-08): a rejection changed to approve stays disputed until two
+  // new approvals, including after the change is undone, so the merge is refused.
+  test("P4: a rejection changed to approve and then undone still stands, so a merge is refused", async ({ browser }) => {
     const source = await clearedFamily();
     const email = await settledFamily();
     const processId = await applicationAtPayment(email);
+    const reviewId = await checkReviewOf(processId);
     await review(REVIEWER, processId, email, "REJECT");
     await review(REVIEWER, processId, email);
-    const undone = await send(await loginAs(REVIEWER), "POST", "/api/membership/reviews/undo", { processId, reason: "Approved the wrong family." });
+    const undone = await send(await loginAs(REVIEWER), "POST", "/api/membership/reviews/undo", { processId: reviewId, reason: "Approved the wrong family." });
     expect(undone.status).toBe(200);
 
-    await asViewer(browser, BOARD, (page) => mergeInCheck(page, email, source));
+    await asViewer(browser, BOARD, (page) => requestMerge(page, email, source), MERGE_REFUSED);
 
-    await asViewer(browser, email, async (page) => {
-      await membership(page);
-      await expect(heading(page, "Membership fee")).toBeVisible();
-      await expect(page.getByText(STILL_REVIEWING)).toHaveCount(0);
-    });
-    expect((await application(processId)).bgClearedAt).not.toBeNull();
+    expect((await application(processId)).bgClearedAt).toBeNull();
   });
 });

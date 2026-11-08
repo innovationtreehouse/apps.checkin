@@ -33,15 +33,24 @@ type AuditFacts = { oldData: Prisma.JsonValue | null; newData: Prisma.JsonValue 
  * Whether a review's audit rows, oldest first, send it back for its current person.
  * Only a rejection sent back counts: a Board reset of a BLOCKED review, or the
  * rejector's change to approve, which no later undo or reset takes back. A row
- * that clears the review's person (`newData.subjectPersonId: null`) is a plain
- * start-over and begins a fresh history for whoever is named next.
+ * that clears the review's person (`newData.subjectPersonId: null`) begins a fresh
+ * history for whoever is named next, unless that is the same person again: their
+ * earlier rejection still stands.
  */
 export function sentBackForSubject(rows: readonly AuditFacts[]): boolean {
     let sentBack = false;
+    let cleared: { personId: Prisma.JsonValue | undefined; sentBack: boolean } | null = null;
     for (const { oldData, newData } of rows) {
         const action = jsonField(newData, "action");
-        if (jsonField(newData, "subjectPersonId") === null) sentBack = false;
-        else if (action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED")) sentBack = true;
+        const sendsBack = action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED");
+        const subject = jsonField(newData, "subjectPersonId");
+        if (subject === null) {
+            cleared = { personId: jsonField(oldData, "subjectPersonId"), sentBack: sentBack || sendsBack };
+            sentBack = false;
+        } else if (action === "subject named") {
+            sentBack = cleared !== null && cleared.personId === subject && cleared.sentBack;
+            cleared = null;
+        } else if (sendsBack) sentBack = true;
     }
     return sentBack;
 }
@@ -119,4 +128,10 @@ export async function householdCheckStandings(db: DbClient, householdId: number,
         where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
     });
     return { members, awaitingNaming: unnamed > 0 };
+}
+
+/** Whether anyone in the household holds a DISPUTED check standing; the window does not matter for a dispute. */
+export async function householdHasDisputedCheck(db: DbClient, householdId: number): Promise<boolean> {
+    const { members } = await householdCheckStandings(db, householdId, null);
+    return members.some((m) => m.standing === "DISPUTED");
 }

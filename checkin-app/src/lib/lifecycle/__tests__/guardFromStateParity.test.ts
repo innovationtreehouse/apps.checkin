@@ -83,6 +83,10 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'ACTIVE'], mode: 'spread' },
     // board reset / rejector change to approve on a BLOCKED review return it to review.
     { file: 'lib/membership/review.ts', machine: 'membership', from: 'BLOCKED', edge: ['BLOCKED', 'PENDING_PAYMENT'], mode: 'spread' },
+    // naming a person closes their empty check review in favour of the one naming them.
+    { file: 'lib/membership/review.ts', machine: 'membership', from: 'PENDING_BG_REVIEW', edge: ['PENDING_BG_REVIEW', 'ARCHIVED'], mode: 'spread' },
+    // a lifted block returns a household application to its step.
+    { file: 'lib/membership/settleHouseholdBg.ts', machine: 'membership', from: 'BLOCKED', edge: ['BLOCKED', 'PENDING_EXTERNAL_ACTION'], mode: 'spread' },
 
     // ── household (OrgMembership.status) — every write goes through setHouseholdStatus ──
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'DENIED'], mode: 'helper' },

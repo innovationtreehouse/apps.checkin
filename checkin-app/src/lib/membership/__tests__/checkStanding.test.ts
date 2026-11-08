@@ -78,6 +78,22 @@ describe('sentBackForSubject', () => {
         expect(sentBackForSubject([changedToApprove, undo, subjectCleared])).toBe(false);
         expect(sentBackForSubject([reset('BLOCKED'), subjectCleared, reset('BLOCKED')])).toBe(true);
     });
+
+    const named = (personId: number) => ({ oldData: { subjectPersonId: null }, newData: { action: 'subject named', subjectPersonId: personId } });
+
+    it('keeps the earlier rejection when the person cleared off the review is named again', () => {
+        expect(sentBackForSubject([subjectCleared, named(5)])).toBe(true);
+        expect(sentBackForSubject([changedToApprove, undo, subjectCleared, named(5)])).toBe(true);
+    });
+
+    it('starts fresh when a different person is named after the subject is cleared', () => {
+        expect(sentBackForSubject([subjectCleared, named(6)])).toBe(false);
+    });
+
+    it('keeps nothing for the same person when the cleared review had not been sent back', () => {
+        const clearedInProgress = { oldData: { status: 'PENDING_BG_REVIEW', subjectPersonId: 5 }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } };
+        expect(sentBackForSubject([clearedInProgress, named(5)])).toBe(false);
+    });
 });
 
 describe('householdQualifies', () => {

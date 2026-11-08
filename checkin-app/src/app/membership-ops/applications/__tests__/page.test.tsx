@@ -92,8 +92,23 @@ const rows = [
         bgConsentAt: "2026-01-02T00:00:00.000Z",
         bgClearedAt: null,
         paidAt: null,
-        attestations: [{ id: 1, result: "APPROVE", isMarkedVolunteerFamily: false }],
+        attestations: [],
         orgMembership: { householdId: 2, isVolunteerFamily: true, household: household("Payment Family", 2) },
+    },
+    {
+        id: 5,
+        kind: "PERSON_BG",
+        status: "PENDING_BG_REVIEW",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        zohoEnvelopeId: null,
+        contractSignedAt: null,
+        bgConsentAt: "2026-01-02T00:00:00.000Z",
+        bgClearedAt: null,
+        paidAt: null,
+        attestations: [{ id: 1, result: "APPROVE", subjectPersonId: 21, isMarkedVolunteerFamily: false }],
+        requestedForHouseholdId: 2,
+        subjectPerson: { id: 21, name: "Robin Payment", householdId: 2 },
+        orgMembership: null,
     },
     {
         id: 3,
@@ -198,6 +213,9 @@ describe("AdminMembershipPage", () => {
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Certified — membership activated." })));
 
         fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "reviewed the wrong report" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
 
         // Board ruling B5/B25: the board resets a blocked review but never clears it.
@@ -205,7 +223,14 @@ describe("AdminMembershipPage", () => {
         expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     });
 
-    it("clears a still-open review's approvals, behind a confirmation", async () => {
+    it("shows a household application waiting on its check review", async () => {
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Payment Family");
+        expect(screen.getByText(/waiting on the household's check review/)).toBeInTheDocument();
+    });
+
+    it("clears a still-open check review's approvals, with a reason, as the wrong person", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         const fetchMock = mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
@@ -214,16 +239,21 @@ describe("AdminMembershipPage", () => {
         renderPage();
         await screen.findByText("Payment Family");
 
-        // Only the in-review row with an approval on it offers the reset.
+        // Only the check review with an approval on it offers the reset.
         const reset = screen.getByRole("button", { name: "Discard approvals — start the review over" });
         fireEvent.click(reset);
         expect(await screen.findByText("Start this background-check review over?")).toBeInTheDocument();
-        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Discard approvals" }));
+        const dialog = screen.getByRole("dialog");
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "names the wrong parent" } });
+        fireEvent.click(within(dialog).getByRole("switch", { name: /names the wrong person/ }));
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
 
         await waitFor(() =>
             expect(fetchMock).toHaveBeenCalledWith(
                 "/api/membership-ops/applications/review-override",
-                expect.objectContaining({ body: JSON.stringify({ processId: 2, action: "reset" }) }),
+                expect.objectContaining({ body: JSON.stringify({ processId: 5, action: "reset", reason: "names the wrong parent", wrongPerson: true }) }),
             ),
         );
     });
@@ -359,6 +389,9 @@ describe("Reset for re-review while the reload is in flight", () => {
 
         const reset = await screen.findByRole("button", { name: "Reset for re-review" });
         fireEvent.click(reset);
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "start over" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
         await waitFor(() => expect(reads).toBe(2));
 

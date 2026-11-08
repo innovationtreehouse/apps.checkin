@@ -3,6 +3,8 @@ import type { TxClient } from "@/lib/db-client";
 import { attest, clearBackgroundCheck, SelfGrantRefusedError } from "@/lib/membership/review";
 import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
 
+jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleHouseholdBg: jest.fn(async () => []), blockedByCheckReview: jest.fn(async () => false) }));
+
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
@@ -28,8 +30,9 @@ function fakeTx(process: { subjectPersonId: number | null; householdId: number }
     const tx = {
         $queryRaw: jest.fn(async () => [{ status: householdStatus }]),
         orgMembershipProcess: {
-            findFirst: async () => ({ id: 7, status: "PENDING_BG_REVIEW", kind: "INITIAL", paidAt: null, orgMembershipId: 70, subjectPersonId: process.subjectPersonId, attestations: [] }),
+            findFirst: async () => ({ id: 7, status: "PENDING_BG_REVIEW", kind: process.subjectPersonId ? "PERSON_BG" : "INITIAL", paidAt: null, orgMembershipId: process.subjectPersonId ? null : 70, subjectPersonId: process.subjectPersonId, attestations: [] }),
             updateMany: jest.fn(async () => ({ count: 1 })),
+            count: async () => 0,
         },
         orgMembership: { findUnique: async () => ({ householdId: process.householdId, status: "NONE" }) },
         person: {
@@ -97,7 +100,7 @@ describe("attest on a PERSON_BG", () => {
         const tx = {
             $queryRaw: jest.fn(),
             orgMembershipProcess: {
-                findUnique: async () => ({ id: 7, status: "PENDING_BG_REVIEW", bgConsentAt: null, bgClearedAt: null, orgMembershipId: null, subjectPersonId, attestations: [] }),
+                findUnique: async () => ({ id: 7, kind: "PERSON_BG", status: "PENDING_BG_REVIEW", bgConsentAt: new Date(), bgClearedAt: null, orgMembershipId: null, subjectPersonId, requestedForHouseholdId: null, attestations: [] }),
                 update: jest.fn(),
             },
             person: { findUnique: async ({ where }: { where: { id: number } }) => ({ householdId: people[where.id] ?? null }) },
