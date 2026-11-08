@@ -1,3 +1,4 @@
+import { staleJobOf } from "@/lib/opsIncidents";
 import prisma from "@/lib/prisma";
 
 /** An incident not yet closed, as System Status lists it. "watching" until its first notice goes out, then "open". */
@@ -22,12 +23,9 @@ export async function getActiveIncidents(): Promise<ActiveIncident[]> {
     return rows.map(({ notifiedAt, ...row }) => ({ ...row, status: notifiedAt ? "open" : "watching" }));
 }
 
-// The engine keys a stopped job's incident `cron:<job>:stale`.
-const STALE_KEY = /^cron:(.+):stale$/;
-
 /** Open incidents, and the jobs whose stopped-job incident is open, so the badge counts that outage once. */
 export async function openIncidentSummary(): Promise<{ openIncidents: number; staleJobs: Set<string> }> {
     const open = await prisma.opsIncident.findMany({ where: { closedAt: null, notifiedAt: { not: null } }, select: { key: true } });
-    const staleJobs = new Set(open.flatMap(({ key }) => key.match(STALE_KEY)?.[1] ?? []));
+    const staleJobs = new Set(open.flatMap(({ key }) => staleJobOf(key) ?? []));
     return { openIncidents: open.length, staleJobs };
 }

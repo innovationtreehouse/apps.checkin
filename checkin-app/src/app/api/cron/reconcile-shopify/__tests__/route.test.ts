@@ -14,9 +14,13 @@ import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { healProgramStock } from '@/lib/shopify/stock';
 import prisma from '@/lib/prisma';
+import { reportTo } from '@/lib/finishRun';
+import { evaluateRun } from '@/lib/runIncidents';
 import { GET } from '../route';
 
 jest.mock('@/lib/finance/reconcile', () => ({ runReconcile: jest.fn() }));
+// The incident engine has its own tests; here a run only reaches it.
+jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseCatchUp: jest.fn() }));
 jest.mock('@checkin/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@checkin/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
@@ -84,6 +88,25 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const body = await res.json();
         expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: RECEIPT_STUCK, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake']);
+    });
+
+    it("hands a held receipt's connection failure and a crashed step to the engine", async () => {
+        jest.mocked(repushUnpushed).mockImplementation(async () => {
+            reportTo('receipt')({ lane: 'push', kind: 'connection', detail: 'receipt 5' });
+            return { ...RECEIPT_PUSH, failed: 1 };
+        });
+        jest.mocked(healProgramStock).mockRejectedValue(new Error('stock db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toEqual(['reconcile-shopify', 'receipt push', 'receipt mail-listing', 'receipt ocr', 'expense intake', 'expense intake-replay']);
+        expect(run.failures).toEqual([
+            { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1, stopped: false },
+            { lane: 'receipt push', cause: 'mapping', kind: 'connection', code: 'connection', count: 1, stopped: false },
+        ]);
+        logged.mockRestore();
     });
 
     it('runs every step in order when each one throws, logging each and reporting it as an error', async () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
+import { stepCrashed } from "@/lib/finishRun";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@checkin/income";
@@ -11,13 +12,14 @@ import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inven
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
 import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
 
-/** Runs one step so its failure stays its own: logged, and reported as `{ status: "error" }`. */
+/** Runs one step so its failure stays its own: logged, reported to the run, and returned as `{ status: "error" }`. */
 async function isolated<T>(name: string, failureName: string, step: () => Promise<T>): Promise<T | { status: "error" }> {
     let outcome: T | { status: "error" };
     try {
         outcome = await step();
     } catch (err) {
         logger.error(`[reconcile] ${failureName} failed:`, err);
+        stepCrashed("reconcile-shopify", name, err);
         outcome = { status: "error" };
     }
     logger.info(`[reconcile] ${name} ${JSON.stringify(outcome)}`);

@@ -1,4 +1,4 @@
-import { SWEEP_DAYS, appKeyOf, findOrCreate, postFailure, postFailureError, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { SWEEP_DAYS, appKeyOf, findOrCreate, postFailure, postFailureError, type BooksMapRole, type PostFailure, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -452,7 +452,9 @@ export async function postPayout(
     if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window`, failure: "bug" };
   }
 
-  if (result.kind === "failed") incomeRuntime.failed("deposit-build", write ? postFailureError(result) : buildErr, `payout reconciliation ${id}`);
+  // Reported only once the claim holds, so a post that lost the payout to another stays quiet.
+  const reportFailed = (failure: PostFailure) =>
+    incomeRuntime.failed("deposit-build", write ? postFailureError(failure) : buildErr, `payout reconciliation ${id}`);
 
   const settleIn = () => db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM payout_reconciliations WHERE id = ${id} FOR UPDATE`;
@@ -505,6 +507,7 @@ export async function postPayout(
       case "needs-finance":
         return toQueue(RECON_KIND.NO_DEPOSIT, null);
       case "failed":
+        reportFailed(result);
         if (current.kind === RECON_KIND.POST_FAILED) {
           return { outcome: "failed" as const, row: await tx.payoutReconciliation.update({ where: { id }, data: { postClaimedAt: null } }) };
         }

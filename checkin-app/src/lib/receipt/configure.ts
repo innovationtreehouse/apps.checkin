@@ -36,6 +36,7 @@ import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
 import { gmailAccessToken } from "@/lib/receipt/gmailToken";
 import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
+import { reportTo } from "@/lib/finishRun";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
 async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
@@ -245,6 +246,7 @@ const outcomeMail: OutcomeMail = {
 
 export function configureRuntime(): void {
   configureReceipt({
+    onFailure: reportTo("receipt"),
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },

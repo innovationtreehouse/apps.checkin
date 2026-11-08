@@ -62,6 +62,7 @@ import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { LIVE_BOOKS_MAP_ROLES } from "@checkin/quickbooks";
+import { reportTo } from "@/lib/finishRun";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -175,6 +176,7 @@ function posting(): IncomePosting | undefined {
 
 export function configureRuntime(): void {
   configureIncome({
+    onFailure: reportTo("income"),
     auth: { getPrincipal },
     org: getOrg,
     mirror: mirrorConfigured() ? payoutMirror : undefined,

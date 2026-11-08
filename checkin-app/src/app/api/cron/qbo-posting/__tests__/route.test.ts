@@ -11,9 +11,13 @@ import { runDonationDepositHandOver, runInKindQbPosting } from '@checkin/bulk-do
 import { drainIncomeOutbox, runIncomeOrphanSweep } from '@checkin/income';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { reportTo } from '@/lib/finishRun';
+import { evaluateRun } from '@/lib/runIncidents';
 import { GET } from '../route';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
+// The incident engine has its own tests; here a run only reaches it.
+jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ runDonationDepositHandOver: jest.fn(), runInKindQbPosting: jest.fn() }));
 jest.mock('@checkin/income', () => ({ drainIncomeOutbox: jest.fn(), runIncomeOrphanSweep: jest.fn() }));
@@ -74,6 +78,33 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(runIncomeOrphanSweep).toHaveBeenCalledWith('org-1');
         expect(create).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
+    });
+
+    it("hands the lanes' reports to the engine, a stopped drain's lane marked stopped, and counts them by kind", async () => {
+        jest.mocked(runExpenseQbPosting).mockImplementation(async () => {
+            reportTo('expense')({ lane: 'posting', kind: 'system', status: 503, detail: 'expense 1' });
+            return expensePosting({ ...EXPENSE_DRAIN, stoppedAfterFailures: true });
+        });
+
+        await GET(req());
+
+        expect(jest.mocked(evaluateRun).mock.calls[0][0]).toEqual({
+            lanes: ['qbo-posting', 'expense posting', 'bulk-donation in-kind-posting', 'income deposit-build'],
+            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1, stopped: true }],
+        });
+        expect(create.mock.calls[0][0].data).toMatchObject({ failuresByKind: { system: 1 } });
+    });
+
+    it('reports a throwing step to the engine as a failure of the job', async () => {
+        jest.mocked(runIncomeOrphanSweep).mockRejectedValue(new Error('income db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        expect(jest.mocked(evaluateRun).mock.calls[0][0].failures).toEqual([
+            { lane: 'qbo-posting', cause: 'qbo-posting', kind: 'bug', code: 'income sweep crashed', count: 1, stopped: false },
+        ]);
+        logged.mockRestore();
     });
 
     it('a throwing step still runs the other and records the failure', async () => {

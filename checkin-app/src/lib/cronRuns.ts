@@ -37,7 +37,7 @@ export function cronJobName(url: string): string {
  *
  * `success` means the run COMPLETED, not that it was clean — pass an `error`
  * alongside `success: true` for a sweep that finished but could not process every
- * row. See {@link CronJobStatus}.
+ * row. See {@link CronJobStatus}. `failuresByKind` counts the run's failed items per failure kind.
  *
  * Never throws and never rethrows: recording that a job ran must not change
  * whether the job ran or what it returned. A failed write degrades the System
@@ -47,7 +47,7 @@ export function cronJobName(url: string): string {
  * sweep — writes are ~9/day, and a cron to prune the cron log would be the exact
  * circularity this table exists to detect. Same pattern as logIntegrationError.
  */
-export async function recordCronRun(job: string, startedAt: Date, success: boolean, error?: unknown) {
+export async function recordCronRun(job: string, startedAt: Date, success: boolean, error?: unknown, failuresByKind?: Record<string, number>) {
     try {
         await prisma.cronRunLog.create({
             data: {
@@ -55,6 +55,7 @@ export async function recordCronRun(job: string, startedAt: Date, success: boole
                 startedAt,
                 success,
                 error: error === undefined ? null : error instanceof Error ? error.message : String(error),
+                ...(failuresByKind ? { failuresByKind } : {}),
             },
         });
 

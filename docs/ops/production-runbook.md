@@ -132,15 +132,26 @@ If one of them is at fault, fix it and release forward.
 ## Alerts
 
 The incident engine (`checkin-app/src/lib/opsIncidents.ts`) turns job failures
-into email: one alert per outage, not one per item or per run. It is not yet
-called by any job; the job wiring and the address lookup come next.
+into email: one alert per outage, not one per item or per run. Every scheduled
+job ends its run in one shared step (`checkin-app/src/lib/finishRun.ts`): it
+records the run with its failures by kind, then hands the run to the engine,
+which also checks every job for a stopped schedule.
 
-**Who gets them.** The engine sends to the addresses its caller passes: the
-job wiring reads the alert address and the Board address from app settings.
+**What it hears.** The receipt, expense, gift-of-goods and income libraries
+report each sorted failure through their "on failure" port; the app files the
+reports under the job run in progress. The daily reconcile job runs the receipt
+lanes (re-push, mailbox reading, OCR of mailed files) and expense intake; the daily posting job runs
+the expense, gift-of-goods and income posting lanes. A step of either job that
+crashes counts too, as a bug unless its error was sorted. An item counts once
+per run, however often its lane reports it. A failure outside a job run, such
+as a receipt finalized by hand, is only logged.
+
+**Who gets them.** The engine reads the alert address and the Board address
+from app settings (Settings → Email).
 Every alert goes to the alert address; the two-week escalation goes to the
 Board address. Both are group addresses, and alerts ignore personal email
-opt-outs. With no address set, nothing is sent and the incident stays
-unannounced, so the next run tries again.
+opt-outs. With no address set, nothing is sent, with no fallback to anyone
+else: the incident stays unannounced, so the next run tries again.
 
 **What opens an incident.** Each failure has a cause (QuickBooks, Gmail, OCR,
 the database, catalog events) and a kind.

@@ -161,7 +161,7 @@ export function OpenProblemsBox() {
   useEffect(() => {
     fetch('/api/system-status/config-health')
       .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((data) => setIncidents(data.incidents as Incident[]))
+      .then((data: { incidents?: unknown }) => (Array.isArray(data.incidents) ? setIncidents(data.incidents as Incident[]) : setFailed(true)))
       .catch(() => setFailed(true));
   }, []);
 
