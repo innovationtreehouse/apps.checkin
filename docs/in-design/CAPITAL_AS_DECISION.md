@@ -317,9 +317,9 @@ its own lines; the cross-database `awaitingReview` read goes.
 
 ```ts
 interface CapitalRegister {
-  /** Mints one asset per unit for the line; a repeat for the same line returns the same numbers. */
+  /** Returns the line's live assets, minting one per unit when it has none; a repeat returns the same numbers. */
   register(orgId: string, source: AssetSource, units: AssetUnit[]): Promise<string[]>;
-  /** Retires the line's assets with a reason; numbers are never reissued. */
+  /** Retires the line's live assets with a reason; their numbers are never reissued. */
   retire(orgId: string, source: AssetSource, reason: string): Promise<void>;
   assetsOf(orgId: string, source: AssetSource): Promise<{ assetNumber: string; status: string }[]>;
 }
@@ -331,9 +331,17 @@ interface AssetUnit { costCents: number; acquisitionDate: string | null; depreci
 
 `CapitalAsset` gains `sourceKind`, `sourceGiftSource`, `sourceGiftId`,
 `sourceGiftLineId` and `unitIndex`, with a unique index on
-(org, source, unit index). That index is what makes `register` repeatable
-without a copy of the line. `status` gains `retired`, and the next number is
-the highest **ever** issued plus one, retired rows included (CAD-7).
+(org, source, unit index) **over live rows only** (`status <> 'retired'`).
+That index is what makes `register` repeatable without a copy of the line.
+`status` gains `retired`, and the next number is the highest **ever** issued
+plus one, retired rows included (CAD-7).
+
+`register` reads only live rows. A line whose assets were retired has none, so
+registering it again mints new rows with new numbers beside the retired ones;
+the partial index admits them, and the retired numbers never return. Example:
+ITFA31 and ITFA32 are a line's two lathes; the expense is sent back, both are
+retired; on the second depreciation step `register` mints ITFA33 and ITFA34,
+and a later repeat returns ITFA33 and ITFA34.
 
 - The expense flow calls it in-process, inside the depreciation step's
   transaction, as today: atomic.
@@ -351,7 +359,7 @@ The account rule that applies follows CAD-11 for both kinds of line.
 
 - An expense sent back: its assets are retired, not deleted (B7).
 - A gift's capital decision changed before it books: its assets are retired and
-  the line registered again.
+  the line registered again, under new numbers.
 - A withdrawal settled: the gift's assets are retired (CAD-8).
 - After booking: per CAD-6.
 
@@ -415,8 +423,9 @@ and is the shape @thpr has asked to move away from.
 
 Option A. It puts the decision on the gift line and on the expense line, in
 each record's own flow; it reaches the one register through a link; it keeps the
-purchase path atomic; and it fixes every bug found except B8, which needs an
-answer first. Build it after CAD-1 to CAD-8 and CAD-10 to CAD-11 are answered.
+purchase path atomic; and it fixes the bugs found except B6 and B8, which each
+need an answer first (CAD-11, CAD-12). B13 is a hand-off gap, outside it
+(CAD-14). Build it after CAD-1 to CAD-8 and CAD-10 to CAD-11 are answered.
 The cutover is in `CAPITAL_AS_DECISION-migration.md`.
 
 ## 5. Open questions
@@ -460,7 +469,8 @@ question is answered, and not before.
 - Expense unit: the shared threshold test, both callers, against the CAD-1 and
   CAD-3 examples.
 - Expense integration: `register` repeated for the same line returns the same
-  numbers; `retire` keeps the number; the next number skips retired ones; each
+  numbers; `retire` keeps the number; registering a retired line again mints new
+  numbers beside the retired rows; the next number skips retired ones; each
   writes its audit row.
 - Bulk-donation integration: the gift's capital decision and its event in one
   transaction; the drain registers, stamps, and survives a crash between the two;

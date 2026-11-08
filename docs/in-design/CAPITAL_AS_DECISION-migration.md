@@ -34,23 +34,31 @@ release reads.
 
 1. **Schema, additive.** Nullable gift-line columns in bulk-donation; nullable
    `sourceKind`, gift source columns and `unitIndex` on `CapitalAsset`, and the
-   `retired` status. The unique index on (org, source, unit index) is created
-   only after step 3 fills it. Safe against old code: nothing it writes
-   conflicts.
+   `retired` status. The partial unique index on (org, source, unit index) over
+   live rows is created only after step 3 fills it. Safe against old code:
+   nothing it writes conflicts.
 2. **Register service and dual write.** Expense gains `register`, `retire` and
    `assetsOf`; both mint paths go through `register` and fill the new columns.
    Clearing an expense retires instead of deleting. The gift path still copies,
-   and also writes the decision on its line when finance reviews the copy. One
-   PR, expense and bulk-donation.
-3. **Backfill.** The script above, idempotent, with a dry run that prints the
-   counts per row of the table and the lists for finance. Then the unique index.
+   and **at accept** also sets each gift line's `capitalReview` from the shared
+   threshold test: `pending` or `not_needed`. A review of the copy still
+   happens in expense and is not written across to the gift here; step 3 and
+   step 5 carry it. One PR, expense and bulk-donation.
+3. **Backfill, after step 2 has fully rolled out.** Not before: until then an
+   old release can still mint assets with no `sourceKind`, which the backfill
+   would miss and `register` would mint again. The script above, idempotent,
+   with a dry run that prints the counts per row of the table and the lists for
+   finance. Then the partial unique index.
 4. **Boundary PR: the new gift capital route.** Its registry entry alone, in
    `checkin-app/src/security/`, per the boundary isolation rule. Inert until
    step 5.
 5. **Switch.** The gift page and queue take the capital decision; the drain
    registers and stamps; booking reads the gift line. The copy stops being
    written; the Donated Equipment page and nav entry go. Based on `main`, not on
-   step 4's branch.
+   step 4's branch. Until step 6, the drain also takes the decision of any copy
+   reviewed after the step 3 backfill: a gift line still `pending` whose copy
+   holds a review gets that review, with its audit event, before the gift is
+   shown as waiting on capital.
 6. **Contract, decommission.** Drop `DonatedCapitalLine`,
    `CapitalAsset.sourceDonatedLineId`, `capitalSubmittedAt`, the two
    `donated-capital` routes and their registry entries, and the `submit`,
