@@ -243,7 +243,7 @@ A failed post is recorded by its kind (`kindOf`), stored in `qbFailureKind`.
 | System | QuickBooks 5xx, a timeout, a rate limit after its retry, the database down | No, unless QuickBooks answered an earlier expense in the run or an earlier read in the same post: then charged as a bug | `POST_FAILED`, retried next run | Counts toward the stop |
 | Connection | QuickBooks 401 or 403 | No | `POST_FAILED` | Stops at once |
 | Settings | A port not wired | No | Stays where it was, re-checked each run | Leaves the stop count alone |
-| Data | Any other QuickBooks 4xx on the create; a 4xx on a read is the app's own request at fault, so it is a bug | Once | `NEEDS_FINANCE` at once, "QuickBooks refused: code N (request R)" | Resets the stop count |
+| Data | Any other QuickBooks 4xx on the create; a 4xx on a read is the app's own request at fault, so it is a bug | Once | `NEEDS_FINANCE` at once, "QuickBooks refused: code N (request R)" | Resets the stop count; the third refusal with one code in a run stops it |
 | Bug | Anything unrecognised | Yes | `POST_FAILED`, `NEEDS_FINANCE` at five | Counts toward the stop |
 
 ### Limits
@@ -254,7 +254,8 @@ A failed post is recorded by its kind (`kindOf`), stored in `qbFailureKind`.
 | Entries created per UTC day | `qbMaxCreatesPerDay`, 50 by default, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
 | Bugs or outages in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
 | Broken QuickBooks connections in one drain | 1 | The run stops |
-| Failed attempts on one expense | 5 bugs, or 1 refusal | `NEEDS_FINANCE` |
+| Creates QuickBooks refuses with one fault code in one drain (a refusal counts toward each code it carries) | 3 | The code reads as a QuickBooks setting, such as an inactive account or class: the run stops, the three go back to `POST_FAILED` (`qbFailureKind` settings), each keeping the try its refusal charged, so one refused on every run reaches `NEEDS_FINANCE` at five, and the stop is logged with the code (`qb_drain_refusal_code`). The gift lane follows the same rule and alerts finance |
+| Failed attempts on one expense | 5 bugs, 1 refusal, or 5 refusals each returned by the same-code stop | `NEEDS_FINANCE` |
 | Drift reads per run | 25 | The slice moves each UTC day, so every entry is checked in turn |
 
 The two create limits and the match window are org settings, read once per drain run;

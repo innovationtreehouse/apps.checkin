@@ -235,7 +235,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
 | `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | FINANCE, else board | batches, `actionLink` ("Open booking batches") |
 | `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
-| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak or a lost connection | FINANCE, else board | failures, remaining, cause, `actionLink` ("Open the in-kind queue") |
+| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak, a lost connection, or three gifts refused with one fault code | FINANCE, else board | failures, remaining, cause, `actionLink` ("Open the in-kind queue") |
 
 ### receipt — 2
 | key | trigger | recipient | tokens |

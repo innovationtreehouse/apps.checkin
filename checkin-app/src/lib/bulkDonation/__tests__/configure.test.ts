@@ -203,6 +203,8 @@ describe("bulk-donation wiring", () => {
     expect(notifyFinanceAlert.mock.calls[1][1]).toMatchObject({ failures: "3", remaining: "12", cause: expect.stringMatching(/may be down/) });
     await inKindQb!.drainStopped({ orgId: ORG.id, failures: 1, remaining: 4, cause: "connection" });
     expect(notifyFinanceAlert.mock.calls[2][1]).toMatchObject({ failures: "1", cause: expect.stringMatching(/Reconnect QuickBooks/) });
+    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 3, remaining: 5, cause: "settings", code: "6000" });
+    expect(notifyFinanceAlert.mock.calls[3][1]).toMatchObject({ failures: "3", cause: expect.stringMatching(/refuses entries with code 6000; likely a books-map setting/) });
   });
 
   it("reads which donated lines became assets from the expense library's capital review", async () => {

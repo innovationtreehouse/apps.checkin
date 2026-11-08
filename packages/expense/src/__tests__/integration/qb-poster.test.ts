@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NotWiredError } from "@checkin/component-kit";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, MAX_SAME_CODE_REFUSALS, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
@@ -25,6 +25,9 @@ const PAYMENT_ACCOUNT = "41";
 const VENDOR = "77";
 /** An account id QuickBooks does not hold: a create naming it is refused. */
 const UNKNOWN_ACCOUNT = "999";
+/** An account QuickBooks refuses with a different fault code. */
+const INACTIVE_ACCOUNT = "998";
+const REFUSAL_CODES: Record<string, string> = { [UNKNOWN_ACCOUNT]: "2500", [INACTIVE_ACCOUNT]: "6000" };
 
 interface PostedLine {
   Amount: number;
@@ -75,7 +78,8 @@ class FakeQbo {
     if (this.mode === "closed") return json({ Fault: { Error: [{ code: "6210" }] } }, 400);
     const entity = url.pathname.endsWith("/bill") ? "Bill" : "Purchase";
     const body = JSON.parse(String(init?.body)) as PostedTxn;
-    if (body.Line.some((l) => l.AccountBasedExpenseLineDetail.AccountRef.value === UNKNOWN_ACCOUNT)) return json({ Fault: { Error: [{ code: "2500" }] } }, 400);
+    const refusedWith = [...new Set(body.Line.map((l) => REFUSAL_CODES[l.AccountBasedExpenseLineDetail.AccountRef.value]).filter(Boolean))];
+    if (refusedWith.length) return json({ Fault: { Error: refusedWith.map((code) => ({ code })) } }, 400);
     this.posts.push({ entity, key: url.searchParams.get("requestid") ?? "", body });
     const Id = String(this.nextId++);
     const TotalAmt = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0) / 100;
@@ -976,6 +980,74 @@ describeDb("QB-2 posting — drain failure streak", () => {
 
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 2, refused: 1, stoppedAfterFailures: false });
     expect(await expenseRow(refused)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
+  });
+
+  /** An outboxed expense dated `day` whose lines QuickBooks refuses through `account`. */
+  const refusedBy = async (day: string, account: string) => {
+    const { id } = await outboxed(day);
+    await db.expenseLineItem.updateMany({ where: { expenseId: id }, data: { resolvedQbAccount: account } });
+    return id;
+  };
+
+  it("two refusals with one code hold both for finance and the run goes on", async () => {
+    const held = [await refusedBy("2026-09-10", UNKNOWN_ACCOUNT), await refusedBy("2026-09-11", UNKNOWN_ACCOUNT)];
+    await outboxed("2026-09-12");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, refused: 2, refusalStop: null });
+    for (const id of held) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data" });
+  });
+
+  it("a third refusal with one code stops the run and returns all three to try again, each charged its try", async () => {
+    expect(MAX_SAME_CODE_REFUSALS).toBe(3);
+    const refused = [];
+    for (let d = 10; d < 13; d++) refused.push(await refusedBy(`2026-09-${d}`, UNKNOWN_ACCOUNT));
+    const { id: rest } = await outboxed("2026-09-20");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, posted: 0, refusalStop: { code: "2500", returned: 3 } });
+    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "settings" });
+    expect((await expenseRow(rest)).qbMatchState).toBe("UNMATCHED");
+    const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: refused[0] }, orderBy: { id: "desc" } });
+    expect(last).toMatchObject({ action: "qb_post_failed", valueBefore: "NEEDS_FINANCE", valueAfter: "POST_FAILED" });
+    expect(last.notes).toContain("code 2500");
+
+    // Fixed in QuickBooks: the next run posts them.
+    await db.expenseLineItem.updateMany({ where: { expenseId: { in: refused } }, data: { resolvedQbAccount: "60" } });
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 4, refusalStop: null });
+  });
+
+  it("expenses refused with one code on every run reach finance at the attempt limit, and the lane moves on", async () => {
+    const refused = [];
+    for (let d = 10; d < 13; d++) refused.push(await refusedBy(`2026-09-${d}`, UNKNOWN_ACCOUNT));
+    const { id: rest } = await outboxed("2026-09-20");
+
+    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
+      expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refusalStop: { code: "2500", returned: 3 } });
+    }
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, refusalStop: { code: "2500", returned: 0 } });
+    for (const id of refused) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbFailureKind: "data" });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, refused: 0, refusalStop: null });
+    expect((await expenseRow(rest)).qbMatchState).toBe("CREATED");
+  });
+
+  it("a refusal carrying several fault codes counts toward each of them", async () => {
+    const both = await refusedBy("2026-09-10", UNKNOWN_ACCOUNT);
+    const [line] = await db.expenseLineItem.findMany({ where: { expenseId: both }, orderBy: { id: "asc" } });
+    await db.expenseLineItem.update({ where: { id: line.id }, data: { resolvedQbAccount: INACTIVE_ACCOUNT } });
+    await refusedBy("2026-09-11", UNKNOWN_ACCOUNT);
+    await refusedBy("2026-09-12", UNKNOWN_ACCOUNT);
+
+    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, refusalStop: { code: "2500", returned: 3 } });
+    expect(await expenseRow(both)).toMatchObject({ qbMatchState: "POST_FAILED", qbFailureKind: "settings" });
+  });
+
+  it("three refusals with mixed codes do not stop the run", async () => {
+    await refusedBy("2026-09-10", UNKNOWN_ACCOUNT);
+    await refusedBy("2026-09-11", INACTIVE_ACCOUNT);
+    await refusedBy("2026-09-12", UNKNOWN_ACCOUNT);
+    await outboxed("2026-09-13");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ refused: 3, posted: 1, refusalStop: null });
   });
 
   it("a missing setting leaves the expense where it was, uncharged, and does not count toward the stop", async () => {
