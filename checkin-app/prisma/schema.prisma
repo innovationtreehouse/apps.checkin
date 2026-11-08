@@ -1820,6 +1820,30 @@ model OpsIncident {
   @@index([closedAt])
 }
 
+/// A QuickBooks fault code the app has received, per kind it was sorted as. Holds codes,
+/// kinds, counts, dates and lane names only: no detail, request id, amount or name, which
+/// is what lets sysadmins read it. Written by lib/qboFaultCodes.ts; rows are never pruned.
+model QboFaultCodeSeen {
+  /// The fault code as QuickBooks sent it, such as "6000".
+  /// @sensitivity:internal
+  code        String
+  /// The failure kind the report carried: system, connection, settings, data or bug.
+  /// @sensitivity:internal
+  kind        String
+  /// Never reset, including when the code table changes.
+  /// @sensitivity:internal
+  count       Int      @default(1)
+  /// @sensitivity:internal
+  firstSeenAt DateTime @default(now())
+  /// @sensitivity:internal
+  lastSeenAt  DateTime @default(now())
+  /// Library and lane of the latest report, such as "expense posting".
+  /// @sensitivity:internal
+  lastLane    String
+
+  @@id([code, kind])
+}
+
 /// An off-diagram lifecycle row some digest has already reported. Deleted when the
 /// row leaves the off-diagram set, so its return is reported as new.
 model LifecycleDriftReport {

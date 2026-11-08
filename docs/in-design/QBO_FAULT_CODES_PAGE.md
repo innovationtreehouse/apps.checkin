@@ -31,12 +31,12 @@ The page reads live rows, so a code seen this morning is on it this morning.
 
 ## Rules this relies on
 
-- Only finance has QuickBooks access; sysadmins don't. A QuickBooks problem goes to
-  finance, and ops gets at most a copy. (Error-kinds design, Q1 ruling.)
+- Finance holds QuickBooks. A QuickBooks refusal the app can't settle goes to
+  finance (`docs/architecture/RECEIPT_PIPELINE.md`, posting lanes;
+  `docs/rules/revenue.md`, gifts of goods).
 - QuickBooks fault text is never logged or stored; codes and request ids are.
 - Least privilege (`docs/rules/principles.md`): a surface grants nothing its gate
   does not already grant.
-- Board is finance's superuser (`docs/rules/revenue.md`, Ownership).
 
 ## Design
 
@@ -73,15 +73,19 @@ itself useful.
 ### How it is recorded
 
 Each library's runtime already hands every kinded failure to its "on failure" port,
-fire-and-forget. The host binds that port per library. For a report that carries
+fire-and-forget. The host binds that port per library (`reportTo` in
+`checkin-app/src/lib/finishRun.ts`). For a report that carries
 fault codes and comes from a QuickBooks lane, the binding upserts one row per code:
 
 ```sql
-INSERT INTO qbo_fault_code_seen (code, kind, count, first_seen_at, last_seen_at, last_lane)
+INSERT INTO "QboFaultCodeSeen" ("code", "kind", "count", "firstSeenAt", "lastSeenAt", "lastLane")
 VALUES ($1, $2, 1, now(), now(), $3)
-ON CONFLICT (code, kind) DO UPDATE
-  SET count = qbo_fault_code_seen.count + 1, last_seen_at = now(), last_lane = EXCLUDED.last_lane;
+ON CONFLICT ("code", "kind") DO UPDATE
+  SET "count" = "QboFaultCodeSeen"."count" + 1, "lastSeenAt" = now(), "lastLane" = EXCLUDED."lastLane";
 ```
+
+The writer is `recordFaultCodes` in `checkin-app/src/lib/qboFaultCodes.ts`, a Prisma
+upsert of that shape.
 
 The write runs outside the lane's transaction, on the shared client. A failed write
 is logged and dropped, never thrown, so a lane's retry and settle never depend on
@@ -89,15 +93,17 @@ it. Counts can therefore undercount during a database outage; the log line remai
 the full record.
 
 The QuickBooks lanes are the binding's list: expense posting, gift posting and
-income deposit build. Only QuickBooks errors carry fault codes today, but the list
-keeps a future service's codes off this page.
+income deposit build, the lanes `finishRun.ts` groups under the `quickbooks` cause.
+All three report their failures through `failed()`, so all three feed the table.
+Only QuickBooks errors carry fault codes today, but the list keeps a future
+service's codes off this page.
 
 ### Who sees the page
 
 | Role | Why |
 |---|---|
 | Finance | Holds QuickBooks; decides whether a code is the item's data or a books setting |
-| Board | Finance's superuser |
+| Board | Ruled in (FC1) |
 | Sysadmin | Maintains the code table in the QuickBooks package and the sorting rules |
 
 The page shows only what the row holds: codes, kinds, counts, dates and lane
@@ -151,10 +157,12 @@ Then a table, one row per code:
 | 6000 | `unclassified` | `data 14` `connection 1` | 15 | 3 Nov | today 09:12 | expense posting |
 | 6190 | `unclassified` | `data 2` | 2 | 5 Nov | 6 Nov | gift posting |
 
-- **Classified as** comes from the code table in the QuickBooks package: settings,
-  data, or `unclassified` when the code isn't in it. Until that table has entries,
-  every code reads unclassified. The panel imports
-  that table; it is a plain constant, so the response carries only stored rows.
+- **Classified as** comes from the code table in `packages/quickbooks`, the plain
+  constant that maps a fault code to settings or data, beside the status rule
+  (`statusKind` in `packages/quickbooks/src/client.ts`) it overrides. A code not in
+  the table reads `unclassified`. The table has no entries yet, so every code reads
+  unclassified until one lands by PR (FC3). The panel imports the table, so the
+  response carries only stored rows.
 - **Sorted as** has one pill per kind with its count, in the kind colours the rest
   of the app uses.
 - The panel refreshes on focus and every minute. Empty, it says "QuickBooks hasn't
@@ -167,7 +175,7 @@ Three PRs, in order. None is stacked on another.
 1. **Table and writer.** Migration adds the table (additive, safe against old code).
    The host's on-failure binding writes it. Tests: the upsert, two codes counting
    toward each, a non-QuickBooks lane ignored, a failed write not thrown.
-   Depends on the host binding the on-failure port, which is in flight.
+   Builds on the host's on-failure binding.
 2. **Registry entry**, alone (boundary PR).
 3. **Route and page**, with the System Status nav changes and the page-registry entry.
 
