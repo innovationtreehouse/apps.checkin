@@ -86,6 +86,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     const blockingNow = members.flatMap((m) => m.disputing.filter((r) => r.status === "BLOCKED").map((r) => r.id));
     const steps: SettleStep[] = [];
     let status: OrgMembershipProcessStatus = process.status;
+    let cleared = !!process.bgClearedAt;
 
     if (status === "BLOCKED") {
         const recorded = await recordedBlockers(tx, processId);
@@ -94,10 +95,11 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         if (unrecorded.length) await audit(tx, processId, householdId, { status }, { action: BLOCK_REASON, blockingReviewIds: unrecorded });
         if (unrecorded.length || await tx.orgMembershipProcess.count({ where: { id: { in: recorded }, status: "BLOCKED" } })) return { steps };
         const to = blockedResetStatus(process);
-        const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, stageEnteredAt: new Date() } });
+        const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
         if (!count) return { steps };
         await audit(tx, processId, householdId, { status }, { status: to, action: "check review no longer rejected", blockingReviewIds: recorded });
         status = to;
+        cleared = false;
         steps.push("resumed");
     } else if (blockingNow.length) {
         if (!BLOCKABLE.includes(status)) return { steps };
@@ -110,7 +112,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         return { steps: ["blocked"], paidReject: !!process.paidAt };
     }
 
-    if (process.bgClearedAt || !householdQualifies(members)) return { steps };
+    if (cleared || !householdQualifies(members)) return { steps };
     const now = new Date();
 
     if (STAMPS.includes(status)) {

@@ -164,6 +164,33 @@ describe('settleHouseholdBg — blocking and resuming', () => {
         expect(notifyBoardPaidReject).toHaveBeenCalledWith(id);
     });
 
+    it('drops an earlier clearance when a blocked application resumes, so payment cannot activate it', async () => {
+        const f = await family();
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['cleared']);
+        expect((await row(id)).bgClearedAt).not.toBeNull();
+
+        const reviewId = await checkReview(f.otherId, 'BLOCKED');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked']);
+        await sendBack(reviewId, 'board reset');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['resumed']);
+        const p = await row(id);
+        expect(p.status).toBe('PENDING_PAYMENT');
+        expect(p.bgClearedAt).toBeNull();
+    });
+
+    it('resumes and clears in one pass once the rejected adult has left and a lead is cleared', async () => {
+        const f = await family();
+        const reviewId = await checkReview(f.otherId, 'BLOCKED');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        await settleHouseholdBg(f.householdId);
+        const elsewhere = await prisma.household.create({ data: { name: `${TAG} elsewhere ${seq++}` } });
+        await prisma.person.update({ where: { id: f.otherId }, data: { householdId: elsewhere.id } });
+        await sendBack(reviewId, 'board reset');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['resumed', 'cleared']);
+        expect((await row(id)).bgClearedAt).not.toBeNull();
+    });
+
     it('resumes once the rejection is reset, and clears only when the person clears', async () => {
         const f = await family();
         const reviewId = await checkReview(f.otherId, 'BLOCKED');
