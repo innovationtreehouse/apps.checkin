@@ -6,7 +6,7 @@ import type { ReceivedReceipt, ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { catalogLookupResultSchema } from "../contract";
-import { getOrgId, ports } from "../runtime";
+import { assertOrg, getOrgId, ports } from "../runtime";
 import { initialReceiptState } from "../workflows/workflow-mapping.machine";
 
 type Recognized = Map<number, { gtin13: string; conversionFactor: number; conversionVersion: number }>;
@@ -64,11 +64,9 @@ export interface IngestResult {
  * recorded as `apply_failed`.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
+  await assertOrg(input.orgId);
   const orgId = await getOrgId();
-  const receipt = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
-    message: "receipt orgId does not match this org",
-    path: ["orgId"],
-  }).parse(input);
+  const receipt = CompletedReceiptSchema.parse(input);
 
   const existing = await db.receivedReceipt.findUnique({ where: { receiptId: receipt.receiptId } });
   if (existing) return { id: existing.id, state: existing.state as ReceivedReceiptState, created: false };
