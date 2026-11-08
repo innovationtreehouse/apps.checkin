@@ -52,7 +52,7 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             {myEnrolled.map((m, i) => (
               <Text key={i} size="sm" c={m.unpaid ? 'yellow' : 'green'} ml="sm">
                 {m.name} — {m.unpaid ? 'Enrolled, not paid yet' : 'Enrolled'}
-                {m.unpaid && program.enrollmentStatus !== 'CLOSED' && (
+                {m.unpaid && (
                   <>{' '}<Anchor component="button" size="sm" onClick={onPayNow}>Pay now</Anchor></>
                 )}
               </Text>
