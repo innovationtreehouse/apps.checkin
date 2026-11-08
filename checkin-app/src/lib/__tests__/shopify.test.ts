@@ -61,6 +61,20 @@ describe('setProgramProductOffSale', () => {
         expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'setProgramProductOffSale' }));
         expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('retried on the next daily run'));
     });
+
+    it('treats a product Shopify no longer has (404) as already off sale, with no alert', async () => {
+        process.env.SHOPIFY_STORE_DOMAIN = 'test.myshopify.com';
+        process.env.SHOPIFY_CLIENT_ID = 'test_client_id';
+        process.env.SHOPIFY_CLIENT_SECRET = 'test_client_secret';
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: async () => '{"errors":"Not Found"}' });
+
+        const result = await setProgramProductOffSale({ shopifyProductId: '4242' });
+
+        expect(result).toBe(true);
+        expect(logIntegrationError).not.toHaveBeenCalled();
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
 });
 
 describe('createShopifySingleVariantProgram', () => {

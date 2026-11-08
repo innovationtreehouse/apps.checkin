@@ -50,6 +50,11 @@ export const getOcrSwitch: ReceiptRouteHandler = async () => ({ ReceiptOcrSwitch
 
 export const updateOcrSwitch: ReceiptRouteHandler = async ({ req }) => ({ ReceiptOcrSwitch: await orgSettingsService.setOcrSwitch(await readJson(req)) });
 
+/** Body `{ reason }`: gives the person a full reading allowance from now. */
+export const resetOcrAllowance: ReceiptRouteHandler = async ({ req, params }) => ({
+  ReceiptOcrAllowance: await receiptService.resetOcrAllowance(parseId(params.personId, "person id"), await readJson(req)),
+});
+
 /**
  * Multipart: `file` is the receipt, `data` an optional JSON string of the upload input. With
  * `data.details` the upload is manual; without, OCR reads the file in this request.
