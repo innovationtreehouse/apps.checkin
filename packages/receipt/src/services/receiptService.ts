@@ -272,6 +272,8 @@ async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput },
   if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
 }
 
+const DONOR_FIELDS = ["donorFirstName", "donorLastName", "donorCompanyName"] as const;
+
 /** "I am the donor" checks the profile name with the donor schema donations uses, and stores it as parsed. */
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
   if (!("self" in donor)) return { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
@@ -1303,7 +1305,7 @@ export const receiptService = {
         valueBefore: String(locked.needsReimbursement),
         valueAfter: String(needsReimbursement),
       });
-      // reimbursementFor is only the display name of this person, and a pii value has no place in the personal-tier audit values.
+      // reimbursementFor is only this person's display name, so the id records the change.
       const reimburseePersonId = needsReimbursement ? actor.id : null;
       if (locked.reimburseePersonId !== reimburseePersonId) {
         await audit(tx, id, actor, {
@@ -1340,6 +1342,12 @@ export const receiptService = {
         valueBefore: String(locked.isInKind),
         valueAfter: String(input.isInKind),
       });
+      if (locked.isInKind && input.isInKind) {
+        for (const field of DONOR_FIELDS) {
+          if (locked[field] === donor[field]) continue;
+          await audit(tx, id, actor, { action: "in_kind_updated", fieldChanged: field, valueBefore: locked[field], valueAfter: donor[field] });
+        }
+      }
       return true;
     });
     if (updated) await sendDonorSync(id, actor);
