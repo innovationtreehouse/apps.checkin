@@ -12,7 +12,7 @@ import { MAX_REPLAY_ATTEMPTS, receiveCompletedReceipt, replayReceivedPayloads } 
 import { updateExpenseSettings } from "../../services/settingsService";
 import { storedTaxNeedsFinance } from "../../services/flagService";
 import { financeQueueRows } from "../../services/financeQueueService";
-import { ServiceError } from "@checkin/component-kit";
+import { KindedError, NotWiredError, ServiceError } from "@checkin/component-kit";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -354,6 +354,33 @@ describeDb("S2 intake — expense owns a payload once it is stored", () => {
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('"event":"intake_replay_given_up","receiptId":"' + allRecognized.receiptId + '","attempts":5'));
     const [row] = await financeQueueRows(principal(3, { isFinance: true }), "expenses");
     expect(row).toMatchObject({ expenseId: null, reasons: [expect.objectContaining({ code: "INTAKE_FAILED" })] });
+  });
+
+  it("a resend of a given-up payload starts its tries from zero", async () => {
+    failingLookup(new Error("directory down"));
+    await receiveCompletedReceipt(withReimbursee);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    for (let i = 0; i < MAX_REPLAY_ATTEMPTS; i++) await replayReceivedPayloads();
+
+    await receiveCompletedReceipt(withReimbursee);
+
+    expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "failed", replayAttempts: null })]);
+    expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
+  });
+
+  it.each([
+    ["system", new ServiceError(503, "directory down")],
+    ["connection", new KindedError("connection", "directory sign-in revoked")],
+    ["settings", new NotWiredError("signoff.personExists")],
+  ])("a %s failure uses no replay try, however long it lasts", async (_kind, err) => {
+    failingLookup(err);
+    await receiveCompletedReceipt(withReimbursee);
+
+    for (let i = 0; i <= MAX_REPLAY_ATTEMPTS; i++) expect(await replayReceivedPayloads()).toEqual({ applied: 0, failed: 1 });
+
+    expect((await snapshot(allRecognized.receiptId)).payloads).toEqual([expect.objectContaining({ status: "failed", replayAttempts: null })]);
+    bindPorts({ signoff: directory({}) });
+    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
   });
 
   it("the replay counts a payload that fails to build again as failed", async () => {
