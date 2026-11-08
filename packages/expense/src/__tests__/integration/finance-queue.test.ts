@@ -111,7 +111,7 @@ describeDb("finance queue — QuickBooks tab", () => {
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_NO_CLASS", "A line has no budget bucket, so it has no QuickBooks class"]]]);
   });
 
-  it("shows an outboxed expense a setting stops, naming the setting on the expense and generically in the queue", async () => {
+  it("shows an outboxed expense a setting stops, naming the setting on the expense and in the queue", async () => {
     const id = await seedExpense({ state: "qb_complete" });
     await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
     await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
@@ -119,13 +119,27 @@ describeDb("finance queue — QuickBooks tab", () => {
 
     expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_WAITING_ON_SETTING")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
     const rows = await financeQueueRows(FINANCE, "quickbooks");
-    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_WAITING_ON_SETTING", "Waiting on a QuickBooks setting"]]]);
+    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_WAITING_ON_SETTING", "Waiting on a setting: the books map has no payment account"]]]);
   });
 
   it("drops the setting reason once the expense posts", async () => {
     const id = await seedExpense({ state: "qb_complete" });
     await db.expense.update({ where: { id }, data: { qbMatchState: "CREATED", qbFailureKind: "settings", qbTxnId: "77" } });
     expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+  });
+
+  it("drops the setting reason once a retry clears the failure kind", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: null } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+  });
+
+  it("shows no setting reason on the expense or in the queue for an expense with no outbox row", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
+    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+    expect(await codes(FINANCE, "quickbooks", id)).toEqual([]);
   });
 });
 
