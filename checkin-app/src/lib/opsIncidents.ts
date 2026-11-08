@@ -24,7 +24,7 @@ export interface RunFailure {
 /**
  * What a run saw. `lanes` are the lanes that ran, clean or not: an open incident
  * closes only when a run covers every one of its lanes without failing it. A settings
- * failure is reported only while work is waiting. `staleJobs` lists jobs with no
+ * failure counts only while work is waiting (`count` above 0). `staleJobs` lists jobs with no
  * successful run in 48 hours; leave it out when the run did not check.
  */
 export interface RunReport {
@@ -81,7 +81,7 @@ const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
 function observe(report: RunReport): Observation[] {
     const byKey = new Map<string, Observation>();
     for (const f of report.failures) {
-        if (f.kind === "data") continue;
+        if (f.kind === "data" || (f.kind === "settings" && f.count <= 0)) continue;
         const key = f.kind === "bug" ? `${f.lane}:${f.code}` : `${f.cause}:${f.kind}`;
         const o = byKey.get(key) ?? { key, cause: f.cause, kind: f.kind, lanes: [], codes: [], count: 0, stopped: false };
         o.lanes = union(o.lanes, [f.lane]);

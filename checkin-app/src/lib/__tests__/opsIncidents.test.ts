@@ -127,6 +127,12 @@ describe("evaluateIncidents", () => {
         expect(sent.map((s) => s.ctx.status)).toEqual(["needs reconnecting", "needs attention"]);
     });
 
+    it("ignores a settings failure with no work waiting", async () => {
+        await evaluateIncidents(run([{ lane: "gift", cause: "booksmap", kind: "settings", code: "LANE_UNCONFIGURED", count: 0 }]), delivery(at(0)));
+        expect(rows).toEqual([]);
+        expect(sent).toEqual([]);
+    });
+
     it("keys a bug by lane and code, and opens it on the first run", async () => {
         await evaluateIncidents(run([{ lane: "receipt", cause: "ocr", kind: "bug", code: "PARSE_CRASH", count: 1 }]), delivery(at(0)));
         expect(rows[0]).toMatchObject({ key: "receipt:PARSE_CRASH", kind: "bug", lanes: ["receipt"] });
@@ -141,6 +147,7 @@ describe("evaluateIncidents", () => {
     it("opens a stopped-job incident under cron:<job>:stale and closes it when the job is fresh again", async () => {
         await evaluateIncidents(run([], [], { staleJobs: ["qbo-posting"] }), delivery(at(0)));
         expect(rows[0]).toMatchObject({ key: "cron:qbo-posting:stale", notifiedAt: at(0) });
+        expect(sent[0].ctx.todo).toMatch(/Scheduled Jobs/);
         await evaluateIncidents(run([]), delivery(at(1)));
         expect(rows[0].closedAt).toBeNull();
         await evaluateIncidents(run([], [], { staleJobs: [] }), delivery(at(2)));
@@ -209,6 +216,17 @@ describe("evaluateIncidents", () => {
             expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentReminder"]);
         });
 
+        it("retries a reminder whose send failed on the next run", async () => {
+            await evaluateIncidents(failing, delivery(at(0)));
+            sendOk = false;
+            await evaluateIncidents(failing, delivery(at(3)));
+            expect(rows[0].lastRemindedAt).toBeNull();
+            sendOk = true;
+            await evaluateIncidents(failing, delivery(at(4)));
+            expect(rows[0].lastRemindedAt).toEqual(at(4));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentReminder"]);
+        });
+
         it("escalates once to the Board address after two weeks open", async () => {
             for (let d = 0; d <= 20; d++) await evaluateIncidents(failing, delivery(at(d)));
             const escalations = sent.filter((s) => s.template === "ops.incidentEscalated");
@@ -252,6 +270,16 @@ describe("evaluateIncidents", () => {
             await evaluateIncidents(run([]), delivery(at(1, 6)));
             expect(rows[0].recoveryNotifiedAt).toEqual(at(1, 6));
             expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentRecovered"]);
+        });
+
+        it("stops retrying a failed recovery email 24 hours after closing", async () => {
+            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            sendOk = false;
+            await evaluateIncidents(run([]), delivery(at(1)));
+            sendOk = true;
+            await evaluateIncidents(run([]), delivery(at(2, 1)));
+            expect(rows[0].recoveryNotifiedAt).toBeNull();
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened"]);
         });
     });
 
