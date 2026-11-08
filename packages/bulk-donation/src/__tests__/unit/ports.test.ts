@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
-import { DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
+import { DonatedCapitalLineSchema, DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
-import { InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
+import { CapitalReviewLineSchema, InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -59,8 +59,9 @@ afterEach(() => {
 });
 
 describe("X9 ingestInKind (callee)", () => {
-  it("rejects a receipt from another org at parse time", async () => {
-    await expect(ingestInKind(receipt("other-org"))).rejects.toBeInstanceOf(ZodError);
+  it("throws a plain error for a receipt from another org, a wiring bug", async () => {
+    await expect(ingestInKind(receipt("other-org"))).rejects.toThrow(/not this org/);
+    await expect(ingestInKind(receipt("other-org"))).rejects.not.toBeInstanceOf(ZodError);
   });
 
   it("rejects a purchase receipt", async () => {
@@ -88,9 +89,9 @@ describe("X9 ingestInKind (callee)", () => {
 describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
   const DONOR = { firstName: "Jane", lastName: "Doe", companyName: null };
 
-  it("rejects another org at parse time", async () => {
-    await expect(recordInKindDonor("other-org", RECEIPT_ID, DONOR, 0)).rejects.toBeInstanceOf(ZodError);
-    await expect(withdrawInKind("other-org", RECEIPT_ID, 0)).rejects.toBeInstanceOf(ZodError);
+  it("throws a plain error for another org, a wiring bug", async () => {
+    await expect(recordInKindDonor("other-org", RECEIPT_ID, DONOR, 0)).rejects.not.toBeInstanceOf(ZodError);
+    await expect(withdrawInKind("other-org", RECEIPT_ID, 0)).rejects.toThrow(/not this org/);
   });
 
   it("rejects a blank donor name", async () => {
@@ -104,6 +105,10 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
 
   it("checks the donor with the shared schema", () => {
     expect(BulkDonorSchema).toBe(InKindDonorSchema);
+  });
+
+  it("checks capital-send lines with the shared schema", () => {
+    expect(CapitalReviewLineSchema).toBe(DonatedCapitalLineSchema);
   });
 
   it("rejects an empty receipt id", async () => {

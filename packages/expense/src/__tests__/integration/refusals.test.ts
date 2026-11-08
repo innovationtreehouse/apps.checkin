@@ -5,7 +5,8 @@ import { refusals, type RefusalCase, type RefusalExpectation, type Refusals } fr
 import { describeDb } from "../helpers/db";
 import { ORG } from "../helpers/seed";
 import { receiveCompletedReceipt } from "../../services/intakeService";
-import { submitDonatedLines, type DonatedLine } from "../../services/donatedCapitalService";
+import type { DonatedCapitalLine } from "@checkin/receipt-types";
+import { submitDonatedLines } from "../../services/donatedCapitalService";
 
 const KIND: Record<RefusalExpectation, string> = { accepted: "accepted", refused: "data", bug: "bug" };
 
@@ -41,4 +42,4 @@ function contract<P>(fixture: Refusals<P>, send: (payload: P) => Promise<unknown
 }
 
 contract(refusals("X5", { orgId: ORG }), receiveCompletedReceipt);
-contract(refusals<{ orgId: string; lines: DonatedLine[] }>("capital-send", { orgId: ORG }), (p) => submitDonatedLines(p.orgId, p.lines));
+contract(refusals<{ orgId: string; lines: DonatedCapitalLine[] }>("capital-send", { orgId: ORG }), (p) => submitDonatedLines(p.orgId, p.lines));

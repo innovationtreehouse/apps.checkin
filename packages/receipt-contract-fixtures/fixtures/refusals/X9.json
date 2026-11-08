@@ -5,7 +5,7 @@
   "cases": [
     { "name": "the payload as sent", "expect": "accepted" },
     { "name": "a resend that differs, kept out and raised for finance", "expect": "accepted", "after": "base", "set": { "receiptTotalCents": 1 } },
-    { "name": "a receipt for another org", "expect": "refused", "status": 400, "message": "orgId is not this org", "set": { "orgId": "another-org" } },
+    { "name": "a receipt for another org, a wiring bug", "expect": "bug", "status": 500, "message": "is not this org", "set": { "orgId": "another-org" } },
     { "name": "a receipt not marked in-kind", "expect": "refused", "status": 400, "message": "not an in-kind receipt", "set": { "isInKind": false } },
     { "name": "an empty receiptId", "expect": "refused", "status": 400, "message": "expected string to have >=1 characters", "set": { "receiptId": "" } },
     { "name": "no line items", "expect": "refused", "status": 400, "message": "expected array to have >=1 items", "set": { "lineItems": [] } }

@@ -58,6 +58,10 @@ export type {
 export { InKindDonorSchema, DONOR_NAME_MAX, DONOR_COMPANY_MAX } from "./in-kind-donor";
 export type { InKindDonor } from "./in-kind-donor";
 
+// Capital send — donations → expense donated-capital lines
+export { DonatedCapitalLineSchema } from "./donated-capital-line";
+export type { DonatedCapitalLine } from "./donated-capital-line";
+
 export {
   RECEIPT_CONTRACT_VERSION,
   majorVersion,
