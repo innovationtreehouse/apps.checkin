@@ -217,9 +217,11 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - A mailed message with nothing to read as a receipt — no file, no amount in
-  its text, only small inline images — gets one email saying no receipt was
-  found: attach the receipt as a file, or upload it in the app. It goes to the
-  same senders a refusal notice reaches, never to finance.
+  its text, only small inline images — gets one email saying no receipt file
+  or receipt text was found: attach the receipt as a file, or upload it in the
+  app. It goes to the same senders a refusal notice reaches, never to finance.
+  A reply, and a copy on which the receipt mailbox is only in Cc, get no such
+  email; mail sent to another address that reaches the mailbox still does.
   [Decision — owner]
 
 - A receipt's lines, plus shipping and tax, less discount, must equal its

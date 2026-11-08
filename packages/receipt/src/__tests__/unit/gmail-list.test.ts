@@ -16,4 +16,8 @@ describe("createGmailReader.listRecent", () => {
     expect(url.searchParams.get("q")).toBe("newer_than:3d -in:sent -in:drafts");
     expect(url.searchParams.has("includeSpamTrash")).toBe(false);
   });
+
+  it("names the mailbox it reads", () => {
+    expect(createGmailReader("receipts@example.org", async () => "token").address).toBe("receipts@example.org");
+  });
 });

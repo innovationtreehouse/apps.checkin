@@ -21,6 +21,7 @@ let failSends: boolean;
 let attachment: () => Promise<Buffer>;
 
 const reader: MailboxReader = {
+  address: "receipts@example.org",
   listRecent: async () => [...messages.keys()],
   getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
   getAttachment: async () => attachment(),
@@ -264,6 +265,23 @@ describeDb("mailed receipt acknowledgements", () => {
     await sendMailReplies();
     expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [NO_RECEIPT] })]);
     expect(await db.receiptMailReply.findFirstOrThrow()).toMatchObject({ refusalSentAt: expect.any(Date), doneAt: expect.any(Date) });
+  });
+
+  it("tells nobody about a reply, or a copy on which the receipt mailbox is only in Cc", async () => {
+    const empty = [{ mimeType: "text/plain", body: { data: b64("thanks, see you Tuesday") } }];
+    mailWith("cc", empty, { headers: [{ name: "To", value: "bob@example.org" }, { name: "Cc", value: "receipts@example.org" }] });
+    mailWith("reply", empty, { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: "<a1@example.org>" }] });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailReply.count()).toBe(0);
+  });
+
+  it("still tells a sender who mailed an alias of the receipt mailbox that no receipt was found", async () => {
+    mailWith("alias", [{ mimeType: "text/plain", body: { data: b64("hello") } }], { headers: [{ name: "To", value: "expenses@example.org" }, { name: "Cc", value: "bob@example.org" }] });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", refused: [NO_RECEIPT] })]);
   });
 
   it("tells a forged, unknown or automatic sender nothing about a message with no receipt", async () => {

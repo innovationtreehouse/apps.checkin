@@ -239,6 +239,8 @@ export type MailMessage = z.infer<typeof MailMessageSchema>;
 
 /** Read-only access to the receipt mailbox. */
 export interface MailboxReader {
+  /** The mailbox's own address, from configuration. */
+  address: string;
   /** Ids of messages received in the last `days` days, oldest first. Mail the mailbox sent is not listed. */
   listRecent(days: number): Promise<string[]>;
   getMessage(id: string): Promise<MailMessage>;

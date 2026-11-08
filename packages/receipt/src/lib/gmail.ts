@@ -31,6 +31,7 @@ export function createGmailReader(mailboxAddress: string, accessToken: () => Pro
   }
 
   return {
+    address: mailboxAddress,
     async listRecent(days) {
       const ids: string[] = [];
       let pageToken: string | undefined;
