@@ -5,7 +5,7 @@ import type { DbOrTx } from "../../db";
 
 const rule = {
   id: 1, orgId: "org-1", companyName: "Acme Corp", corporatePeerCampaign: "*", donationMethod: "check", donationType: "standard",
-  donationAccount: "4000-Donations", matchAccount: "4001-Match", feesAccount: "6000-Fees", donationAccountId: "60", matchAccountId: "61",
+  donationAccount: "4000-Donations", matchAccount: "4001-Match", donationAccountId: "60", matchAccountId: "61",
 };
 const row = (over: Record<string, unknown>) => ({
   id: 1, transactionId: "t1", disbursementDate: "2025-01-15", disbursementFrom: "Benevity", companyName: "Acme Corp",

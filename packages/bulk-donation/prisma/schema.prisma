@@ -170,8 +170,6 @@ model AccountMap {
   donationAccount       String   @map("donation_account")
   /// @sensitivity:internal
   matchAccount          String   @map("match_account")
-  /// @sensitivity:internal
-  feesAccount           String   @map("fees_account")
   /// QuickBooks account id a matched gift's donation amount books to; null until finance picks one.
   /// @sensitivity:internal
   donationAccountId     String?  @map("donation_account_id")

@@ -1,7 +1,7 @@
 // The ports another lane calls to hand income a deposit it expects and read back what became of
 // it. The caller calls expectDeposit only after its own record has committed, and again from a
 // re-send job for every key depositStatus leaves out; a repeat changes nothing.
-import { isBooksMapRole, type BooksMapRole } from "@checkin/quickbooks";
+import { isBooksMapRole, isRetiredBooksMapRole, type BooksMapRole, type RetiredBooksMapRole } from "@checkin/quickbooks";
 import { ServiceError } from "@checkin/component-kit";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
@@ -12,11 +12,11 @@ import { DEPOSIT_SOURCE, type DepositSourceName } from "./sources";
 /**
  * One line of an expected deposit: the QuickBooks account it books to and a budget bucket (null for
  * organization level). A line stored before lanes named accounts, or a fee line stored before fees
- * reduced income, carries only a role, and goes to finance.
+ * reduced income, carries only a retired role, and goes to finance.
  */
 export type ExpectedDepositLine = {
   accountId?: string;
-  role?: BooksMapRole;
+  role?: RetiredBooksMapRole;
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;
@@ -51,7 +51,7 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
   return checkExpected(raw, true);
 }
 
-/** `fresh` is a new hand-over; a stored row may carry a role-only line from before lanes named accounts. */
+/** `fresh` is a new hand-over; a stored row may carry a retired-role line from before lanes named accounts. */
 function checkExpected(raw: ExpectedDeposit, fresh: boolean): ExpectedDeposit {
   const bad = (msg: string) => new ServiceError(400, msg);
   if (!DAY.test(raw.txnDate) || Number.isNaN(Date.parse(`${raw.txnDate}T00:00:00Z`))) throw bad("txnDate must be YYYY-MM-DD");
@@ -61,7 +61,7 @@ function checkExpected(raw: ExpectedDeposit, fresh: boolean): ExpectedDeposit {
   for (const l of raw.lines) {
     if (l.accountId !== undefined && l.role !== undefined) throw bad("a line names an account or a role, not both");
     if (l.accountId !== undefined && !QB_ID.test(l.accountId)) throw bad("line accountId must be a QuickBooks id (digits only)");
-    if (l.role !== undefined && !isBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a books-map role`);
+    if (l.role !== undefined && !isRetiredBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a retired books-map role`);
     if (l.accountId === undefined && (fresh || l.role === undefined)) throw bad("a line needs its QuickBooks account id");
     if (!Number.isInteger(l.amountCents)) throw bad("line amountCents must be a whole number");
     if (l.budgetOwnerId !== null && (!Number.isInteger(l.budgetOwnerId) || l.budgetOwnerId <= 0)) throw bad("line budgetOwnerId must be a positive integer or null");

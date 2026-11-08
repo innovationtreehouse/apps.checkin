@@ -34,7 +34,6 @@ export const accountMapService = {
           // The name columns hold what finance typed before rules named accounts; a new rule has none.
           donationAccount: "",
           matchAccount: "",
-          feesAccount: "",
           donationAccountId: data.donationAccountId ?? null,
           matchAccountId: data.matchAccountId ?? null,
         },

@@ -135,7 +135,7 @@ describe("bulk-donation wiring", () => {
   it("names what gift-of-goods posting lacks, from the books map the drain reads", async () => {
     const { inKindPostingMissing } = await import("../configure");
     delete process.env.QBO_REALM_ID;
-    booksMap.accounts.mockResolvedValue({ INKIND_EXPENSE: "401", FIXED_ASSETS: "402" });
+    booksMap.accounts.mockResolvedValue({});
     await expect(inKindPostingMissing()).resolves.toEqual([
       "QuickBooks company (QBO_REALM_ID)",
       "no account picked for: Gifts of goods: in-kind income, Gifts of goods: clearing account (finance's past bookings)",

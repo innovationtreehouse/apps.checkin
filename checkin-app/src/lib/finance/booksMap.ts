@@ -5,7 +5,7 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { updateBudgetOwner } from "@/lib/finance/budgetOwners";
-import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, LIVE_BOOKS_MAP_ROLES, accountTypeRefusal, isBooksMapRole, isQuickBooksId, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLE_ACCOUNT_TYPES, BOOKS_MAP_ROLES, accountTypeRefusal, isBooksMapRole, isQuickBooksId, type BooksMap, type BooksMapRole, type QboAccount } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
 // The books map (docs/ops/quickbooks-go-live.md): bucket -> QuickBooks Class,
@@ -25,7 +25,7 @@ export async function listBooksMap() {
     const set = new Map(rows.map((r) => [r.role, r.quickBooksAccountId]));
     return {
         BooksMapClass: buckets.map((b) => ({ budgetOwnerId: b.id, budgetOwnerName: b.name, quickBooksClassId: b.quickBooksClassId })),
-        BooksMapAccount: LIVE_BOOKS_MAP_ROLES.map((role) => ({ role, quickBooksAccountId: set.get(role) ?? null })),
+        BooksMapAccount: BOOKS_MAP_ROLES.map((role) => ({ role, quickBooksAccountId: set.get(role) ?? null })),
     };
 }
 
@@ -111,14 +111,14 @@ export async function listQuickBooksAccounts() {
 const either = new Intl.ListFormat("en", { type: "disjunction" });
 
 /**
- * Each set live role whose account QuickBooks lists under a type the role does
+ * Each set role whose account QuickBooks lists under a type the role does
  * not accept, or no longer lists, in plain words for System Status. Stored values
  * stay as they are; finance re-picks them.
  */
 export async function misTypedRoleAccounts(qbAccounts: readonly Pick<QboAccount, "Id" | "FullyQualifiedName" | "AccountType">[]): Promise<string[]> {
     const byId = new Map(qbAccounts.map((a) => [a.Id, a]));
     const set = await booksMap.accounts();
-    return LIVE_BOOKS_MAP_ROLES.flatMap((role) => {
+    return BOOKS_MAP_ROLES.flatMap((role) => {
         const id = set[role];
         if (!id) return [];
         const account = byId.get(id);
