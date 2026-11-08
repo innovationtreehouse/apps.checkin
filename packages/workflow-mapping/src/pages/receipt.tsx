@@ -175,7 +175,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {receipt.matchingPendingSince && (
-        <Text size="sm" c="dimmed" mb="md">Matching didn't run because the catalog was unavailable. It retries daily.</Text>
+        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. It retries daily."}</Text>
       )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && (
