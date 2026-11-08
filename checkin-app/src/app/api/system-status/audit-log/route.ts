@@ -12,15 +12,9 @@ import type { Prisma } from "@/generated/prisma/client";
 import { apiError } from "@/lib/api-response";
 import { withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
 import { personNamesById } from "@/lib/person/archivedPeople";
+import { parseDayAt } from "@/lib/time";
 
 const PAGE_SIZE = 50;
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-
-/** A yyyy-mm-dd day at `time` in server time; null when malformed. */
-function parseDay(value: string, time: string): Date | null {
-    const d = new Date(`${value}T${time}`);
-    return DAY.test(value) && !isNaN(d.getTime()) ? d : null;
-}
 const ACTIONS = ["CREATE", "EDIT", "DELETE", "BECOME_ADMIN"] as const;
 
 export const GET = withAuth(
@@ -63,8 +57,8 @@ export const GET = withAuth(
             // ponytail: server-local day boundaries; revisit if multi-TZ forensics matter.
             const from = sp.get("from");
             const to = sp.get("to");
-            const fromDay = from ? parseDay(from, "00:00:00.000") : undefined;
-            const toDay = to ? parseDay(to, "23:59:59.999") : undefined;
+            const fromDay = from ? parseDayAt(from, "00:00:00.000") : undefined;
+            const toDay = to ? parseDayAt(to, "23:59:59.999") : undefined;
             if (fromDay === null) return apiError("Invalid from date.", 400);
             if (toDay === null) return apiError("Invalid to date.", 400);
             if (fromDay || toDay) where.timestamp = { gte: fromDay, lte: toDay };

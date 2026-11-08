@@ -69,6 +69,12 @@ describe('GET /api/system-status/audit-log — day filters', () => {
         expect(findMany()).not.toHaveBeenCalled();
     });
 
+    it.each(['?from=2026-02-31', '?to=2026-02-29'])('answers 400 for a day the calendar lacks (%s), reading nothing', async (query) => {
+        const res = await call(query);
+        expect(res.status).toBe(400);
+        expect(findMany()).not.toHaveBeenCalled();
+    });
+
     it('filters an inclusive day range', async () => {
         await call('?from=2026-01-02&to=2026-01-03');
         const { where } = findMany().mock.calls[0][0];
