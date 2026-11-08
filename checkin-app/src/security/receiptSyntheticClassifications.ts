@@ -16,7 +16,7 @@
  * like `validationNotes`. A rejected receipt says whether its uploader has yet
  * to acknowledge the rejection (`rejectionUnacknowledged`), which keeps it in
  * their My receipts pill until they do. Tiers match the generated
- * models field for field. No file column is listed, so the stripper drops one if
+ * models field for field, for every column the view carries. No file column is listed, so the stripper drops one if
  * a projection ever passes it through: the file leaves only through the file
  * route (plan rule 7).
  *

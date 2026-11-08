@@ -16,8 +16,8 @@
  *   3. FINANCE-only routes refuse a non-finance session; BOARD reads with
  *      FINANCE's view on every finance-or-board route but does not act; a
  *      sysadmin gets nothing beyond the submitter view.
- *   4. The submitter view never returns donor or reimbursee names, or the id
- *      or rejection status of a suspected duplicate (another person's
+ *   4. The submitter view never returns donor or reimbursee names, or the
+ *      receipt kept in place of one rejected as a copy (another person's
  *      receipt); FINANCE sees both.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
