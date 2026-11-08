@@ -119,7 +119,7 @@ export const GET = withCron(async () => {
     const inventoryEvents = await isolated("inventory events", "inventory event catch-up", catchUpInventoryEvents);
     const workflowEvents = await isolated("workflow-mapping events", "workflow-mapping event catch-up", catchUpWorkflowEvents);
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
-    const receivingMatching = await isolated("workflow-mapping pending matching", "workflow-mapping matching re-run", retryPendingMatching);
+    const receivingMatching = await isolated("workflow-mapping pending matching", "workflow-mapping matching re-run", retryPendingMatching, ["workflow-mapping matching"]);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
     const receiptStuck = await isolated("receipt stuck uploads", "receipt stuck-upload sweep", sweepStuckUploaded);
     const donorSync = await isolated("donor sync", "receipt donor re-send", resendDonorSync);
@@ -136,6 +136,7 @@ export const GET = withCron(async () => {
         + (receiptMail.status === "listing_failed" ? 1 : 0);
     // Expense's replay re-runs the receipts live intake could not take, so it reaches both intake lanes.
     if ("intake" in expense && !crashed(expense.intake)) laneReached("expense intake", "expense intake-replay");
+    if (!crashed(receivingMatching)) laneReached("workflow-mapping matching");
     if (!crashed(receiptPush)) laneReached("receipt push");
     if (receiptMail.status === "ok") {
         laneReached("receipt mail-listing");
