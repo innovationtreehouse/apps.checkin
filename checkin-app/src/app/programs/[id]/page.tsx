@@ -66,8 +66,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     : program.phase === 'UPCOMING' ? 'Upcoming'
     : program.phase === 'FINISHED' ? 'Ended'
     : null;
-  // A household with an unpaid claim keeps its way to pay unless enrollment was closed by hand.
-  const canResume = !viewerIsYouth && program.enrollmentStatus !== 'CLOSED' && myEnrolled.some((m) => m.unpaid);
+  // A household with an unpaid claim keeps its way to pay however enrollment closed; the server refuses only new claims.
+  const canResume = !viewerIsYouth && myEnrolled.some((m) => m.unpaid);
   const closedSuffix = closedReason && <Text component="span" c="white"> ({closedReason})</Text>;
 
   return (
