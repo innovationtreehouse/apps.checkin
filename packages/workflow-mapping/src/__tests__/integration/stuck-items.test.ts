@@ -62,6 +62,14 @@ describeDb("stuckItems", () => {
     expect(text).not.toContain("provisionalGtin13");
   });
 
+  it("a retry that fails again carries no error text", async () => {
+    const r = await failedApply();
+
+    const err = await retryStuckItem({ id: r.receiptId, step: "apply" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 409 });
+    expect(String((err as Error).message)).not.toContain("expense down");
+  });
+
   it("a failed apply records its error and first failure time; a second failure keeps the time", async () => {
     const r = await failedApply();
     const row = await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } });
@@ -71,7 +79,7 @@ describeDb("stuckItems", () => {
     expect(before.failedAt).toEqual(row.applyFirstFailedAt);
 
     await pause();
-    await retryStuckItem({ id: before.id, step: before.step });
+    await expect(retryStuckItem({ id: before.id, step: before.step })).rejects.toMatchObject({ status: 409 });
 
     expect(await stuckItems()).toEqual([before]);
   });
@@ -81,7 +89,7 @@ describeDb("stuckItems", () => {
     const [before] = await stuckItems();
 
     await pause();
-    await retryStuckItem({ id: before.id, step: before.step });
+    await expect(retryStuckItem({ id: before.id, step: before.step })).rejects.toMatchObject({ status: 409 });
     await orgEventConsumer.onOrgEvents([malformed(1)]);
 
     expect(await stuckItems()).toEqual([before]);

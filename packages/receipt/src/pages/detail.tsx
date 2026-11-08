@@ -19,6 +19,8 @@ import { day } from "../lib/describeReceipt";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { missingDetails } from "../lib/missingDetails";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
+import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
+import AllowanceReset from "../components/AllowanceReset";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -272,6 +274,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   // A saved receipt whose lines already add up still needs a way out of Totals off.
   const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
   const unread = r.state === "ocr_failed";
+  const lastFailure = audit.data?.filter((a) => a.action.startsWith("ocr_failed")).at(-1);
+  const allowanceUsedUp = unread && lastFailure?.action === "ocr_failed" && lastFailure.valueAfter === DAILY_LIMIT_REACHED;
   // Details saved before a failed resubmit still need a way out of Couldn't read.
   const savedTyped = unread && missingDetails(r).length === 0;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
@@ -485,6 +489,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
             {(own || isFinance) && r.state === "ocr_failed" && !ocrOff && (
               <Button size="xs" variant="light" onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
             )}
+            {(isFinance || isBoard) && allowanceUsedUp && <AllowanceReset personId={r.uploadedByUserId} />}
             {own && !TERMINAL.has(r.state) && (
               <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}

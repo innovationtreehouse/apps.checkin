@@ -366,6 +366,15 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(body).toMatchObject({ success: true, failed: 0 });
     });
 
+    it("records the cron run as failed when workflow-mapping could not read the catalog's events", async () => {
+        jest.mocked(catchUpWorkflowEvents).mockResolvedValue({ ...WORKFLOW_EVENTS, unreadable: true });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+    });
+
     it('records a clean run when the mailbox was read', async () => {
         await GET(req());
 

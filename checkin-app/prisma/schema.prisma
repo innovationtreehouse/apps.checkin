@@ -1131,6 +1131,10 @@ model Program {
   claimantShopifyProductId  String?
   /// @sensitivity:public
   claimantShopifyVariantId  String?
+  /// Set once the sale sweep has taken the reserved-seat product off sale after
+  /// the program ended. Nothing clears it.
+  /// @sensitivity:internal
+  claimantProductHiddenAt   DateTime?
   /// Durable "Shopify stock needs a push" flag: set when a stock write could not
   /// be confirmed (lib/shopify/stock.ts adjustProgramInventory).
   /// @sensitivity:internal

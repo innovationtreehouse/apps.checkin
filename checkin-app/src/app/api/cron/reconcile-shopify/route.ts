@@ -106,7 +106,8 @@ function rowsFailed(outcome: object): number {
  * The Shopify reconcile and the sale sweep run isolated too. The top-level `failed`, which the cron
  * run records, counts every step or expense part that crashed, every row a step reports as failed
  * (reconcile orders, receipt sweeps, re-pushes, donor re-sends, outcome emails), provisionals not
- * reconciled, and a mailbox that could not be read.
+ * reconciled, a workflow-mapping catch-up that could not read the catalog's events, and a mailbox
+ * that could not be read.
  */
 export const GET = withCron(async () => {
     const result = await isolated("shopify", "Shopify reconcile", runReconcile);
@@ -128,6 +129,7 @@ export const GET = withCron(async () => {
     const failed = [...steps, ...expenseParts].filter(crashed).length
         + [result, receipt, receiptStuck, receiptPush, donorSync, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
         + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
+        + ("unreadable" in workflowEvents && workflowEvents.unreadable ? 1 : 0)
         + (receiptMail.status === "listing_failed" ? 1 : 0);
     // Expense's replay re-runs the receipts live intake could not take, so it reaches both intake lanes.
     if ("intake" in expense && !crashed(expense.intake)) laneReached("expense intake", "expense intake-replay");

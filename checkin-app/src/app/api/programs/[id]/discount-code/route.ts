@@ -7,7 +7,7 @@ import { mintMemberDiscountCode } from "@/lib/shopify/discounts";
 import { checkoutVariantId } from "@/lib/programs/variants";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { householdLeadship } from "@/lib/household/leads";
-import { signCheckout } from "@/lib/programs/checkoutSignature";
+import { PROGRAM_ENDED_PAYMENT, signCheckout } from "@/lib/programs/checkoutSignature";
 
 // Server-minted, single-use member discount code for a single-pool program's
 // checkout link (see mintMemberDiscountCode in lib/shopify/discounts.ts), bound to the
@@ -16,6 +16,7 @@ import { signCheckout } from "@/lib/programs/checkoutSignature";
 //
 // Only a household lead pays for the household (a youth is enrolled by their
 // lead — docs/rules/programs.md), so anyone else is refused with a 403.
+// An ended program is refused with a 400: the Board settles its unpaid claims by hand.
 // One order pays for one household: `participantIds` (the children in this
 // checkout) must all be in the caller's household, or the checkout is refused
 // with a 400. Otherwise always 200s with the checkout `signature` the link must
@@ -37,6 +38,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
     const program = await prisma.program.findUnique({ where: { id: programId } });
     if (!program) return apiError("Program not found", 404);
+    if (program.phase === "FINISHED") return apiError(PROGRAM_ENDED_PAYMENT, 400);
 
     const caller = await householdLeadship(auth.user.id);
     if (!caller?.canManage) return apiError("Only a household lead can pay for the household.", 403);

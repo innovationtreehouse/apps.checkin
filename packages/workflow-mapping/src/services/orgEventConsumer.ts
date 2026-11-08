@@ -129,10 +129,10 @@ export const orgEventConsumer: OrgEventConsumer = {
 };
 
 /** Retry of a failed event: applies it once from its stored row. 404 when no event of this org is failed. */
-export async function retryFailedOrgEvent(id: number): Promise<void> {
+export async function retryFailedOrgEvent(id: number): Promise<"processed" | "failed" | "duplicate"> {
   const row = Number.isSafeInteger(id) ? await db.workflowFailedOrgEvent.findFirst({ where: { id, orgId: await getOrgId() } }) : null;
   if (!row) throw new ServiceError(404, "No failed catalog event with this id");
-  await consumeEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload });
+  return consumeEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload });
 }
 
 /**

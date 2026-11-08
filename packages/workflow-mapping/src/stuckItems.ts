@@ -7,6 +7,8 @@ import { receiptService } from "./services/receiptService";
 
 const APPLY = "apply";
 const CATALOG_EVENT = "catalog event";
+// The error itself is shown only on the item's own page.
+const FAILED_AGAIN = "The retry failed again; the item stays stuck";
 
 /** A receipt whose apply failed, or one left applying with a recorded failure (a lost stamp, a push that threw). */
 const STUCK_RECEIPT = { OR: [{ state: "apply_failed" }, { state: "applying", applyFirstFailedAt: { not: null } }] };
@@ -26,8 +28,8 @@ export async function stuckItems(): Promise<StuckItem[]> {
 
 /**
  * Runs the item's step once. Safe to repeat: the apply claim and each leg's applied stamp, and the
- * event ledger, hold. A step that fails again leaves the item stuck with its first failure time;
- * one that is not stuck answers 404.
+ * event ledger, hold. A step that fails again answers 409 and leaves the item stuck with its first
+ * failure time; one that is not stuck answers 404.
  */
 export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
   switch (step) {
@@ -36,11 +38,14 @@ export async function retryStuckItem({ id, step }: { id: string; step: string })
       if (!received) throw new ServiceError(404, "No stuck apply for this receipt");
       const actor = await requireActor();
       await receiptService.retryApply(received.id);
-      if (!(await executePushAndSettle(received.id, received, actor.id, actor.name))) throw new ServiceError(409, "Receipt is already being applied");
+      const result = await executePushAndSettle(received.id, received, actor.id, actor.name);
+      if (!result) throw new ServiceError(409, "Receipt is already being applied");
+      if (result.state !== "resolved") throw new ServiceError(409, FAILED_AGAIN);
       return;
     }
     case CATALOG_EVENT:
-      return retryFailedOrgEvent(Number(id));
+      if ((await retryFailedOrgEvent(Number(id))) === "failed") throw new ServiceError(409, FAILED_AGAIN);
+      return;
     default:
       throw new ServiceError(404, `No step ${step} in workflow mapping`);
   }

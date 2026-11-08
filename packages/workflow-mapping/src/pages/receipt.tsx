@@ -25,6 +25,7 @@ interface Receipt {
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
   matchingPendingSince?: string | null;
+  applyFirstFailedAt?: string | null;
 }
 interface LineItem {
   receiptLineItemId: number;
@@ -145,6 +146,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { ReceivedReceipt: receipt, WorkflowReceiptView: parsed, ReceivedReceiptLineStatus: lines } = detail.data;
   const lockReason = lineLockReason(receipt);
   const editable = canManage && !lockReason;
+  // Waits for a person: a failed apply, or one left applying with a recorded failure.
+  const stuck = receipt.state === "apply_failed" || (receipt.state === "applying" && !!receipt.applyFirstFailedAt);
   const base = `/receipts/${receipt.id}`;
   const items = new Map(parsed.lineItems.map((li) => [li.receiptLineItemId, li]));
   const partLabels = withProvisionalNames(partLookup);
@@ -203,10 +206,10 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand."}</Text>
       )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
-      {receipt.state === "applying" && (
+      {receipt.state === "applying" && !stuck && (
         <Text size="sm" c="dimmed" mb="md">Applying — the system retries this automatically.</Text>
       )}
-      {canManage && receipt.state === "apply_failed" && (
+      {canManage && stuck && (
         <Alert color="gray" mb="md" title="Lines locked">
           Lines are locked once a receipt is sent to apply. Retry sends the part that failed with the same lines.
         </Alert>
@@ -223,7 +226,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
               Proceed
             </Button>
           )}
-          {receipt.state === "apply_failed" && (
+          {stuck && (
             <Button
               variant="light"
               loading={busy}

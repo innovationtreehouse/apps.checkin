@@ -14,6 +14,7 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1
 const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
   inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null,
+  applyFirstFailedAt: null as string | null,
 };
 const baseDetail = {
   ReceivedReceipt: receipt,
@@ -313,6 +314,16 @@ describe("the receiving page for one receipt", () => {
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry apply" })).not.toBeInTheDocument();
     expect(screen.getByText("Applying — the system retries this automatically.")).toBeInTheDocument();
+  });
+
+  it("offers Retry apply for a receipt left applying with a recorded failure, and no automatic retry", async () => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "applying", applyFirstFailedAt: "2026-11-08T10:00:00Z" } };
+    mockApi.mockResolvedValueOnce({ id: 7, state: "applying" }).mockResolvedValueOnce({ id: 7, state: "resolved" });
+    wrap();
+    expect(screen.queryByText("Applying — the system retries this automatically.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry apply" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/apply", expect.anything()));
+    expect(mockApi).toHaveBeenCalledWith("/receipts/7/retry-apply", expect.anything());
   });
 
   it("shows Matching pending, and how to resolve it, while matching couldn't run", () => {
