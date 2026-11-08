@@ -13,7 +13,7 @@ import { createProvisionalResolutionRepository } from "../repositories/provision
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
 import { recordSubmitterSeats } from "./submitterSeatService";
-import { kindOf, ServiceError } from "@checkin/component-kit";
+import { kindOf, ServiceError, type FailureKind } from "@checkin/component-kit";
 
 /** A stored payload as the contract reads it now, so a code it normalizes does not count as a difference. */
 function asParsed(payloadJson: string): string {
@@ -29,6 +29,14 @@ function asParsed(payloadJson: string): string {
 export async function receiveCompletedReceipt(
   raw: unknown,
 ): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }> {
+  const { receiptId, status } = await receive(raw, { replay: false });
+  return { receiptId, status };
+}
+
+type Received = { receiptId: string; status: "created" | "already_applied" | "accepted"; failure?: FailureKind };
+
+/** A new arrival starts the payload's replay tries from zero; a replay keeps its count. */
+async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<Received> {
   const receipt = CompletedReceiptSchema.parse(raw);
   await assertOrg(receipt.orgId);
   const { receiptId } = receipt;
@@ -44,7 +52,7 @@ export async function receiveCompletedReceipt(
 
   // Record arrival as "received"; "applied" is written only after processing commits, so a crash
   // in between leaves a row the next call (or the catch-up sweep) finishes.
-  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", failureReason: null, receivedAt: new Date() };
+  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", failureReason: null, receivedAt: new Date(), ...(!replay && { replayAttempts: null }) };
   try {
     await db.receivedExpensePayload.upsert({ where: { receiptId }, create: { receiptId, ...arrival }, update: arrival });
   } catch (err) {
@@ -61,7 +69,7 @@ export async function receiveCompletedReceipt(
       .updateMany({ where: { receiptId, status: { not: "applied" } }, data: { status: "failed", failureReason: messageOf(err) } })
       // The row stays "received", which the daily replay still picks up.
       .catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
-    return { receiptId, status: "accepted" };
+    return { receiptId, status: "accepted", failure: kindOf(err) };
   }
   await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null } });
   return { receiptId, status: created ? "created" : "already_applied" };
@@ -69,6 +77,8 @@ export async function receiveCompletedReceipt(
 
 /** Replays a stored payload gets before it is given up: no more replays, held for a developer. */
 export const MAX_REPLAY_ATTEMPTS = 5;
+
+const UNCHARGED_KINDS: ReadonlySet<FailureKind> = new Set(["system", "connection", "settings"]);
 
 /** Catch-up sweep: re-runs payloads left received or failed until they build or are given up. Capped; counts only. */
 export async function replayReceivedPayloads(limit = 50): Promise<{ applied: number; failed: number }> {
@@ -94,21 +104,24 @@ export async function replayReceivedPayloads(limit = 50): Promise<{ applied: num
   return counts;
 }
 
-/** True when the replay built the expense; otherwise the attempt is counted on the row. */
+/** True when the replay built the expense; otherwise a failure that is the payload's is counted on the row. */
 async function replayOne(row: { receiptId: string; payloadJson: string; replayAttempts: number | null }): Promise<boolean> {
   const { receiptId } = row;
   const stored = storedPayload(row.payloadJson);
   // A stored payload the contract refuses can never build, so it is given up at once.
   if (!stored.ok) return recordFailedReplay(receiptId, MAX_REPLAY_ATTEMPTS, `The stored payload no longer passes the receipt contract: ${stored.reason}`);
 
-  const attempts = (row.replayAttempts ?? 0) + 1;
+  let failure: { kind: FailureKind; reason: string | null };
   try {
-    const { status } = await receiveCompletedReceipt(stored.payload);
+    const { status, failure: kind } = await receive(stored.payload, { replay: true });
     if (status !== "accepted") return true;
+    failure = { kind: kind ?? "bug", reason: null };
   } catch (err) {
-    return recordFailedReplay(receiptId, attempts, messageOf(err));
+    failure = { kind: kindOf(err), reason: messageOf(err) };
   }
-  return recordFailedReplay(receiptId, attempts, null);
+  // An outage, a lost connection or a missing setting is no fault of the payload, so it uses no try.
+  if (UNCHARGED_KINDS.has(failure.kind)) return false;
+  return recordFailedReplay(receiptId, (row.replayAttempts ?? 0) + 1, failure.reason);
 }
 
 function storedPayload(payloadJson: string): { ok: true; payload: unknown } | { ok: false; reason: string } {
