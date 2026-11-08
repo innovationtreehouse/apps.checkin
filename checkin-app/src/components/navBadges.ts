@@ -228,8 +228,8 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
     }
     case '/system-status': {
       // Red alert: things broken about the deployment itself — failing system-config
-      // checks (env-var/deploy gaps, e.g. Zoho e-sign unconfigured) plus cron sweeps
-      // that stopped running OR stopped working. Distinct from the
+      // checks (env-var/deploy gaps, e.g. Zoho e-sign unconfigured), cron sweeps
+      // that stopped running OR stopped working, and open incidents. Distinct from the
       // green/gray queue badges — this is "infra broken," not "you have a task."
       // Admins + board only (the counts are absent from the payload for everyone else).
       //
@@ -242,11 +242,14 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       // "unhealthy", not "not running": the count also covers a sweep that runs every
       // night and cannot finish its work. Which one it is, is a panel-level detail.
       const cron = counts.configHealth?.unhealthyCronJobs ?? 0;
-      const n = config + cron;
+      // Open incidents from the incident engine; listed on the Open problems panel.
+      const incidents = counts.configHealth?.openIncidents ?? 0;
+      const n = config + cron + incidents;
       if (n === 0) return [];
       const parts = [
         ...(config > 0 ? [`${config} config ${config === 1 ? 'issue' : 'issues'}`] : []),
         ...(cron > 0 ? [`${cron} cron job${plural(cron, '', 's')} unhealthy`] : []),
+        ...(incidents > 0 ? [`${incidents} open problem${plural(incidents, '', 's')}`] : []),
       ];
       return [{ count: n, color: 'red', label: parts.join(', ') }];
     }

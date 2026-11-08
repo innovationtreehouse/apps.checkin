@@ -1,7 +1,7 @@
 import { act, screen, fireEvent } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
-import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox } from "../SystemHealthPanels";
+import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
 
@@ -211,5 +211,41 @@ describe("KioskHeartbeatBox", () => {
     renderHeartbeat([{ metric: "kiosk_clock_skew", value: 90 }]);
     expect(await screen.findByText(/90s ahead of the server/)).toBeInTheDocument();
     expect(screen.getByText(/No kiosk request since this task started/)).toBeInTheDocument();
+  });
+});
+
+describe("OpenProblemsBox", () => {
+  const incident = (over: Record<string, unknown>) => ({
+    key: "quickbooks:connection", status: "open", kind: "connection", cause: "quickbooks",
+    lanes: ["expenses", "gifts"], firstSeenAt: "2026-11-01T12:00:00.000Z", runsSeen: 3, itemsAffected: 7, ...over,
+  });
+
+  it("lists each incident with its kind, cause, lanes and counts, and badges only the open ones", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        incidents: [incident({}), incident({ key: "ocr:system", status: "watching", kind: "system", cause: "ocr", lanes: ["receipts"], runsSeen: 1, itemsAffected: 2 })],
+      },
+    });
+    renderWithProviders(<OpenProblemsBox />);
+
+    expect(await screen.findByText("quickbooks")).toBeInTheDocument();
+    expect(screen.getByText("expenses, gifts")).toBeInTheDocument();
+    expect(screen.getByText(/3 runs, 7 items/)).toBeInTheDocument();
+    expect(screen.getByText("● Open")).toBeInTheDocument();
+    expect(screen.getByText("ocr")).toBeInTheDocument();
+    expect(screen.getByText("● Watching")).toBeInTheDocument();
+    expect(screen.getByTitle("1 open problem(s)")).toBeInTheDocument();
+  });
+
+  it("says so when nothing is open", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("No open problems.")).toBeInTheDocument();
+  });
+
+  it("says so when the panel cannot load", async () => {
+    mockFetchJson({});
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
   });
 });

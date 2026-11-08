@@ -154,8 +154,14 @@ the database, catalog events) and a kind.
 | Data | Never: it stays in finance's queue | — |
 | Stopped job | No successful run in 48 hours | job (`cron:<job>:stale`) |
 
-A single system failure that heals on the next run stays quiet. System Status
-will list it as watching.
+A single system failure that heals on the next run stays quiet.
+
+**Where to see them.** System Status → Health has an "Open problems" panel
+listing every incident not yet closed: its kind, cause, lanes, when it was
+first seen, and runs and items so far. *Watching* means seen but below the
+alert threshold; *open* means the notice went out. Open incidents add to the
+red System Status pill. A stopped job with an open incident counts there once,
+not again as an unhealthy scheduled job.
 
 **What arrives, and when.**
 
