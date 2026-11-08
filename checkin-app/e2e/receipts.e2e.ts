@@ -145,12 +145,12 @@ test.describe("receipts in the browser", () => {
     const page = await context.newPage();
     const watch = watchPage(page);
     await page.goto(`/receipts/${encodeURIComponent(copy.id)}?queue=all`);
-    // The suspected original is the earliest matching read, which may be another test's receipt.
+    // The group holds every matching read, so other tests' receipts may be matches too.
     await expect(page.getByText("This receipt's file", { exact: true })).toBeVisible();
     // The page shows this receipt's file above the comparison as well.
     await expect(page.getByText(`E2E copy ${id}`).first()).toBeVisible();
-    await expect(page.getByText("The original's file", { exact: true })).toBeVisible();
-    await expect(page.getByText("The original's file is not loaded.")).toHaveCount(0);
+    await expect(page.getByText("File of match 1", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^The file of match \d+ is not loaded\.$/)).toHaveCount(0);
     await noProblems(watch, "duplicate compare");
     await context.close();
   });
