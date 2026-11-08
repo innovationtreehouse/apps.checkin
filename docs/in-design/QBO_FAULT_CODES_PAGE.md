@@ -173,14 +173,13 @@ Three PRs, in order. None is stacked on another.
 
 ## Open questions
 
-- **FC2. Closed books on the page.** Fault 6210 (closed books) ends as "Not
-  booked", not as a kinded failure, so it never reaches the port and never shows
-  here. Should it be recorded too, under its own "closed books" pill?
+None. Every question is ruled; see Rulings.
 
 ## Rulings
 
 | Q | Ruling |
 |---|---|
 | FC1. Who sees the page | Sysadmins, finance and the board, under System Status. Sysadmin access rests on the row holding only code, kind, counts, first and last seen, and lane names. |
+| FC2. Closed books (fault 6210) | Left off the page. Books close once a year, so it is rare, and it already ends as "Not booked" for finance. |
 | FC3. Reclassifying from the page | No. The code table stays in the QuickBooks package, edited by a PR with a test per entry. The page only reads it. |
 | FC4. Counts after a reclassification | No reset. Counts keep running across a change to the code table; the last-seen date shows recent activity. |
