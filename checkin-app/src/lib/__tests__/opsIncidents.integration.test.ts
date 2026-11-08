@@ -26,6 +26,23 @@ describe('incident engine (real DB)', () => {
         expect(await prisma.opsIncident.count({ where: { openKey: KEY } })).toBe(1);
     });
 
+    it('sends each notice once when runs on an existing incident evaluate at the same time', async () => {
+        const t0 = new Date();
+        await prisma.opsIncident.create({
+            data: { key: KEY, openKey: KEY, cause: CAUSE, kind: 'connection', lanes: ['expense'], firstSeenAt: t0, runsSeen: 1 },
+        });
+        const sends: string[] = [];
+        const counting = (now: Date): Delivery => ({ ...delivery(now), send: async (_to, template) => { sends.push(template); return true; } });
+        const both = (r: RunReport, now: Date) => Promise.all([evaluateIncidents(r, counting(now)), evaluateIncidents(r, counting(now))]);
+
+        await both(report, new Date(t0.getTime() + 60_000));
+        await both({ lanes: ['expense'], failures: [] }, new Date(t0.getTime() + 120_000));
+        await both(report, new Date(t0.getTime() + 180_000));
+
+        expect(sends).toEqual(['ops.incidentOpened', 'ops.incidentRecovered', 'ops.incidentOpened']);
+        expect(await prisma.opsIncident.count({ where: { key: KEY } })).toBe(1);
+    });
+
     it('closes the incident on a clean run and reopens the same row when it is back within a day', async () => {
         const t0 = new Date();
         await evaluateIncidents(report, delivery(t0));

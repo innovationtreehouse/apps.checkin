@@ -54,12 +54,9 @@ export interface IncidentEvent {
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-// A daily job starts at slightly different times; without slack a reminder due at
-// "3 days" slips a whole day when the run starts a few seconds early.
-const SLACK = HOUR;
-const FIRST_REMINDER = 3 * DAY;
-const REMINDER_EVERY = 7 * DAY;
-const ESCALATE_AFTER = 14 * DAY;
+const FIRST_REMINDER_DAYS = 3;
+const REMINDER_EVERY_DAYS = 7;
+const ESCALATE_AFTER_DAYS = 14;
 const BACK_AGAIN_WITHIN = DAY;
 const PURGE_AFTER = 90 * DAY;
 const DETAIL_MAX = 500;
@@ -77,6 +74,8 @@ interface Observation {
 const staleKey = (job: string) => `cron:${job}:stale`;
 const isStaleKey = (key: string) => key.startsWith("cron:") && key.endsWith(":stale");
 const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
+// Rounded, so a daily run that starts early, or after a 23-hour daylight-saving day, still counts its day.
+const daysBetween = (from: Date, to: Date) => Math.round((to.getTime() - from.getTime()) / DAY);
 
 function observe(report: RunReport): Observation[] {
     const byKey = new Map<string, Observation>();
@@ -140,7 +139,7 @@ function status(template: OpsTemplate, row: OpsIncident, now: Date): string {
     switch (template) {
         case "ops.incidentRecovered": return "recovered";
         case "ops.incidentEscalated": return "open for 2 weeks";
-        case "ops.incidentReminder": return `still open after ${Math.round((now.getTime() - (row.notifiedAt ?? now).getTime()) / DAY)} days`;
+        case "ops.incidentReminder": return `still open after ${daysBetween(row.notifiedAt ?? now, now)} days`;
         default:
             if (row.recoveryNotifiedAt) return "back again";
             return row.kind === "connection" ? "needs reconnecting" : "needs attention";
@@ -175,25 +174,64 @@ async function sendAll(to: string[], template: OpsTemplate, row: OpsIncident, de
     }
     const ctx = context(template, row, delivery, now);
     let sent = false;
-    for (const address of to) sent = (await delivery.send(address, template, ctx)) || sent;
+    for (const address of to) {
+        try {
+            sent = (await delivery.send(address, template, ctx)) || sent;
+        } catch (err) {
+            console.warn(`[ops incident] ${row.key}: ${template} send rejected: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
     if (!sent) console.warn(`[ops incident] ${row.key}: ${template} not sent, every send failed`);
     return sent;
 }
 
 const update = (row: OpsIncident, data: Prisma.OpsIncidentUpdateInput) => prisma.opsIncident.update({ where: { id: row.id }, data });
 
-/** The row this observation lands on: the open one, one closed within 24 hours (back again), or a new one. Null when a concurrent run created it first. */
+type SentAt = "notifiedAt" | "lastRemindedAt" | "escalatedAt" | "recoveryNotifiedAt";
+
+/** Moves `field` from `from` to `to` only if it still holds `from`; true when this call moved it. */
+async function swap(row: OpsIncident, field: SentAt, from: Date | null, to: Date | null): Promise<boolean> {
+    const { count } = await prisma.opsIncident.updateMany({ where: { id: row.id, [field]: from }, data: { [field]: to } });
+    return count === 1;
+}
+
+/**
+ * Sends one notice at most once across overlapping runs: only the run that claims
+ * `field` (moves it from the value it read to `now`) sends. A failed send releases
+ * the claim, so the next run tries again.
+ */
+async function claimAndSend(
+    row: OpsIncident, field: SentAt, event: IncidentEvent["event"], to: string[], template: OpsTemplate,
+    delivery: Delivery, now: Date, events: IncidentEvent[],
+): Promise<void> {
+    if (!(await swap(row, field, row[field], now))) return;
+    const sent = await sendAll(to, template, row, delivery, now);
+    events.push({ key: row.key, event, sent });
+    if (!sent) await swap(row, field, now, row[field]);
+}
+
+/** Opens or closes the row only while its `openKey` is still what this run read; null when an overlapping run got there first. */
+async function transition(row: OpsIncident, data: Prisma.OpsIncidentUpdateInput): Promise<OpsIncident | null> {
+    try {
+        return await prisma.opsIncident.update({ where: { id: row.id, AND: { openKey: row.openKey } }, data });
+    } catch (err) {
+        if (!isPrismaError(err, "P2025")) throw err;
+        return null;
+    }
+}
+
+/** The row this observation lands on: the open one, one closed within 24 hours (back again), or a new one. Null when an overlapping run created or reopened it first. */
 async function record(o: Observation, open: OpsIncident | undefined, recent: OpsIncident | undefined, now: Date): Promise<OpsIncident | null> {
     const seen = { lastSeenAt: now, itemsAffected: o.count, detail: o.codes.join(", ").slice(0, DETAIL_MAX) };
     if (open) return update(open, { ...seen, lanes: union(open.lanes, o.lanes), runsSeen: open.runsSeen + 1 });
     if (recent?.notifiedAt) {
-        return update(recent, {
+        return transition(recent, {
             ...seen, openKey: o.key, closedAt: null, notifiedAt: null, lastRemindedAt: null,
             lanes: union(recent.lanes, o.lanes), runsSeen: recent.runsSeen + 1,
         });
     }
     // A watching incident that closed unannounced restarts, so blip, clean run, blip is not "two runs in a row".
-    if (recent) return update(recent, { ...seen, openKey: o.key, closedAt: null, firstSeenAt: now, lanes: o.lanes, runsSeen: 1 });
+    if (recent) return transition(recent, { ...seen, openKey: o.key, closedAt: null, firstSeenAt: now, lanes: o.lanes, runsSeen: 1 });
     try {
         return await prisma.opsIncident.create({
             data: { ...seen, key: o.key, openKey: o.key, cause: o.cause, kind: o.kind, lanes: o.lanes, firstSeenAt: now, runsSeen: 1 },
@@ -208,32 +246,20 @@ async function record(o: Observation, open: OpsIncident | undefined, recent: Ops
 async function notify(row: OpsIncident, stopped: boolean, delivery: Delivery, now: Date, events: IncidentEvent[]): Promise<void> {
     if (!row.notifiedAt) {
         if (!meetsThreshold(row, stopped)) return;
-        const sent = await sendAll(delivery.alertTo, "ops.incidentOpened", row, delivery, now);
-        events.push({ key: row.key, event: "opened", sent });
-        if (sent) await update(row, { notifiedAt: now });
+        await claimAndSend(row, "notifiedAt", "opened", delivery.alertTo, "ops.incidentOpened", delivery, now, events);
         return;
     }
-    const t = now.getTime();
-    if (!row.escalatedAt && t - row.firstSeenAt.getTime() >= ESCALATE_AFTER - SLACK) {
-        const sent = await sendAll(delivery.boardTo, "ops.incidentEscalated", row, delivery, now);
-        events.push({ key: row.key, event: "escalated", sent });
-        if (sent) await update(row, { escalatedAt: now });
+    if (!row.escalatedAt && daysBetween(row.firstSeenAt, now) >= ESCALATE_AFTER_DAYS) {
+        await claimAndSend(row, "escalatedAt", "escalated", delivery.boardTo, "ops.incidentEscalated", delivery, now, events);
     }
     const due = row.lastRemindedAt
-        ? t - row.lastRemindedAt.getTime() >= REMINDER_EVERY - SLACK
-        : t - row.notifiedAt.getTime() >= FIRST_REMINDER - SLACK;
-    if (due) {
-        const sent = await sendAll(delivery.alertTo, "ops.incidentReminder", row, delivery, now);
-        events.push({ key: row.key, event: "reminded", sent });
-        if (sent) await update(row, { lastRemindedAt: now });
-    }
+        ? daysBetween(row.lastRemindedAt, now) >= REMINDER_EVERY_DAYS
+        : daysBetween(row.notifiedAt, now) >= FIRST_REMINDER_DAYS;
+    if (due) await claimAndSend(row, "lastRemindedAt", "reminded", delivery.alertTo, "ops.incidentReminder", delivery, now, events);
 }
 
-async function recover(row: OpsIncident, delivery: Delivery, now: Date, events: IncidentEvent[]): Promise<void> {
-    const sent = await sendAll(delivery.alertTo, "ops.incidentRecovered", row, delivery, now);
-    events.push({ key: row.key, event: "recovered", sent });
-    if (sent) await update(row, { recoveryNotifiedAt: now });
-}
+const recover = (row: OpsIncident, delivery: Delivery, now: Date, events: IncidentEvent[]) =>
+    claimAndSend(row, "recoveryNotifiedAt", "recovered", delivery.alertTo, "ops.incidentRecovered", delivery, now, events);
 
 /** A recovery email is owed when an opening notice went out and this closing's recovery email has not. */
 const recoveryOwed = (row: OpsIncident) =>
@@ -264,8 +290,8 @@ export async function evaluateIncidents(report: RunReport, delivery: Delivery): 
     const seen = new Set(observations.map((o) => o.key));
     for (const row of open.values()) {
         if (seen.has(row.key) || !covers(report, row)) continue;
-        const closed = await update(row, { openKey: null, closedAt: now });
-        if (closed.notifiedAt) await recover(closed, delivery, now, events);
+        const closed = await transition(row, { openKey: null, closedAt: now });
+        if (closed?.notifiedAt) await recover(closed, delivery, now, events);
     }
     for (const row of recent.values()) {
         if (recoveryOwed(row)) await recover(row, delivery, now, events);
