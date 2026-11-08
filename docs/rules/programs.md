@@ -335,7 +335,7 @@ Things the app takes as true because they are handled outside it.
   ended sale.  [Decision]
 
 - A family whose unpaid claim was made in time can still pay it through the
-  reserved-seat item, whether enrollment was closed by the off-sale date's daily
+  reserved-seat item until the program ends, whether enrollment was closed by the off-sale date's daily
   run or by the Board by hand. It may also still request a scholarship or payment
   plan after the off-sale date, and the request takes its seat as any request
   does.  [Decision — Owner ruling, 2026-11-08]
