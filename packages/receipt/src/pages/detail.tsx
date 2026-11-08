@@ -510,6 +510,11 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
             <Paper withBorder p="sm">
               <Stack gap="xs">
                 <Text fw={500} size="sm">Finance</Text>
+                {r.lastPushFailedAt && (
+                  <Text size="sm" c="red">
+                    Stuck since {new Date(r.lastPushFailedAt).toLocaleString()}: {r.lastPushFailure ?? "no error recorded"}
+                  </Text>
+                )}
                 {r.state === "financial_review" && !own && (
                   <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
                 )}

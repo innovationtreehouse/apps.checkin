@@ -48,25 +48,6 @@ describe("finishRun", () => {
         expect(recordCronRun).toHaveBeenCalledWith("reconcile-shopify", STARTED, true, undefined, { settings: 2 });
     });
 
-    it("reaches the receipt lanes, so a held receipt's connection or settings failure opens an incident", async () => {
-        const run = newRun();
-        await inRun(run, async () => {
-            reportTo("receipt")({ lane: "push", kind: "connection", detail: "receipt 3" });
-            reportTo("receipt")({ lane: "mail-listing", kind: "settings" });
-            reportTo("receipt")({ lane: "ocr", kind: "system", detail: "receipt 4" });
-            laneReached("receipt push", "receipt mail-listing", "receipt ocr");
-        });
-
-        await finishRun("reconcile-shopify", STARTED, true, undefined, run);
-
-        expect(report().failures).toEqual([
-            expect.objectContaining({ lane: "receipt push", cause: "mapping", kind: "connection", count: 1 }),
-            expect.objectContaining({ lane: "receipt mail-listing", cause: "gmail", kind: "settings", count: 1 }),
-            expect.objectContaining({ lane: "receipt ocr", cause: "ocr", kind: "system", count: 1 }),
-        ]);
-        expect(report().lanes).toEqual(expect.arrayContaining(["receipt push", "receipt mail-listing", "receipt ocr"]));
-    });
-
     it("keeps a QuickBooks refusal's fault codes as its code", async () => {
         const run = newRun();
         await inRun(run, async () => reportTo("bulk-donation")({ lane: "in-kind-posting", kind: "bug", status: 400, faultCodes: ["6000", "610"] }));
@@ -100,11 +81,11 @@ describe("finishRun", () => {
 
     it("covers only the lanes the run reached", async () => {
         const run = newRun();
-        await inRun(run, async () => laneReached("receipt push"));
+        await inRun(run, async () => laneReached("workflow-mapping matching"));
 
         await finishRun("reconcile-shopify", STARTED, true, undefined, run);
 
-        expect(report().lanes).toEqual(["reconcile-shopify", "receipt push"]);
+        expect(report().lanes).toEqual(["reconcile-shopify", "workflow-mapping matching"]);
     });
 
     it("files a crashed step under the library lanes it runs, with their cause, and leaves them uncovered", async () => {
@@ -121,7 +102,7 @@ describe("finishRun", () => {
 
     it("a run that crashed covers no library lane", async () => {
         const run = newRun();
-        await inRun(run, async () => laneReached("receipt push"));
+        await inRun(run, async () => laneReached("workflow-mapping matching"));
         runCrashed(run, "reconcile-shopify", new Error("boom"));
 
         await finishRun("reconcile-shopify", STARTED, false, undefined, run);
@@ -130,7 +111,7 @@ describe("finishRun", () => {
     });
 
     it("drops a report made outside any run", async () => {
-        reportTo("receipt")({ lane: "push", kind: "connection", detail: "receipt 3" });
+        reportTo("workflow-mapping")({ lane: "matching", kind: "connection", detail: "receipt 3" });
         const run = newRun();
 
         await finishRun("nightly", STARTED, true, undefined, run);
@@ -144,11 +125,11 @@ describe("finishRun", () => {
         const b = newRun();
         await Promise.all([
             inRun(a, async () => { await Promise.resolve(); reportTo("expense")({ lane: "posting", kind: "system", detail: "expense 1" }); }),
-            inRun(b, async () => reportTo("receipt")({ lane: "push", kind: "system", detail: "receipt 1" })),
+            inRun(b, async () => reportTo("workflow-mapping")({ lane: "matching", kind: "system", detail: "receipt 1" })),
         ]);
 
         expect(a.reports.map((r) => r.lane)).toEqual(["expense posting"]);
-        expect(b.reports.map((r) => r.lane)).toEqual(["receipt push"]);
+        expect(b.reports.map((r) => r.lane)).toEqual(["workflow-mapping matching"]);
     });
 });
 
@@ -163,7 +144,6 @@ describe("reportTo and the QuickBooks fault-code table", () => {
     });
 
     it("records nothing for a lane outside QuickBooks", () => {
-        reportTo("receipt")({ lane: "ocr", kind: "data", faultCodes: ["6000"] });
         reportTo("expense")({ lane: "intake", kind: "data", faultCodes: ["6000"] });
 
         expect(recordFaultCodes).not.toHaveBeenCalled();

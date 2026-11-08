@@ -1,10 +1,9 @@
-import { isServiceError, KindedError, ServiceError, type FailureKind } from "@checkin/component-kit";
+import { isServiceError, ServiceError } from "@checkin/component-kit";
 import { DEFAULT_CURRENCY, DONOR_NAME_MAX, InKindDonorSchema, type ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import {
-  OCR_FILE_REFUSED,
   OcrDataSchema,
   purchaseOutcomesSchema,
   reimbursementStatusSchema,
@@ -24,7 +23,6 @@ import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
-import { givenUp, pushRecords } from "./catchUp";
 import { oweOutcomeNotice, sendOutcomeNotices } from "./outcomeNotices";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import { listWords, missingDetails } from "../lib/missingDetails";
@@ -38,7 +36,7 @@ import {
   type DonorInput,
 } from "../lib/schemas";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
-import { getOrgId, limits, ports, receiptRuntime, requireActor } from "../runtime";
+import { getOrgId, limits, ports, requireActor } from "../runtime";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import { DAY_MS } from "../lib/limits";
@@ -58,6 +56,19 @@ export type FinanceCounts = { total: number; byState: Record<string, number> };
 const EDITABLE: ReadonlySet<string> = new Set(["ocr_failed", "validation_failed", "submitter_review"]);
 const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
+
+/** When each stuck receipt of `ids` first failed, as the review list shows it; no error text. */
+async function firstFailures(ids: string[]): Promise<Map<string, { lastPushFailedAt: Date }>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.receipt.findMany({ where: { id: { in: ids }, firstFailedAt: { not: null } }, select: { id: true, firstFailedAt: true } });
+  return new Map(rows.flatMap((r) => (r.firstFailedAt ? [[r.id, { lastPushFailedAt: r.firstFailedAt }] as const] : [])));
+}
+
+/** A stuck receipt's first failure time and latest error, for finance on the receipt's own page. */
+async function failureOf(id: string): Promise<{ lastPushFailedAt: Date; lastPushFailure: string | null } | undefined> {
+  const row = await db.receipt.findUnique({ where: { id }, select: { firstFailedAt: true, lastError: true } });
+  return row?.firstFailedAt ? { lastPushFailedAt: row.firstFailedAt, lastPushFailure: row.lastError } : undefined;
+}
 
 /** The receipt as a submitter sees it: donor names are pii, read by finance only. */
 
@@ -354,45 +365,24 @@ async function refundOcrCall(tx: Pick<Prisma.TransactionClient, "receiptAuditLog
 
 type OcrFailure = Extract<OcrResult, { success: false }>;
 
-/** A failure that is not the receipt's fault gives the call back to the person's daily allowance. */
-const REFUNDED: ReadonlySet<FailureKind> = new Set(["system", "connection", "settings", "bug"]);
-/** A failure that is not the file's: an outage, a retired model, a used-up credit or a revoked key. Someone has to hear of it. */
-const REPORTED: ReadonlySet<FailureKind> = new Set(["system", "connection", "settings", "bug"]);
-const NOT_COUNTED = "This didn't count against your daily reading allowance.";
-
-/**
- * Kinds that give back one call per receipt between them; retrying a receipt after that counts
- * again. A missing setup makes no model call, so it is given back every time.
- */
-const REFUNDED_ONCE_PER_RECEIPT: ReadonlySet<FailureKind> = new Set(["system", "connection", "bug"]);
-const ONCE_PER_RECEIPT_ACTIONS = [...REFUNDED_ONCE_PER_RECEIPT].map((kind) => `ocr_failed:${kind}`);
-
-/** Whether this failure gives its call back. */
-async function refundsCall(id: string, kind: FailureKind): Promise<boolean> {
-  if (!REFUNDED.has(kind)) return false;
-  if (!REFUNDED_ONCE_PER_RECEIPT.has(kind)) return true;
-  return (await db.receiptAuditLog.count({ where: { receiptId: id, action: { in: ONCE_PER_RECEIPT_ACTIONS } } })) === 0;
-}
-
-/** What the submitter reads on a receipt OCR could not read, by the failure's kind and whether its call was given back. */
-export function ocrFailureNote({ kind, error }: OcrFailure, refunded: boolean): string {
-  const counted = refunded ? ` ${NOT_COUNTED}` : "";
+/** What the submitter reads on a receipt OCR could not read, by the failure's kind. */
+export function ocrFailureNote({ kind, error }: OcrFailure): string {
   switch (kind) {
     case "system":
-      return `Automatic reading is unavailable right now: ${error}. Press "Read it again" later, or type the details.${counted}`;
+      return `Automatic reading is unavailable right now: ${error}. Press "Read it again" later, or type the details.`;
     case "connection":
-      return `Automatic reading is switched off until an administrator reconnects it: ${error}. Type the details, or press "Read it again" once it is back.${counted}`;
+      return `Automatic reading is switched off until an administrator reconnects it: ${error}. Type the details, or press "Read it again" once it is back.`;
     case "settings":
-      return `Automatic reading isn't set up, so type the details.${counted}`;
+      return `Automatic reading isn't set up, so type the details.`;
     case "data":
-      return `This receipt couldn't be read automatically: ${error}. Type the details.${counted}`;
+      return `This receipt couldn't be read automatically: ${error}. Type the details.`;
     case "bug":
-      return `Automatic reading failed unexpectedly, and it has been reported. Type the details, or press "Read it again".${counted}`;
+      return `Automatic reading failed unexpectedly, and it has been reported. Type the details, or press "Read it again".`;
   }
 }
 
-/** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. `callId` is the reserved call. */
-async function applyOcr(id: string, actor: ReceiptPrincipal, callId: number): Promise<void> {
+/** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
+async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
   const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
   // A missing file reads as null; a store outage throws.
   const stored = await readStoredFile(file).then(
@@ -428,15 +418,7 @@ async function applyOcr(id: string, actor: ReceiptPrincipal, callId: number): Pr
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
     await runFullFlow(id, actor);
   } else {
-    const failure = await asRefusalRun(id, actor, result);
-    if (REPORTED.has(failure.kind)) receiptRuntime.failed("ocr", new KindedError(failure.kind, failure.error), `receipt ${id}`);
-    const refunded = await refundsCall(id, failure.kind);
-    await failOcr(id, actor, {
-      notes: ocrFailureNote(failure, refunded),
-      action: `ocr_failed:${failure.kind}`,
-      reason: failure.error,
-      refundCallId: refunded ? callId : null,
-    });
+    await failOcr(id, actor, { notes: ocrFailureNote(result), action: `ocr_failed:${result.kind}`, reason: result.error });
   }
 }
 
@@ -447,53 +429,12 @@ async function ocrIsOn(): Promise<boolean> {
 
 /** Land an auto upload in `ocr_failed` with the switched-off note, spending no call. */
 const failOcrSwitchedOff = (id: string, actor: ReceiptPrincipal) =>
-  failOcr(id, actor, { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off", refundCallId: null });
+  failOcr(id, actor, { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off" });
 
-/**
- * Bad files are rare, so this many different receipts from more than one submitter refused by the
- * reading service, with no successful reading since and within the window, means the fault is ours
- * (a reworded account error, a broken request); the next refusal is reported and given back as `connection`.
- */
-const REFUSAL_RUN = { receipts: 3, submitters: 2, windowMs: 60 * 60 * 1000 };
-const REFUSAL_RUN_REASON = "the reading service refused several receipts in a row";
-
-/** `failure`, or a `connection` failure when it continues a run of refusals across receipts. */
-async function asRefusalRun(id: string, actor: ReceiptPrincipal, failure: OcrFailure): Promise<OcrFailure> {
-  if (failure.kind !== "data" || failure.error !== OCR_FILE_REFUSED) return failure;
-  const orgId = await getOrgId();
-  // ponytail: both reads scan audit rows by action; an (action, changedAt) index if refusals ever get frequent.
-  const lastRead = await db.receiptAuditLog.findFirst({
-    where: { action: READING_APPLIED, receipt: { orgId } },
-    orderBy: { id: "desc" },
-    select: { changedAt: true },
-  });
-  const since = Math.max(Date.now() - REFUSAL_RUN.windowMs, lastRead?.changedAt.getTime() ?? 0);
-  const prior = await db.receiptAuditLog.findMany({
-    where: {
-      receiptId: { not: id },
-      receipt: { orgId },
-      action: { in: ["ocr_failed:data", "ocr_failed:connection"] },
-      valueAfter: { in: [OCR_FILE_REFUSED, REFUSAL_RUN_REASON] },
-      changedAt: { gt: new Date(since) },
-    },
-    distinct: ["receiptId"],
-    select: { userId: true },
-  });
-  const submitters = new Set([actor.id, ...prior.map((p) => p.userId)]);
-  const inRun = prior.length >= REFUSAL_RUN.receipts && submitters.size >= REFUSAL_RUN.submitters;
-  return inRun ? { success: false, kind: "connection", error: REFUSAL_RUN_REASON } : failure;
-}
-
-/** Lands the receipt in `ocr_failed`, giving back `refundCallId`; the audit action names the failure's kind (`ocr_failed:<kind>`). */
-async function failOcr(
-  id: string,
-  actor: ReceiptPrincipal,
-  { notes, action, reason, refundCallId }: { notes: string; action: string; reason: string; refundCallId: number | null },
-): Promise<void> {
+/** Lands the receipt in `ocr_failed`; a reading's failure is audited as `ocr_failed:<kind>`. */
+async function failOcr(id: string, actor: ReceiptPrincipal, { notes, action, reason }: { notes: string; action: string; reason: string }): Promise<void> {
   assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
   await db.$transaction(async (tx) => {
-    // The call was spent whether or not the receipt is still here to land.
-    if (refundCallId !== null) await refundOcrCall(tx, id, actor, refundCallId);
     const moved = await tx.receiptDetail.updateMany({
       where: { id, state: "auto_upload" },
       data: { state: "ocr_failed", validationNotes: notes },
@@ -542,21 +483,19 @@ export async function intakeMailedReceipt(
     await failOcrSwitchedOff(id, actor);
     return id;
   }
-  let callId: number;
   try {
-    callId = await reserveOcrCall(actor);
+    await reserveOcrCall(actor);
   } catch (err) {
     if (!(isServiceError(err) && err.status === 429)) throw err;
     await failOcr(id, actor, {
       notes: `Today's automatic reading allowance is used up. Type the details, or press "Read it again" tomorrow.`,
       action: "ocr_failed",
       reason: DAILY_LIMIT_REACHED,
-      refundCallId: null,
     });
     return id;
   }
   // A failed read leaves the receipt in auto_upload, where the interrupted-OCR sweep finds it.
-  await applyOcr(id, actor, callId).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
+  await applyOcr(id, actor).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
   return id;
 }
 
@@ -947,7 +886,7 @@ export const receiptService = {
     if (input.isInKind) await sendDonorSync(id, actor);
     if (ocrOff) await failOcrSwitchedOff(id, actor);
     else if (callId === null) await runFlowLogged(id, actor);
-    else await applyOcr(id, actor, callId);
+    else await applyOcr(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
@@ -1096,7 +1035,7 @@ export const receiptService = {
       await refundOcrCall(db, id, actor, callId);
       throw err;
     }
-    await applyOcr(id, actor, callId);
+    await applyOcr(id, actor);
     return load(id, access, actor);
   },
 
@@ -1444,7 +1383,7 @@ export const receiptService = {
     const row = await load(id, access, actor);
     const lineItems = await receiptRepo.listLineItems(id);
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
-    const receipt = access === "finance" ? { ...row, rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
+    const receipt = access === "finance" ? { ...row, ...(await failureOf(id)), rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
     const purchaseOutcome = outcomeOf(row, await purchaseOutcomes([row]));
     const duplicateNotice = row.uploadedByUserId === actor.id ? await ownCopyNotice(row, actor) : null;
     return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome, duplicateNotice };
@@ -1525,15 +1464,15 @@ export const receiptService = {
 
   /**
    * The org's receipts narrowed by `filter`; an unknown state matches no rows. A finalized
-   * receipt not yet delivered to receiving carries its push record.
+   * receipt whose push failed carries when it first failed.
    */
   async list(filter: ReceiptListFilter) {
     await requireActor();
     const orgId = await getOrgId();
     const rows = await receiptRepo.list(listFilterWhere(orgId, filter));
     const undelivered = rows.filter((r) => r.state === "receipt_finalized" && !r.pushedAt).map((r) => r.id);
-    const [records, copies] = await Promise.all([pushRecords(orgId, undelivered), copiesOf(orgId, rows)]);
-    return rows.map((r) => ({ ...r, ...records.get(r.id), ...copies.get(r.id) }));
+    const [failed, copies] = await Promise.all([firstFailures(undelivered), copiesOf(orgId, rows)]);
+    return rows.map((r) => ({ ...r, ...failed.get(r.id), ...copies.get(r.id) }));
   },
 
   /**
@@ -1546,40 +1485,36 @@ export const receiptService = {
     const orgId = await getOrgId();
     const [groups, undelivered, finance] = await Promise.all([
       db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
-      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { id: true } }),
+      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { firstFailedAt: true } }),
       financeViewerId === null ? null : receiptService.countAwaitingFinance(financeViewerId),
     ]);
-    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
     const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
     if (finance) for (const state of FINANCE_ACTION_STATES) byState[state] = finance.byState[state] ?? 0;
     else if (byState.duplicate_flagged) byState.duplicate_flagged = (await waitingGroups(orgId)).length;
     return {
       byState,
       notPushed: undelivered.length,
-      pushGivenUp: stopped.size,
+      pushGivenUp: undelivered.filter((r) => r.firstFailedAt).length,
     };
   },
 
   /**
    * How many of the org's receipts wait on this FINANCE viewer, for the host's nav pill and the
    * review queues. Duplicates count once per group, and a group with any member the viewer is
-   * conflicted on is left out. The total also holds undelivered receipts catch-up gave up on,
+   * conflicted on is left out. The total also holds finalized receipts whose push failed,
    * which have no queue state of their own. A receipt the viewer is conflicted on is left out.
    */
   async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
     const orgId = await getOrgId();
-    const [queued, undelivered] = await Promise.all([
+    const [queued, failedPushes, household] = await Promise.all([
       receiptRepo.listParties({ orgId, details: { state: { in: [...FINANCE_ACTION_STATES] } } }),
-      receiptRepo.listParties({ orgId, pushedAt: null, details: { state: "receipt_finalized" } }),
-    ]);
-    const [stopped, household] = await Promise.all([
-      givenUp(orgId, undelivered.map((r) => r.id)),
+      receiptRepo.listParties({ orgId, pushedAt: null, firstFailedAt: { not: null }, details: { state: "receipt_finalized" } }),
       ports().households.householdOf([viewerId]),
     ]);
     const conflicted = new Set([viewerId, ...household]);
     const isParty = (r: { uploadedByUserId: number; reimburseePersonId: number | null }) =>
       conflicted.has(r.uploadedByUserId) || (r.reimburseePersonId != null && conflicted.has(r.reimburseePersonId));
-    const rows = [...queued.filter((r) => r.state !== "duplicate_flagged"), ...undelivered.filter((r) => stopped.has(r.id))];
+    const rows = [...queued.filter((r) => r.state !== "duplicate_flagged"), ...failedPushes];
     const byState: Record<string, number> = Object.fromEntries(FINANCE_ACTION_STATES.map((s) => [s, 0]));
     let total = 0;
     rows.forEach((r) => {
@@ -1607,11 +1542,9 @@ export const receiptService = {
       details: { state: { in: NEEDS_ATTENTION } },
     });
     if (access !== "finance") return rows.map(toSubmitterView);
-    const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
-    const records = await pushRecords(orgId, undelivered.map((r) => r.id));
-    const stopped = undelivered.filter((r) => records.get(r.id)?.pushGivenUp);
-    const conflicted = await Promise.all(stopped.map((r) => isConflicted(r, actor.id)));
-    return [...rows, ...stopped.flatMap((r, i) => (conflicted[i] ? [] : [{ ...r, ...records.get(r.id) }]))];
+    const stopped = await receiptRepo.list({ orgId, pushedAt: null, firstFailedAt: { not: null }, details: { state: "receipt_finalized" } });
+    const [failed, conflicted] = await Promise.all([firstFailures(stopped.map((r) => r.id)), Promise.all(stopped.map((r) => isConflicted(r, actor.id)))]);
+    return [...rows, ...stopped.flatMap((r, i) => (conflicted[i] ? [] : [{ ...r, ...failed.get(r.id) }]))];
   },
 
   /**

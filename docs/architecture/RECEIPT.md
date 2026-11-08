@@ -193,19 +193,31 @@ Mail a run leaves unread is stored in `ReceiptMailAtRisk`, and finance gets one
 alert once such a message would leave the window before the next run. A failed
 listing alerts finance on every run and counts as a failure in the cron result.
 
-## Catch-up steps
+## Daily steps
 
-There are no schedules of the library's own and nothing runs at boot. Five steps
+There are no schedules of the library's own and nothing runs at boot. Three steps
 run inside the host's existing daily `/api/cron/reconcile-shopify`, in this order,
-each in its own `try/catch` and each returning counts only:
+each in its own `try/catch` and each returning counts only. None retries a failed step:
 
 | Step | Moves | Cap per run |
 |---|---|---|
 | `sweepInterruptedOcr` | `auto_upload` older than ten minutes to `ocr_failed` | 50 |
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
-| `repushUnpushed` | finalized and unpushed receipts, sent again | 50 |
-| `resendDonorSync` | `donorSync = pending`, sent again | 50 |
 | `readMailbox` | the mailbox, last because it is the only slow step | as above |
+
+## Stuck receipts
+
+After input, a receipt that fails a step is stuck in it: `flow_error`, or finalized with
+`pushedAt` null. `firstFailedAt` keeps when the step first failed, and `lastError` the latest
+failure's error; a step that succeeds clears both. `stuckItems()` lists stuck receipts for
+the Problems list, timed by `firstFailedAt`, with no error text. `retryStuckItem({ id, step })`
+runs the step once ("flow" or "push to mapping"), and nothing retries by itself. Finance sees
+`lastError` on the receipt's own page.
+
+A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So
+`problemNotices()` counts the `ocr_failed:<kind>` audit rows of the last day, and at
+`READING_FAILURES_NOTICE_AT` (three) or more the Problems list carries one line,
+"Receipt reading failed N times in the last day".
 
 ## Crossings
 
@@ -218,13 +230,9 @@ sends a `CompletedReceipt` from `@checkin/receipt-types` to `ingestReceipt`.
 - `submitterId` is the uploader's `Person.id`. `backfill` is true when the receipt
   has a QuickBooks link, which tells downstream not to post it again. `financeReview`
   is present only for an approved review.
-- A push never throws to its caller. A failure leaves `pushedAt` null with an audit
-  row, for the catch-up step or the manual `push-to-inventory` route. A refusal (the
-  receipt's own payload check, or a 4xx from workflow-mapping other than 401, 403 or
-  429) is `push_refused`, and catch-up skips the receipt at once. Any other failure is
-  `push_failed`, its kind in `valueBefore`. Catch-up skips a receipt after five bug
-  failures in a row; a manual push of it clears the skip. An outage (system, connection
-  or settings) is never charged to the receipt, which stays due for the next run.
+- A push never throws to its caller. A failure leaves `pushedAt` null, a `push_failed`
+  audit row with its kind in `valueBefore`, and the receipt stuck until a person sends
+  it again (`push-to-inventory`, or Retry on the Problems list).
 - A receipt whose `donorSync` is still `pending` is held back with a `push_deferred`
   audit row, so donations has the final in-kind state before the money side arrives.
 
@@ -234,11 +242,8 @@ Both are idempotent on `receiptId` and carry `donorSyncSeq`, so donations ignore
 call older than one it has seen. Donor names leave the library only here, never on
 S1. `donorSync` is `none` for a receipt that was never in-kind, so a plain purchase
 never sends a withdrawal. A failed send is a `donor_sync_failed` row with its kind in
-`valueBefore`, and catch-up resends it by S1's rule: an outage is never charged, and five
-bug failures in a row give up the donor and the receipt's push, shown to finance as
-"catch-up stopped". A refusal from donations, or a stored donor failing the donor check,
-is a bug: upload checks the donor with the same rule. A donor edit or a manual push
-starts a fresh run.
+`valueBefore`, and marks the receipt stuck. Its push waits on the donor, so sending the
+receipt again sends the donor first.
 
 **X12, reimbursement status.** `reimbursementStatus` asks expense, which reads
 QuickBooks. The library stores no payment fact. A receipt missing from the answer

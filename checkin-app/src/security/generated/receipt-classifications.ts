@@ -31,6 +31,8 @@ export const classifications = {
         donorSync: 'internal',
         donorSyncSeq: 'internal',
         pushedAt: 'internal',
+        firstFailedAt: 'internal',
+        lastError: 'personal',
     },
     ReceiptDetail: {
         id: 'internal',

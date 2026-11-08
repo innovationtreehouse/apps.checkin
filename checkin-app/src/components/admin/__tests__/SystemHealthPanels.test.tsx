@@ -266,6 +266,7 @@ describe("ProblemsBox", () => {
             { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
           ],
           unread: ["gifts"],
+          notices: ["Receipt reading failed 3 times in the last day"],
         },
         cronJobs: [
           { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
@@ -280,11 +281,12 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("qbo-posting")).toBeInTheDocument();
     expect(screen.queryByText("nightly")).not.toBeInTheDocument();
     expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
-    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("Receipt reading failed 3 times in the last day")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
   });
 
   it("says so when nothing is stuck", async () => {
-    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [] }, cronJobs: [] } });
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [], notices: [] }, cronJobs: [] } });
     renderWithProviders(<ProblemsBox />);
     expect(await screen.findByText("Nothing is stuck.")).toBeInTheDocument();
   });
