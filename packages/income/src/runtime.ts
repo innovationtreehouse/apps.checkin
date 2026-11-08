@@ -1,4 +1,4 @@
-import { defineRuntime, ServiceError } from "@checkin/component-kit";
+import { defineRuntime, ServiceError, type OnFailure } from "@checkin/component-kit";
 import type { BooksMap, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
@@ -52,6 +52,7 @@ export interface IncomeConfig {
   auth?: IncomeAuth;
   /** Org identity as an async accessor, called per request: the host may read it from its store. */
   org?: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   mirror?: PayoutMirror;
   deposits?: QbDepositSource;
   owners?: OwnerDirectory;

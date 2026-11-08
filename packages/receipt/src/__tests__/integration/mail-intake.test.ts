@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { KindedError } from "@checkin/component-kit";
+import { KindedError, type FailureReport } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
 import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
@@ -46,6 +46,7 @@ let mail: ReturnType<typeof fakeMailbox>;
 let alerts: MailHoldCeilingEvent[];
 let agingAlerts: MailAgingOutEvent[];
 let listingAlerts: MailListingFailedEvent[];
+let failures: FailureReport[];
 const DAY_MS = 24 * 60 * 60_000;
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
@@ -89,7 +90,9 @@ beforeEach(async () => {
   alerts = [];
   agingAlerts = [];
   listingAlerts = [];
+  failures = [];
   configure({
+    onFailure: (r) => void failures.push(r),
     ocr: okOcr(),
     mailbox: mail.reader,
     alerts: testAlerts(),
@@ -556,6 +559,13 @@ describeDb("mail intake listing failure", () => {
     expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
     expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
     expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "connection" }, { orgId: TEST_ORG_ID, kind: "connection" }]);
+  });
+
+  it("hands each listing failure to the on-failure port", async () => {
+    failListing();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await readMailbox();
+    expect(failures).toEqual([{ lane: "mail-listing", kind: "connection" }]);
   });
 
   it.each([

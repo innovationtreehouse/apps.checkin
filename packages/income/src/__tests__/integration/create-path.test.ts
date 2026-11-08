@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
+import { ServiceError, type FailureReport } from "@checkin/component-kit";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
@@ -1010,6 +1011,29 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     );
     expect(lines).toHaveLength(4);
     expect(lines.reduce((s, l) => s + l.cents, 0)).toBe(9830);
+  });
+
+  it("hands a deposit that cannot be built to the on-failure port", async () => {
+    const g = orderPayout(2);
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "83" } });
+    let lists = 0;
+    const reports: FailureReport[] = [];
+    bind({
+      owners: {
+        list: async () => {
+          // The bucket check reads the owners first; the deposit build's read is the one that fails.
+          if (++lists > 1) throw new ServiceError(429, "busy");
+          return owners;
+        },
+      },
+      onFailure: (r) => void reports.push(r),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await drain();
+    expect(reports).toEqual([{ lane: "deposit-build", kind: "system", status: 429, detail: `payout reconciliation ${(await rowFor(g)).id}` }]);
   });
 
   const camp = { id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" };

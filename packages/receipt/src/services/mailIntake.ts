@@ -2,14 +2,14 @@
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
-import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
+import { isServiceError, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
+import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports, receiptRuntime } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -693,7 +693,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   try {
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
-    const kind = kindOf(err);
+    const kind = receiptRuntime.failed("mail-listing", err);
     console.error(`[receipt] mailbox listing failed (${kind}):`, err);
     // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
     try {

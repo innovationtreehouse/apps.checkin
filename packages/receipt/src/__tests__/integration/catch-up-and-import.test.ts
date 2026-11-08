@@ -1,4 +1,4 @@
-import { KindedError, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { KindedError, NotWiredError, ServiceError, type FailureReport } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
 import { CATCH_UP_CAP, MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
@@ -74,6 +74,19 @@ describeDb("catch-up steps", () => {
     expect(await actions(r.id)).toContain("push_failed");
     expect(await actions(r.id)).not.toContain("push_refused");
     expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 0 });
+  });
+
+  it.each([
+    ["bug", () => new ServiceError(403, "Forbidden"), { status: 403 }],
+    ["data", () => new ServiceError(400, "lineItems: required"), { status: 400 }],
+    ["settings", () => new NotWiredError("receiptSink"), {}],
+  ] as const)("hands a %s push failure to the on-failure port", async (kind, failure, extra) => {
+    const reports: FailureReport[] = [];
+    configure({ receiptSink: ports.receiptSink, onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    ports.fail.push = failure();
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect(reports).toEqual([{ lane: "push", kind, detail: `receipt ${r.id}`, ...extra }]);
   });
 
   it("retries a skipped receipt again after a manual push, and delivers it once the push succeeds", async () => {

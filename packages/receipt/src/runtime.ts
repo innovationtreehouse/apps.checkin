@@ -129,7 +129,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "onFailure" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,

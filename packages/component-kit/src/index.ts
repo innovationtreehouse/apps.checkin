@@ -207,9 +207,35 @@ export function callerId(principal: { id?: unknown } | null | undefined): number
   return id;
 }
 
+/** One kinded failure in a library's lane, as its "on failure" port receives it. Ids and codes only, never error text. */
+export interface FailureReport {
+  lane: string;
+  kind: FailureKind;
+  status?: number;
+  faultCodes?: readonly string[];
+  requestId?: string;
+  /** What failed, by id: "receipt 12", never submitted text. */
+  detail?: string;
+}
+
+/** A library's "on failure" port. Unbound, a failure is only logged. */
+export type OnFailure = (report: FailureReport) => void;
+
+function failureReport(lane: string, err: unknown, detail: string | undefined): FailureReport {
+  const report: FailureReport = { lane, kind: kindOf(err) };
+  if (err instanceof Error) {
+    if ("status" in err && typeof err.status === "number") report.status = err.status;
+    if ("codes" in err && Array.isArray(err.codes) && err.codes.length > 0) report.faultCodes = err.codes.map(String);
+    if ("requestId" in err && typeof err.requestId === "string") report.requestId = err.requestId;
+  }
+  if (detail !== undefined) report.detail = detail;
+  return report;
+}
+
 interface RuntimeShape<Principal> {
   org?: () => Promise<{ id: string }>;
   auth?: { getPrincipal(): Promise<Principal | null> };
+  onFailure?: OnFailure;
 }
 
 /**
@@ -257,6 +283,20 @@ export function defineRuntime<Config extends RuntimeShape<Principal>, Principal 
     },
     /** The current request's org id, the scope of every row. */
     getOrgId,
+    /**
+     * Sorts a lane's failure: logs one `failure_kinded` line, hands the report to the bound
+     * "on failure" port, and returns the kind. Never throws, so it is safe inside a catch.
+     */
+    failed(lane: string, err: unknown, detail?: string): FailureKind {
+      const report = failureReport(lane, err, detail);
+      console.warn(JSON.stringify({ level: "warn", event: "failure_kinded", library: name, ...report, ts: new Date().toISOString() }));
+      try {
+        store[key]?.onFailure?.(report);
+      } catch (portErr) {
+        console.error(`[${name}] on-failure port threw:`, portErr);
+      }
+      return report.kind;
+    },
     /** Callee guard: a crossing payload must carry the injected org. */
     async assertOrg(orgId: string): Promise<void> {
       if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
