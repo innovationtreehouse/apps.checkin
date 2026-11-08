@@ -132,6 +132,15 @@ describeDb("recordInKindWithoutReceipt", () => {
     expect(warned).toHaveBeenLastCalledWith(expect.stringMatching(/failed \(data\)/), applyFails);
   });
 
+  it.each([401, 403])("answers a callee's %i as a fault in our software, not the viewer's permission", async (status) => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { id } = await recordInKindWithoutReceipt(input);
+    applyFails = new ServiceError(status, "Forbidden");
+    const failed = await loadInKindInventory(id).catch((e: unknown) => e);
+    expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/fault in our software/), cause: applyFails });
+    expect((failed as Error).message).not.toMatch(/Forbidden|permission/);
+  });
+
   it("records a gift with no suggested value", async () => {
     const { id } = await recordInKindWithoutReceipt({ ...input, lines: [{ gtin13: DRILL, quantity: 1 }] });
     const row = await db.manualInKindDonation.findUniqueOrThrow({ where: { id }, include: { lines: true } });

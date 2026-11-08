@@ -123,7 +123,8 @@ export const manualInKindService = {
   /**
    * Load a recorded donation's goods. Safe to repeat: the callee is idempotent on `donation:<id>`.
    * A failure is logged with its kind; a `data` one is inventory refusing it for good, and passes
-   * through so the inventory manager is told to adjust stock by hand.
+   * through so the inventory manager is told to adjust stock by hand. A `bug`, such as a callee's
+   * 401 or 403, is our wiring, never the viewer's permission: a 500 that says so.
    */
   async loadInventory(orgId: string, id: number): Promise<void> {
     const donation = await db.manualInKindDonation.findFirst({ where: { id, orgId }, include: { lines: true } });
@@ -144,8 +145,12 @@ export const manualInKindService = {
         })),
       });
     } catch (err) {
-      console.warn(`[bulk-donation] in-kind donation ${id} inventory load failed (${kindOf(err)})`, err);
-      throw err;
+      const kind = kindOf(err);
+      console.warn(`[bulk-donation] in-kind donation ${id} inventory load failed (${kind})`, err);
+      if (kind !== "bug") throw err;
+      const fault = new ServiceError(500, "Loading the goods into inventory hit a fault in our software; tell whoever runs the system");
+      fault.cause = err;
+      throw fault;
     }
     if (!donation.inventoryLoadedAt) {
       await db.manualInKindDonation.updateMany({ where: { id, inventoryLoadedAt: null }, data: { inventoryLoadedAt: new Date() } });
