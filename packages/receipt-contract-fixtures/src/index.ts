@@ -118,12 +118,20 @@ interface RefusalsFile {
   crossing: Crossing;
   callee: string;
   base: ({ fixture: string } | { payload: Record<string, unknown> }) & PayloadEdit;
-  cases: Array<PayloadEdit & { name: string; expect: RefusalExpectation; after?: "base" }>;
+  cases: Array<PayloadEdit & { name: string; expect: RefusalExpectation; after?: "base"; status?: number; message?: string }>;
+}
+
+/** How a refused or bug case is answered: the HTTP status the host renders (500 when the error has none) and a stable part of its message. */
+export interface Refusal {
+  status: number;
+  message: string;
 }
 
 export interface RefusalCase<P> {
   name: string;
   expect: RefusalExpectation;
+  /** Present on every case that is not accepted. */
+  refusal?: Refusal;
   /** The base payload is sent first, so the case is a resend. */
   afterBase: boolean;
   payload: P;
@@ -194,6 +202,22 @@ export function refusals<P = Record<string, unknown>>(crossing: Crossing, opts: 
     crossing: file.crossing,
     callee: file.callee,
     base,
-    cases: file.cases.map((c) => ({ name: c.name, expect: c.expect, afterBase: c.after === "base", payload: applyEdit(base, c) })),
+    cases: file.cases.map((c) => ({
+      name: c.name,
+      expect: c.expect,
+      refusal: refusalOf(crossing, c),
+      afterBase: c.after === "base",
+      payload: applyEdit(base, c),
+    })),
   };
+}
+
+function refusalOf(crossing: Crossing, c: RefusalsFile["cases"][number]): Refusal | undefined {
+  const named = c.status !== undefined || c.message !== undefined;
+  if (c.expect === "accepted") {
+    if (named) throw new Error(`${crossing} "${c.name}": an accepted case names no status or message`);
+    return undefined;
+  }
+  if (c.status === undefined || !c.message) throw new Error(`${crossing} "${c.name}": a ${c.expect} case names its status and message`);
+  return { status: c.status, message: c.message };
 }

@@ -21,6 +21,6 @@
   "cases": [
     { "name": "the payload as sent", "expect": "accepted" },
     { "name": "the same lines again, skipped", "expect": "accepted", "after": "base" },
-    { "name": "lines for another org, a wiring bug", "expect": "bug", "set": { "orgId": "another-org" } }
+    { "name": "lines for another org, a wiring bug", "expect": "bug", "status": 500, "message": "is not this org", "set": { "orgId": "another-org" } }
   ]
 }

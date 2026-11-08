@@ -19,6 +19,13 @@ describe("refusals fixtures", () => {
         expect(new Set(names).size).toBe(names.length);
       });
 
+      it("names a status and message on exactly the cases that are not accepted", () => {
+        for (const c of file.cases) {
+          const named = c.status !== undefined && Boolean(c.message);
+          expect(named, c.name).toBe(c.expect !== "accepted");
+        }
+      });
+
       it.each(file.cases.map((c) => [c.name, c] as const))("edits only fields the base has: %s", (_name, c) => {
         expect(editTargetsExist(base, c)).toBe(true);
       });

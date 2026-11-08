@@ -7,11 +7,11 @@
     { "name": "a lower-case currency, which the contract normalizes", "expect": "accepted", "set": { "currency": "usd" } },
     { "name": "a fractional quantity", "expect": "accepted", "set": { "lineItems.0.quantity": 6.002 } },
     { "name": "a resend that differs, answered with the stored receipt", "expect": "accepted", "after": "base", "set": { "vendorName": "Different" } },
-    { "name": "a receipt for another org", "expect": "refused", "set": { "orgId": "another-org" } },
-    { "name": "no receiptId", "expect": "refused", "unset": ["receiptId"] },
-    { "name": "no line items", "expect": "refused", "set": { "lineItems": [] } },
-    { "name": "a negative tax", "expect": "refused", "set": { "taxCents": -1 } },
-    { "name": "a zero quantity", "expect": "refused", "set": { "lineItems.0.quantity": 0 } },
-    { "name": "a submission time that is not ISO", "expect": "refused", "set": { "submittedAt": "yesterday" } }
+    { "name": "a receipt for another org", "expect": "refused", "status": 400, "message": "receipt orgId does not match this org", "set": { "orgId": "another-org" } },
+    { "name": "no receiptId", "expect": "refused", "status": 400, "message": "expected string, received undefined", "unset": ["receiptId"] },
+    { "name": "no line items", "expect": "refused", "status": 400, "message": "expected array to have >=1 items", "set": { "lineItems": [] } },
+    { "name": "a negative tax", "expect": "refused", "status": 400, "message": "expected number to be >=0", "set": { "taxCents": -1 } },
+    { "name": "a zero quantity", "expect": "refused", "status": 400, "message": "expected number to be >0", "set": { "lineItems.0.quantity": 0 } },
+    { "name": "a submission time that is not ISO", "expect": "refused", "status": 400, "message": "Invalid ISO datetime", "set": { "submittedAt": "yesterday" } }
   ]
 }
