@@ -20,7 +20,8 @@ const inv = vi.hoisted(() => ({
   getItemNames: vi.fn(),
 }));
 
-import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
+import { checkAndProcessExpense, recoverStrandedQbExpenses } from "../../lib/expense-qb-processor";
+import { expenseReasons } from "../../services/reasonService";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 
 /** Default catalog: one category/subcategory, every part resolves cleanly. */
@@ -324,6 +325,54 @@ describeDb("checkAndProcessExpense — failure path", () => {
     expect(await holdsFor(id)).toHaveLength(0);
     const lines = await db.expenseLineItem.findMany({ where: { expenseId: id }, select: { signedGtin13: true } });
     expect(lines.map((l) => l.signedGtin13)).toEqual([null, null]);
+  });
+
+  it("a catalog outage shows finance it waits for the catalog, not an account hold", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    await signAllLines(id);
+    catalogResolvesAll({});
+    inv.lookupItems.mockRejectedValue(catalogDown());
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(await stateOf(id)).toBe("qb_error");
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_waiting_on_catalog" } })).toBe(1);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_processing_failed" } })).toBe(0);
+    expect((await expenseReasons(principal(3, { isFinance: true }), id)).map((r) => [r.code, r.actionable])).toEqual([["QB_WAITING_ON_CATALOG", false]]);
+  });
+
+  it("a held expense finance resubmits during an outage parks waiting for the catalog", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({});
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    expect(await stateOf(id)).toBe("qb_on_hold");
+
+    await seedAccountMapping({ qbAccount: "4000" });
+    inv.lookupItems.mockRejectedValue(catalogDown());
+    await resubmitHeldExpense(principal(500, { isFinance: true }), id);
+
+    expect(await stateOf(id)).toBe("qb_error");
+    expect((await expenseReasons(principal(3, { isFinance: true }), id)).map((r) => r.code)).toContain("QB_WAITING_ON_CATALOG");
+  });
+
+  it("once the catalog is back, the posting run's recovery books it and the reason clears", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await signAllLines(id);
+    catalogResolvesAll({ [li]: "0000000000017" });
+    inv.lookupItems.mockRejectedValueOnce(catalogDown());
+    await checkAndProcessExpense(ORG, id);
+    expect(await stateOf(id)).toBe("qb_error");
+
+    await recoverStrandedQbExpenses();
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect(await eventsFor(id)).toHaveLength(1);
+    expect((await expenseReasons(principal(3, { isFinance: true }), id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_CATALOG");
   });
 
   it("ignores an expense that is not in a QB-processable state", async () => {

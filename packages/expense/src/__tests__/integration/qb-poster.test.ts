@@ -634,6 +634,21 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("a retry while the catalog is unreachable answers 503 and changes nothing", async () => {
+    const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, line, "60");
+    await db.expenseLineItem.update({ where: { id: line }, data: { partNumber: "PN-1" } });
+    const down = async () => { throw Object.assign(new Error("Can't reach database server"), { code: "P1001" }); };
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: down }, quickbooks: { posting: async () => posting() } });
+
+    await expect(resubmitHeldExpense(finance, id)).rejects.toMatchObject({ status: 503, message: "The catalog is unavailable; try again" });
+
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 1 });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
   it("a refused retry answers 409 and records no retry", async () => {
     const { id, line } = await outboxedManual(UNKNOWN_ACCOUNT);
     await db.expenseLineItem.update({ where: { id: line }, data: { manualQbAccount: null } });

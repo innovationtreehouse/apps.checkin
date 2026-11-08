@@ -1,4 +1,4 @@
-import { catalogSettingsMessage, isNotWired, ServiceError } from "@checkin/component-kit";
+import { catalogSettingsMessage, isNotWired, kindOf, ServiceError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
@@ -343,7 +343,17 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
-    await processExpenseForQb(orgId, expenseId, expense);
+    if ((await processExpenseForQb(orgId, expenseId, expense)) === "catalog_unavailable") {
+      // An outage parks the expense for the posting run's recovery; it never counts as a failure.
+      await advanceWorkflow({
+        db,
+        expenseId,
+        currentState: expense.state,
+        event: { type: "QB_ERROR" },
+        actor: SYSTEM_ACTOR,
+        action: "qb_waiting_on_catalog",
+      }).catch(unlessRaceLost);
+    }
   } catch (err) {
     // A concurrent drain moved the expense first and carries it on; this is not a QB failure.
     if (err instanceof StaleStateError) return;
@@ -364,22 +374,25 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   }
 }
 
+/** Returns "catalog_unavailable" when the catalog could not be read, before anything is written. */
 async function processExpenseForQb(
   orgId: string,
   expenseId: string,
   expense: Expense,
-): Promise<void> {
+): Promise<"catalog_unavailable" | void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
   if (lineItems.length === 0) return;
 
   const rules = await db.accountMapping.findMany({ where: { orgId } });
 
-  const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(
-    lineItems,
-    rules,
-    expense.vendorName ?? "",
-  );
+  const accounts = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "").catch((err: unknown) => {
+    if (kindOf(err) !== "system") throw err;
+    logError("qb_catalog_unavailable", { expenseId, orgId }, err);
+    return null;
+  });
+  if (!accounts) return "catalog_unavailable";
+  const { resolved, conflicts, snapshots } = accounts;
 
   if (conflicts.length > 0) {
     await saveCatalogSnapshots(snapshots);
@@ -464,9 +477,9 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 // ── Finance retry of a failed QuickBooks post ─────────────────────────────────
 
-/** A missing catalog database as the 503 finance reads; the lookup already answers an unbound catalog as matching nothing. */
+/** A missing or unreachable catalog as the 503 finance reads; the lookup already answers an unbound catalog as matching nothing. */
 function refuseMissingCatalog(err: unknown): never {
-  const message = catalogSettingsMessage(err);
+  const message = catalogSettingsMessage(err) ?? (kindOf(err) === "system" ? "The catalog is unavailable; try again" : null);
   throw message ? new ServiceError(503, message) : err;
 }
 

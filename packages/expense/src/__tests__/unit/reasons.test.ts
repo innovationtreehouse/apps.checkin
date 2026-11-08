@@ -90,6 +90,13 @@ describe("deriveReasons", () => {
     expect(codes(facts({ expense: { state: "rejected" }, waitingOnSetting: { detail: null } }))).toEqual([]);
   });
 
+  it("reads an expense parked for the catalog as a QuickBooks reason, never an account hold", () => {
+    expect(deriveReasons(facts({ expense: { state: "qb_error" }, waitingOnCatalog: true }))).toEqual([
+      { code: "QB_WAITING_ON_CATALOG", tab: "qb", amountCents: null, count: null, detail: null },
+    ]);
+    expect(codes(facts({ expense: { state: "qb_error" } }))).toEqual([]);
+  });
+
   it("a closed expense keeps its QuickBooks reasons and reviews, and drops the rest", () => {
     const closed = facts({
       expense: { state: "qb_complete", qbMatchState: "NEEDS_FINANCE", taxCents: 100, needsReimbursement: true },
@@ -154,6 +161,7 @@ describe("reasonText", () => {
     expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
     expect(reasonText(r({ code: "QB_WAITING_ON_SETTING", detail: "Account 61 is inactive" }), "USD")).toBe("Waiting on a setting: Account 61 is inactive");
     expect(reasonText(r({ code: "QB_WAITING_ON_SETTING" }), "USD")).toBe("Waiting on a QuickBooks setting");
+    expect(reasonText(r({ code: "QB_WAITING_ON_CATALOG" }), "USD")).toBe("Waiting for the catalog; retries daily");
   });
 });
 
