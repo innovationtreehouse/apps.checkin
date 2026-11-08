@@ -39,21 +39,11 @@ export interface InventoryRuntimeConfig {
   catalogEventSource?: CatalogEventSource;
   /** Active catalog item read; unbound, a catalog part is refused as unreachable. */
   catalog?: CatalogItemReader;
-  alerts?: InventoryAlerts;
 }
 
 /** The approved, non-archived catalog item with this GTIN, or null. */
 export interface CatalogItemReader {
   getActiveItem(gtin13: string): Promise<{ gtin13: string } | null>;
-}
-
-/** Alerts the host binds to reach a person. */
-export interface InventoryAlerts {
-  /**
-   * Catalog events a catch-up run left undone: newly failed, stalled over its cap, or the catalog
-   * unreadable; or stored resolutions it could not apply to their provisionals (`stuckProvisionals`).
-   */
-  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean; stuckProvisionals?: { gtin13: string; name: string }[] }): Promise<void>;
 }
 
 /** One catalog OrgEvent row; `payload` is its stored JSON body without `eventType`. */

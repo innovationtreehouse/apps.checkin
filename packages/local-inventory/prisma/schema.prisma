@@ -237,8 +237,12 @@ model InventoryReceivedOrgEvent {
   receivedAt    DateTime @map("received_at")
   /// @sensitivity:public
   status        String   @default("pending")
+  /// The last error while failed; shown only on the org-events page.
   /// @sensitivity:internal
   failureReason String?  @map("failure_reason")
+  /// When the event first failed; cleared once it processes.
+  /// @sensitivity:public
+  firstFailedAt DateTime? @map("first_failed_at")
 
   @@map("received_org_events")
 }
@@ -282,10 +286,14 @@ model ReceivedInventoryDelta {
   resultJson    String?  @map("result_json")
   /// @sensitivity:public
   status        String
+  /// The last error while failed; shown only on the inventory log page.
   /// @sensitivity:internal
   failureReason String?  @map("failure_reason")
   /// @sensitivity:public
   receivedAt    DateTime @default(now()) @map("received_at")
+  /// When the apply first failed; cleared once it applies.
+  /// @sensitivity:public
+  firstFailedAt DateTime? @map("first_failed_at")
 
   @@unique([orgId, sourceKey])
   @@map("received_inventory_deltas")
