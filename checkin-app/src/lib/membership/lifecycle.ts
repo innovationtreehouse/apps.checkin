@@ -362,8 +362,8 @@ export const ARCHIVABLE_STATUSES = [
 export const CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "RENEWAL_PENDING_BG"] as const satisfies readonly ProcessStatus[];
 
 /**
- * What a board restore of a DENIED household closes, unpaid only: the family starts
- * over, so a BLOCKED application closes too (its rejection stays in the audit row).
+ * What a board restore of a DENIED household, or a household archive, closes, unpaid
+ * only: a BLOCKED application closes too (its rejection stays in the audit row).
  */
 export const RESTORE_CLOSABLE_STATUSES = [...CLOSABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
 
@@ -461,7 +461,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
         }),
     ),
     // A board restore closes the denied household's unpaid applications, BLOCKED included.
-    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the restore transaction" },
+    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the household restore or archive transaction" },
     // Reopen — back to the step the close captured. ARCHIVED rests but is not sealed.
     ...ARCHIVABLE_STATUSES.map(
         (to): Transition<TState, string, ProcessKind> => ({
