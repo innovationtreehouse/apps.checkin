@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { createClient, NO_CATALOG_NAMES, useViewer, withLookup, type CatalogNames } from "@checkin/component-ui";
+import { useEffect, useMemo, useState } from "react";
+import { createClient, HttpError, NO_CATALOG_NAMES, useViewer, withLookup, type CatalogNames } from "@checkin/component-ui";
 
 /**
  * Client fetch helpers. Every inventory read and write goes through the host's
@@ -30,7 +30,8 @@ export function useCanSeeReceiving(): boolean {
  * Catalog item names for the given GTINs, read from the host's catalog route
  * one item at a time (callers pass only the visible page). A provisional
  * part's GTIN is one the catalog answers 404 for. Found names stay cached
- * across pages; `failed` holds only the latest page's failures.
+ * across pages, and a failed refetch keeps the cached name; `failed` holds only
+ * the latest page's GTINs that have no name to show.
  */
 export function useCatalogNames(gtins: readonly string[]): CatalogNames {
   const [lookup, setLookup] = useState<CatalogNames>(NO_CATALOG_NAMES);
@@ -42,9 +43,17 @@ export function useCatalogNames(gtins: readonly string[]): CatalogNames {
     Promise.all(
       ids.map((g) => api<{ gtin13: string; name: string }>(`/api/catalog/items/${g}`).then((item): unknown => item.name, (e: unknown) => e)),
     ).then((outcomes) => {
-      if (live) setLookup((prev) => ids.reduce<CatalogNames>((acc, g, i) => withLookup(acc, g, outcomes[i]), { ...prev, failed: new Set() }));
+      if (live) setLookup((prev) => ids.reduce<CatalogNames>(
+        (acc, g, i) => (keepsCachedName(acc, outcomes[i], g) ? acc : withLookup(acc, g, outcomes[i])),
+        { ...prev, failed: new Set() },
+      ));
     });
     return () => { live = false; };
   }, [key]);
-  return lookup;
+  return useMemo(() => (key ? lookup : { ...lookup, failed: NO_CATALOG_NAMES.failed }), [key, lookup]);
+}
+
+/** A refetch that failed for a reason other than 404 leaves the name already found in place. */
+function keepsCachedName(lookup: CatalogNames, outcome: unknown, gtin13: string): boolean {
+  return lookup.names.has(gtin13) && typeof outcome !== "string" && !(outcome instanceof HttpError && outcome.status === 404);
 }
