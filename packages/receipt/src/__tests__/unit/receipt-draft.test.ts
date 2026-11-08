@@ -36,6 +36,12 @@ describe("parseCents", () => {
     expect(parseCents(".5")).toBe(50);
   });
 
+  it("rounds as @checkin/money does", () => {
+    expect(parseCents("1.005")).toBe(101);
+    expect(parseCents("3.33")).toBe(333);
+    expect(parseCents("10")).toBe(1000);
+  });
+
   it("refuses what is not a non-negative amount", () => {
     expect(parseCents("")).toBeNull();
     expect(parseCents("-1")).toBeNull();

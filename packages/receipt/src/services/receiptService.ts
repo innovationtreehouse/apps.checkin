@@ -33,6 +33,7 @@ import {
   EditLineItemSchema,
   EditReceiptSchema,
   InKindInputSchema,
+  toCents,
   UploadInputSchema,
   type DonorInput,
 } from "../lib/schemas";
@@ -112,9 +113,6 @@ function outcomeOf(r: { id: string; state: string }, outcomes: Map<string, Purch
   if (!outcomes) return { unavailable: true };
   return outcomes.get(r.id) ?? { receiving: null, money: null, gift: null };
 }
-
-const toCents = (dollars: number | string | undefined): number =>
-  Math.round((typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0)) * 100);
 
 function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
   const result = schema.safeParse(input);
