@@ -12,7 +12,7 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1
 
 const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
-  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null,
+  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null,
 };
 const baseDetail = {
   ReceivedReceipt: receipt,
@@ -311,6 +311,18 @@ describe("the receiving page for one receipt", () => {
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry apply" })).not.toBeInTheDocument();
     expect(screen.getByText("Applying — the system retries this automatically.")).toBeInTheDocument();
+  });
+
+  it("shows Matching pending, and that it retries daily, while matching couldn't run", () => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } };
+    wrap();
+    expect(screen.getByText("Matching pending")).toBeInTheDocument();
+    expect(screen.getByText("Matching didn't run because the catalog was unavailable. It retries daily.")).toBeInTheDocument();
+  });
+
+  it("shows no Matching pending once matching ran", () => {
+    wrap();
+    expect(screen.queryByText("Matching pending")).not.toBeInTheDocument();
   });
 
   it("pushes the receipt straight after a manual proceed", async () => {
