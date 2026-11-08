@@ -1,7 +1,9 @@
 import type { OpsIncident } from "@/generated/prisma/client";
 import { evaluateIncidents, purgeClosedIncidents, type Delivery, type RunFailure, type RunReport } from "../opsIncidents";
 
-type Where = { closedAt?: null | { gte?: Date; lt?: Date }; OR?: Where[]; id?: number };
+type Stamp = "notifiedAt" | "lastRemindedAt" | "escalatedAt" | "recoveryNotifiedAt";
+type Where = { closedAt?: null | { gte?: Date; lt?: Date }; OR?: Where[]; AND?: Where; id?: number; openKey?: string | null } & { [K in Stamp]?: Date | null };
+const STAMPS: Stamp[] = ["notifiedAt", "lastRemindedAt", "escalatedAt", "recoveryNotifiedAt"];
 
 const rows: OpsIncident[] = [];
 let nextId = 1;
@@ -9,6 +11,9 @@ let nextId = 1;
 function matches(row: OpsIncident, where: Where = {}): boolean {
     if (where.OR) return where.OR.some((w) => matches(row, w));
     if (where.id !== undefined && row.id !== where.id) return false;
+    if (where.AND && !matches(row, where.AND)) return false;
+    if ("openKey" in where && row.openKey !== where.openKey) return false;
+    for (const f of STAMPS) if (f in where && row[f]?.getTime() !== where[f]?.getTime()) return false;
     if (where.closedAt === null) return row.closedAt === null;
     if (where.closedAt) {
         if (!row.closedAt) return false;
@@ -33,11 +38,16 @@ jest.mock("@/lib/prisma", () => ({
                 rows.push(row);
                 return { ...row };
             }),
-            update: jest.fn(async ({ where, data }: { where: { id: number }; data: Partial<OpsIncident> }) => {
-                const row = rows.find((r) => r.id === where.id);
-                if (!row) throw new Error("no row");
+            update: jest.fn(async ({ where, data }: { where: Where; data: Partial<OpsIncident> }) => {
+                const row = rows.find((r) => matches(r, where));
+                if (!row) throw Object.assign(new Error("no row"), { code: "P2025" });
                 Object.assign(row, data);
                 return { ...row };
+            }),
+            updateMany: jest.fn(async ({ where, data }: { where: Where; data: Partial<OpsIncident> }) => {
+                const hit = rows.filter((r) => matches(r, where));
+                for (const r of hit) Object.assign(r, data);
+                return { count: hit.length };
             }),
             deleteMany: jest.fn(async ({ where }: { where: Where }) => {
                 const gone = rows.filter((r) => matches(r, where));
@@ -55,7 +65,9 @@ const at = (days: number, hours = 0) => new Date(T0 + days * DAY + hours * HOUR)
 
 const sent: { to: string; template: string; ctx: Record<string, string> }[] = [];
 let sendOk = true;
+let sendRejects = false;
 const send = jest.fn(async (to: string, template: string, ctx: Record<string, string>) => {
+    if (sendRejects) throw new Error("mail service down");
     if (sendOk) sent.push({ to, template, ctx });
     return sendOk;
 });
@@ -72,6 +84,7 @@ beforeEach(() => {
     nextId = 1;
     sent.length = 0;
     sendOk = true;
+    sendRejects = false;
     send.mockClear();
     jest.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -192,6 +205,26 @@ describe("evaluateIncidents", () => {
             expect(rows[0].notifiedAt).toEqual(at(0));
         });
 
+        it("counts a rejected send as not sent and still tries the other addresses", async () => {
+            send.mockImplementationOnce(async () => {
+                throw new Error("mail service down");
+            });
+            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0), { alertTo: ["a@example.org", "b@example.org"] }));
+            expect(sent.map((s) => s.to)).toEqual(["b@example.org"]);
+            expect(rows[0].notifiedAt).toEqual(at(0));
+        });
+
+        it("keeps evaluating when every send rejects, and retries on the next run", async () => {
+            const qbAuth: RunFailure = { lane: "expense", cause: "quickbooks", kind: "connection", code: "QB_AUTH", count: 1 };
+            sendRejects = true;
+            const events = await evaluateIncidents(run([qbSystem("gift", { stopped: true }), qbAuth]), delivery(at(0)));
+            expect(events.map((e) => e.sent)).toEqual([false, false]);
+            expect(rows.map((r) => r.notifiedAt)).toEqual([null, null]);
+            sendRejects = false;
+            await evaluateIncidents(run([qbSystem("gift"), qbAuth]), delivery(at(1)));
+            expect(rows.map((r) => r.notifiedAt)).toEqual([at(1), at(1)]);
+        });
+
         it("records not sent when no address is passed", async () => {
             const events = await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0), { alertTo: [] }));
             expect(events).toEqual([{ key: "quickbooks:system", event: "opened", sent: false }]);
@@ -214,6 +247,16 @@ describe("evaluateIncidents", () => {
             await evaluateIncidents(failing, delivery(at(0)));
             await evaluateIncidents(failing, delivery(at(3, -0.1)));
             expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentReminder"]);
+        });
+
+        it("reminds and escalates on schedule when a 23-hour spring-forward day makes the run early", async () => {
+            const early = -1 - 1 / 60;
+            await evaluateIncidents(failing, delivery(at(0)));
+            for (let d = 3; d <= 14; d++) await evaluateIncidents(failing, delivery(at(d, early)));
+            expect(sent.map((s) => s.template)).toEqual([
+                "ops.incidentOpened", "ops.incidentReminder", "ops.incidentReminder", "ops.incidentEscalated",
+            ]);
+            expect(rows[0].escalatedAt).toEqual(at(14, early));
         });
 
         it("retries a reminder whose send failed on the next run", async () => {
@@ -307,6 +350,44 @@ describe("evaluateIncidents", () => {
             await evaluateIncidents(run([qbSystem("gift")]), delivery(at(0, 12)));
             expect(rows[0]).toMatchObject({ closedAt: null, runsSeen: 1, notifiedAt: null });
             expect(sent).toEqual([]);
+        });
+    });
+
+    describe("overlapping runs", () => {
+        const failing = run([qbSystem("gift")]);
+        const twice = (report: RunReport, now: Date) => Promise.all([evaluateIncidents(report, delivery(now)), evaluateIncidents(report, delivery(now))]);
+
+        it("send the opening notice once", async () => {
+            await evaluateIncidents(failing, delivery(at(0)));
+            await twice(failing, at(1));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened"]);
+        });
+
+        it("send a reminder once", async () => {
+            for (let d = 0; d < 4; d++) await evaluateIncidents(failing, delivery(at(d)));
+            await twice(failing, at(4));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentReminder"]);
+        });
+
+        it("send the escalation once", async () => {
+            for (let d = 0; d < 14; d++) await evaluateIncidents(failing, delivery(at(d)));
+            sent.length = 0;
+            await twice(failing, at(14));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentEscalated"]);
+        });
+
+        it("send the recovery notice once", async () => {
+            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await twice(run([]), at(1));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentRecovered"]);
+        });
+
+        it("reopen a recent incident once and send one back-again notice", async () => {
+            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([]), delivery(at(1)));
+            await twice(run([qbSystem("gift", { stopped: true })]), at(1, 6));
+            expect(rows).toHaveLength(1);
+            expect(sent.map((s) => s.ctx.status)).toEqual(["needs attention", "recovered", "back again"]);
         });
     });
 
