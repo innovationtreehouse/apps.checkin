@@ -7,8 +7,9 @@
  * stripper drops any bag key that isn't a known model. Who is reimbursed is `pii`
  * wherever it appears: a candidate's `vendorRef` (on a Bill the vendor is the
  * reimbursee), a QuickBooks Vendor's name, and the reimbursee's id and name.
- * Everything else is `internal`. No shape names a signer, and what a caller may
- * do on a line describes that caller only.
+ * Stored error text (a queue reason's detail, a failed intake's reason) is
+ * `personal`. Everything else is `internal`. No shape names a signer, and
+ * what a caller may do on a line describes that caller only.
  *
  * Hand-authored, not generated: it describes API responses, not tables. This is a
  * security-boundary artifact — changes ship in a boundary PR.
@@ -95,7 +96,9 @@ export const classifications = {
     reviewedAt: "internal",
   },
   // GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board.
-  // The queue's row and counts hold reason codes, money, dates and counts, never a person.
+  // The row's reasons hold codes, fixed text and links. A failed intake's row also
+  // carries the stored error text, `personal` like the ReceivedExpensePayload
+  // column it comes from, because it can name a person.
   FinanceQueueRow: {
     expenseId: "internal",
     vendorName: "internal",
@@ -104,8 +107,9 @@ export const classifications = {
     currency: "internal",
     reasons: "internal",
     waitingSince: "internal",
+    failureReason: "personal",
   },
-  // GET /api/expense/finance-queue/counts: per tab, `{ actionable, total, byReason }`.
+  // GET /api/expense/finance-queue/counts: per tab, `{ actionable, total, byReason }`, never a person.
   FinanceQueueCounts: {
     expenses: "internal",
     toSign: "internal",
