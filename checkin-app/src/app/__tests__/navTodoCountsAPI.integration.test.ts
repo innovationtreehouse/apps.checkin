@@ -439,4 +439,46 @@ describe('Nav todo-counts API', () => {
             expect(await unhealthyCount(board())).toBeGreaterThanOrEqual(1);
         });
     });
+
+    // The pill counts an outage once: an open incident adds one, and a stopped job
+    // whose own incident is open is not counted again as an unhealthy cron job.
+    describe('open incidents', () => {
+        const JOB = `nav-incident-${TAG}`;
+        const KEY = `cron:${JOB}:stale`;
+        const board = () => ({ id: boardId, householdId: householdBId, isBoardMember: true });
+        const counts = async () => (await (await callAs(board())).json()).configHealth as { unhealthyCronJobs: number; openIncidents: number };
+        const long = () => new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
+
+        afterEach(async () => {
+            await prisma.cronRunLog.deleteMany({ where: { job: JOB } });
+            await prisma.opsIncident.deleteMany({ where: { key: { contains: TAG } } });
+        });
+
+        it('a watching incident stays off the pill; an open one counts once', async () => {
+            const before = await counts();
+            const row = await prisma.opsIncident.create({
+                data: { key: `quickbooks:${TAG}`, openKey: `quickbooks:${TAG}`, cause: 'quickbooks', kind: 'system', lanes: ['expenses'] },
+            });
+            expect((await counts()).openIncidents).toBe(before.openIncidents);
+
+            await prisma.opsIncident.update({ where: { id: row.id }, data: { notifiedAt: new Date() } });
+            expect((await counts()).openIncidents).toBe(before.openIncidents + 1);
+
+            await prisma.opsIncident.update({ where: { id: row.id }, data: { openKey: null, closedAt: new Date() } });
+            expect((await counts()).openIncidents).toBe(before.openIncidents);
+        });
+
+        it('a stopped job with an open stopped-job incident counts as the incident, not twice', async () => {
+            const before = await counts();
+            await prisma.cronRunLog.create({ data: { job: JOB, startedAt: long(), finishedAt: long(), success: true } });
+            const row = await prisma.opsIncident.create({
+                data: { key: KEY, openKey: KEY, cause: 'cron', kind: 'system', lanes: [JOB] },
+            });
+            // Watching: no notice yet, so the stopped job still shows as a cron job.
+            expect(await counts()).toEqual({ ...before, unhealthyCronJobs: before.unhealthyCronJobs + 1 });
+
+            await prisma.opsIncident.update({ where: { id: row.id }, data: { notifiedAt: new Date() } });
+            expect(await counts()).toEqual({ ...before, openIncidents: before.openIncidents + 1 });
+        });
+    });
 });

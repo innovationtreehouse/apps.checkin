@@ -140,7 +140,8 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
  * ponytail: shares getCronJobStatuses' two reads rather than keeping a leaner
  * aggregate for the nav-poll path — the panel's "failure detail" IS half the badge,
  * so a second query shape would only be the same reads spelled twice.
+ * `skipJobs` are jobs the badge already counts through their open incident.
  */
-export async function countUnhealthyCronJobs(now: Date = new Date()): Promise<number> {
-    return (await getCronJobStatuses(now)).filter((j) => j.stale || j.lastError).length;
+export async function countUnhealthyCronJobs(now: Date = new Date(), skipJobs: ReadonlySet<string> = new Set()): Promise<number> {
+    return (await getCronJobStatuses(now)).filter((j) => (j.stale || j.lastError) && !skipJobs.has(j.job)).length;
 }

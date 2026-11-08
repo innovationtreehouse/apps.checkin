@@ -8,6 +8,7 @@ import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
 import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
+import { openIncidentSummary } from "@/lib/opsIncidentView";
 import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
@@ -97,8 +98,11 @@ export type TodoCounts = {
     // inside CRON_STALE_AFTER_MS) OR whose latest run could not process every row.
     // Both mean "go look at Scheduled Jobs"; the panel says which. Computed here
     // rather than in getConfigHealth() because it needs a DB read and that function
-    // is deliberately synchronous. See lib/cronRuns.ts.
-    configHealth?: { openIssues: number; unhealthyCronJobs: number };
+    // is deliberately synchronous. See lib/cronRuns.ts. A job whose
+    // stopped-job incident is open is counted under `openIncidents` instead.
+    // `openIncidents` = incidents that have sent their first notice and not closed;
+    // watching incidents show on the Open problems panel only. See lib/opsIncidentView.ts.
+    configHealth?: { openIssues: number; unhealthyCronJobs: number; openIncidents: number };
     // Background-check reviewer surface (reviewers + board, per-viewer). `canActOn`
     // = applications this reviewer may attest now (green). `approvedAwaitingSecond`
     // = ones they approved that still need a second reviewer (gray).
@@ -453,7 +457,7 @@ export async function comingYearVariantUnset(boundary: Date | null | undefined, 
 async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoCounts, "admin" | "configHealth">>> {
     // Finance counts are Board/Finance reads; a sysadmin off the Board gets zeros.
     const seesFinance = !!user.isBoardMember || !!user.isFinance;
-    const [membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, unhealthyCronJobs] = await Promise.all([
+    const [membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, incidentHealth] = await Promise.all([
         prisma.orgMembershipProcess.count({
             where: { status: { in: BOARD_ACTIONABLE_MEMBERSHIP } },
         }),
@@ -511,8 +515,12 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
-        // notice its own nightly sweep stopped working. See lib/cronRuns.ts.
-        countUnhealthyCronJobs(),
+        // notice its own nightly sweep stopped working. See lib/cronRuns.ts. Open incidents
+        // are read first so a stopped job with an open incident counts once.
+        openIncidentSummary().then(async ({ openIncidents, staleJobs }) => ({
+            openIncidents,
+            unhealthyCronJobs: await countUnhealthyCronJobs(new Date(), staleJobs),
+        })),
     ]);
     const settingsMisconfig =
         ((await comingYearVariantUnset(boardSettings?.orgMembershipYearBoundary, new Date())) ? 1 : 0) +
@@ -522,8 +530,9 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
         admin: { membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
-        // Env-var/deploy gaps and the alert address (presence checks) plus cron sweeps that
-        // stopped running or stopped working — both fold into the single red System Status pill.
-        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), alertAddressCheck(boardSettings?.alertEmailAddress)]), unhealthyCronJobs },
+        // Env-var/deploy gaps and the alert address (presence checks), cron sweeps that
+        // stopped running or stopped working, and open incidents all fold into the single red
+        // System Status pill.
+        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), alertAddressCheck(boardSettings?.alertEmailAddress)]), ...incidentHealth },
     };
 }
