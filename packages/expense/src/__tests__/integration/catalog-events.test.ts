@@ -85,7 +85,7 @@ const malformed = (id: number) => ({ ...envelope(approved, id), payload: JSON.st
 const CLEAN = { processed: 0, duplicate: 0, failed: 0, unprocessed: 0, unreadable: false };
 
 describeDb("S5 consumer — catch-up sweep", () => {
-  it("replays a failed event and reads past the cursor from the catalog", async () => {
+  it("leaves a failed event for a retry and reads past the cursor from the catalog", async () => {
     const first = envelope(approved, 10);
     await db.expenseReceivedOrgEvent.create({
       data: { id: 10, orgId: ORG, eventType: first.eventType, payload: first.payload, receivedAt: new Date(), status: "failed", failureReason: "x" },
@@ -94,10 +94,10 @@ describeDb("S5 consumer — catch-up sweep", () => {
     let askedAfter = -1;
     bindPorts({ catalogEvents: { eventsSince: async (_orgId, after) => { askedAfter = askedAfter < 0 ? after : askedAfter; return [later].filter((e) => e.id > after); } } });
 
-    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 2 });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 1 });
 
     expect(askedAfter).toBe(0);
-    expect(await db.expenseReceivedOrgEvent.count({ where: { status: "processed" } })).toBe(2);
+    expect(await db.expenseReceivedOrgEvent.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true } })).toEqual([{ id: 10, status: "failed" }, { id: 11, status: "processed" }]);
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {

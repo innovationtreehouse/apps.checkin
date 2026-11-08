@@ -14,7 +14,7 @@ import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { expenseReasons } from "../../services/reasonService";
 import {
-  drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
+  drainExpenseOutbox, postExpenseToQb, retryFailedPost, sweepExpenseQbStrays,
 } from "../../lib/expense-qb-poster";
 import { matchExpenseToQb, skipExpenseQb } from "../../services/qbMatchService";
 import { POSTED_CHECK_OFF, SKIPPED_CHECK_OFF } from "../../services/flagService";
@@ -372,7 +372,7 @@ describeDb("QB-2 posting — a failed post is stuck until a retry", () => {
 
     qbo.mode = "accept-then-drop";
     expect(await postExpenseToQb(ORG, id)).toBe("failed");
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: "socket hang up" });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: "QBO create Purchase failed: socket hang up" });
 
     qbo.mode = "ok";
     await retryStuckItem({ id, step: "QuickBooks posting" });
@@ -407,7 +407,7 @@ describeDb("QB-2 posting — a failed post is stuck until a retry", () => {
     await new Promise((r) => setTimeout(r, 5));
     await retryStuckItem({ id, step: "QuickBooks posting" });
 
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: "socket hang up" });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: "QBO create Purchase failed: socket hang up" });
   });
 
   it("a drain goes on past failures: every due expense is tried once and the stuck ones are left", async () => {
@@ -608,7 +608,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     // The retry finds the app's own entry, held by the other expense: finance decides, nothing is created again.
     await retryStuckItem({ id, step: "QuickBooks posting" });
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: null });
-    const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" } });
+    const last = await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_needs_finance" }, orderBy: { id: "desc" } });
     expect(last.notes).toBe(`app entry Purchase 5000 is held by expense ${holder}`);
     expect(qbo.posts).toHaveLength(1);
   });
@@ -1361,7 +1361,7 @@ describeDb("QB closed books — a create that may have landed", () => {
     qbo.purchases[0].TxnDate = "2026-11-30";
 
     qbo.mode = "ok";
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id });
   });
@@ -1672,7 +1672,7 @@ describeDb("QB posting — an entry finance voided", () => {
     const { id, first } = await landed();
     voidEntry(first);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
 
     expect(qbo.posts).toHaveLength(2);
     const replacement = qbo.purchases[1];
@@ -1686,7 +1686,7 @@ describeDb("QB posting — an entry finance voided", () => {
     const live = secondKeyedEntry(first);
     voidEntry(first);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
 
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: live.Id });
@@ -1696,7 +1696,7 @@ describeDb("QB posting — an entry finance voided", () => {
     const { id, first } = await landed();
     secondKeyedEntry(first);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    expect(await retryFailedPost(ORG, id)).toBe("needs_finance");
     expect(qbo.posts).toHaveLength(1);
     expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
   });
@@ -1704,7 +1704,7 @@ describeDb("QB posting — an entry finance voided", () => {
   it("finance's match links the live entry of an expense stuck on two keyed entries once one is voided", async () => {
     const { id, first } = await landed();
     const live = secondKeyedEntry(first);
-    expect(await postExpenseToQb(ORG, id)).toBe("needs_finance");
+    expect(await retryFailedPost(ORG, id)).toBe("needs_finance");
     voidEntry(first);
 
     await matchExpenseToQb(finance, id, "hand-1");
@@ -1734,7 +1734,7 @@ describeDb("QB posting — an entry finance voided", () => {
   it("a $0 expense's retry links its own $0 entry, never a second booking", async () => {
     const { id, first } = await landed([0, 0]);
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await retryFailedPost(ORG, id)).toBe("posted");
 
     expect(qbo.posts).toHaveLength(1);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: first.Id });

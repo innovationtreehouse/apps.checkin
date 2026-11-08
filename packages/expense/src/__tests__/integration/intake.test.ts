@@ -192,7 +192,7 @@ describeDb("S2 intake — has-provisional fixture", () => {
     expect((await db.provisionalItemMap.findFirstOrThrow({ where: { provisionalGtin13: gtin } })).status).toBe(kind);
     await db.receivedExpensePayload.updateMany({ data: { status: "failed" } });
 
-    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
+    await retryFailedPayload(hasProvisional.receiptId);
 
     expect((await snapshot(hasProvisional.receiptId)).payloads.map((p) => p.status)).toEqual(["applied"]);
   });

@@ -254,6 +254,23 @@ export async function postExpenseToQb(orgId: string, expenseId: string, opts: Po
   }
 }
 
+/**
+ * Retry of a stuck post: re-arms it (NEEDS_FINANCE → POST_FAILED, keeping its first failure time)
+ * and posts once. The lines keep the accounts they were outboxed with. "waiting" when the expense
+ * is not a stuck post.
+ */
+export async function retryFailedPost(orgId: string, expenseId: string): Promise<PostOutcome | "unbound"> {
+  if (!(await getExpenseRuntime().quickbooks.posting())) return "unbound";
+  const rearmed = await db.$transaction(async (tx) => {
+    const current = await lockedExpense(tx, orgId, expenseId);
+    if (current.qbMatchState !== "NEEDS_FINANCE" || !current.qbFirstFailedAt) return false;
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED" } });
+    await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "qb_post_retried", fieldChanged: "qbMatchState", valueBefore: "NEEDS_FINANCE", valueAfter: "POST_FAILED" });
+    return true;
+  });
+  return rearmed ? postExpenseToQb(orgId, expenseId) : "waiting";
+}
+
 type Claimed = {
   claim: Claim;
   write: TxnWrite;

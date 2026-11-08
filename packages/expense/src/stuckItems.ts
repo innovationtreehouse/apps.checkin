@@ -1,8 +1,8 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { db } from "./db";
 import { getOrgId } from "./runtime";
-import { checkAndProcessExpense, retryQbPost } from "./lib/expense-qb-processor";
-import { SYSTEM_ACTOR } from "./lib/system-actor";
+import { checkAndProcessExpense } from "./lib/expense-qb-processor";
+import { retryFailedPost } from "./lib/expense-qb-poster";
 import { retryCatalogEvent } from "./services/catalogEventConsumer";
 import { retryFailedPayload } from "./services/intakeService";
 
@@ -50,8 +50,7 @@ export async function retryStuckItem({ id, step }: { id: string; step: string })
     case QB_POSTING: {
       const expense = await db.expense.findFirst({ where: { id, orgId: await getOrgId(), state: { not: "qb_error" }, qbFirstFailedAt: { not: null } }, select: { id: true } });
       if (!expense) throw new ServiceError(404, "No failed QuickBooks post for this expense");
-      const outcome = await retryQbPost(await getOrgId(), id, SYSTEM_ACTOR);
-      if (outcome === false) throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
+      const outcome = await retryFailedPost(await getOrgId(), id);
       if (outcome === "unbound") throw new ServiceError(503, "QuickBooks isn't connected, so nothing was sent");
       return;
     }
