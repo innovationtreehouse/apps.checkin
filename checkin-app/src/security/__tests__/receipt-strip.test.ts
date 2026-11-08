@@ -156,8 +156,8 @@ describe('ReceiptView tiering', () => {
         const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq');
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
-        // The two old duplicate columns stay in the table, unread, until they are dropped.
-        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt', 'duplicateFlagClearedAt', 'duplicateSuspectReceiptId');
+        // The three old duplicate columns stay in the table, unread, until they are dropped.
+        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt', 'duplicateFlagClearedAt', 'duplicateSuspectReceiptId', 'duplicateSuspectIsRejected');
         const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });

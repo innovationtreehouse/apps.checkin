@@ -116,7 +116,6 @@ export const classifications = {
     state: "internal",
     ocrStartedAt: "internal",
     duplicateFlaggedAt: "internal",
-    duplicateSuspectIsRejected: "pii",
     validationNotes: "personal",
     approvedAt: "internal",
     reviewedAt: "internal",
