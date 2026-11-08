@@ -281,6 +281,12 @@ Things the app takes as true because they are handled outside it.
   again".
   [Decision — owner]
 
+- Finance or the Board may reset one person's daily reading allowance when that
+  person has a good reason, so they need not wait for the next day. The reset
+  gives a full allowance from that moment, needs a reason, and is recorded in
+  the audit log.
+  [Decision — owner, 2026-11-08]
+
 - Every reading that fails for a cause other than the file (the service down,
   a refused key, used-up credit, missing setup, or a fault in the app, such as a
   retired model) is reported to the app's alerts.

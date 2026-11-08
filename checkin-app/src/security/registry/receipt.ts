@@ -94,6 +94,10 @@ const OCR_SWITCH_VIEW: readonly OrderedViewEntry[] = [['authenticated', ['public
 defineRoute({ endpoint: 'GET /api/receipts/settings/ocr', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptOcrSwitch'], orderedView: OCR_SWITCH_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/settings/ocr', authorize: { anyRole: ['isSysadmin', 'isFinance', 'isBoardMember'] }, envelope: null, returns: ['ReceiptOcrSwitch'], orderedView: OCR_SWITCH_VIEW });
 
+// FINANCE and BOARD reset one person's daily automatic-reading allowance, for a
+// reason (expenses.md), and read how many readings that person has left.
+defineRoute({ endpoint: 'POST /api/receipts/allowance/[personId]/reset', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOcrAllowance'], orderedView: FINANCE_READ_VIEW });
+
 // Gmail mail queue: FINANCE only (the sender address is read by FINANCE alone).
 defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });

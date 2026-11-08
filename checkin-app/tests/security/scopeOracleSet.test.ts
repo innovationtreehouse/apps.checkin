@@ -58,6 +58,7 @@ const ORACLES = [
     'program-participant-payment-method-strip.test.ts',
     'program-participant-pending-since-strip.test.ts',
     'program-scope-withdrawn.test.ts',
+    'receipt-allowance-reset-routes.test.ts',
     'receipt-flow-status-routes.test.ts',
     'receipt-ocr-switch-routes.test.ts',
     'receipt-routes.test.ts',

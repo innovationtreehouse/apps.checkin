@@ -68,6 +68,10 @@
  * A submitter's page reads it to hide "Read it again" while reading is off, so
  * it is `public`.
  *
+ * ReceiptOcrAllowance — how many automatic readings a person has left today
+ * (`callsLeft`), after finance or the Board resets their allowance. `internal`;
+ * it carries no person id, since the caller named the person in the path.
+ *
  * ReceiptDuplicateGroup — a receipt's duplicate group as finance compares it:
  * its members in upload order and the ids of the receipts dismissed against it.
  * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
@@ -214,6 +218,9 @@ export const classifications = {
   },
   ReceiptOcrSwitch: {
     ocrEnabled: "public",
+  },
+  ReceiptOcrAllowance: {
+    callsLeft: "internal",
   },
   ReceiptDuplicateGroup: {
     dismissed: "pii",
