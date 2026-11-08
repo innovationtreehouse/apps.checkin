@@ -56,8 +56,8 @@ defineRoute({ endpoint: 'GET /api/expense/account-mapping', authorize: 'finance-
 defineRoute({ endpoint: 'GET /api/expense/account-mapping/catalog', authorize: 'finance-or-board', envelope: null, returns: ['Category', 'Subcategory'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/qb-accounts', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseQbAccount'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/local-owners', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseBucketView'], orderedView: FINANCE_OR_BOARD_VIEW });
-// Each mapped part's catalog name rides as Item (gtin13 and name only).
-defineRoute({ endpoint: 'GET /api/expense/ownership-map', authorize: 'finance-or-board', envelope: null, returns: ['PartOwnerMap', 'Item', 'ExpenseBucketView'], orderedView: FINANCE_OR_BOARD_VIEW });
+// Each mapped part's catalog name rides as Item (gtin13 and name only); ExpenseCatalogNames says when the catalog couldn't be read.
+defineRoute({ endpoint: 'GET /api/expense/ownership-map', authorize: 'finance-or-board', envelope: null, returns: ['PartOwnerMap', 'Item', 'ExpenseBucketView', 'ExpenseCatalogNames'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/provisional-items', authorize: 'finance-or-board', envelope: null, returns: ['ProvisionalItemMap', 'PartOwnerMap', 'ExpenseBucketView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/expense/expense-events', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseEvent', 'Expense'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/expense/expense-events/count', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseListCount'], orderedView: FINANCE_OR_BOARD_VIEW });
