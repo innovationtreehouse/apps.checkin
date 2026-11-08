@@ -148,6 +148,7 @@ describe("GET /api/system-status/finance-views", () => {
         ["an unknown kind", "?kind=tools", "Invalid record kind."],
         ["a non-numeric person", "?person=pat", "Invalid person."],
         ["a malformed date", "?from=27-10-2026", "Invalid from date."],
+        ["a day the calendar lacks", "?to=2026-02-31", "Invalid to date."],
     ])("refuses %s", async (_label, qs, error) => {
         const res = await get(qs);
         expect(res.status).toBe(400);
