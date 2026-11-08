@@ -62,7 +62,7 @@ injection seam is described in [COMPONENT_ARCHITECTURE.md](COMPONENT_ARCHITECTUR
 ## Where to look when
 
 - **A receipt hasn't reached finance.** Its state in `receipt.machine.ts`, and `validationNotes` on the receipt.
-- **A finalized receipt isn't in workflow-mapping.** The receipt's audit log: `push_failed`, or `push_deferred` for a pending donor.
+- **A finalized receipt isn't in workflow-mapping.** The receipt's audit log: `push_refused` when the receipt's payload check or workflow-mapping rejects it (catch-up stops retrying), `push_failed` for any other failure (catch-up retries), or `push_deferred` for a pending donor.
 - **Workflow-mapping shows `apply_failed`.** `validationNotes` names the failed leg (Expense, Donation or Inventory).
 - **A signed expense isn't in QuickBooks.** The expense's `state` and `qbMatchState`; `lib/quickbooks/health.ts` lists what posting lacks.
 - **A gift isn't booking.** `waitingOn` in `inKindAcceptService.ts`.

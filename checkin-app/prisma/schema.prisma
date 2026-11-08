@@ -1714,24 +1714,24 @@ model IntegrationErrorLog {
 /// auto-purge after 90 days.
 model CronRunLog {
   /// @sensitivity:internal
-  id         Int      @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   /// Route slug — the last path segment of /api/cron/<job>.
   /// @sensitivity:internal
-  job        String
+  job            String
   /// @sensitivity:internal
-  startedAt  DateTime
+  startedAt      DateTime
   /// @sensitivity:internal
-  finishedAt DateTime @default(now())
+  finishedAt     DateTime @default(now())
   /// Whether the run COMPLETED — not whether it was clean. A sweep that isolates
   /// per-row failures still completed, so it lands here as true with `error` set.
   /// Drives "is this job still running" (lib/cronRuns.ts lastSuccessByJob).
   /// @sensitivity:internal
-  success    Boolean
+  success        Boolean
   /// Why the run was not clean — the throw's message, the HTTP status, or the count
   /// of rows the sweep could not process. Null means the run did all of its work.
   /// Drives "is this job still working", independently of `success`.
   /// @sensitivity:internal
-  error      String?
+  error          String?
   /// Count of this run's failures per failure kind, e.g. {"connection": 2}. Null when not recorded.
   /// @sensitivity:internal
   failuresByKind Json?
