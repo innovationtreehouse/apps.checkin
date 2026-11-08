@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button, Group, Modal, Paper, Stack, Table, Text, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
-import { LoadError, Pager } from "@checkin/component-ui";
+import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 
 interface AccountRule { id: number; companyName: string; corporatePeerCampaign: string }
 interface HoldRow {
@@ -24,7 +24,7 @@ const REASON: Record<string, string> = {
 /** /donations/holds — disbursements whose gifts match zero or several account rules, a rule without the account a gift needs, or a row with fees and no amount. */
 export default function HoldsPage() {
   const canWrite = useCanWrite();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const [releasing, setReleasing] = useState<HoldRow | null>(null);
   const holds = useLoad<HoldRow[]>(paged("/disbursement-holds", page), { keepPrevious: true });
   const groups = new Map<string, HoldRow[]>();

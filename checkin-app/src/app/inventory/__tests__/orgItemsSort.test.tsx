@@ -1,6 +1,10 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 const loaded: string[] = [];
 

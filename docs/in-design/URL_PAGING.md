@@ -1,7 +1,7 @@
 # Paged lists keep their page in the URL
 
-Survey and open questions for making every paged list in the app keep its page
-in the address bar. No code changes with this doc.
+Survey and decisions for making every paged list in the app keep its page in
+the address bar.
 
 ## The problem
 
@@ -36,13 +36,12 @@ page view in the finance view log. The rule is written down as a convention in
   in the browser only.
 - **Six lists keep their filters, search or sort in local state beside the
   pager.** Putting only the page in the URL would make `?page=3` mean page 3 of
-  whatever filter the screen happens to start with. That is the main question
-  below (Q1), and it pulls in Q2 (search text in the URL) and Q3 (history
-  entries).
-- **Nothing is built until the questions are settled.** The build is one PR:
-  the shared helper in `@checkin/component-ui`, every list moved onto it, the
-  convention, and the finance view log design's open point closed once #3093
-  has added it.
+  whatever filter the screen happens to start with. Q1 settles it: filters,
+  view tabs and sort go in the URL with the page. Typed search text does not
+  (Q2).
+- **The build is one PR:** the shared helper in `@checkin/component-ui`, every
+  list moved onto it, and the convention. The finance view log design's open
+  point closes once #3093 has added it.
 
 ## Rules this relies on or changes
 
@@ -109,22 +108,27 @@ These have a count route, so they know the last page.
   `ProvisionalProposalsClient`, `LearnedReferencesClient` under
   `packages/global-catalog/src/components/`) fetch `page=1&limit=200` and show
   no pager. They are not paged, so the convention does not reach them. Rows
-  past 200 are silently not shown; that is a separate question (Q6).
+  past 200 are silently not shown; #3151 tracks that (Q6).
 - **No "Load more", infinite scroll or cursor paging** anywhere in
   `packages/*/src` or `checkin-app/src`.
 - **No paging inside a modal or panel.** The modals beside L1, L4, L16 edit or
   confirm one row.
 
-## Questions for @thpr
+## Decisions
 
-| # | Question | Recommendation |
+@thpr settled all six. The numbers are kept so the reasoning below still lines
+up.
+
+| # | Question | Decision |
 |---|---|---|
-| Q1 | Does the convention cover the filters, search and sort beside a pager, or only the page? | Filters and sort: yes. Search text: see Q2. |
-| Q2 | Does typed search text go in the URL? | No for now; it stays in local state and resets the page. |
-| Q3 | Push or replace, for the page and for filters? | Page: push. Filters and sort: replace. |
-| Q4 | What does a page past the end show? | The last page, where the list knows its total; otherwise the empty page with its pager. |
-| Q5 | Does `limit` go in the URL? | No. No screen lets anyone change it. |
-| Q6 | The five capped catalog lists: in scope? | No. A follow-up issue. |
+| Q1 | Does the convention cover the filters, search and sort beside a pager, or only the page? | All of them: the URL holds the page, filters, view tabs and sort. A filter change drops `page`. [Decision — @thpr] |
+| Q2 | Does typed search text go in the URL? | No. It stays in local state and a change resets to page 1. Selects, date pickers and toggles go in the URL. [Decision — @thpr] |
+| Q3 | Push or replace, for the page and for filters? | The page pushes; filters, view tabs and sort replace. [Decision — @thpr] |
+| Q4 | What does a page past the end show? | A list with a total clamps to its last page. A list without one shows the empty page with its pager. A missing, non-numeric, zero or negative `page` is page 1. [Decision — @thpr] |
+| Q5 | Does `limit` go in the URL? | No. [Decision — @thpr] |
+| Q6 | The five capped catalog lists: in scope? | No. Tracked in #3151, a "more rows exist" notice. [Decision — @thpr] |
+
+The sections below are the reasoning each decision rests on.
 
 ### Q1. Page only, or the filters beside it too?
 
@@ -220,44 +224,58 @@ The five global-catalog review queues load the first 200 rows and
 show no pager or "more" notice. Example: `ProvisionalProposalsClient` fetches
 `/provisional-items?page=1&limit=200`; a 201st proposal never appears.
 
-Recommendation: out of scope here, since they do not page. File a follow-up
-issue to give them the shared pager (at which point the convention covers
-them).
+Decided: out of scope here, since they do not page. #3151 tracks a "more rows
+exist" notice for them.
 
 ## Proposed convention
 
-Draft text for `docs/conventions.md`, a new section after "A library's pages
-share one client kit". Its wording depends on Q1–Q3 and Q5.
+The text added to `docs/conventions.md`, a new section after "A library's pages
+share one client kit", worded to Q1–Q5.
 
 > ## A paged list keeps its place in the URL
 >
 > - **A paged list keeps its page in the URL query (`page`), with the filters,
->   view and sort that decide its rows.** A reload, the back button and a
+>   view tabs and sort that decide its rows.** A reload, the back button and a
 >   shared link land on the same rows, and each page is its own page view in the
->   finance view log. Typed search text stays out of the URL.
+>   finance view log.
+> - **Typed search text stays out of the URL.** It lives in the screen's state,
+>   and a change starts again on page 1. Selects, date pickers and toggles go in
+>   the URL.
 > - **Paging pushes a history entry; a filter, view or sort change replaces the
 >   entry and drops `page`.** Back steps through pages, not filter states.
-> - **Read and write it with `@checkin/component-ui`'s paging helper**, never
->   `useState` for the page.
+> - **A bad or out-of-range `page` never shows an error.** A missing,
+>   non-numeric, zero or negative `page` is page 1. A list that knows its total
+>   shows its last page for a page past the end; a list without one shows the
+>   empty page with its pager.
+> - **`limit` stays out of the URL** while no screen lets anyone pick a page size.
+> - **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
+>   `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
+>   for the page or a filter.
 
-## The build, once settled
+## The build
 
 One PR:
 
-1. **The helper.** A hook in `@checkin/component-ui` that reads `page` from
-   `useSearchParams`, falls back to 1 on a missing or bad value, and writes it
-   with `router.push` (Q3), keeping the other query params. A companion for
-   filter params writes with `router.replace` and drops `page`. `Pager` takes
-   its page from the hook when given no `page` prop. Tests: reads the page from
-   the URL; writes it on change; a missing, non-numeric, zero or negative page
-   falls back to 1; a filter change drops it.
-2. **Every list on it.** L1–L18, plus their filters under Q1.
+1. **The helpers**, in `@checkin/component-ui`'s `urlState.ts`, read through
+   `useSearchParams` and written through the router. `useUrlPage` reads `page`,
+   falls back to 1 on a missing or bad value, clamps to the last page when the
+   caller passes one, and writes with `router.push` (Q3), keeping the other
+   query params. `useUrlFilter` (free values such as a date or a person),
+   `useUrlChoice` (a fixed set such as a view tab or sort) and
+   `useSetUrlFilters` (several keys at once) write with `router.replace` and
+   drop `page`. `Pager` keeps its `page` and `onChange` props; callers pass
+   `useUrlPage`'s pair. Tests: reads state from the URL; a page change pushes
+   and a filter change replaces; a filter change drops the page; Q4's
+   fallbacks and clamping.
+2. **Every list on it.** L1–L18, plus their filters under Q1. Typed search
+   boxes (L12, L13, L16, and the record-id and entity-id boxes on L17, L18)
+   stay in local state; a change replaces the URL without `page`.
 3. **The convention** in `docs/conventions.md`.
 4. **The finance view log design.** Close the PR 3 open point that #3093 adds
    (paging that does not change the URL): all paging changes the URL, so
    #3093's requirement (b), a new page-view id per URL query change, covers
-   it. Doc edit only; no finance view log code. If #3093 has not merged when
-   the build starts, this step waits for it.
+   it. Doc edit only; no finance view log code. It waits for #3093 to merge,
+   and this doc goes once it lands.
 
 Host pages under `checkin-app/src/app` (L17, L18) move onto the same helper,
 since nothing about their paging needs its own.

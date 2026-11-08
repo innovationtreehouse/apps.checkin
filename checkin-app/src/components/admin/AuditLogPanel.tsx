@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, useSetUrlFilters, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { normalizeAuditData } from "@/lib/auditPayload";
 import { useLoad } from "@/lib/api";
 import {
@@ -54,13 +54,17 @@ const ACTION_COLOR: Record<AuditLog["action"], string> = {
 const ACTIONS = ["CREATE", "EDIT", "DELETE", "BECOME_ADMIN"];
 
 export function AuditLogPanel() {
-  const [page, setPage] = useState(1);
-  const [action, setAction] = useState<string | null>(null);
-  const [table, setTable] = useState<string | null>(null);
-  const [actor, setActor] = useState<string | null>(null);
+  const [action, setAction] = useUrlFilter("action");
+  const [table, setTable] = useUrlFilter("table");
+  const [actor, setActor] = useUrlFilter("actor");
+  const [from, setFrom] = useUrlFilter("from");
+  const [to, setTo] = useUrlFilter("to");
+  const setFilters = useSetUrlFilters();
+  // Typed text stays out of the URL; a change still starts again on page 1.
   const [entityId, setEntityId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // The total arrives with the rows, so a page past the end clamps once the first answer is in.
+  const [knownLast, setKnownLast] = useState<number | null>(null);
+  const [page, setPage] = useUrlPage(knownLast);
 
   const qs = new URLSearchParams({ page: String(page) });
   if (action) qs.set("action", action);
@@ -73,14 +77,6 @@ export function AuditLogPanel() {
   const { data, error, loading, retrying, reload } = useLoad<AuditResponse>(`/api/system-status/audit-log?${qs}`, { keepPrevious: true });
   const stale = loading || retrying;
 
-  // Filter changes reset to page 1.
-  const onFilter =
-    <T,>(setter: (v: T) => void) =>
-    (v: T) => {
-      setter(v);
-      setPage(1);
-    };
-
   // People by name, then the named automated paths — one control over two columns
   // (a person's value is their id, a system path's value is its own name).
   const actorOptions = [
@@ -89,6 +85,7 @@ export function AuditLogPanel() {
   ];
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  if (data && totalPages !== knownLast) setKnownLast(totalPages);
 
   return (
     <Stack gap="sm">
@@ -98,8 +95,8 @@ export function AuditLogPanel() {
           placeholder="All"
           clearable
           data={ACTIONS}
-          value={action}
-          onChange={onFilter(setAction)}
+          value={action || null}
+          onChange={(v) => setAction(v ?? "")}
           w={150}
         />
         <Select
@@ -108,8 +105,8 @@ export function AuditLogPanel() {
           clearable
           searchable
           data={data?.tables ?? []}
-          value={table}
-          onChange={onFilter(setTable)}
+          value={table || null}
+          onChange={(v) => setTable(v ?? "")}
           w={180}
         />
         <Select
@@ -118,8 +115,8 @@ export function AuditLogPanel() {
           clearable
           searchable
           data={actorOptions}
-          value={actor}
-          onChange={onFilter(setActor)}
+          value={actor || null}
+          onChange={(v) => setActor(v ?? "")}
           w={220}
         />
         <TextInput
@@ -127,11 +124,14 @@ export function AuditLogPanel() {
           placeholder="id"
           type="number"
           value={entityId}
-          onChange={(e) => onFilter(setEntityId)(e.currentTarget.value)}
+          onChange={(e) => {
+            setEntityId(e.currentTarget.value);
+            if (page > 1) setFilters({});
+          }}
           w={100}
         />
-        <DateField label="From" value={from} onChange={onFilter(setFrom)} />
-        <DateField label="To" value={to} onChange={onFilter(setTo)} />
+        <DateField label="From" value={from} onChange={setFrom} />
+        <DateField label="To" value={to} onChange={setTo} />
       </Group>
 
       {error ? (

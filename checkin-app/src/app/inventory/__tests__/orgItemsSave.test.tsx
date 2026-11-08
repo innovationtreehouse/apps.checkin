@@ -1,7 +1,11 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
 import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 const mockApi = jest.fn();
 const LOADED = {

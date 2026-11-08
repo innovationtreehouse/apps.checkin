@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navM
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
-import { renderWithProviders, resetRtl, router, setSearchParams } from "@/test-helpers/rtl";
+import { renderWithProviders, resetRtl, router, setPathname, setSearchParams } from "@/test-helpers/rtl";
 import InventoryLogPage, { applySource, parseDelta } from "@checkin/local-inventory/pages/inventoryLog";
 
 const loaded: string[] = [];
@@ -42,6 +42,7 @@ const LOG = [
 
 beforeEach(() => {
   resetRtl();
+  setPathname("/inventory/inventory-log");
   loaded.length = 0;
   canSeeReceiving = true;
   data = { "/inventory-log": LOG, "/received-inventory-deltas": APPLIES };

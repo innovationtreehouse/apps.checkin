@@ -15,7 +15,7 @@
  */
 import { render, configure, type RenderOptions } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import type { ReactElement, ReactNode } from "react";
+import { useSyncExternalStore, type ReactElement, type ReactNode } from "react";
 import { EnvProvider } from "@/components/EnvProvider";
 import type { CheckinEnv } from "@/lib/config";
 import type { DevMocks } from "@/lib/nav/sections/devTools";
@@ -90,16 +90,32 @@ export function renderWithProviders(ui: ReactElement, options?: RenderOptions) {
 }
 
 // ── next/navigation + next-auth/react mocks ──────────────────────────────────
+let pathname = "/";
+let searchParams = new URLSearchParams();
+const searchListeners = new Set<() => void>();
+function setSearch(sp: URLSearchParams) {
+    searchParams = sp;
+    searchListeners.forEach((listener) => listener());
+}
+// A push or replace moves the mocked URL's query, so a screen keeping its state there re-renders.
+const navigate = (href: string) => setSearch(new URL(href, "http://localhost").searchParams);
 export const router = {
-    push: jest.fn(),
-    replace: jest.fn(),
+    push: jest.fn(navigate),
+    replace: jest.fn(navigate),
     refresh: jest.fn(),
     back: jest.fn(),
     forward: jest.fn(),
     prefetch: jest.fn(),
 };
-let pathname = "/";
-let searchParams = new URLSearchParams();
+function useMockSearchParams() {
+    return useSyncExternalStore(
+        (listener) => {
+            searchListeners.add(listener);
+            return () => searchListeners.delete(listener);
+        },
+        () => searchParams,
+    );
+}
 let session: { data: unknown; status: string; update?: jest.Mock } = { data: null, status: "unauthenticated" };
 
 /** Factory for `jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock())`. */
@@ -107,7 +123,7 @@ export function navMock() {
     return {
         useRouter: () => router,
         usePathname: () => pathname,
-        useSearchParams: () => searchParams,
+        useSearchParams: useMockSearchParams,
         useParams: () => ({}),
         redirect: jest.fn(),
         notFound: jest.fn(),
@@ -127,7 +143,7 @@ export function setPathname(p: string) {
     pathname = p;
 }
 export function setSearchParams(sp: URLSearchParams | string) {
-    searchParams = typeof sp === "string" ? new URLSearchParams(sp) : sp;
+    setSearch(typeof sp === "string" ? new URLSearchParams(sp) : sp);
 }
 /** Set the mocked session user (pass null for signed-out). */
 export function setSession(user: Record<string, unknown> | null, status = user ? "authenticated" : "unauthenticated") {

@@ -5,7 +5,8 @@ import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { ExpenseActionList } from "../ExpenseActionList";
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  usePathname: () => "/expense",
   useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 3, isFinance: true } }, status: "authenticated" }) }));

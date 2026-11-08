@@ -1,7 +1,11 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
 import { render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
 import ReceiveQueuePage from "@checkin/local-inventory/pages/receiveQueue";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 const PROVISIONAL = "0200000000011";
 const provisionals = [{ provisionalGtin13: PROVISIONAL, name: "Widget" }];

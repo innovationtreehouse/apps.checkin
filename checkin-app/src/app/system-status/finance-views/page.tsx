@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Anchor, Box, Button, Center, Group, Loader, Select, Stack, Table, Text, TextInput } from "@mantine/core";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, useSetUrlFilters, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useLoad } from "@/lib/api";
 import { FINANCE_VIEWS_ROLES } from "@/lib/nav/sections/systemStatus";
@@ -37,12 +37,14 @@ export default function FinanceViewsPage() {
 }
 
 function FinanceViewsPanel() {
-  const [page, setPage] = useState(1);
-  const [person, setPerson] = useState<string | null>(null);
-  const [kind, setKind] = useState<string | null>(null);
+  const [page, setPage] = useUrlPage();
+  const [person, setPerson] = useUrlFilter("person");
+  const [kind, setKind] = useUrlFilter("kind");
+  const [from, setFrom] = useUrlFilter("from");
+  const [to, setTo] = useUrlFilter("to");
+  const setFilters = useSetUrlFilters();
+  // Typed text stays out of the URL; a change still starts again on page 1.
   const [record, setRecord] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
 
   const qs = new URLSearchParams({ page: String(page) });
   if (person) qs.set("person", person);
@@ -53,14 +55,6 @@ function FinanceViewsPanel() {
   // Keeps the person filter's options and the rows on screen while the next page or filter loads.
   const { data, error, loading, retrying, reload } = useLoad<FinanceViewsResponse>(`/api/system-status/finance-views?${qs}`, { keepPrevious: true });
   const stale = loading || retrying;
-
-  // Filter changes reset to page 1.
-  const onFilter =
-    <T,>(setter: (v: T) => void) =>
-    (v: T) => {
-      setter(v);
-      setPage(1);
-    };
 
   const names = new Map((data?.Person ?? []).map((p) => [p.id, p.name]));
   const personOptions = (data?.Person ?? [])
@@ -81,8 +75,8 @@ function FinanceViewsPanel() {
           clearable
           searchable
           data={personOptions}
-          value={person}
-          onChange={onFilter(setPerson)}
+          value={person || null}
+          onChange={(v) => setPerson(v ?? "")}
           w={220}
         />
         <Select
@@ -90,19 +84,22 @@ function FinanceViewsPanel() {
           placeholder="All"
           clearable
           data={KIND_OPTIONS}
-          value={kind}
-          onChange={onFilter(setKind)}
+          value={kind || null}
+          onChange={(v) => setKind(v ?? "")}
           w={180}
         />
         <TextInput
           label="Record id"
           placeholder="id"
           value={record}
-          onChange={(e) => onFilter(setRecord)(e.currentTarget.value)}
+          onChange={(e) => {
+            setRecord(e.currentTarget.value);
+            if (page > 1) setFilters({});
+          }}
           w={200}
         />
-        <DateField label="From" value={from} onChange={onFilter(setFrom)} />
-        <DateField label="To" value={to} onChange={onFilter(setTo)} />
+        <DateField label="From" value={from} onChange={setFrom} />
+        <DateField label="To" value={to} onChange={setTo} />
       </Group>
 
       {error ? (
@@ -111,29 +108,31 @@ function FinanceViewsPanel() {
         <Center mih="30vh">
           <Loader />
         </Center>
-      ) : rows.length === 0 ? (
-        <Text c="dimmed" size="sm">
-          No finance views match these filters.
-        </Text>
       ) : (
         <>
-          <Box aria-busy={stale} style={{ opacity: stale ? 0.5 : 1 }}>
-          <Table striped withTableBorder verticalSpacing={6} fz="sm">
-            <Table.Tbody>
-              {rows.map((row) => (
-                <Table.Tr key={row.id}>
-                  <Table.Td>
-                    <Text size="sm">{financeViewSentence(row, names.get(row.actorId))}</Text>
-                    {row.recordIds.length > 0 && <RecordIds row={row} />}
-                    <Text size="xs" c="dimmed">
-                      {row.endpoint}
-                    </Text>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-          </Box>
+          {rows.length === 0 ? (
+            <Text c="dimmed" size="sm">
+              No finance views match these filters.
+            </Text>
+          ) : (
+            <Box aria-busy={stale} style={{ opacity: stale ? 0.5 : 1 }}>
+            <Table striped withTableBorder verticalSpacing={6} fz="sm">
+              <Table.Tbody>
+                {rows.map((row) => (
+                  <Table.Tr key={row.id}>
+                    <Table.Td>
+                      <Text size="sm">{financeViewSentence(row, names.get(row.actorId))}</Text>
+                      {row.recordIds.length > 0 && <RecordIds row={row} />}
+                      <Text size="xs" c="dimmed">
+                        {row.endpoint}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            </Box>
+          )}
           {(page > 1 || hasNext) && (
             <Group justify="center">
               <Button variant="default" size="xs" disabled={stale || page === 1} onClick={() => setPage(page - 1)}>

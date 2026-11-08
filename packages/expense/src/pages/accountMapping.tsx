@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Group, Select, Table, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
-import { CatalogPicker, LoadError, Pager } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface Mapping {
@@ -48,7 +48,7 @@ const EMPTY ={ category: "*", subcategory: "*", partNumber: "*", isDelayed: "any
 /** /expense/account-mapping — rules mapping a resolved line to one QuickBooks account (`*` matches anything). */
 export default function AccountMappingPage() {
   const { isFinance } = useRoles();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const mappings = useLoad<Mapping[]>(paged("/account-mapping", page), { keepPrevious: true });
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
   const live = useLoad<LiveAccount[]>("/api/books-map/quickbooks-accounts");

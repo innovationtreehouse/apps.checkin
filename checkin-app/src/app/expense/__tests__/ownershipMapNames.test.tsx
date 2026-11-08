@@ -1,6 +1,10 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
 import { render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OwnershipMapPage from "@checkin/expense/pages/ownershipMap";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 jest.mock("@checkin/expense/components/api", () => ({
   PAGE_SIZE: 50,
