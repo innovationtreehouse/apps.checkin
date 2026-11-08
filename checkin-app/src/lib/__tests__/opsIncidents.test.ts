@@ -41,7 +41,9 @@ jest.mock("@/lib/prisma", () => ({
             update: jest.fn(async ({ where, data }: { where: Where; data: Partial<OpsIncident> }) => {
                 const row = rows.find((r) => matches(r, where));
                 if (!row) throw Object.assign(new Error("no row"), { code: "P2025" });
-                Object.assign(row, data);
+                const { runsSeen, ...rest } = data as Omit<Partial<OpsIncident>, "runsSeen"> & { runsSeen?: number | { increment: number } };
+                Object.assign(row, rest);
+                if (runsSeen !== undefined) row.runsSeen = typeof runsSeen === "number" ? runsSeen : row.runsSeen + runsSeen.increment;
                 return { ...row };
             }),
             updateMany: jest.fn(async ({ where, data }: { where: Where; data: Partial<OpsIncident> }) => {
@@ -259,6 +261,28 @@ describe("evaluateIncidents", () => {
             expect(rows[0].escalatedAt).toEqual(at(14, early));
         });
 
+        it("reminds and escalates on schedule when a 25-hour fall-back day makes the run late", async () => {
+            await evaluateIncidents(failing, delivery(at(0)));
+            for (let d = 3; d <= 14; d++) await evaluateIncidents(failing, delivery(at(d, 1)));
+            expect(sent.map((s) => s.template)).toEqual([
+                "ops.incidentOpened", "ops.incidentReminder", "ops.incidentReminder", "ops.incidentEscalated",
+            ]);
+            expect(rows[0].escalatedAt).toEqual(at(14, 1));
+        });
+
+        it("does not remind or escalate a run that comes hours before the day is up", async () => {
+            await evaluateIncidents(failing, delivery(at(0)));
+            await evaluateIncidents(failing, delivery(at(3, -3)));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened"]);
+            await evaluateIncidents(failing, delivery(at(3)));
+            for (let d = 4; d < 14; d++) await evaluateIncidents(failing, delivery(at(d)));
+            sent.length = 0;
+            await evaluateIncidents(failing, delivery(at(14, -3)));
+            expect(sent.map((s) => s.template)).toEqual([]);
+            await evaluateIncidents(failing, delivery(at(14)));
+            expect(sent.map((s) => s.template)).toEqual(["ops.incidentEscalated"]);
+        });
+
         it("retries a reminder whose send failed on the next run", async () => {
             await evaluateIncidents(failing, delivery(at(0)));
             sendOk = false;
@@ -356,6 +380,12 @@ describe("evaluateIncidents", () => {
     describe("overlapping runs", () => {
         const failing = run([qbSystem("gift")]);
         const twice = (report: RunReport, now: Date) => Promise.all([evaluateIncidents(report, delivery(now)), evaluateIncidents(report, delivery(now))]);
+
+        it("count every run on an open incident", async () => {
+            await evaluateIncidents(failing, delivery(at(0)));
+            await twice(failing, at(1));
+            expect(rows[0].runsSeen).toBe(3);
+        });
 
         it("send the opening notice once", async () => {
             await evaluateIncidents(failing, delivery(at(0)));

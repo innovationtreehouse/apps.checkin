@@ -74,8 +74,9 @@ interface Observation {
 const staleKey = (job: string) => `cron:${job}:stale`;
 const isStaleKey = (key: string) => key.startsWith("cron:") && key.endsWith(":stale");
 const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
-// Rounded, so a daily run that starts early, or after a 23-hour daylight-saving day, still counts its day.
-const daysBetween = (from: Date, to: Date) => Math.round((to.getTime() - from.getTime()) / DAY);
+// Whole days, with a two-hour margin so a daily run that starts early, or after a 23-hour daylight-saving day, still counts its day.
+const DAY_MARGIN = 2 * HOUR;
+const daysBetween = (from: Date, to: Date) => Math.floor((to.getTime() - from.getTime() + DAY_MARGIN) / DAY);
 
 function observe(report: RunReport): Observation[] {
     const byKey = new Map<string, Observation>();
@@ -223,7 +224,7 @@ async function transition(row: OpsIncident, data: Prisma.OpsIncidentUpdateInput)
 /** The row this observation lands on: the open one, one closed within 24 hours (back again), or a new one. Null when an overlapping run created or reopened it first. */
 async function record(o: Observation, open: OpsIncident | undefined, recent: OpsIncident | undefined, now: Date): Promise<OpsIncident | null> {
     const seen = { lastSeenAt: now, itemsAffected: o.count, detail: o.codes.join(", ").slice(0, DETAIL_MAX) };
-    if (open) return update(open, { ...seen, lanes: union(open.lanes, o.lanes), runsSeen: open.runsSeen + 1 });
+    if (open) return update(open, { ...seen, lanes: union(open.lanes, o.lanes), runsSeen: { increment: 1 } });
     if (recent?.notifiedAt) {
         return transition(recent, {
             ...seen, openKey: o.key, closedAt: null, notifiedAt: null, lastRemindedAt: null,
