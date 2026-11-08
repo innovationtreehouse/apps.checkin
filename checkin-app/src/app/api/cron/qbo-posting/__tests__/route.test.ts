@@ -150,6 +150,34 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: in-kind streak stop, in-kind duplicate check' });
     });
 
+    it('records an expense drain stopped by a repeated refusal code, naming the code', async () => {
+        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ ...EXPENSE_DRAIN, refusalStop: { code: '6000', returned: 3 } }));
+
+        await GET(req());
+
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: expense refusal stop (code 6000)' });
+    });
+
+    it('records an expense drain stopped at a broken QuickBooks connection', async () => {
+        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ ...EXPENSE_DRAIN, stoppedOnConnection: true }));
+
+        await GET(req());
+
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: expense connection stop' });
+    });
+
+    it('records an in-kind refusal stop and connection stop by their kind, not as a streak', async () => {
+        jest.mocked(runInKindQbPosting)
+            .mockResolvedValueOnce({ ...IN_KIND_DRAIN, stoppedAfterFailures: true, stopKind: 'settings', refusalStop: { code: '6190', returned: 3 } })
+            .mockResolvedValueOnce({ ...IN_KIND_DRAIN, stoppedAfterFailures: true, stopKind: 'connection' });
+
+        await GET(req());
+        await GET(req());
+
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: in-kind refusal stop (code 6190)' });
+        expect(create.mock.calls[1][0].data).toMatchObject({ success: true, error: 'failed: in-kind connection stop' });
+    });
+
     it('records an unconfigured in-kind lane only while gifts wait', async () => {
         jest.mocked(runInKindQbPosting).mockResolvedValueOnce({ unconfigured: true, waiting: 0 }).mockResolvedValueOnce({ unconfigured: true, waiting: 2 });
 

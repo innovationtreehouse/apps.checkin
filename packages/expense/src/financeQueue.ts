@@ -42,6 +42,7 @@ export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
   QB_DRIFT: "Changed in QuickBooks",
   QB_POST_HELD: "Closed but not posted",
   QB_NO_CLASS: "No QuickBooks class",
+  QB_WAITING_ON_SETTING: "Waiting on a setting",
   QB_AWAITING_MATCH: "Waiting for a match",
   QB_VENDOR_MISSING: "No QuickBooks vendor",
   QB_UNBOOKED: "Not booked in QuickBooks",

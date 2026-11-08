@@ -6,12 +6,29 @@ import { runExpenseQbPosting } from "@checkin/expense";
 import { runDonationDepositHandOver, runInKindQbPosting } from "@checkin/bulk-donation";
 import { drainIncomeOutbox, runIncomeOrphanSweep } from "@checkin/income";
 
-/** The counts of a drain that ran: whether its failure streak stopped it, and whether its duplicate check could read QuickBooks. */
-type DrainRun = { stoppedAfterFailures: boolean; sweep: { full: boolean } | { failed: true } };
+/**
+ * The counts of a drain that ran: how it stopped, and whether its duplicate check could read
+ * QuickBooks. Expense says a connection stop with `stoppedOnConnection`; in-kind says every stop's
+ * kind with `stopKind`, and sets `stoppedAfterFailures` for each.
+ */
+type DrainRun = {
+    stoppedAfterFailures: boolean;
+    stoppedOnConnection?: boolean;
+    stopKind?: string | null;
+    refusalStop: { code: string } | null;
+    sweep: { full: boolean } | { failed: true };
+};
+
+function stopProblem(lane: string, drain: DrainRun): string | null {
+    if (drain.refusalStop) return `${lane} refusal stop (code ${drain.refusalStop.code})`;
+    if (drain.stoppedOnConnection || drain.stopKind === "connection") return `${lane} connection stop`;
+    return drain.stoppedAfterFailures ? `${lane} streak stop` : null;
+}
 
 function drainProblems(lane: string, drain: DrainRun): string[] {
     const problems: string[] = [];
-    if (drain.stoppedAfterFailures) problems.push(`${lane} streak stop`);
+    const stop = stopProblem(lane, drain);
+    if (stop) problems.push(stop);
     if ("failed" in drain.sweep) problems.push(`${lane} duplicate check`);
     return problems;
 }
@@ -22,9 +39,10 @@ function drainProblems(lane: string, drain: DrainRun): string[] {
  * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the
- * run as its error. So is a drain stopped by its failure streak, a duplicate check that could not
- * read QuickBooks, and an in-kind lane missing a books-map role while gifts wait. Counts go to the
- * log only; the response body is `{}`.
+ * run as its error. So is a drain stopped by its failure streak, a broken QuickBooks connection or
+ * a fault code QuickBooks refused three times; a duplicate check that could not read QuickBooks;
+ * and an in-kind lane missing a books-map role while gifts wait. Counts go to the log only; the
+ * response body is `{}`.
  */
 export const GET = handler("GET /api/cron/qbo-posting", async ({ req }) => {
     const startedAt = new Date();
