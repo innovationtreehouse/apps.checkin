@@ -29,6 +29,10 @@ export const classifications = {
   ExpenseListCount: {
     total: "internal",
   },
+  // Beside a response's catalog names: true when the catalog couldn't be read, so names are missing.
+  ExpenseCatalogNames: {
+    unavailable: "internal",
+  },
   // A budget-owner bucket from the injected OwnerDirectory.
   ExpenseBucketView: {
     id: "internal",
