@@ -1,11 +1,11 @@
-import { isKindedError, kindOf, ServiceError } from "@checkin/component-kit";
+import { catalogSettingsMessage, isNotWired, ServiceError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
-import { CATALOG_DB_MISSING, lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
+import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
 import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
@@ -73,7 +73,7 @@ export async function lookupCatalogInfo(
       })),
     ),
   ]).catch((err: unknown) => {
-    if (isKindedError(err) && err.name === "NotWiredError") return null;
+    if (isNotWired(err)) return null;
     throw err;
   });
   if (!reads) return { gtin13ByItemId: new Map(), info, catalogNotConnected: true };
@@ -466,8 +466,8 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 /** A missing catalog database as the 503 finance reads; the lookup already answers an unbound catalog as matching nothing. */
 function refuseMissingCatalog(err: unknown): never {
-  if (kindOf(err) === "settings") throw new ServiceError(503, CATALOG_DB_MISSING);
-  throw err;
+  const message = catalogSettingsMessage(err);
+  throw message ? new ServiceError(503, message) : err;
 }
 
 /**

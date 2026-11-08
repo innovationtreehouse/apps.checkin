@@ -3,7 +3,7 @@
  * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
-import { httpError, isKindedError, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { catalogSettingsMessage, httpError, isNotWired, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
@@ -13,7 +13,7 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { LISTED_TYPES, bookableTypes, refuseWrongType } from "../lib/account-types";
 import { writeOrgAudit } from "../lib/audit";
-import { CATALOG_DB_MISSING, getActiveItem, getItemNames } from "../lib/catalog";
+import { getActiveItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
 import { logError } from "../lib/logger";
 import { withLiveParties, withLiveParty } from "../lib/livePeople";
@@ -140,8 +140,8 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, princi
 
 /** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
 function refuseCatalogSettings(err: unknown): void {
-  if (isKindedError(err) && err.name === "NotWiredError") throw httpError(503, "No catalog is connected");
-  if (kindOf(err) === "settings") throw httpError(503, CATALOG_DB_MISSING);
+  const message = catalogSettingsMessage(err);
+  if (message) throw httpError(503, message);
 }
 
 /** Catalog category and subcategory names, through the CatalogReader port; 503 while the catalog is unbound, missing or down. */
@@ -215,7 +215,7 @@ export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const names = await getItemNames(rows.map((r) => r.gtin13)).then(
     (items) => ({ items, unavailable: false }),
     (err: unknown) => {
-      if (isKindedError(err) && err.name === "NotWiredError") return { items: [], unavailable: false };
+      if (isNotWired(err)) return { items: [], unavailable: false };
       refuseCatalogSettings(err);
       if (kindOf(err) !== "system") throw err;
       logError("catalog_names_unavailable", { route: "ownership-map" }, err);

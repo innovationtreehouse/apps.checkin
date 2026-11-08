@@ -192,12 +192,28 @@ function statusKind(status: number): FailureKind {
   return "data";
 }
 
+const NOT_WIRED = Symbol.for("@checkin/component-kit/NotWiredError");
+
 /** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
 export class NotWiredError extends KindedError {
+  readonly [NOT_WIRED] = true;
+
   constructor(port: string) {
     super("settings", `${port} is not wired`);
     this.name = "NotWiredError";
   }
+}
+
+/** An unbound port: the only failure that means "not connected". Any other `settings` failure is itself. */
+export function isNotWired(err: unknown): err is NotWiredError {
+  return isKindedError(err) && NOT_WIRED in err;
+}
+
+/** The 503 wording a person reads when the catalog needs fixing: unbound, or its database missing. Null for any other failure. */
+export function catalogSettingsMessage(err: unknown): string | null {
+  if (isNotWired(err)) return "No catalog is connected";
+  if (kindOf(err) === "settings") return "The catalog database does not exist; the infra operator checks its settings";
+  return null;
 }
 
 /** The acting person id. A 401 on anything but an integer: Prisma drops an undefined `where` key. */
@@ -425,7 +441,7 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
       after = ids[ids.length - 1];
     }
   } catch (err) {
-    if (kindOf(err) === "settings") notConnected = true;
+    if (isNotWired(err)) notConnected = true;
     else unreadable = true;
     sweep.onUnreadable(err);
   }
