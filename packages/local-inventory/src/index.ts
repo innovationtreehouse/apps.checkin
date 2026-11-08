@@ -31,3 +31,5 @@ export type {
   CatalogEventSource,
   InventoryAlerts,
 } from "./contract";
+
+export { stuckItems } from "./stuckItems";

@@ -205,6 +205,75 @@ export function OpenProblemsBox() {
   );
 }
 
+// Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
+type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
+type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown }; cronJobs?: unknown };
+
+/**
+ * The receipt flow's Problems list: every stuck item, oldest first, with a link to its own page
+ * (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
+ */
+export function ProblemsBox() {
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; staleJobs: CronJob[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/system-status/config-health')
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then(({ problems, cronJobs }: ProblemsPayload) => {
+        if (!Array.isArray(problems?.items) || !Array.isArray(problems?.unread) || !Array.isArray(cronJobs)) return setFailed(true);
+        setData({ items: problems.items as StuckItem[], unread: problems.unread as string[], staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale) });
+      })
+      .catch(() => setFailed(true));
+  }, []);
+
+  const total = data ? data.items.length + data.staleJobs.length + data.unread.length : 0;
+
+  return (
+    <Card withBorder radius="md" padding="lg">
+      <Group gap="sm" mb="md">
+        <Title order={4}>Problems</Title>
+        {total > 0 && <Badge color="red">{total}</Badge>}
+      </Group>
+
+      {failed ? (
+        <Text c="yellow">Unable to load the Problems list.</Text>
+      ) : !data ? (
+        <Text c="dimmed">Checking for problems…</Text>
+      ) : total === 0 ? (
+        <Text c="dimmed">Nothing is stuck.</Text>
+      ) : (
+        <List spacing="sm" listStyleType="none">
+          {data.unread.map((library) => (
+            <List.Item key={`unread-${library}`}>
+              <Text c="yellow">Could not read {library}&apos;s stuck items.</Text>
+            </List.Item>
+          ))}
+          {data.items.map((i) => (
+            <List.Item key={`${i.library}-${i.step}-${i.id}`}>
+              <Group gap="xs">
+                <Badge variant="light">{i.library}</Badge>
+                <span>{i.step}</span>
+                {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
+              </Group>
+              <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
+            </List.Item>
+          ))}
+          {data.staleJobs.map((j) => (
+            <List.Item key={`job-${j.job}`}>
+              <Group gap="xs">
+                <Badge variant="light" color="orange">scheduled job</Badge>
+                <Code>{j.job}</Code>
+              </Group>
+              <Text size="xs" c="dimmed" title={j.lastSuccessAt}>Has not run on time; last ran {timeAgo(j.lastSuccessAt)}</Text>
+            </List.Item>
+          ))}
+        </List>
+      )}
+    </Card>
+  );
+}
+
 // Mirrors CronJobStatus in lib/cronRuns.ts (lastSuccessAt arrives JSON-serialized).
 type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string };
 

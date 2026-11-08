@@ -1,7 +1,7 @@
 import { act, screen, fireEvent } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
-import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox } from "../SystemHealthPanels";
+import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
 
@@ -253,5 +253,45 @@ describe("OpenProblemsBox", () => {
     mockFetchJson({ "/api/system-status/config-health": { checks: [] } });
     renderWithProviders(<OpenProblemsBox />);
     expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
+  });
+});
+
+describe("ProblemsBox", () => {
+  it("lists each stuck item with its library, step, a link to its page and its time, then each job not on time", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems: {
+          items: [
+            { library: "expense", id: "e1", step: "QuickBooks posting", href: "/expense/expenses/e1", failedAt: "2026-11-01T12:00:00.000Z" },
+            { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
+          ],
+          unread: ["gifts"],
+        },
+        cronJobs: [
+          { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
+          { job: "qbo-posting", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true },
+        ],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    expect((await screen.findByText("e1")).closest("a")).toHaveAttribute("href", "/expense/expenses/e1");
+    expect(screen.getByText("7").closest("a")).toBeNull();
+    expect(screen.getByText("qbo-posting")).toBeInTheDocument();
+    expect(screen.queryByText("nightly")).not.toBeInTheDocument();
+    expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
+  it("says so when nothing is stuck", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Nothing is stuck.")).toBeInTheDocument();
+  });
+
+  it("shows the failed state when the answer has no problems", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Unable to load the Problems list.")).toBeInTheDocument();
   });
 });
