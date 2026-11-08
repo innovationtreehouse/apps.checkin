@@ -1,4 +1,4 @@
-import { checkStanding, disputingReviews, householdQualifies, type CheckReviewFacts, type CheckStanding } from '@/lib/membership/checkStanding';
+import { checkStanding, disputingReviews, householdQualifies, sentBackForSubject, type CheckReviewFacts, type CheckStanding } from '@/lib/membership/checkStanding';
 
 const THRESHOLD = new Date('2026-01-01T00:00:00Z');
 const FRESH = new Date('2026-06-01T00:00:00Z');
@@ -24,7 +24,7 @@ describe('checkStanding', () => {
         expect(checkStanding(FRESH, [review({ status: 'BLOCKED' })], THRESHOLD)).toBe('DISPUTED');
     });
 
-    it('is DISPUTED on a Board-reset or changed-to-approve review still waiting, including after an undo left it with no approvals', () => {
+    it('is DISPUTED on a review whose rejection was sent back and still waits, including after an undo left it with no approvals', () => {
         expect(checkStanding(FRESH, [review({ sentBack: true })], THRESHOLD)).toBe('DISPUTED');
         expect(checkStanding(null, [review({ sentBack: true, bgConsentAt: false })], THRESHOLD)).toBe('DISPUTED');
     });
@@ -48,29 +48,66 @@ describe('checkStanding', () => {
     });
 });
 
+describe('sentBackForSubject', () => {
+    const reset = (from: string) => ({ oldData: { status: from }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset' } });
+    const changedToApprove = { oldData: { status: 'BLOCKED' }, newData: { status: 'PENDING_BG_REVIEW', action: 'rejector changed to approve' } };
+    const undo = { oldData: { result: 'APPROVE' }, newData: { action: 'reviewer undo' } };
+    const subjectCleared = { oldData: { status: 'BLOCKED', subjectPersonId: 5 }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } };
+
+    it('sends back a Board reset of a rejection', () => {
+        expect(sentBackForSubject([reset('BLOCKED')])).toBe(true);
+    });
+
+    it('treats a Board reset of a review with no rejection as a plain start-over', () => {
+        expect(sentBackForSubject([reset('PENDING_BG_REVIEW')])).toBe(false);
+        expect(sentBackForSubject([])).toBe(false);
+    });
+
+    it('keeps a rejection changed to approve sent back, including after that approval is undone', () => {
+        expect(sentBackForSubject([changedToApprove])).toBe(true);
+        expect(sentBackForSubject([changedToApprove, undo])).toBe(true);
+        expect(sentBackForSubject([changedToApprove, reset('PENDING_BG_REVIEW')])).toBe(true);
+    });
+
+    it('treats the reset that clears the named person as a plain start-over', () => {
+        expect(sentBackForSubject([subjectCleared])).toBe(false);
+    });
+
+    it('starts a fresh history for the next person named after the subject is cleared', () => {
+        expect(sentBackForSubject([reset('BLOCKED'), subjectCleared])).toBe(false);
+        expect(sentBackForSubject([changedToApprove, undo, subjectCleared])).toBe(false);
+        expect(sentBackForSubject([reset('BLOCKED'), subjectCleared, reset('BLOCKED')])).toBe(true);
+    });
+});
+
 describe('householdQualifies', () => {
     const lead = (standing: CheckStanding) => ({ isHouseholdLead: true, standing });
     const other = (standing: CheckStanding) => ({ isHouseholdLead: false, standing });
+    const householdQualifiesOn = (members: { isHouseholdLead: boolean; standing: CheckStanding }[]) => householdQualifies({ members, awaitingNaming: false });
 
     it('qualifies on one cleared lead', () => {
-        expect(householdQualifies([lead('CLEARED'), lead('NONE'), other('NONE')])).toBe(true);
+        expect(householdQualifiesOn([lead('CLEARED'), lead('NONE'), other('NONE')])).toBe(true);
     });
 
     it('does not qualify with no leads, even when another adult is cleared', () => {
-        expect(householdQualifies([])).toBe(false);
-        expect(householdQualifies([other('CLEARED')])).toBe(false);
+        expect(householdQualifiesOn([])).toBe(false);
+        expect(householdQualifiesOn([other('CLEARED')])).toBe(false);
     });
 
     it('does not qualify when no lead is cleared (expired, pending or none)', () => {
-        expect(householdQualifies([lead('NONE'), lead('PENDING')])).toBe(false);
+        expect(householdQualifiesOn([lead('NONE'), lead('PENDING')])).toBe(false);
     });
 
     it('does not qualify when a non-lead adult is disputed', () => {
-        expect(householdQualifies([lead('CLEARED'), other('DISPUTED')])).toBe(false);
+        expect(householdQualifiesOn([lead('CLEARED'), other('DISPUTED')])).toBe(false);
     });
 
     it('does not qualify when the other lead is disputed, nor when the only cleared lead is', () => {
-        expect(householdQualifies([lead('CLEARED'), lead('DISPUTED')])).toBe(false);
-        expect(householdQualifies([lead('DISPUTED')])).toBe(false);
+        expect(householdQualifiesOn([lead('CLEARED'), lead('DISPUTED')])).toBe(false);
+        expect(householdQualifiesOn([lead('DISPUTED')])).toBe(false);
+    });
+
+    it('does not qualify while an open review is waiting for its first reviewer to name a person', () => {
+        expect(householdQualifies({ members: [lead('CLEARED')], awaitingNaming: true })).toBe(false);
     });
 });

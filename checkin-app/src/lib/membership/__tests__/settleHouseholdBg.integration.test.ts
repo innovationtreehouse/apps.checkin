@@ -45,9 +45,16 @@ async function checkReview(personId: number, status: OrgMembershipProcessStatus,
     return p.id;
 }
 
-async function sendBack(reviewId: number, action: 'board reset' | 'rejector changed to approve') {
+async function sendBack(reviewId: number, action: 'board reset' | 'rejector changed to approve', from: OrgMembershipProcessStatus = 'BLOCKED') {
     await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { status: 'PENDING_BG_REVIEW' } });
-    await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: reviewId, oldData: { status: 'BLOCKED' }, newData: { status: 'PENDING_BG_REVIEW', action } } });
+    await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: reviewId, oldData: { status: from }, newData: { status: 'PENDING_BG_REVIEW', action } } });
+}
+
+/** The wrong-person reset: the review returns to no subject, then a reviewer names `personId`. */
+async function renameSubject(reviewId: number, personId: number) {
+    await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { status: 'PENDING_BG_REVIEW', subjectPersonId: null } });
+    await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: reviewId, oldData: { status: 'BLOCKED' }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } } });
+    await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { subjectPersonId: personId } });
 }
 
 const row = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id } });
@@ -57,7 +64,7 @@ async function wipe() {
     const ids = households.map((h) => h.id);
     const people = await prisma.person.findMany({ where: { email: { contains: TAG } }, select: { id: true } });
     const personIds = people.map((p) => p.id);
-    const processes = await prisma.orgMembershipProcess.findMany({ where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { subjectPersonId: { in: personIds } }] }, select: { id: true } });
+    const processes = await prisma.orgMembershipProcess.findMany({ where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { subjectPersonId: { in: personIds } }, { requestedForHouseholdId: { in: ids } }] }, select: { id: true } });
     const processIds = processes.map((p) => p.id);
     const memberships = await prisma.orgMembership.findMany({ where: { householdId: { in: ids } }, select: { id: true } });
     await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { in: processIds } } });
@@ -141,6 +148,33 @@ describe('settleHouseholdBg — clearing', () => {
         const p = await row(id);
         expect(p.status).toBe('PENDING_PAYMENT');
         expect(p.bgClearedAt).toBeNull();
+    });
+
+    it('clears when an adult\'s review was reset from an approval, not a rejection', async () => {
+        const f = await family();
+        const reviewId = await checkReview(f.otherId, 'PENDING_BG_REVIEW');
+        await sendBack(reviewId, 'board reset', 'PENDING_BG_REVIEW');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['cleared']);
+        expect((await row(id)).bgClearedAt).not.toBeNull();
+    });
+
+    it('does not carry a reset rejection onto the next person named on that review', async () => {
+        const f = await family();
+        const elsewhere = await family();
+        const reviewId = await checkReview(elsewhere.otherId, 'BLOCKED', 'board reset');
+        await renameSubject(reviewId, f.otherId);
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['cleared']);
+        expect((await row(id)).bgClearedAt).not.toBeNull();
+    });
+
+    it('holds the clearance while a review requested for the household names nobody yet', async () => {
+        const f = await family();
+        await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: f.householdId, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() } });
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect((await row(id)).bgClearedAt).toBeNull();
     });
 
     it('holds the clearance after a change to approve was undone', async () => {

@@ -1,3 +1,4 @@
+import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
@@ -8,9 +9,9 @@ import { bgFreshThreshold, nextBoundary } from "@/lib/membership/renewal";
  * (PERSON_BG rows naming them) and their `lastBackgroundCheck`
  * (docs/in-design/person-based-bg-review.md §3.1).
  *
- * - DISPUTED: a review is BLOCKED, or was Board-reset or changed to approve and has
- *   not cleared since. It beats CLEARED: an old clearance never outweighs a new
- *   rejection.
+ * - DISPUTED: a review is BLOCKED, or its rejection was Board-reset or changed to
+ *   approve and it has not cleared since. It beats CLEARED: an old clearance never
+ *   outweighs a new rejection.
  * - CLEARED: `lastBackgroundCheck` inside the window, nothing disputed.
  * - PENDING: a review naming them is open with consent, nothing disputed.
  * - NONE: none of the above.
@@ -22,12 +23,32 @@ export type CheckReviewFacts = {
     id: number;
     status: ProcessStatus;
     bgConsentAt: boolean;
-    /** A Board reset or a rejector's change to approve sent this review back. */
+    /** Its rejection was Board-reset or changed to approve since its person was named. */
     sentBack: boolean;
 };
 
-/** Audit actions that send a review back for two new approvals (review.ts). */
-export const SENT_BACK_ACTIONS = ["board reset", "rejector changed to approve"] as const;
+type AuditFacts = { oldData: Prisma.JsonValue | null; newData: Prisma.JsonValue | null };
+
+/**
+ * Whether a review's audit rows, oldest first, send it back for its current person.
+ * Only a rejection sent back counts: a Board reset of a BLOCKED review, or the
+ * rejector's change to approve, which no later undo or reset takes back. A row
+ * that clears the review's person (`newData.subjectPersonId: null`) is a plain
+ * start-over and begins a fresh history for whoever is named next.
+ */
+export function sentBackForSubject(rows: readonly AuditFacts[]): boolean {
+    let sentBack = false;
+    for (const { oldData, newData } of rows) {
+        const action = jsonField(newData, "action");
+        if (jsonField(newData, "subjectPersonId") === null) sentBack = false;
+        else if (action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED")) sentBack = true;
+    }
+    return sentBack;
+}
+
+export function jsonField(json: Prisma.JsonValue | null, key: string): Prisma.JsonValue | undefined {
+    return json !== null && typeof json === "object" && !Array.isArray(json) ? json[key] : undefined;
+}
 
 /**
  * The reviews that make their person DISPUTED. A sent-back review stays disputing
@@ -45,12 +66,13 @@ export function checkStanding(lastBackgroundCheck: Date | null, reviews: readonl
 }
 
 /**
- * The household qualifies on its background check (§3.2): at least one lead is
- * CLEARED, and nobody in it is DISPUTED. Every member is read, not only adults:
- * a minor is never checked, so never holds a review to dispute.
+ * The household qualifies on its background check (§3.1-3.2): at least one lead is
+ * CLEARED, nobody in it is DISPUTED, and no review requested for it is waiting for
+ * its first reviewer to name a person. Every member is read, not only adults: a
+ * minor is never checked, so never holds a review to dispute.
  */
-export function householdQualifies(members: readonly { isHouseholdLead: boolean; standing: CheckStanding }[]): boolean {
-    return members.some((m) => m.isHouseholdLead && m.standing === "CLEARED") && !members.some((m) => m.standing === "DISPUTED");
+export function householdQualifies({ members, awaitingNaming }: { members: readonly { isHouseholdLead: boolean; standing: CheckStanding }[]; awaitingNaming: boolean }): boolean {
+    return !awaitingNaming && members.some((m) => m.isHouseholdLead && m.standing === "CLEARED") && !members.some((m) => m.standing === "DISPUTED");
 }
 
 /** The earliest check date valid at the next membership-year boundary, from live board settings; null when the policy is unset. */
@@ -68,30 +90,33 @@ export async function loadCheckReviews(db: DbClient, personIds: readonly number[
         where: { kind: "PERSON_BG", subjectPersonId: { in: [...personIds] }, ...personBgOpen.where },
         select: { id: true, status: true, bgConsentAt: true, subjectPersonId: true },
     });
-    const sentBack = new Set(
-        rows.length
-            ? (await db.auditLog.findMany({
-                  where: {
-                      tableName: "OrgMembershipProcess",
-                      affectedEntityId: { in: rows.map((r) => r.id) },
-                      OR: SENT_BACK_ACTIONS.map((action) => ({ newData: { path: ["action"], equals: action } })),
-                  },
-                  select: { affectedEntityId: true },
-              })).map((a) => a.affectedEntityId)
-            : [],
-    );
+    const audits = rows.length
+        ? await db.auditLog.findMany({
+              where: { tableName: "OrgMembershipProcess", affectedEntityId: { in: rows.map((r) => r.id) } },
+              orderBy: { id: "asc" },
+              select: { affectedEntityId: true, oldData: true, newData: true },
+          })
+        : [];
     for (const r of rows) {
-        byPerson.get(r.subjectPersonId!)?.push({ id: r.id, status: r.status, bgConsentAt: !!r.bgConsentAt, sentBack: sentBack.has(r.id) });
+        const sentBack = sentBackForSubject(audits.filter((a) => a.affectedEntityId === r.id));
+        byPerson.get(r.subjectPersonId!)?.push({ id: r.id, status: r.status, bgConsentAt: !!r.bgConsentAt, sentBack });
     }
     return byPerson;
 }
 
-/** A household's members with their standing and the reviews disputing it. */
+/**
+ * A household's members with their standing and the reviews disputing it, and
+ * whether a review requested for it still names nobody.
+ */
 export async function householdCheckStandings(db: DbClient, householdId: number, threshold: Date | null) {
-    const members = await db.person.findMany({ where: { householdId }, select: { id: true, isHouseholdLead: true, lastBackgroundCheck: true } });
-    const reviews = await loadCheckReviews(db, members.map((m) => m.id));
-    return members.map((m) => {
+    const people = await db.person.findMany({ where: { householdId }, select: { id: true, isHouseholdLead: true, lastBackgroundCheck: true } });
+    const reviews = await loadCheckReviews(db, people.map((m) => m.id));
+    const members = people.map((m) => {
         const own = reviews.get(m.id) ?? [];
         return { personId: m.id, isHouseholdLead: m.isHouseholdLead, standing: checkStanding(m.lastBackgroundCheck, own, threshold), disputing: disputingReviews(own) };
     });
+    const unnamed = await db.orgMembershipProcess.count({
+        where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
+    });
+    return { members, awaitingNaming: unnamed > 0 };
 }
