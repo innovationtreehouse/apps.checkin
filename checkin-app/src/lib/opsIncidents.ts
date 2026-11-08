@@ -23,7 +23,7 @@ export interface RunFailure {
 
 /**
  * What a run saw. `lanes` are the lanes that ran, clean or not: an open incident
- * closes only when a run covers one of its lanes without failing it. A settings
+ * closes only when a run covers every one of its lanes without failing it. A settings
  * failure is reported only while work is waiting. `staleJobs` lists jobs with no
  * successful run in 48 hours; leave it out when the run did not check.
  */
@@ -104,7 +104,7 @@ function meetsThreshold(row: OpsIncident, stopped: boolean): boolean {
 
 function covers(report: RunReport, row: OpsIncident): boolean {
     if (isStaleKey(row.key)) return report.staleJobs !== undefined;
-    return row.lanes.some((lane) => report.lanes.includes(lane));
+    return row.lanes.every((lane) => report.lanes.includes(lane));
 }
 
 const CAUSE_NAMES: Record<string, string> = {

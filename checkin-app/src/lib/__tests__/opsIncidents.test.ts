@@ -154,6 +154,19 @@ describe("evaluateIncidents", () => {
         expect(rows[0].closedAt).toBeNull();
     });
 
+    it("does not close a cross-lane incident on a run that covers only some of its lanes", async () => {
+        await evaluateIncidents(run([qbSystem("expense", { stopped: true }), qbSystem("gift")]), delivery(at(0)));
+        await evaluateIncidents(run([], ["expense"]), delivery(at(0, 6)));
+        await evaluateIncidents(run([qbSystem("gift")], ["gift"]), delivery(at(1)));
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ closedAt: null, lanes: ["expense", "gift"] });
+        expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened"]);
+
+        await evaluateIncidents(run([], ["expense", "gift"]), delivery(at(2)));
+        expect(rows[0].closedAt).toEqual(at(2));
+        expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentRecovered"]);
+    });
+
     describe("a failed send", () => {
         it("does not mark the incident notified and retries on the next run", async () => {
             sendOk = false;

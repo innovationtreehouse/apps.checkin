@@ -161,7 +161,7 @@ will list it as watching.
    only if at least one address took it; a failed send retries next run.
 2. *Reminder*: three days after the notice, then weekly, with the runs seen so far.
 3. *Escalation*: to the Board address, once, after two weeks open.
-4. *Recovered*: when a run covers one of the incident's lanes without the
+4. *Recovered*: when a run covers every lane on the incident without the
    failure. It is sent only if an opening notice went out.
 5. *Back again*: the same problem within 24 hours of recovering reopens the
    same incident, and the opened notice says "back again".
