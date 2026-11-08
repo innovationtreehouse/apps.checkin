@@ -561,15 +561,16 @@ defineRoute({
 // deciding — wasOrgMemberAtApproval is only stamped on approval). Board/finance
 // only, no sysadmin, and they hold everyones:* so they see every field — the win
 // is the declared policy: any role later added to this view is field-stripped
-// automatically.
+// automatically. everyones:hardship is the request itself; only Board and
+// finance views hold it.
 defineRoute({
     endpoint: 'GET /api/finance-ops/payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
     returns: ['ProgramParticipant', 'Person', 'Program', 'Household', 'OrgMembership', 'BoardSettings'],
     orderedView: [
-        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
     auditedRead: true,
 });
@@ -622,15 +623,16 @@ defineRoute({
 // OrgMembershipProcess rows the household asked to pay by plan, with the
 // membership + household nested. Board/finance only, no sysadmin, and they hold
 // everyones:* so they see every field — the win is the declared policy: any role
-// later added to this view is field-stripped automatically.
+// later added to this view is field-stripped automatically. everyones:hardship is
+// the request itself; only Board and finance views hold it.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
     returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
-        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
     auditedRead: true,
 });

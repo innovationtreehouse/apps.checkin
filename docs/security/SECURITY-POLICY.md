@@ -40,6 +40,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 | `pii` | Personally identifying (email, phone, dob, googleId) |
 | `personal` | Private but not identifying (Household.address, emergency contacts) |
 | `internal` | Role/audit metadata (sysadmin flag, lastBackgroundCheck, audit logs) |
+| `hardship` | Whether a person or household asked for, holds, was granted or was refused help with a fee: a payment plan, a scholarship, a comp. Granted only to Board and finance views, and to a family on its own rows |
 | `secret` | Cryptographic — never returned to any client (oauth tokens) |
 
 **Scope** (per-row, computed by the handler for each row in the response):
@@ -55,7 +56,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 
 **Token grammar:**
 - `'public'` — bare. Public-tier fields, no row gate.
-- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal}`. Grant applies on rows where the caller holds `<scope>`.
+- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal, hardship}`. Grant applies on rows where the caller holds `<scope>`.
 - `'secret'` — never appears in any view (type error at registration).
 
 **Field visibility per row:** a field is exposed iff one of:
