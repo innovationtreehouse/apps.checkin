@@ -633,8 +633,10 @@ the parts specific to expenses.
 - Each expense line reaches the books on one account, with its share of tax,
   shipping and discount. Nothing splits a line across accounts or categories. A
   line the mappings do not resolve to exactly one account waits for finance to
-  set it.
-  [Decision]
+  set it. A line whose account couldn't be looked up because the catalog was
+  unavailable is not a mapping hold: the expense waits and is retried with each
+  posting run, using no try, and finance sees that it waits for the catalog.
+  [Decision — owner]
 
 - An account rule names its part by the part's GTIN-13, or `*` for any part. A
   new or changed part must be one of these; a rule stored with any other value

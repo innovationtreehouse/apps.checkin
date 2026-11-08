@@ -54,6 +54,17 @@ async function waitingOnSetting(expense: { id: string; backfill: boolean; qbTxnI
   return { detail: settingWaitDetail(last?.notes) };
 }
 
+/** Whether the catalog's outage, and not another failure, last parked this qb_error expense. */
+async function waitingOnCatalog(expense: { id: string; state: string }): Promise<true | undefined> {
+  if (expense.state !== "qb_error") return undefined;
+  const last = await db.expenseAuditLog.findFirst({
+    where: { expenseId: expense.id, action: { in: ["qb_waiting_on_catalog", "qb_processing_failed"] } },
+    orderBy: { changedAt: "desc" },
+    select: { action: true },
+  });
+  return last?.action === "qb_waiting_on_catalog" ? true : undefined;
+}
+
 /**
  * Every open reason on the expense; [] when it is not in this org. `readOnly` is for the queue's
  * reads, which must not freeze the Everyday check.
@@ -94,6 +105,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     reimburseeVendorLinked: vendorLinked,
     missingClass: await missingClass(expense, expense.approvals.map((a) => a.ownerId)),
     waitingOnSetting: await waitingOnSetting(expense),
+    waitingOnCatalog: await waitingOnCatalog(expense),
     openReviews: expense.flags.flatMap((flag) => {
       const kind = reviewKindOf(flag);
       return kind ? [{ kind, detail: flag.detail }] : [];
@@ -104,7 +116,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const conflicted = await isConflicted(expense, me);
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
-    if (!principal.isFinance) return false;
+    if (!principal.isFinance || r.code === "QB_WAITING_ON_CATALOG") return false;
     if (BOOKKEEPING.has(r.code) || BUCKET_CHOICE.has(r.code)) return true;
     if (conflicted || r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.

@@ -85,7 +85,7 @@ async function candidateIds(orgId: string): Promise<string[]> {
       where: {
         ...open,
         OR: [
-          { state: { in: ["assign_ownership", "owner_approval", "capital_review", "set_depreciation_cycle", "qb_pending"] } },
+          { state: { in: ["assign_ownership", "owner_approval", "capital_review", "set_depreciation_cycle", "qb_pending", "qb_error"] } },
           { approvals: { some: { status: { in: ["unknown", "exception_raised"] } } } },
           { needsReimbursement: true, backfill: false, reimburseePersonId: null },
           { holds: { some: { status: "PENDING" } } },
