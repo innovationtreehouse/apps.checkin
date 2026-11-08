@@ -88,7 +88,7 @@ describeDb("OCR call quota", () => {
     await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ status: 429 });
   });
 
-  it.each(["system", "connection", "settings"] as const)("gives back the call a %s failure spent", async (kind) => {
+  it.each(["system", "connection", "settings", "bug"] as const)("gives back the call a %s failure spent", async (kind) => {
     configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr(kind), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("ocr_failed");
@@ -97,11 +97,20 @@ describeDb("OCR call quota", () => {
     expect(await db.receiptAuditLog.count({ where: { userId: ALICE.id, action: "ocr_call_refunded", receiptId: r.id } })).toBe(3);
   });
 
-  it.each(["data", "bug"] as const)("keeps the call a %s failure spent", async (kind) => {
-    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr(kind), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
+  it("keeps the call a data failure spent", async () => {
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("data"), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     await expect(receiptService.retryOcr(r.id, "submitter")).rejects.toMatchObject({ status: 429 });
     expect(await db.receiptAuditLog.count({ where: { action: "ocr_call_refunded" } })).toBe(0);
+  });
+
+  it("gives back no call once the refunded call has left the window", async () => {
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("system"), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
+    await receiptService.upload(textFile(), "text/plain", {});
+    await db.receiptAuditLog.updateMany({ where: { action: "ocr_call" }, data: { changedAt: new Date(Date.now() - 25 * 60 * 60 * 1000) } });
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: { ...LOOSE, ocrCallsPerPersonPerDay: 1 } });
+    await receiptService.upload(textFile(), "text/plain", {});
+    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ status: 429 });
   });
 
   it("manual uploads spend no OCR calls", async () => {
