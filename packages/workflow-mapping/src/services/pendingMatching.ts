@@ -43,15 +43,16 @@ async function matchUndecided(row: PendingRow): Promise<{ matching: Matching; li
  * Re-runs matching for one receipt still waiting for mapping. Each match is written only while
  * the line is unrecognized and the receipt waits for mapping, so a person's decision always
  * stands. When matching ran the flag clears and the receipt does what arrival would have: every
- * line decided sends it. Past MATCHING_RETRY_DAYS the flag clears, the lines stay for hand
- * mapping, and the failure goes to the on-failure port once. A null actor is the daily run.
+ * line decided sends it. Past MATCHING_RETRY_DAYS the daily run (a null actor) clears the flag,
+ * leaves the lines for hand mapping, and reports the failure to the on-failure port once. A
+ * person's run never gives up: it reports outside any job run, where no incident would open.
  */
 export async function rerunMatching(row: PendingRow, actor: Actor | null = null): Promise<Outcome> {
   const { matching, lineIds } = await matchUndecided(row);
   const since = row.matchingPendingSince;
 
   if (!matching.ran) {
-    if (!since || Date.now() - since.getTime() < MATCHING_RETRY_DAYS * DAY_MS) {
+    if (actor || !since || Date.now() - since.getTime() < MATCHING_RETRY_DAYS * DAY_MS) {
       const kind = kindOf(matching.err);
       return kind === "system" || kind === "connection" ? "deferred" : "errored";
     }
@@ -62,8 +63,7 @@ export async function rerunMatching(row: PendingRow, actor: Actor | null = null)
     if (count !== 1) return "deferred";
     await insertAuditEvent(db, {
       orgId: row.orgId,
-      actorUserId: actor?.id ?? null,
-      actorUsername: actor?.name ?? null,
+      actorUserId: null,
       eventType: "matching_gave_up",
       receivedReceiptId: row.id,
       details: JSON.stringify({ retryDays: MATCHING_RETRY_DAYS, kind: kindOf(matching.err) }),
