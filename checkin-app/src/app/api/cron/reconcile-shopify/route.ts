@@ -84,11 +84,12 @@ function rowsFailed(outcome: object): number {
  * Then moves receipts whose intake checks never ran out of `uploaded` into finance's
  * `flow_error` queue (sweepStuckUploaded). Isolated the same way; counts only.
  *
+ * Then it re-sends in-kind donor changes the receipt library has not yet delivered to
+ * donations (resendDonorSync). Isolated the same way; counts only, no donor data. It runs before
+ * the re-push, so a receipt whose donor it settles is delivered in the same run.
+ *
  * Then re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
  * same way; counts only.
- *
- * Then it re-sends in-kind donor changes the receipt library has not yet delivered to
- * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  *
  * Then it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
  * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
@@ -113,8 +114,8 @@ export const GET = withCron(async () => {
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
     const receiptStuck = await isolated("receipt stuck uploads", "receipt stuck-upload sweep", sweepStuckUploaded);
-    const receiptPush = await isolated("receipt push", "receipt re-push", repushUnpushed);
     const donorSync = await isolated("donor sync", "receipt donor re-send", resendDonorSync);
+    const receiptPush = await isolated("receipt push", "receipt re-push", repushUnpushed);
     const receiptMail = await isolated("receipt mail", "receipt mail intake", readMailbox);
     const receiptOutcomes = await isolated("receipt outcome emails", "receipt outcome emails", sweepOutcomeNotices);
     const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes];

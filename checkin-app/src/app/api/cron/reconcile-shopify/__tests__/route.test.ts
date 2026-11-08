@@ -87,7 +87,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('runs every step in order when each one throws, logging each and reporting it as an error', async () => {
-        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, repushUnpushed, resendDonorSync, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
+        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, resendDonorSync, repushUnpushed, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
         for (const step of steps) step.mockRejectedValue(new Error('step down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 

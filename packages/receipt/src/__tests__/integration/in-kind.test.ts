@@ -254,6 +254,8 @@ describeDb("stale donor sends (in-kind findings K2–K4)", () => {
     expect(await db.receiptAuditLog.count({ where: { receiptId: r.id, action: "push_deferred" } })).toBe(1);
 
     ports.fail.donor = false;
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 0 });
+    expect(await resendDonorSync()).toMatchObject({ resent: 1 });
     expect(await repushUnpushed()).toMatchObject({ pushed: 1 });
     expect(await donorSync(r.id)).toBe("synced");
     expect(ports.calls.pushes).toHaveLength(1);
@@ -309,7 +311,7 @@ describeDb("donor sync failures by kind (X13)", () => {
     }
     const sends = ports.calls.donors.length;
     expect(await resendDonorSync()).toEqual({ resent: 0, failed: 0, skipped: 1 });
-    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 0 });
     expect(ports.calls.donors).toHaveLength(sends);
 
     actAs(FINANCE);
@@ -317,6 +319,18 @@ describeDb("donor sync failures by kind (X13)", () => {
     expect(await undelivered()).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true, lastPushFailure: failure().message })]);
     const audited = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: "donor_sync_failed", userId: null } });
     expect(audited.map((a) => a.valueBefore)).toEqual(Array(MAX).fill("bug"));
+  });
+
+  it("a daily run, donor re-send then re-push, tries a pending donor once", async () => {
+    ports.fail.donor = new Error("unexpected");
+    await gift();
+    const sends = ports.calls.donors.length;
+    for (let day = 0; day < MAX; day++) {
+      await resendDonorSync();
+      await repushUnpushed();
+    }
+    expect(ports.calls.donors).toHaveLength(sends + MAX);
+    expect(await resendDonorSync()).toMatchObject({ skipped: 1 });
   });
 
   it("gives up a receipt stored with a blank donor for finance, never sending it to donations", async () => {

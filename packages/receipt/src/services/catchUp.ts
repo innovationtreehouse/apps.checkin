@@ -181,11 +181,14 @@ export async function pushRecords(orgId: string, ids: string[]): Promise<Map<str
   );
 }
 
-/** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
+/**
+ * S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. A
+ * receipt whose donor sync is pending is left to resendDonorSync, so a run tries its donor once.
+ */
 export async function repushUnpushed(): Promise<{ pushed: number; failed: number; skipped: number }> {
   const orgId = await getOrgId();
   const rows = await db.receipt.findMany({
-    where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } },
+    where: { orgId, pushedAt: null, donorSync: { not: "pending" }, details: { state: "receipt_finalized" } },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
   });
