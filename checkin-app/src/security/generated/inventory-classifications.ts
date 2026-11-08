@@ -64,6 +64,8 @@ export const classifications = {
         rejectionReason: 'internal',
         resolvedToGtin13: 'public',
         conversionFactor: 'public',
+        reconcileFirstFailedAt: 'public',
+        reconcileLastError: 'internal',
     },
     InventoryMergeConflict: {
         id: 'public',

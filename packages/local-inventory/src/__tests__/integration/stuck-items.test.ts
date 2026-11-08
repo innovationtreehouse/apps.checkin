@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { inertCatalogEventSource, type OrgEventRecord } from "../../contract";
 import { db } from "../../lib/db/index";
-import { orgEventConsumer } from "../../lib/services/orgEventConsumer";
+import { catchUpOrgEvents, orgEventConsumer } from "../../lib/services/orgEventConsumer";
 import { configureLocalInventory, getServices } from "../../runtime";
 import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
@@ -95,6 +95,42 @@ describeDb("stuckItems", () => {
     await orgEventConsumer.onOrgEvents([malformed(5)]);
 
     expect(await stuckItems()).toEqual([before]);
+  });
+});
+
+describeDb("stuckItems: provisionals", () => {
+  const pending = (provisionalGtin13: string, extra: Record<string, unknown> = {}) =>
+    db.inventoryProvisionalItem.create({ data: { provisionalGtin13, name: "Widget", usageBehavior: "Unknown", orgId: TEST_ORG_ID, status: "pending", ...extra } });
+
+  it("lists a pending provisional whose catalog decision failed to apply, without its error", async () => {
+    const first = new Date("2026-11-02T10:00:00Z");
+    await pending(PROV, { reconcileFirstFailedAt: first, reconcileLastError: "secret detail" });
+    await pending("2000000000022");
+    await pending("2000000000039", { status: "approved", reconcileFirstFailedAt: first });
+
+    const items = await stuckItems();
+    expect(items).toEqual([{ id: PROV, step: "provisional item", href: "/inventory/provisional-items", failedAt: first }]);
+    expect(JSON.stringify(items)).not.toContain("secret detail");
+  });
+
+  it("a failed retry keeps the first failure time; a retry that applies clears it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await orgEventConsumer.onOrgEvents([{ id: 5, orgId: TEST_ORG_ID, eventType: "provisional_approved", payload: JSON.stringify({ version: 1, provisionalGtin13: PROV, realGtin13: REAL, name: "Widget" }), createdAt: new Date() }]);
+    await pending(PROV);
+    const reconcile = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate").mockRejectedValueOnce(new Error("boom")).mockRejectedValueOnce(new Error("again"));
+    await catchUpOrgEvents();
+    const [before] = await stuckItems();
+    expect(before).toMatchObject({ id: PROV, step: "provisional item" });
+
+    await tick();
+    await retryStuckItem(before);
+    expect(await stuckItems()).toEqual([before]);
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ reconcileLastError: "again" });
+
+    reconcile.mockRestore();
+    await retryStuckItem(before);
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "approved", reconcileFirstFailedAt: null, reconcileLastError: null });
+    await expect(retryStuckItem(before)).rejects.toMatchObject({ status: 404 });
   });
 });
 

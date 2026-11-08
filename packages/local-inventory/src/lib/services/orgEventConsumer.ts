@@ -8,6 +8,7 @@ import { db } from "../db";
 import type { OrgEventRecord } from "../../contract";
 import { getCatalogEventSource, getOrgId, getServices } from "../../runtime";
 import { createOrgEventsRepository } from "../repositories/orgEventsRepository";
+import { reconcileRecorded } from "./provisionalItemService";
 
 export type ConsumeResult = "processed" | "duplicate" | "failed" | "skipped";
 
@@ -79,14 +80,14 @@ export async function retryOrgEvent(id: number): Promise<void> {
 }
 
 /**
- * Apply stored resolutions to provisionals still pending: a resolution that arrived before its
- * provisional row is otherwise applied only by the reconcile right after the creating commit.
- * Idempotent, since reconcile skips a provisional that already left pending. Capped.
+ * Apply stored resolutions to provisionals still pending whose reconcile after the creating commit
+ * never ran. One with a recorded failure waits for Retry instead. Idempotent, since reconcile skips
+ * a provisional that already left pending. Capped.
  */
 async function reconcilePendingProvisionals(orgId: string, limit: number): Promise<{ reconciled: number; reconcileFailed: number }> {
   // ponytail: loads every pending GTIN for the org; page it if pending provisionals reach thousands.
   const pending = await db.inventoryProvisionalItem.findMany({
-    where: { orgId, status: "pending" },
+    where: { orgId, status: "pending", reconcileFirstFailedAt: null },
     select: { provisionalGtin13: true },
   });
   if (pending.length === 0) return { reconciled: 0, reconcileFailed: 0 };
@@ -101,11 +102,11 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
   let reconcileFailed = 0;
   for (const { provisionalGtin13 } of resolved) {
     try {
-      await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
-      reconciled++;
+      if (await reconcileRecorded(db, service, orgId, provisionalGtin13)) reconciled++;
+      else reconcileFailed++;
     } catch (err) {
       reconcileFailed++;
-      console.error(`[local-inventory/org-events] reconcile of provisional ${provisionalGtin13} failed`, err);
+      console.error(`[local-inventory/org-events] recording the reconcile of provisional ${provisionalGtin13} failed`, err);
     }
   }
   return { reconciled, reconcileFailed };
@@ -114,8 +115,8 @@ async function reconcilePendingProvisionals(orgId: string, limit: number): Promi
 /**
  * Catch-up sweep over the org's catalog events (see `sweepOrgEvents`): it consumes events not yet
  * in the ledger and leaves failed ones for Retry. Then it reconciles pending provisionals that have
- * a stored resolution; one that fails counts in `reconcileFailed` and is tried again next run. The
- * host's daily reconcile cron step calls it. Capped; counts only.
+ * a stored resolution and no recorded failure; one that fails counts in `reconcileFailed` and waits
+ * for Retry. The host's daily reconcile cron step calls it. Capped; counts only.
  */
 export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResult | "reconciled" | "reconcileFailed" | "unprocessed", number> & { unreadable: boolean; notConnected?: true }> {
   const orgId = await getOrgId();
@@ -141,4 +142,12 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
     unreadable: sweep.unreadable,
     ...(sweep.notConnected && { notConnected: true }),
   };
+}
+
+/** Retry of a provisional whose stored catalog decision failed to apply: applies it once. 404 when this org has no such provisional. */
+export async function retryProvisionalReconcile(provisionalGtin13: string): Promise<void> {
+  const orgId = await getOrgId();
+  const row = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13, status: "pending", reconcileFirstFailedAt: { not: null } }, select: { id: true } });
+  if (!row) throw new ServiceError(404, "No provisional item waiting on the catalog's decision");
+  await reconcileRecorded(db, getServices().provisionalItemService, orgId, provisionalGtin13);
 }

@@ -165,6 +165,12 @@ model InventoryProvisionalItem {
   // canonical factor at merge time to detect a uom_mismatch. Integer.
   /// @sensitivity:public
   conversionFactor      Int       @default(1) @map("conversion_factor")
+  /// When applying the catalog's stored decision first failed; cleared once it applies.
+  /// @sensitivity:public
+  reconcileFirstFailedAt DateTime? @map("reconcile_first_failed_at")
+  /// The last error applying it; shown only on the provisional items page.
+  /// @sensitivity:internal
+  reconcileLastError    String?   @map("reconcile_last_error")
 
   @@map("provisional_items")
 }

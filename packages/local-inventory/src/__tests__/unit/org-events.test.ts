@@ -289,19 +289,23 @@ describeDb("S5 catch-up: stored resolutions", () => {
     expect(await qty(PROV)).toBe(2);
   });
 
-  it("counts a reconcile that throws as failed, and the next run applies it", async () => {
+  it("records a reconcile that throws, and later runs leave it for Retry", async () => {
     await orgEventConsumer.onOrgEvents([approved(5)]);
     await pendingProvisionalWithStock(3);
     const spy = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate").mockRejectedValueOnce(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
       expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 1 });
-      expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending" });
+      const failed = await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } });
+      expect(failed).toMatchObject({ status: "pending", reconcileLastError: "boom" });
+      expect(failed?.reconcileFirstFailedAt).toBeInstanceOf(Date);
 
-      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 1, reconcileFailed: 0 });
-      expect(await qty(REAL)).toBe(3);
+      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 0 });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(await qty(PROV)).toBe(3);
     } finally {
-      spy.mockRestore();
+      vi.restoreAllMocks();
     }
   });
 });

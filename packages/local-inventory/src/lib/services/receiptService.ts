@@ -6,7 +6,7 @@ import type { InventoryRepository } from "../repositories/inventoryRepository";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
 import { formatGtinDisplay, isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
-import { receivingGtin13, type ProvisionalItemService } from "./provisionalItemService";
+import { receivingGtin13, reconcileRecorded, type ProvisionalItemService } from "./provisionalItemService";
 import { ServiceError } from "@checkin/component-kit";
 
 export type ApplyLineItem = {
@@ -177,14 +177,13 @@ export function createReceiptService({
   /**
    * Reconcile-on-ingest, run after commit since it issues its own transactions: if a catalog
    * resolution for a new provisional GTIN already arrived (event-before-row), apply it now.
-   * The commit stands either way, so a failure is logged, not thrown; the daily org-event
-   * catch-up retries pending provisionals that have a stored resolution.
+   * The commit stands either way, so a failure is recorded on the provisional, not thrown.
    */
   async function reconcileAfterCommit(orgId: string, gtin13: string): Promise<void> {
     try {
-      await provisionalItemService.reconcileProvisionalOnCreate(orgId, gtin13);
+      await reconcileRecorded(db, provisionalItemService, orgId, gtin13);
     } catch (err) {
-      console.error(`[local-inventory/receipt] reconcile of provisional ${gtin13} failed; catch-up retries it`, err);
+      console.error(`[local-inventory/receipt] recording the reconcile of provisional ${gtin13} failed`, err);
     }
   }
 

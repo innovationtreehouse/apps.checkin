@@ -199,6 +199,7 @@ describeDb("apply idempotency", () => {
     expect(again).toEqual({ ...first, replayed: true });
     expect(await qty(TEST_ORG_ID, PROV)).toBe(2);
     expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ status: "applied", failureReason: null });
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ reconcileLastError: "lock timeout" });
     logged.mockRestore();
   });
 
