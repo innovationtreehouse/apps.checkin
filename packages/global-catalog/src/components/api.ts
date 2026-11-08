@@ -1,5 +1,5 @@
 "use client";
-import { createClient, lastPage, notifyNavCounts, useViewer } from "@checkin/component-ui";
+import { createClient, notifyNavCounts, useViewer } from "@checkin/component-ui";
 
 export { lastPage } from "@checkin/component-ui";
 
@@ -19,11 +19,6 @@ export async function api<T>(path: string, options: Parameters<typeof client.api
   const answer = await client.api<T>(path, options);
   if (options.method && options.method !== "GET") notifyNavCounts();
   return answer;
-}
-
-/** The page to show: archiving the only row on the last page shrinks the list under the person. */
-export function clampPage(page: number, total: number, pageSize: number): number {
-  return Math.min(page, lastPage(total, pageSize));
 }
 
 /** Whether the viewer may curate the catalog (write). Mirrors the routes' INVENTORY_MANAGER gate. */

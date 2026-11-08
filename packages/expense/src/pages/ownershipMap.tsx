@@ -3,7 +3,7 @@ import { useState } from "react";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { Button, Group, Select, Table, Text, Title } from "@mantine/core";
 import { paged, send, useLoad, useRoles, type Bucket } from "../components/api";
-import { CatalogPicker, LoadError, Pager } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 
 interface PartOwner {
   id: number;
@@ -19,7 +19,7 @@ interface CatalogItem {
 /** /expense/ownership-map — which budget-owner bucket owns each part; FINANCE edits it. */
 export default function OwnershipMapPage() {
   const { isFinance } = useRoles();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const map = useLoad<{ PartOwnerMap: PartOwner[]; Item?: CatalogItem[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page), { keepPrevious: true });
   const [gtin13, setGtin13] = useState<string | null>(null);
   const [owner, setOwner] = useState<string | null>(null);

@@ -7,7 +7,8 @@ let mockSearch = "";
 let mockUser: Record<string, unknown> = { id: 4 };
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  usePathname: () => "/programs-i-lead/expense-approvals",
   useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: mockUser }, status: "authenticated" }) }));

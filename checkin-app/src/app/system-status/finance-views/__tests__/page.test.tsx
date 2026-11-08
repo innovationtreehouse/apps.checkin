@@ -1,5 +1,5 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
+jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock({ followUrl: true }));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 import { fireEvent, screen, waitFor } from "@testing-library/react";

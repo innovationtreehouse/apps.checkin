@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, clampPage, lastPage } from "../../components/api";
+import { api, lastPage } from "../../components/api";
 
 function stubFetch(status: number, body: string) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status })));
@@ -26,15 +26,6 @@ describe("api()", () => {
   it("rejects a non-JSON success body instead of returning it", async () => {
     stubFetch(200, "<html>sign in</html>");
     await expect(api("/items")).rejects.toThrow("HTTP 200");
-  });
-});
-
-describe("clampPage()", () => {
-  it("moves back to the last page when the list shrinks, and never below 1", () => {
-    expect(clampPage(3, 100, 50)).toBe(2);
-    expect(clampPage(2, 100, 50)).toBe(2);
-    expect(clampPage(1, 100, 50)).toBe(1);
-    expect(clampPage(2, 0, 50)).toBe(1);
   });
 });
 

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button, Group, Modal, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
-import { LoadError, Pager } from "@checkin/component-ui";
+import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface RuleRow {
@@ -55,7 +55,7 @@ function earlierNames(r: RuleRow): string {
  */
 export default function AccountMapPage() {
   const canWrite = useCanWrite();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const rules = useLoad<RuleRow[]>(paged("/account-map", page), { keepPrevious: true });
   const accounts = useLoad<AccountOption[]>("/api/books-map/quickbooks-accounts");
   const [editing, setEditing] = useState<{ id: number | null; form: Form } | null>(null);

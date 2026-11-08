@@ -195,6 +195,28 @@ missed a row stored at a different time of day.
 
 ---
 
+## A paged list keeps its place in the URL
+
+- **A paged list keeps its page in the URL query (`page`), with the filters,
+  view tabs and sort that decide its rows.** A reload, the back button and a
+  shared link land on the same rows, and each page is its own page view in the
+  finance view log.
+- **Typed search text stays out of the URL.** It lives in the screen's state,
+  and a change starts again on page 1. Selects, date pickers and toggles go in
+  the URL.
+- **Paging pushes a history entry; a filter, view or sort change replaces the
+  entry and drops `page`.** Back steps through pages, not filter states.
+- **A bad or out-of-range `page` never shows an error.** A missing,
+  non-numeric, zero or negative `page` is page 1. A list that knows its total
+  shows its last page for a page past the end; a list without one shows the
+  empty page with its pager.
+- **`limit` stays out of the URL** while no screen lets anyone pick a page size.
+- **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
+  `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
+  for the page or a filter.
+
+---
+
 ## A shared helper has one home
 
 - **Before writing a small helper, look in the package that owns its kind, and

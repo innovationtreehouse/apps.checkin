@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useViewer } from "@checkin/component-ui";
+import { useViewer, useUrlPage } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, errorMessage, isRefusal, loadError, paged, useLoad, when } from "../components/api";
@@ -56,7 +56,7 @@ function useCatalogSearch(q: string): CatalogItem[] {
 /** /donations/in-kind-gifts — goods given without a receipt: record each item and quantity, then load it into stock. Finance sets the value when accepting. */
 export default function ManualInKindPage() {
   const canRecord = useCanRecord();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const rows = useLoad<DonationRow[]>(paged("/in-kind/manual", page), { keepPrevious: true });
 
   const [firstName, setFirstName] = useState("");

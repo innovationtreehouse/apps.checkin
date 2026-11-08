@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Code, CloseButton, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatGtinDisplay } from "../lib/gtin";
 import { errorMessage, lastPage, PAGE_SIZE, useCanSeeReceiving, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, useSetUrlFilters, useUrlPage } from "@checkin/component-ui";
 
 interface LogRow {
   id: number;
@@ -91,16 +91,13 @@ export function applySource(row: ApplyRow): { kind: "receipt" | "donation"; id: 
 }
 
 function useLogQuery() {
-  const router = useRouter();
   const sp = useSearchParams();
+  const setFilters = useSetUrlFilters();
   const view: View = sp.get("view") === "applies" ? "applies" : "parts";
   const status = sp.get("status");
   const statusFilter: StatusFilter = status === "failed" || status === "applied" ? status : "";
   const receiptId = sp.get("receiptId") ?? "";
-  const go = (next: Record<string, string>) => {
-    const q = new URLSearchParams(Object.entries(next).filter(([, v]) => v !== ""));
-    router.replace(`/inventory/inventory-log${q.size ? `?${q}` : ""}`, { scroll: false });
-  };
+  const go = (next: { view?: string; status?: string; receiptId?: string }) => setFilters({ view: null, status: null, receiptId: null, ...next });
   return { view, statusFilter, receiptId, go };
 }
 
@@ -138,10 +135,10 @@ function LogViews({ receivedReceiptIds }: { receivedReceiptIds?: ReceivedReceipt
 }
 
 function PartsView({ receiptId, onReceipt }: { receiptId: string; onReceipt: (id: string) => void }) {
-  const [page, setPage] = useState(1);
   const filter = receiptId ? new URLSearchParams({ receiptId }).toString() : "";
-  const rows = useLoad<LogRow[]>(`/inventory-log?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`, { keepPrevious: true });
   const count = useLoad<{ total: number }>(`/inventory-log/count${filter && `?${filter}`}`, { keepPrevious: true });
+  const [page, setPage] = useUrlPage(count.data ? lastPage(count.data.total) : null);
+  const rows = useLoad<LogRow[]>(`/inventory-log?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`, { keepPrevious: true });
   return (
     <>
       {receiptId && (
@@ -210,12 +207,12 @@ function usePartMappingIds(rows: ApplyRow[] | null, resolve: ReceivedReceiptIds 
 function AppliesView({ status, onStatus, onReceipt, receivedReceiptIds }: {
   status: StatusFilter; onStatus: (s: StatusFilter) => void; onReceipt: (id: string) => void; receivedReceiptIds?: ReceivedReceiptIds;
 }) {
-  const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<number | null>(null);
   const filter = status && `status=${status}`;
+  const count = useLoad<{ total: number }>(`/received-inventory-deltas/count${filter && `?${filter}`}`, { keepPrevious: true });
+  const [page, setPage] = useUrlPage(count.data ? lastPage(count.data.total) : null);
   const rows = useLoad<ApplyRow[]>(`/received-inventory-deltas?page=${page}&limit=${PAGE_SIZE}${filter && `&${filter}`}`, { keepPrevious: true });
   const partMappingIds = usePartMappingIds(rows.data, receivedReceiptIds);
-  const count = useLoad<{ total: number }>(`/received-inventory-deltas/count${filter && `?${filter}`}`, { keepPrevious: true });
   return (
     <>
       <SegmentedControl
