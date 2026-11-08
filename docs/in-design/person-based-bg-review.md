@@ -310,6 +310,12 @@ reject, reset, change to approve), after a merge, and after a household move:
   `blockedResetStatus`. It does not clear until the person clears again, because the
   person is still disputed until then.
 
+A **denied** household's application is never moved. `settleHouseholdBg` leaves it
+held whatever the person's review does, because neither a reset nor a change to
+approve reopens a denied household (`docs/rules/membership.md`, Application and
+review). The Board's release (§3.4) is refused for a denied household for the same
+reason.
+
 The application keeps `BLOCKED` as its status, so the Board queues, the payment
 refund notice (`board.paidReject`) and every "a household with a blocked
 application cannot…" rule keep working unchanged. The difference is that a person's
@@ -404,6 +410,14 @@ Every reader of `kind: "PERSON_BG"` that dereferences the subject must handle nu
 (the review route, `applicantHousehold`, the merge's duplicate archive, the
 attestation audit page).
 
+For a review with no subject, the household the own-household bar checks is
+`requestedForHouseholdId`. Today `applicantHousehold` returns null when a row has
+neither a subject nor an `orgMembershipId`, and the queue filter then applies no
+exclusion (`review.ts:151-161`, `:223-224`). An unnamed review must never reach
+that branch: a reviewer in the requested household is refused, as they are today
+on a household application. Once the subject is named, the bar checks the
+subject's household, as on every `PERSON_BG`.
+
 The alternative, reusing `orgMembershipId` on `PERSON_BG` rows, is rejected. Code
 in several places (`mergeBgAdvance.ts:17-21`, `payment.ts:71`,
 `finance/matchAudit.ts:258`) relies on `orgMembershipId` excluding `PERSON_BG`, and
@@ -435,7 +449,7 @@ applications and is kept for history.
 - `review-override`: resets a check review. On a review opened by consent, the
   reset also clears its subject. Household rows are no longer reset.
 - `bg-consent` and the Board's external mark: consent opens or reuses the
-  household's unnamed review. It names no person (PBR-7 withdrawn).
+  household's unnamed review. It names no person (PBR-7).
 - Merge analyze: `mergeBgNotice` is replaced by the dispute refusal preview (§6).
 - New: the Board's release of a household from a departed person's rejection (§3.4).
   It is a new mutating route; whether it goes through the registry is decided with
