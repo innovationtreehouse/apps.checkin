@@ -55,6 +55,7 @@ const ORACLES = [
     'mail-alias-routes.test.ts',
     'member-tier.test.ts',
     'payment-plans-strip.test.ts',
+    'program-participant-payment-method-strip.test.ts',
     'program-participant-pending-since-strip.test.ts',
     'program-scope-withdrawn.test.ts',
     'receipt-flow-status-routes.test.ts',

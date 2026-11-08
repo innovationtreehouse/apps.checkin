@@ -1236,20 +1236,18 @@ model ProgramParticipant {
   personId             Int
   /// @sensitivity:public
   status               ProgramParticipantStatus @default(PENDING)
-  /// @sensitivity:personal
+  /// How a family pays is finance's and the Board's: a program lead sees whether a
+  /// place is paid, never how. Program lead and core-volunteer views hold
+  /// their_program_participants:personal, so this field must sit above it.
+  /// @sensitivity:internal
   isPaymentPlanRequested Boolean                  @default(false)
   /// Which of the two asks isPaymentPlanRequested stands for. Null means the
   /// request predates this column; never backfilled, because what a family asked
-  /// for is not a value to infer on their behalf.
-  ///
-  /// 'internal', deliberately a tier ABOVE the flag beside it: programLeadMentor
-  /// holds their_program_participants:personal, so a 'personal' field here would
-  /// tell a program volunteer that this family asked for a fee waiver. That a
-  /// request exists is already visible to them; which door it knocked on is
-  /// board/finance-confidential, same as the request route's own gate.
+  /// for is not a value to infer on their behalf. Same tier as the flag.
   /// @sensitivity:internal
   scholarshipRequestKind ScholarshipRequestKind?
-  /// Same tier as paymentPlanDeniedAt — workflow timestamps lead mentors need.
+  /// A workflow timestamp lead mentors need. It says only that a place is unpaid,
+  /// not how the family will pay: a family paying by check is pending too.
   /// @sensitivity:personal
   pendingSince         DateTime?                @default(now())
   /// Point-in-time snapshot of the household's org-membership status the moment a
@@ -1271,8 +1269,9 @@ model ProgramParticipant {
   /// scholarship/payment-plan request (the seat stays held — see
   /// inventoryHeldAt — so the applicant may still pay normally). Cleared on
   /// re-application. Drives the grace-period expiry sweep alongside
-  /// BoardSettings.scholarshipDenialGraceDays.
-  /// @sensitivity:personal
+  /// BoardSettings.scholarshipDenialGraceDays. A refusal says a request existed,
+  /// so it carries the request's tier.
+  /// @sensitivity:internal
   paymentPlanDeniedAt  DateTime?
   /// Shopify order id (numeric, from the orders/paid webhook) this enrollment was
   /// activated by. Stored so the reconciler can join a later refund/chargeback/cancel
