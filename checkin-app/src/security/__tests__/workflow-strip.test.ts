@@ -159,9 +159,9 @@ describe('workflow-mapping admission', () => {
 
     beforeEach(() => mockSession.mockReset());
 
-    it('registers the 4 reads, 6 manager writes and close-out', () => {
+    it('registers the 4 reads, 7 manager writes and close-out', () => {
         expect(reads).toHaveLength(4);
-        expect(writes).toHaveLength(6);
+        expect(writes).toHaveLength(7);
         expect(getRoute(CLOSE_OUT)).toBeDefined();
     });
 
@@ -176,6 +176,12 @@ describe('workflow-mapping admission', () => {
     it.each(writes)('%s admits INVENTORY_MANAGER only', async (endpoint) => {
         expect(await call(endpoint, manager)).toEqual({ status: 200, ran: true });
         for (const user of [finance, board, sysadmin]) expect(await call(endpoint, user)).toEqual({ status: 403, ran: false });
+    });
+
+    it('run-matching gives INVENTORY_MANAGER the retry-apply view', () => {
+        const route = (verb: string) => getRoute(`POST /api/workflow-mapping/receipts/[id]/${verb}`)!;
+        expect(route('run-matching').returns).toEqual(['ReceivedReceipt']);
+        expect(route('run-matching').orderedView).toEqual(route('retry-apply').orderedView);
     });
 
     it(`${CLOSE_OUT} admits INVENTORY_MANAGER and BOARD only`, async () => {

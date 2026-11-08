@@ -39,6 +39,7 @@ defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFL
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/proceed', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/apply', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/retry-apply', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
+defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/run-matching', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/close-out', authorize: WORKFLOW_CLOSE_OUT, envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_CLOSE_OUT_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/associate', authorize: 'inventory-manager', envelope: null, orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/propose', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceiptLineStatus'], orderedView: WORKFLOW_MANAGER_VIEW });
