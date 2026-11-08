@@ -34,8 +34,12 @@ async function family(opts: { leadCheck?: Date | null; otherCheck?: Date | null;
     return { householdId: household.id, leadId: lead.id, otherId: other.id, orgMembershipId: membership.id };
 }
 
+/** Steps before the agreement is signed; every later step has its signature, as the external advance requires. */
+const UNSIGNED_STEPS: readonly OrgMembershipProcessStatus[] = ['INTAKE', 'PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION'];
+
 async function application(orgMembershipId: number, status: OrgMembershipProcessStatus, extra: { paidAt?: Date; kind?: 'INITIAL' | 'RENEWAL' } = {}) {
-    const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId, kind: extra.kind ?? 'INITIAL', status, bgConsentAt: new Date(), paidAt: extra.paidAt ?? null } });
+    const contractSignedAt = UNSIGNED_STEPS.includes(status) ? null : new Date();
+    const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId, kind: extra.kind ?? 'INITIAL', status, contractSignedAt, bgConsentAt: new Date(), paidAt: extra.paidAt ?? null } });
     return p.id;
 }
 
