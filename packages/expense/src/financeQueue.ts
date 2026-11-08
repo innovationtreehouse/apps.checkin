@@ -66,6 +66,8 @@ export interface FinanceQueueRow {
   currency: string;
   reasons: FinanceQueueReason[];
   waitingSince: string;
+  /** A failed intake's stored error: why the incoming expense was refused or failed to build. */
+  failureReason?: string | null;
 }
 
 export interface FinanceQueueTabCount {
