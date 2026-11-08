@@ -5,7 +5,7 @@ import { EDITABLE_RECEIPT_WHERE, type ReceivedReceipt } from "../db/schema";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrgId, workflowRuntime } from "../runtime";
+import { getOrgId, workflowRuntime, type Actor } from "../runtime";
 import { matchLines, type Matching } from "./receiptIntakeService";
 
 /** Days the daily re-run keeps trying a receipt whose matching couldn't run, before it gives up. */
@@ -44,9 +44,9 @@ async function matchUndecided(row: PendingRow): Promise<{ matching: Matching; li
  * the line is unrecognized and the receipt waits for mapping, so a person's decision always
  * stands. When matching ran the flag clears and the receipt does what arrival would have: every
  * line decided sends it. Past MATCHING_RETRY_DAYS the flag clears, the lines stay for hand
- * mapping, and the failure goes to the on-failure port once.
+ * mapping, and the failure goes to the on-failure port once. A null actor is the daily run.
  */
-async function rerunMatching(row: PendingRow): Promise<Outcome> {
+export async function rerunMatching(row: PendingRow, actor: Actor | null = null): Promise<Outcome> {
   const { matching, lineIds } = await matchUndecided(row);
   const since = row.matchingPendingSince;
 
@@ -62,7 +62,8 @@ async function rerunMatching(row: PendingRow): Promise<Outcome> {
     if (count !== 1) return "deferred";
     await insertAuditEvent(db, {
       orgId: row.orgId,
-      actorUserId: null,
+      actorUserId: actor?.id ?? null,
+      actorUsername: actor?.name ?? null,
       eventType: "matching_gave_up",
       receivedReceiptId: row.id,
       details: JSON.stringify({ retryDays: MATCHING_RETRY_DAYS, kind: kindOf(matching.err) }),
@@ -88,7 +89,8 @@ async function rerunMatching(row: PendingRow): Promise<Outcome> {
     matched++;
     await insertAuditEvent(db, {
       orgId: row.orgId,
-      actorUserId: null,
+      actorUserId: actor?.id ?? null,
+      actorUsername: actor?.name ?? null,
       eventType: "line_matched",
       receivedReceiptId: row.id,
       lineStatusId,
@@ -99,12 +101,13 @@ async function rerunMatching(row: PendingRow): Promise<Outcome> {
   await db.receivedReceipt.updateMany({ where: { id: row.id }, data: { matchingPendingSince: null } });
   await insertAuditEvent(db, {
     orgId: row.orgId,
-    actorUserId: null,
+    actorUserId: actor?.id ?? null,
+    actorUsername: actor?.name ?? null,
     eventType: "matching_ran",
     receivedReceiptId: row.id,
     details: JSON.stringify({ matched }),
   });
-  await tryAutoProceedApply(row.id, row, null);
+  await tryAutoProceedApply(row.id, row, actor);
   return "ran";
 }
 

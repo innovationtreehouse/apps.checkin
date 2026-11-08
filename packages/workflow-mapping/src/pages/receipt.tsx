@@ -149,6 +149,28 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const items = new Map(parsed.lineItems.map((li) => [li.receiptLineItemId, li]));
   const partLabels = withProvisionalNames(partLookup);
 
+  /** Runs matching now, then says how many of the lines undecided before it matched. */
+  async function runMatching() {
+    const undecided = new Set(lines.filter((ls) => ls.recognitionStatus === "unrecognized").map((ls) => ls.id));
+    setBusy(true);
+    try {
+      await api(`${base}/run-matching`, { method: "POST" });
+      const after = await api<Detail>(base);
+      if (after.ReceivedReceipt.matchingPendingSince) {
+        notifications.show({ message: "Catalog still unavailable. Matching retries daily.", color: "gray" });
+      } else {
+        const matched = after.ReceivedReceiptLineStatus.filter((ls) => undecided.has(ls.id) && ls.recognitionStatus === "recognized").length;
+        notifications.show({ message: `${matched} ${matched === 1 ? "line" : "lines"} matched`, color: "green" });
+      }
+    } catch (err) {
+      notifications.show({ title: "Couldn't run matching", message: errorMessage(err), color: "red", autoClose: false });
+    } finally {
+      setBusy(false);
+      detail.reload();
+      notifyNavCounts();
+    }
+  }
+
   return (
     <>
       {editable && openLineId !== null ? (
@@ -163,6 +185,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         </Stack>
         <Group gap="xs">
           {receipt.matchingPendingSince && <Badge size="lg" variant="light" color="yellow">Matching pending</Badge>}
+          {receipt.matchingPendingSince && canManage && (
+            <Button size="xs" variant="light" loading={busy} onClick={runMatching}>Run matching now</Button>
+          )}
           <Badge size="lg" variant="light" color={stateColor(receipt.state, parsed.openBackorders)}>{stateLabel(receipt.state, parsed.openBackorders)}</Badge>
         </Group>
       </Group>

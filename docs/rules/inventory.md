@@ -147,7 +147,8 @@ How the pieces are built is described in
   is retried once a day while the receipt waits for review, for up to five
   days; it fills only lines nobody has decided, and a receipt whose every line
   is then decided is sent to apply, as on arrival. After five days the lines
-  are left for mapping by hand and finance is alerted once.
+  are left for mapping by hand and finance is alerted once. An inventory
+  manager can also run matching at once from the receipt.
   `[Decision — owner]`
 
 - A receipt's lines can be edited only while it waits for review. Once it is
