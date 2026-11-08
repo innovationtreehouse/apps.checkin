@@ -44,21 +44,29 @@ or the gift line, in the record's own flow. Both kinds of line reach one
 threshold test, one kind of review and one register by the same rules. The
 register holds a link back to the line that made each asset, never a copy of
 the line. Every capital write, on either side, leaves an audit row naming who
-did it, and reversing a decision reverses everything it made.
+did it. A decision is taken once, when the record is final, and the app never
+undoes it.
 
 ## Executive summary
 
-- **For finance.** A gift's capital decision is taken on the gift, in the gift
-  queue, where "waiting on capital review" already shows. The separate Donated
-  Equipment page goes. A purchase's capital review does not move.
+- **For finance.** A gift's capital decision is taken on the gift, after it is
+  accepted, in the same two steps as a purchase: designate, then period and
+  owner. Both run one implementation of the review. The separate Donated
+  Equipment page goes. A purchase's capital review keeps its place but cannot be
+  sent back. The decision never changes; a mistake is cleaned up by hand.
 - **For the register.** It gains one link per asset to the line that made it,
-  the expense line or the gift line, and loses the copied list. An asset that is
-  undone is retired, not deleted, and its number is never issued again.
+  the expense line or the gift line, and loses the copied list. Capital is
+  decided only once a record can no longer be withdrawn or sent back, so the app
+  never undoes an asset and a number is never freed.
 - **For booking.** A gift books its asset lines from the decision stored on its
   own lines. It no longer asks the expense side at booking time.
 - **Same rules both ways.** One threshold test, one cost basis and one
-  account-type rule serve both paths. Which test, which cost and which account
-  rule are owner questions (CAD-1 to CAD-3, CAD-11); this design does not pick.
+  account-type rule serve both paths, through the same code. A gift meets the
+  thresholds as a purchase does, finance decides every line of a record over
+  one, and an asset's cost is what its line books at: its price with its share
+  of tax, shipping and discount (CAD-1 to CAD-3, CAD-15, settled). A capital
+  line always books to a fixed-asset account, bought or given (CAD-11,
+  settled).
 - **Only forks are designed away.** Of the copies between libraries on these
   paths, the capital-line copy is a fork: the expense line's review steps
   rerun on it through other code. The donor, the gift's money and a purchase's
@@ -184,7 +192,7 @@ different code is a **fork**, and is the thing to design away.
 
 | Copy | From → to | Verdict | Evidence |
 |---|---|---|---|
-| A gift's donor | receipt → bulk-donation | **Hand-off** | The decision, conflict checks, warnings and donor letter run only on the gift (`inKindAcceptService.ts`); the receipt only captures and sends. Nothing comes back. Recoverable: the sequence number drops stale sends and the catch-up step resends. Audited on arrival. Gap: B13. |
+| A gift's donor | receipt → bulk-donation | **Hand-off** | The decision, conflict checks, warnings and donor letter run only on the gift (`inKindAcceptService.ts`); the receipt only captures and sends. Nothing comes back. Recoverable: the sequence number drops stale sends and the catch-up step resends. Audited on arrival. |
 | A gift's money and lines | finalized receipt → bulk-donation | **Hand-off** | `ingestInKind`, `bulk-donation/src/inKind.ts:20`. The receipt is read-only once finalized; the gift owns the value from then on. A resend with different values is flagged, never merged (`inKindService.ts:40-80`). Audited on arrival (`IN_KIND_MONEY_RECEIVED`). Only the decision's outcome is read back, for the receipt pages (`giftOutcomes`, `inKind.ts:81`): a read, not a copy. |
 | A purchase's lines | finalized receipt → expense | **Hand-off** | The expense is created once, keyed by the receipt's id (`expense/src/services/intakeService.ts:168-190`), and everything after runs on the expense. Its audit and recovery are outside this design and not checked here. |
 | A gift's lines for capital review (`DonatedCapitalLine`) | bulk-donation → expense | **Fork** | The steps after the copy are steps the expense line already has, run through other code; and the result flows back to the gift twice (whether it still waits, and which lines are assets). Table below. |
@@ -206,7 +214,7 @@ different code is a **fork**, and is the thing to design away.
 | Account at booking | `matchingRules`, `account-rules.ts:17` | `donatedPartAccount`, `account-rules.ts:27` | B6 |
 
 Option A designs away this fork and the second minting loop, and only these.
-The hand-offs keep their shape; their gaps (B13) are follow-ups, not part of
+The hand-offs keep their shape and are not part of
 this design.
 
 ## 2. Bugs found
@@ -215,7 +223,7 @@ Each with where it shows. Line numbers are at `main` 7734c351e.
 
 | # | What goes wrong | Evidence |
 |---|---|---|
-| B1 | **A withdrawn gift keeps its capital lines and assets.** Withdrawal and its settlement touch only the gift. The copied lines are not filtered by the gift's state, so an unreviewed copy stays on the Donated Equipment page and can still be reviewed and minted; assets already minted stay on the register. A purchase undone clears its assets. | `withdraw` and `settle`, `bulk-donation/src/services/inKindService.ts:130,155`; `listDonatedCapital` and `giftsAwaitingCapitalReview`, `donatedCapitalService.ts:54,74` filter only `isCapital: null`; contrast `signoff-facts.ts:296-316` |
+| B1 | **A withdrawn gift keeps its capital lines and assets.** Unreachable in practice, since nothing reaches the withdrawal-after-money state (B13); listed because the code models it. Withdrawal and its settlement touch only the gift. The copied lines are not filtered by the gift's state, so an unreviewed copy stays on the Donated Equipment page and can still be reviewed and minted; assets already minted stay on the register. A purchase undone clears its assets. | `withdraw` and `settle`, `bulk-donation/src/services/inKindService.ts:130,155`; `listDonatedCapital` and `giftsAwaitingCapitalReview`, `donatedCapitalService.ts:54,74` filter only `isCapital: null`; contrast `signoff-facts.ts:296-316` |
 | B2 | **A gift's capital review can never be redone.** A second review is refused and nothing clears the first. A purchase goes back and is reviewed again. A wrong "not capital" or wrong period on a gift is permanent in the app. | `reviewDonatedLine`, `donatedCapitalService.ts:100-110` |
 | B3 | **A bucket change leaves the copy on the old bucket.** Finance may re-accept a gift into another bucket until it starts booking. Once the copy was sent, re-accepting sends nothing, so the copy keeps the old bucket, and the review screen pre-fills the owner from it. | `decide`, `inKindAcceptService.ts:495-503`; `pages/donatedCapital.tsx:35` |
 | B4 | **The thresholds are compared differently.** A purchase goes to review when the receipt total is over the total threshold or any line's unit price is over the unit threshold, and then finance designates every line. A gift's line goes to review only when **that line's own cost** is over the total threshold or its first unit's share is over the unit threshold; lines under it are never reviewed. Example below. | `financial-flow.ts:107`; `donatedCapitalService.ts:46-48` |
@@ -227,7 +235,7 @@ Each with where it shows. Line numbers are at `main` 7734c351e.
 | B10 | **The gift does not know what it booked.** Which lines booked as assets is read live from the expense database at post time and never stored on the gift. A later change on the expense side (B2's fix, a correction by hand) changes the answer for a gift already booked, and a failed read fails the queue, the page and the drain together. | `in-kind-poster.ts:269`; `in-kind-resolve.ts:247`; `listQueue`, `inKindAcceptService.ts:317-325` |
 | B11 | **The review is not the same review.** A purchase takes two steps, designate then period, and finance may mark any line capital. A gift takes one step, capital, period and owner together, and only over-threshold lines are offered. The gift's reason to act shows on the gift; the action is on a separate expense page. | `capitalService.ts:63,118`; `DonatedCapitalReviewSchema`, `donatedCapitalService.ts:77`; `expense/src/nav.ts:92` |
 | B12 | **Five capital writes leave no audit row of their own.** The copy, the sent stamp, each purchased asset minted, each donated asset minted (the review row stores the request, not the numbers), and the gift's knowledge of which lines are assets. Only clearing a purchase names the asset numbers. | as above; `capitalService.ts:161`, `donatedCapitalService.ts:117,133-138` |
-| B13 | **The receipt keeps the donor after the gift drops it.** Settling a withdrawal clears the donor on the gift, as the revenue rule says, but the receipt's own copy of the donor stays, and finance's receipt view still shows it. A hand-off gap, not a fork. A successful send also leaves no row on the sending side: only the arrival (`IN_KIND_DONOR_RECORDED`) is recorded. | `settle`, `inKindService.ts:155-170`; `Receipt.donor*` untouched after send, `donor-sync.ts:46-50`; finance view keeps donor fields, `receiptService.ts:63-70` |
+| B13 | **Gifts carry a withdrawal-after-money state nothing can reach.** A gift is flagged withdrawn after its money, finance settles it, and settling clears the gift's donor. But the receipt holds its money back until the donor sync has landed, so donations already has the final in-kind state and refuses any older call in flight; and the in-kind mark can change only before the receipt is finalized, which is when the money is sent. No path reaches the state, and so a gift never drops its donor. The flag, the settle action, its queue reason and the rule behind them are dead weight, and are to be removed (CAD-8). | `pushReceipt`, `receipt/src/lib/receipt-flow.ts:134-147`; `setInKind`, `receiptService.ts:1340-1344`; `withdraw` and `settle`, `inKindService.ts:130,155`; `waitingOn` `withdrawal`, `inKindAcceptService.ts:295` |
 
 **B4 example.** Total threshold $2,500, unit threshold $1,000.
 
@@ -265,63 +273,117 @@ Three ways to make capital a decision on the original line, then the
 recommendation. Each says how the shared threshold, review, register and
 depreciation are reached.
 
-### Option A — the decision on the line, the register as a service (recommended)
+### Option A — decide once, on the line, when the record is final (recommended)
 
-Each flow records the capital decision on its own line, in its own database,
-in the same transaction as its audit row. The register stays in the expense
-library and is reached through one small service that both flows call, keyed by
-a link to the line, never a copy of it.
+**The principle.** Capital is decided once, after the record can no longer be
+withdrawn or sent back, and never changes afterwards. Nothing the app does then
+undoes it; a mistake is cleaned up by hand (CAD-6). That removes every undo
+path, so there is nothing to retire, nothing to reissue and no capital state
+machine of its own. Capital is a few fields on the line, and the record's own
+flow is the only machine.
 
-**On the gift line** (both gift tables), new columns:
+**Where each record becomes final.**
 
-| Column | Meaning |
+- **A gift: once accepted.** The accept is taken once and never reverses
+  (`decide`, `inKindAcceptService.ts:463`). A withdrawal after the money
+  arrived is modelled, but nothing reaches it (B13): the in-kind mark changes
+  only while the receipt is editable (`receiptService.ts:1340-1344`), the money
+  is sent only once the receipt is finalized, a final state
+  (`receipt/src/workflows/receipt.machine.ts:105`), and only after the donor
+  sync has landed, so an older withdrawal still in flight is refused
+  (`pushReceipt`, `receipt-flow.ts:134-147`; `claimSyncMark`,
+  `inKindService.ts:89`).
+- **An expense: once its owner approvals are terminal and its reimbursee is
+  known.** After owner approval, the only step that sends an expense back is
+  finance naming a reimbursee who was unknown (`signoffService.ts:224-243`,
+  through `clearFrom`, `signoff-facts.ts:341`). The rules already stop
+  approvals until the reimbursee is known, so this should not reach a capital
+  step; the design makes it impossible: the capital step does not open while
+  the reimbursee is unknown, and the `APPROVAL_REOPENED` edges out of
+  `capital_review` and `set_depreciation_cycle` go
+  (`expense/src/workflows/expense.machine.ts:56-72`). The capital part of
+  `clearStepsAfterOwnerApproval` then has nothing to clear, and goes, with the
+  deletion behind B7.
+
+**On the line.** Both kinds of line carry the same fields; the expense line
+already has the first three:
+
+| Field | Meaning |
 |---|---|
-| `capitalReview` | `not_needed` (under the thresholds), `pending`, `capital`, `not_capital` |
-| `depreciationYears` | set when capital |
-| `capitalBucketId` | the owning bucket, set when capital |
-| `capitalDecidedByUserId`, `capitalDecidedAt` | who decided and when |
-| `registeredAt` | when the register confirmed this line's assets |
+| `isCapital` | null until finance designates the line; then true or false |
+| `depreciationYears` | set in the second step, capital lines only |
+| `capitalBucketId` | the owner, set in the second step (the expense line's `capitalOwnerId`) |
+| `capitalDecidedByUserId`, `capitalDecidedAt` | who designated and when |
 
-**On the expense line**, nothing new: it already holds `isCapital`,
-`capitalOwnerId` and `depreciationYears`.
+What a record waits on is read from its lines, the same way for both: it waits
+on designation while a line it offered has no `isCapital`, and on the period
+while a capital line has no `depreciationYears`. The expense keeps its existing
+`capital_review` and `set_depreciation_cycle` states for that; a gift's
+existing "waiting on capital" says the same. Whether the record needed review
+at all is the threshold test, run once when it becomes final and stored on the
+record (`Expense` takes it as its state; the gift gains `capitalReviewNeeded`).
 
-**Thresholds.** The expense library exports one pure test, used by both flows,
-with the settings read through the existing settings port:
+**Thresholds.** One pure test in the expense library, used by both flows, with
+the settings read through the existing settings port:
 
 ```ts
-// expense, exported
 capitalReviewNeeded(
-  record: { totalCents: number; lines: { id: number; unitCostCents: number }[] },
+  record: { totalCents: number; lines: { unitCostCents: number }[] },
   settings: CapitalThresholds,
-): { needed: boolean; lineIds: number[] }   // which lines finance must decide
+): boolean
 ```
 
-Whether `lineIds` is every line of a record over the threshold or only the
-lines over it is CAD-3. Whether `unitCostCents` carries its share of tax and
-shipping is CAD-2. The test is the same for both callers either way.
+The record's total against the total threshold, each unit's cost against the
+unit threshold (CAD-1); a unit's cost carries its share of tax, shipping and
+discount (CAD-2, CAD-15), so it is the line's booked amount (`lineAmount`,
+`expense/src/qb-write.ts:11`) split across its units. When it is true, finance
+decides every line (CAD-3).
 
-**Review.** Finance decides on the record:
+**Review: the purchase's two steps, reused whole.** A gift takes the same two
+steps a purchase does (CAD-5): designate each line, then set each capital
+line's period and owner. Its steps come after the accept (CAD-4), on the gift's
+own page, and any finance holder may take them, as for a purchase.
 
-- an expense: the two existing steps, unchanged;
-- a gift: on the gift's own page and queue row, where "waiting on capital"
-  already shows. One new route,
-  `POST /api/donations/in-kind/{manual,receipt}/[id]/capital`, taking the same
-  shape as the expense steps. Whether that is one step or two, and whether it is
-  part of the accept, are CAD-4 and CAD-5.
+*Why today's functions cannot simply be called for a gift.* `submitCapitalReview`
+and `setDepreciationCycle` (`expense/src/services/capitalService.ts:63,118`)
+are tied to the expense in four places: they load the expense and check its
+state; they write `ExpenseLineItem`; they write `ExpenseAuditLog` keyed by the
+expense; and they advance the expense and drain it to QuickBooks. The rest says
+nothing about expenses: every line must be answered, the owner bucket must be
+live, only capital lines take a period, a capital line is registered once.
 
-Writing the decision is local: it updates the gift lines and records an
-`IN_KIND_CAPITAL_DECIDED` event in one transaction. The gift's `waitingOn` reads
-its own lines; the cross-database `awaitingReview` read goes.
+*So that logic moves out once and both call it.* The expense library gains one
+module holding the two steps, written against a small store:
 
-**Register.** The expense library exposes a register service:
+```ts
+interface CapitalLineStore {
+  lines(): Promise<CapitalLine[]>;                        // the record's lines and unit costs
+  save(line: CapitalLine, before: CapitalLine): Promise<void>; // the line and its audit row
+  afterStep(step: "designated" | "period_set"): Promise<void>; // expense: advance its state; gift: nothing
+}
+designate(store, actor, input): Promise<void>;
+setPeriod(store, actor, input, register: RegisterCall): Promise<void>;
+```
+
+- The expense binds the store to `ExpenseLineItem`, `ExpenseAuditLog` and its
+  state advance, inside its transaction, and registers in the same transaction,
+  as today.
+- bulk-donation binds it to the gift lines and `WorkflowEvent`
+  (`IN_KIND_CAPITAL_DESIGNATED`, `IN_KIND_CAPITAL_PERIOD_SET`) inside the gift's
+  transaction. The host passes the module in, as it passes the account rules
+  today. Two new routes, `…/[id]/capital-review` and
+  `…/[id]/set-depreciation-cycle`, take the purchase routes' input unchanged.
+
+One implementation of the review; the paths cannot fork again.
+
+**Register.** Assets are only ever added. The expense library exposes:
 
 ```ts
 interface CapitalRegister {
-  /** Returns the line's live assets, minting one per unit when it has none; a repeat returns the same numbers. */
+  /** Mints one asset per unit for the line; a repeat for the same line returns the same numbers. */
   register(orgId: string, source: AssetSource, units: AssetUnit[]): Promise<string[]>;
-  /** Retires the line's live assets with a reason; their numbers are never reissued. */
-  retire(orgId: string, source: AssetSource, reason: string): Promise<void>;
-  assetsOf(orgId: string, source: AssetSource): Promise<{ assetNumber: string; status: string }[]>;
+  /** A backfilled line's historical assets: links the line to seeded rows, one per unit; mints nothing. */
+  link(orgId: string, source: AssetSource, seededAssetNumbers: string[]): Promise<void>;
 }
 type AssetSource =
   | { kind: "expense_line"; lineItemId: number }
@@ -329,60 +391,58 @@ type AssetSource =
 interface AssetUnit { costCents: number; acquisitionDate: string | null; depreciationYears: number; description: string }
 ```
 
-`CapitalAsset` gains `sourceKind`, `sourceGiftSource`, `sourceGiftId`,
-`sourceGiftLineId` and `unitIndex`, with a unique index on
-(org, source, unit index) **over live rows only** (`status <> 'retired'`).
-That index is what makes `register` repeatable without a copy of the line.
-`status` gains `retired`, and the next number is the highest **ever** issued
-plus one, retired rows included (CAD-7).
+`CapitalAsset` gains `sourceKind`, the three gift source columns and
+`unitIndex`, with a plain unique index on (org, source, unit index). That index
+makes `register` repeatable. Asset numbers are physical labels and are never
+reused (CAD-7). Nothing deletes an asset any more, and the next number also
+counts the numbers past clearings deleted, which their audit rows name, so none
+of those comes back either.
 
-`register` reads only live rows. A line whose assets were retired has none, so
-registering it again mints new rows with new numbers beside the retired ones;
-the partial index admits them, and the retired numbers never return. Example:
-ITFA31 and ITFA32 are a line's two lathes; the expense is sent back, both are
-retired; on the second depreciation step `register` mints ITFA33 and ITFA34,
-and a later repeat returns ITFA33 and ITFA34.
+- The expense registers inside its period step's transaction: atomic.
+- The gift's period step commits on the gift's side; the in-kind drain then
+  calls `register` and stamps the gift line's `registeredAt`. A crash between
+  the two is safe: the next run gets the same numbers. This is a hand-off, the
+  line's capital facts going to the register, with nothing coming back to the
+  gift but the stamp. The gift does not book until every capital line is
+  stamped: an asset has its number before it goes to QuickBooks, as a
+  purchase's does (CAD-10).
 
-- The expense flow calls it in-process, inside the depreciation step's
-  transaction, as today: atomic.
-- The gift flow cannot share a transaction with it. The decision commits with
-  `registeredAt` empty; the in-kind drain, which already runs per gift, calls
-  `register` and then stamps `registeredAt`. A crash between the two is safe:
-  the next run calls `register` again and gets the same numbers. Whether the gift
-  waits for its numbers before booking is CAD-10.
-
-**Booking.** The gift's journal entry reads `capitalReview = capital` from its
-own lines. `assetLineIds` and the cross-database read at post time go (B10).
-The account rule that applies follows CAD-11 for both kinds of line.
-
-**Reversal, both ways the same.**
-
-- An expense sent back: its assets are retired, not deleted (B7).
-- A gift's capital decision changed before it books: its assets are retired and
-  the line registered again, under new numbers.
-- A withdrawal settled: the gift's assets are retired (CAD-8).
-- After booking: per CAD-6.
+**Booking.** The gift's journal entry reads `isCapital` from its own lines.
+`assetLineIds` and the cross-database read at post time go (B10). A capital
+line, bought or given, takes its account only from a rule marked capital, which
+holds only a fixed-asset account; when no such rule covers it, it waits for
+finance (CAD-11). The purchase side drops the unmarked rules from a capital
+line's match, as `donatedPartAccount` already does (`account-rules.ts:29`), so
+both use one matcher.
 
 **Audit.** Each library audits its own write in the transaction that makes it:
 
 | Write | Row |
 |---|---|
-| A gift line's decision | `IN_KIND_CAPITAL_DECIDED` event on the gift, per line: before and after |
-| A gift's registration stamp | `IN_KIND_CAPITAL_REGISTERED` event, naming the asset numbers |
+| A gift line's designation and period | `IN_KIND_CAPITAL_DESIGNATED`, `IN_KIND_CAPITAL_PERIOD_SET` on the gift, per line |
+| A gift's registration stamp | `IN_KIND_CAPITAL_REGISTERED`, naming the asset numbers |
 | Each asset minted, either flow | `ExpenseOrgAuditLog` `capital_asset_registered`: number, source link, cost |
-| Each asset retired | `ExpenseOrgAuditLog` `capital_asset_retired`: number, source link, reason |
 | An expense line's designation and period | unchanged |
 
 **Library boundaries.** bulk-donation owns the gift's decision; expense owns
-the thresholds, the account rules and the register. The only cross-library
-calls are reads of settings and the idempotent `register` and `retire`, behind
+the thresholds, the review module, the account rules and the register. The
+cross-library calls are reads of settings and the idempotent `register`, behind
 the existing `InKindCapital` port, reshaped. Nothing is copied.
 
-**What it fixes.** B1 (retire at settle), B2 (the gift's decision is editable
-until booking, like a purchase's), B3 (the bucket is on the gift), B4 and B5
-(one test, one cost), B7 (retire, never delete), B9 (the drain retries; no
-hand re-accept), B10 (the decision is on the gift), B11 (the review is on the
-record), B12 (every write audited). B6 follows CAD-11. B8 needs CAD-12.
+**What it fixes.**
+
+| Bug | How |
+|---|---|
+| B1 | Capital is decided only once a gift is final, and nothing reaches the withdrawal state (B13, CAD-8) |
+| B2 | Nothing to redo: the decision is taken once, when the record is final; a mistake is cleaned up by hand, as for a purchase (CAD-6) |
+| B3 | The bucket is on the gift |
+| B4, B5, B11 | One threshold test, one cost basis, one review implementation |
+| B7 | No path deletes or frees an asset number |
+| B9 | The drain retries registration; no hand re-accept |
+| B10 | The decision is on the gift line |
+| B12 | Every write audited |
+| B6 | A capital line matches only rules marked capital, bought or given (CAD-11) |
+| B8 | A backfilled line only links to seeded numbers, never mints (CAD-12, CAD-16) |
 
 ### Option B — a capital library of its own
 
@@ -398,8 +458,9 @@ it across a boundary.
   expense settings, which finance edits today. More to migrate, for no bug A
   leaves open.
 
-A's register service is the interface B would expose, so A can become B later
-without the flows changing (CAD-9).
+Not chosen (CAD-9). Once capital is decided once and the review is one module,
+a separate library buys nothing: it would split the purchase's atomic step
+across two databases to house code expense already owns.
 
 ### Option C — the gift becomes an expense record
 
@@ -421,62 +482,146 @@ and is the shape @thpr has asked to move away from.
 
 ## 4. Recommendation
 
-Option A. It puts the decision on the gift line and on the expense line, in
-each record's own flow; it reaches the one register through a link; it keeps the
-purchase path atomic; and it fixes the bugs found except B6 and B8, which each
-need an answer first (CAD-11, CAD-12). B13 is a hand-off gap, outside it
-(CAD-14). Build it after CAD-1 to CAD-8 and CAD-10 to CAD-11 are answered.
+Option A. Capital is decided once, on the line, after the record can no
+longer be withdrawn or sent back, through one review implementation; the
+register is reached through a link and only ever grows. It keeps the purchase
+path atomic and fixes every bug found. Every question that blocks building is
+settled. Removing the unreachable withdrawal state (CAD-8) is a separate PR.
 The cutover is in `CAPITAL_AS_DECISION-migration.md`.
 
-## 5. Open questions
+## 5. Owner questions
 
-For @thpr. Numbers are fixed; a settled question keeps its number.
+All sixteen are settled (5.1). Numbers are fixed; a settled question keeps its
+number.
 
-| # | Question | What it decides | Example |
-|---|---|---|---|
-| CAD-1 | For a gift, is the **total** threshold compared with the gift's total, as a purchase compares the receipt's total, or with each line's own cost, as today? | Whether a gift split into many small lines can skip review | Six $450 chairs as six lines: by gift total ($2,700) they are reviewed; by line (each $450) they are not |
-| CAD-2 | Does an asset's register cost, and the cost compared with the unit threshold, include its share of tax, shipping and discount? Today a purchase leaves them out and a gift puts them in. | One cost basis for the register and for the test | $1,000 table, $80 tax, $50 shipping: registered at $1,000 or $1,130, for both |
-| CAD-3 | Once a record is over a threshold, does finance decide **every** line, as for a purchase, or only the lines over the threshold, as for a gift? | Whether a cheap line on an expensive record can be made capital | A $3,000 receipt: a $2,800 laser and a $200 lens kit. Every line: finance may register the kit with the laser. Only over: the kit is never asked about |
-| CAD-4 | Does finance take a gift's capital decision **as part of accepting it**, or as its own step after, on the gift's page? | Whether accept stays one quick act; who may take it | As part of accept: the accepter, under the accept conflict rule. After: any finance holder, as classifying a purchase is |
-| CAD-5 | One review step (capital, period and owner together, as a gift today) or two (designate, then period and owner, as a purchase today), for both? | One review shape | — |
-| CAD-6 | May a capital decision change **after** the record has booked? Today neither path allows it. If so, does the app retire and re-register, leaving finance to correct QuickBooks by hand? | Whether a booked mistake is fixed in the app or only in the books | Finance marks a donated 3D printer "not capital", it books to an expense account, and finance finds the mistake a month later |
-| CAD-7 | When an asset is undone, is its number retired for good, or may it be issued again? The rule says "used once"; the code reissues it (B7). | Whether numbers are physical labels | ITFA31 is cleared: does the next asset become ITFA31 or ITFA32? |
-| CAD-8 | When finance settles a withdrawn gift, are its assets retired by the app, or does finance retire them by hand with a reason? | Who undoes the register for a withdrawal | — |
-| CAD-9 | Does the register stay in the expense library (Option A), or move to a library of its own (Option B), now or later? | Library ownership | — |
-| CAD-10 | Does a gift wait for its asset numbers before it books, as a purchase does? | Whether a gift can be in the books with no register row yet | The expense database is down for an hour: the gift waits, or books and registers later |
-| CAD-11 | May a purchased capital line book to an account from a rule with no capital mark, as today, or must it hold for finance like a donated one? | B6: whether an asset can sit on an expense account | Finance marks a $4,000 CNC router capital; only the "Shop tools → Tools expense" rule covers it |
-| CAD-12 | For historical assets, which wins: the register built by backfilled expenses, or the numbers seeded from QuickBooks? Should a backfilled expense mint assets at all when the seed is loaded? | B8: one row per physical asset | A 2024 table saw is in QuickBooks as ITFA07 and is also a backfilled expense that mints ITFA41 |
-| CAD-13 | Should `docs/conventions.md` state the copy test, in one line? Proposed: *"A record may be copied to another library only to hand it to its next owner, with nothing flowing back; the transfer is audited and atomic or retried. Never copy a record so that the same steps run again in another library."* | Whether future cross-library work is judged by the hand-off/fork test | The donor copy passes; the capital-line copy fails |
-| CAD-14 | Is B13 in scope here? When a gift drops its donor, should the receipt drop its copy too, and should the sending side record a successful send? | A hand-off gap, left out of this design unless you say otherwise | A withdrawn gift is settled; the receipt still shows "Jane Smith" as donor |
+### 5.1 Settled
+
+| # | Answer (@thpr) | What it changes |
+|---|---|---|
+| CAD-1 | A gift follows the same threshold rules as a purchase: the **total** threshold is compared with the gift's total, as with the receipt's total on a purchase. | B4's per-line comparison goes. Six $450 chairs as six lines, $2,700 in all, go to review, as the same purchase would. |
+| CAD-2 | Both tax and shipping are included in an asset's cost, for purchases and gifts alike. | The purchase side changes: its register cost and the unit price compared with the unit threshold now carry the line's share of tax and shipping, as a gift's already do. The $1,000 table with $80 tax and $50 shipping is registered at $1,130 whether bought or given (B5). Discount is CAD-15, settled the same way. |
+| CAD-3 | Gifts and purchases act identically; no new flow. Once a record is over a threshold, finance decides **every** line, as for a purchase today. | B11's "only over-threshold lines" goes. A $3,000 gift of a $2,800 laser and a $200 lens kit: finance decides both lines and may register the kit with the laser. The gift's review calls the expense library's review code; it is not reimplemented. |
+| CAD-4 | After accept: the gift's capital decision is its own step, on the gift's page. | Accept stays one act. The capital step is bookkeeping, so any finance holder may take it, as classifying a signed-off purchase is; the accept's conflict rule does not carry over. |
+| CAD-5 | Like a purchase: two steps, designate, then period and owner. Reuse the purchase's review wholesale. | The review logic is lifted out of the expense services into one module both paths call (section 3, "Review"); the gift does not get its own. |
+| CAD-6 | No. A capital decision never changes after the record books; any mistake is cleaned up by hand. Leave it that way. | Same for both paths. The app never retires or re-registers. |
+| CAD-7 | Asset numbers are physical labels and are never reused, whatever the design. And capital is not decided before the record can no longer be withdrawn. | No number is ever issued twice: the next number counts every number issued, including those past clearings deleted (B7). Under this design nothing is undone, so no number is freed. Capital steps open only once a gift is accepted or an expense can no longer be sent back; the expense loses its send-back edges out of the capital steps, and the asset deletion behind B7 goes. |
+| CAD-8 | Yes: remove the withdrawal-after-money state. | The flag, finance's settle action, the queue's `withdrawal` reason and the `revenue.md` rule behind them go, in a PR of their own outside this design. B1 and B13 go with them. |
+| CAD-9 | No separate library. | The register, thresholds and review module stay in the expense library; Option B is dropped. |
+| CAD-10 | A capital line needs its number before it goes to QuickBooks. | A gift does not book until each capital line's assets are registered and stamped, as a purchase's are minted before its entry. |
+| CAD-11 | Any capital is capital: its account is an asset, not an expense. | A capital line never books to an expense account. On both paths it takes only a rule marked capital, which holds only a fixed-asset account, and waits for finance when none covers it. B6 goes. The CNC router marked capital waits for finance instead of booking to "Tools expense". |
+| CAD-12 | For historical assets, the numbers in QuickBooks are the labels on the items and must not change. | The seeded numbers win. A backfilled expense never mints a new number for an asset already seeded: finance links the line to its seeded asset in the period step, and `register` attaches the line to that row instead of minting. Backfilled expenses store no QuickBooks entry id (`expense-qb-processor.ts:320` skips posting), so the link is finance's choice, not a match. The line with no seeded asset is CAD-16. Existing duplicates (B8) are listed for finance; the app changes neither number. |
+| CAD-13 | The two sections in 5.2, as worded. | They go into `docs/conventions.md` in their own PR. |
+| CAD-14 | Withdrawn: a gift cannot drop its donor. | The only place a gift loses its donor is settling a withdrawal after its money, which nothing reaches (B13). What remains is whether to remove that state, CAD-8. |
+| CAD-15 | Yes: the discount is included too. | An asset's cost is exactly what its line books at, price plus its share of tax and shipping less its share of discount, split across its units. The $1,000 table with $80 tax, $50 shipping and $100 off is registered at $1,030, bought or given, and the register agrees with the fixed-asset account to the cent. |
+| CAD-16 | Option B: a backfilled line is only linked, never given a new number. | The period step for a backfilled expense takes a seeded number for each unit of each capital line and refuses without them; it has no path that mints. An old item with no label (the 2023 drill press) is given its number on the existing seed page first, then linked. Every number for an old item comes in through the seed. The seed page shows the next free number, so finance does not have to guess one. |
+
+### 5.2 Conventions (CAD-13)
+
+Agreed wording for `docs/conventions.md`, added in its own PR:
+
+```markdown
+## One process, one implementation
+
+- **A step that happens in two places is one piece of code both call.** When
+  the same decision, check or sequence of steps is needed by two libraries, two
+  kinds of record or two routes, it is written once and both call it. A copy, a
+  near-copy or a second implementation "for our side" is a fork: the two drift,
+  and each fix lands in only one of them.
+- **A record crosses into another library only to change owner.** Handing a
+  record to the library that takes the next step is fine when nothing flows
+  back and the hand-over is audited and either atomic or retried. Copying it so
+  another library can run the same steps on its own copy is the fork above.
+- **Where the domain says two things are treated the same, they run the same
+  code.** "The same rule" kept true by two implementations is a rule waiting to
+  diverge.
+
+The failure is slow. Each copy is correct the day it is written; the defect is
+the later fix that reaches one of them.
+
+## A simple machine with a known risk beats a complete one nobody can read
+
+- **Whether a step can be undone depends on what undoing it costs, and where.**
+  - **A bad state that lives entirely in the app, the app must give a way out
+    of.** Nobody can repair it by hand without editing the database, so the
+    software owes a path back: an undo, or a reset that returns the record to a
+    known starting point and has it go through again.
+  - **A decision whose effects are outside the app may be declared
+    irreversible.** Once it has reached the books, a physical label or another
+    party, unwinding it in the app would mean modelling every outside effect
+    to keep them in step. Past that point the app says the decision is final,
+    and a mistake is cleaned up by hand. That costs a person some work, and it
+    keeps the machine readable. The point is chosen, stated and the same
+    everywhere the decision is taken.
+- **Take a decision as late as it can be taken, after the things that could
+  reverse it.** A decision taken before its record settles needs machinery to
+  unwind it when the record moves; one taken after needs none.
+- **An edge case the design does not handle is an accepted, written-down risk,
+  not a branch.** Record how it could happen, what it costs when it does, and
+  how it is cleaned up by hand. Do not add a state, flag or route whose only
+  purpose is a case that rarely or never happens.
+- **A state nothing can reach is removed.** Code for an unreachable case is not
+  insurance; it is a second account of the system that every reader has to
+  disprove.
+
+The failure is unreadability. A machine that covers everything is one nobody
+can hold in their head, and the bugs live in the transitions nobody traced.
+```
 
 ## 6. Rules this design would establish
 
-Candidates only. Each becomes a rule in `docs/rules/expenses.md` once its
-question is answered, and not before.
+Each is settled and goes into `docs/rules/expenses.md` when the work lands. The
+two conventions in 5.2 go into `docs/conventions.md`.
+
+One existing rule changes. The Spending sign-off rule "When an expense goes
+back to an earlier step, every later step's result is cleared too … the
+capital review, the depreciation cycle and its assets" loses its capital part:
+an expense can no longer go back once its capital steps open (CAD-7), so there
+is nothing of capital to clear. Its signatures and QuickBooks parts stand.
 
 - A capital decision is recorded on the line it is about, by finance, with who
   and when, whether the line is bought or given. *(from the design; no question)*
-- The capital threshold test is the same for a purchase and a gift. *(CAD-1,
-  CAD-3)*
-- An asset's cost on the register is the line's cost on the same basis for a
-  purchase and a gift. *(CAD-2)*
-- An asset that is undone is retired with a reason and its number is not issued
-  again. *(CAD-7)*
-- A withdrawn gift's assets are retired. *(CAD-8)*
+- A gift of goods meets the capital thresholds as a purchase does: the gift's
+  total against the total threshold, each unit's cost against the unit
+  threshold; once a record is over a threshold, finance decides every line.
+  *(CAD-1, CAD-3, settled)*
+- A gift's capital decision is a step after its accept, which any finance
+  holder may take, in the same two steps as a purchase. *(CAD-4, CAD-5, settled)*
+- A capital decision never changes after its record books, bought or given; a
+  mistake found after booking is cleaned up by hand. *(CAD-6, settled)*
+- An asset's cost, on the register and in the unit threshold test, is what its
+  line books at: its price with its share of tax, shipping and discount,
+  whether bought or given. *(CAD-2, CAD-15, settled)*
+- Capital is decided only after the record can no longer be withdrawn or sent
+  back: a gift once accepted, an expense once its owner approvals are terminal
+  and its reimbursee is known. The app never undoes an asset. *(CAD-7, settled)*
+- An asset number is a physical label: it is never issued to a second asset.
+  *(CAD-7, settled)*
+- A capital line has its asset number before its record goes to QuickBooks,
+  bought or given. *(CAD-10, settled)*
+- A capital line books only to a fixed-asset account, bought or given; with no
+  rule marked capital to give it one, it waits for finance. *(CAD-11, settled)*
+- A historical asset keeps the number it carries in QuickBooks, which is its
+  label; the app never gives it another. *(CAD-12, settled)*
+- A backfilled purchase's capital line is only linked to seeded asset numbers,
+  never given a new one; an old item with no number is first given one on the
+  seed page. *(CAD-16, settled)*
 
 ## 7. Tests
 
-- Expense unit: the shared threshold test, both callers, against the CAD-1 and
-  CAD-3 examples.
+- Expense unit: the shared threshold test, both callers, against the CAD-1,
+  CAD-2 and CAD-3 examples: the six chairs, the $1,130 table and the laser with
+  its lens kit, each giving the same answer bought or given.
 - Expense integration: `register` repeated for the same line returns the same
-  numbers; `retire` keeps the number; registering a retired line again mints new
-  numbers beside the retired rows; the next number skips retired ones; each
-  writes its audit row.
-- Bulk-donation integration: the gift's capital decision and its event in one
-  transaction; the drain registers, stamps, and survives a crash between the two;
-  a withdrawal settled retires; a bucket change before booking carries through.
+  numbers and writes its audit row once; the capital steps refuse to open while
+  the reimbursee is unknown; naming a reimbursee never sends an expense back
+  out of a capital step.
+- Bulk-donation integration: each capital step and its events in one
+  transaction; the drain registers, stamps, and survives a crash between the
+  two; a gift with an unstamped capital line does not book.
 - Booking: a gift's asset line books from its own decision with the expense
   database unreachable.
+- Model check before building: the gift's register-then-stamp under crash and
+  retry, the one place a duplicate asset number could be minted.
 - Flow test: accept a gift, decide one line capital on the gift's page, see it
   book to a fixed-asset account and appear on the register with a link to the
   gift line.
@@ -485,13 +630,14 @@ question is answered, and not before.
 
 - A page listing the register. The register has none today (only the seed
   page); that is a separate gap.
+- Removing the withdrawal-after-money state (CAD-8). Settled, and done in its
+  own PR.
 - Booking depreciation to QuickBooks. The app records the period and the
   fully-depreciated date and books nothing.
 - The audit-gap fixes being made elsewhere for the routes in section 1. This
   design removes the copy those gaps are in; it does not patch them.
 - The hand-offs in section 1.4: the donor, the gift's money and lines, and a
-  purchase's lines. They keep their shape; B13 is their only gap found, and is
-  CAD-14.
+  purchase's lines. They keep their shape.
 - Anything under `checkin-app/src/security/`. The route changes this needs ship
   in their own boundary PRs, listed in the migration file.
 
