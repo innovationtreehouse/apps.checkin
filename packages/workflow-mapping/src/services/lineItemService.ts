@@ -1,4 +1,4 @@
-import { httpError, isServiceError, kindOf } from "@checkin/component-kit";
+import { httpError, isServiceError, kindOf, NotWiredError } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import {
   catalogCheckReferencesSchema,
@@ -33,8 +33,16 @@ export function normalizeDescription(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+const CATALOG_DB_MISSING = "The catalog database does not exist; the infra operator checks its settings";
+
+/** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
+function refuseCatalogSettings(err: unknown): void {
+  if (err instanceof NotWiredError) throw httpError(503, "No catalog is connected");
+  if (kindOf(err) === "settings") throw httpError(503, CATALOG_DB_MISSING);
+}
+
 /**
- * Run a catalog call. An unbound catalog is a 503 saying none is connected; any other failure
+ * Run a catalog call. An unbound catalog or a missing catalog database is a 503 saying so; any other failure
  * surfaces as 502. A catalog ServiceError keeps its message; any other error is logged and
  * answered with a plain message.
  */
@@ -42,7 +50,7 @@ async function viaCatalog<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    if (kindOf(err) === "settings") throw httpError(503, "No catalog is connected");
+    refuseCatalogSettings(err);
     if (isServiceError(err)) throw httpError(502, err.message);
     console.error("[workflow-mapping] catalog call failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");

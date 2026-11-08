@@ -1,4 +1,4 @@
-import { kindOf } from "@checkin/component-kit";
+import { kindOf, NotWiredError } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@checkin/receipt-types";
 import type { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
@@ -13,7 +13,7 @@ type Recognized = Map<number, { gtin13: string; conversionFactor: number; conver
 
 const CATALOG_NOT_CONNECTED = "catalog not connected";
 
-/** Matches lines against the catalog. A failed lookup leaves every line unrecognized; an unbound catalog says so in `note`. */
+/** Matches lines against the catalog. A failed lookup leaves every line unrecognized; an unbound catalog says so in `note`; a settings failure throws. */
 async function runRecognition(
   lineItems: CompletedReceiptLineItem[],
   retailer: string | null,
@@ -42,7 +42,9 @@ async function runRecognition(
       }
     }
   } catch (err) {
-    if (kindOf(err) === "settings") return { recognized, note: CATALOG_NOT_CONNECTED };
+    if (err instanceof NotWiredError) return { recognized, note: CATALOG_NOT_CONNECTED };
+    // A settings failure, such as a missing catalog database, needs someone to fix it: the sender retries.
+    if (kindOf(err) === "settings") throw err;
     console.warn("[workflow-mapping/intake] catalog lookup failed (non-fatal):", err);
   }
 
@@ -58,7 +60,8 @@ export interface IngestResult {
 /**
  * S1 callee: deliver a finished receipt. Idempotent on `receiptId` — a replay returns the stored
  * `{ id, state }` with `created: false`, even if the body differs. Throws only on an invalid
- * payload, an org mismatch, or a database failure; a failed push is recorded as `apply_failed`.
+ * payload, an org mismatch, a database failure, or a catalog settings failure; a failed push is
+ * recorded as `apply_failed`.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
   const orgId = await getOrgId();
