@@ -102,7 +102,8 @@ function rowsFailed(outcome: object): number {
  * The Shopify reconcile and the sale sweep run isolated too. The top-level `failed`, which the cron
  * run records, counts every step or expense part that crashed, every row a step reports as failed
  * (reconcile orders, receipt sweeps, re-pushes, donor re-sends, outcome emails), provisionals not
- * reconciled, Apply give-ups, matching give-ups, and a mailbox that could not be read.
+ * reconciled, Apply give-ups, matching re-runs that gave up or errored, and a mailbox that could
+ * not be read.
  */
 export const GET = withCron(async () => {
     const result = await isolated("shopify", "Shopify reconcile", runReconcile);
@@ -126,7 +127,7 @@ export const GET = withCron(async () => {
         + [result, receipt, receiptStuck, receiptPush, donorSync, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
         + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
         + ("gaveUp" in receivingApply ? receivingApply.gaveUp : 0)
-        + ("gaveUp" in receivingMatching ? receivingMatching.gaveUp : 0)
+        + ("gaveUp" in receivingMatching ? receivingMatching.gaveUp + receivingMatching.errored : 0)
         + (receiptMail.status === "listing_failed" ? 1 : 0);
     const reconciled = "configured" in result ? result : { reconcile: result };
     return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receivingMatching, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes });

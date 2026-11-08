@@ -71,7 +71,7 @@ export const AUDIT_EVENT_LABEL: Record<WorkflowAuditEventType, string> = {
   matching_deferred: "Matching pending: the catalog was unavailable",
   line_matched: "Line matched to catalog item",
   matching_ran: "Matching ran",
-  matching_gave_up: "Matching stopped retrying: the catalog stayed unavailable",
+  matching_gave_up: "Matching stopped retrying after 5 days; map the lines by hand",
 };
 
 function isAuditEventType(eventType: string): eventType is WorkflowAuditEventType {

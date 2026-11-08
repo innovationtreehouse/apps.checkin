@@ -5,7 +5,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { KindedError, type FailureReport } from "@checkin/component-kit";
 import { db } from "../../db";
+import { lineItemService } from "../../services/lineItemService";
 import { ingestReceipt } from "../../services/receiptIntakeService";
+import { receiptService } from "../../services/receiptService";
 import { MATCHING_RETRY_DAYS, retryPendingMatching } from "../../services/pendingMatching";
 import { describeDb } from "../helpers/db";
 import { buildReceiptPayload, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
@@ -173,6 +175,16 @@ describeDb("retryPendingMatching", () => {
     expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
   });
 
+  it("an unbound catalog gives up after five days too, recording the failure's kind", async () => {
+    configure({ ...sinks, onFailure: (rep) => void reports.push(rep) });
+    const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS });
+
+    expect(await retryPendingMatching()).toMatchObject({ gaveUp: 1 });
+    const [gaveUp] = await auditsOf(r.id, "matching_gave_up");
+    expect(JSON.parse(gaveUp?.details ?? "{}")).toMatchObject({ kind: "settings" });
+    expect(reports).toEqual([{ lane: "matching", kind: "settings", detail: `receipt ${r.receiptId}` }]);
+  });
+
   it("after five days stops, leaves the lines for hand mapping, and reports once to the on-failure port", async () => {
     cat.state.down = new KindedError("system", "still down");
     const r = await pendingReceipt({ daysAgo: MATCHING_RETRY_DAYS });
@@ -203,5 +215,27 @@ describeDb("retryPendingMatching", () => {
 
     expect(await retryPendingMatching()).toEqual({ ran: 0, deferred: 0, gaveUp: 0, errored: 0 });
     expect(cat.state.seen).toEqual([]);
+  });
+});
+
+describeDb("a person sends a receipt whose matching is pending", () => {
+  it("a manual proceed clears the flag", async () => {
+    const r = await pendingReceipt({ lineCount: 1 });
+    await db.receivedReceiptLineStatus.updateMany({ where: { receivedReceiptId: r.id }, data: { recognitionStatus: "non_inventory" } });
+
+    await receiptService.proceed(r.id);
+
+    expect((await receiptRow(r.id)).matchingPendingSince).toBeNull();
+  });
+
+  it("mapping the last line by hand clears the flag as the receipt is sent", async () => {
+    const r = await pendingReceipt({ lineCount: 1 });
+    const line = await db.receivedReceiptLineStatus.findFirstOrThrow({ where: { receivedReceiptId: r.id } });
+
+    await lineItemService.markNonInventory(r.id, line.id);
+
+    const row = await receiptRow(r.id);
+    expect(row.state).not.toBe("pending_review");
+    expect(row.matchingPendingSince).toBeNull();
   });
 });

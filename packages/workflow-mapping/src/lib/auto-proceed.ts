@@ -28,7 +28,7 @@ export async function tryAutoProceedApply(
   // Compare-and-set: of concurrent callers that saw the last line resolve, only one pushes.
   const { count } = await db.receivedReceipt.updateMany({
     where: { id: receiptId, state: received.state },
-    data: { state: nextState },
+    data: { state: nextState, matchingPendingSince: null },
   });
   if (count !== 1) return;
 

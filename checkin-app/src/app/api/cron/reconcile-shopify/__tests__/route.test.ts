@@ -317,12 +317,12 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '2 item(s) failed' }) });
     });
 
-    it('records the cron run as failed for receipts whose matching stopped retrying', async () => {
-        jest.mocked(retryPendingMatching).mockResolvedValue({ ...RECEIVING_MATCHING, gaveUp: 1 });
+    it('records the cron run as failed for matching re-runs that gave up or errored', async () => {
+        jest.mocked(retryPendingMatching).mockResolvedValue({ ...RECEIVING_MATCHING, gaveUp: 1, errored: 2 });
 
         const body = await (await GET(req())).json();
 
-        expect(body).toMatchObject({ success: true, failed: 1, receivingMatching: { gaveUp: 1 } });
+        expect(body).toMatchObject({ success: true, failed: 3, receivingMatching: { gaveUp: 1, errored: 2 } });
     });
 
     it('records a clean run when the mailbox was read', async () => {

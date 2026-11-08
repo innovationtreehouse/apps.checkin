@@ -65,7 +65,7 @@ async function rerunMatching(row: PendingRow): Promise<Outcome> {
       actorUserId: null,
       eventType: "matching_gave_up",
       receivedReceiptId: row.id,
-      details: JSON.stringify({ retryDays: MATCHING_RETRY_DAYS }),
+      details: JSON.stringify({ retryDays: MATCHING_RETRY_DAYS, kind: kindOf(matching.err) }),
     });
     workflowRuntime.failed("matching", matching.err, `receipt ${row.receiptId}`);
     return "gaveUp";
