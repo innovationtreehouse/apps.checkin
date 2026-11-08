@@ -1,10 +1,9 @@
-import { kindOf } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
-import { getOrgId, ports } from "../runtime";
+import { getOrgId, ports, receiptRuntime } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
 import { liveIds } from "./livePeople";
@@ -212,7 +211,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     });
     return true;
   } catch (err) {
-    const kind = kindOf(err);
+    const kind = receiptRuntime.failed("push", err, `receipt ${receiptId}`);
     const valueAfter = err instanceof Error ? err.message : String(err);
     await audit(
       db,

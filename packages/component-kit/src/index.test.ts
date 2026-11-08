@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   ComponentHttpError,
@@ -21,6 +21,8 @@ import {
   sweepOrgEvents,
   toHttpError,
   zodMessage,
+  type FailureReport,
+  type OnFailure,
 } from "./index";
 
 class LimitError extends ServiceError {
@@ -164,6 +166,7 @@ describe("defineRuntime", () => {
     org?: () => Promise<{ id: string }>;
     auth?: { getPrincipal(): Promise<Principal | null> };
     port?: string;
+    onFailure?: OnFailure;
   }
   const runtime = defineRuntime<Config, Principal>("kit-test");
   const configured = (over: Partial<Config> = {}) =>
@@ -212,6 +215,55 @@ describe("defineRuntime", () => {
     configured();
     await expect(runtime.assertOrg("org-1")).resolves.toBeUndefined();
     await expect(runtime.assertOrg("org-2")).rejects.toThrow("orgId org-2 is not this org");
+  });
+
+  describe("failed", () => {
+    afterEach(() => vi.restoreAllMocks());
+    const logged = () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      return () => warn.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
+    };
+
+    it("returns the kind, logs one failure_kinded line and calls the bound port", () => {
+      const lines = logged();
+      const reports: FailureReport[] = [];
+      configured({ onFailure: (r) => reports.push(r) });
+      const err = Object.assign(new KindedError("data", "refused"), { status: 400, requestId: "tid-1", codes: ["6000"] });
+
+      expect(runtime.failed("posting", err, "expense 7")).toBe("data");
+
+      const report = { lane: "posting", kind: "data", status: 400, faultCodes: ["6000"], requestId: "tid-1", detail: "expense 7" };
+      expect(reports).toEqual([report]);
+      expect(lines()).toEqual([expect.objectContaining({ event: "failure_kinded", library: "kit-test", ...report })]);
+    });
+
+    it("reads a plain error's kind with kindOf and leaves out what it doesn't carry", () => {
+      const lines = logged();
+      const reports: FailureReport[] = [];
+      configured({ onFailure: (r) => reports.push(r) });
+
+      expect(runtime.failed("push", new ServiceError(403, "forbidden"))).toBe("bug");
+      expect(runtime.failed("push", new Error("boom"))).toBe("bug");
+
+      expect(reports).toEqual([{ lane: "push", kind: "bug", status: 403 }, { lane: "push", kind: "bug" }]);
+      expect(lines()).toHaveLength(2);
+    });
+
+    it("only logs when unbound or unconfigured, and survives a throwing port", () => {
+      const lines = logged();
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      configured();
+      expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
+      runtime.reset();
+      expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
+      configured({
+        onFailure: () => {
+          throw new Error("channel down");
+        },
+      });
+      expect(runtime.failed("push", new NotWiredError("sink"))).toBe("settings");
+      expect(lines()).toHaveLength(3);
+    });
   });
 });
 

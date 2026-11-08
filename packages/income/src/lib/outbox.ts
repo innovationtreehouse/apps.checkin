@@ -1,4 +1,4 @@
-import { kindOf, type FailureKind } from "@checkin/component-kit";
+import type { FailureKind } from "@checkin/component-kit";
 import { SWEEP_DAYS, appKeyOf, findOrCreate, type BooksMapRole, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
@@ -394,7 +394,7 @@ export async function postPayout(
     write = await depositWrite(row.payoutDate, basis, accounts);
   } catch (e) {
     buildError = e instanceof Error ? e.message : String(e);
-    buildFailure = kindOf(e);
+    buildFailure = incomeRuntime.failed("deposit-build", e, `payout reconciliation ${id}`);
   }
 
   const claimedAt = new Date();
