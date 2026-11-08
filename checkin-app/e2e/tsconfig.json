@@ -7,5 +7,5 @@
       "@checkin/*/nav": ["../../packages/*/src/nav.ts"]
     }
   },
-  "include": ["**/*.ts", "../test-support/**/*.ts", "../flow-tests/helpers.ts"]
+  "include": ["**/*.ts", "../src/types/next-auth.d.ts", "../test-support/**/*.ts", "../flow-tests/helpers.ts"]
 }
