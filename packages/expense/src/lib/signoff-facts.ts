@@ -245,12 +245,26 @@ export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: 
  * the facts of that moment, and no seat is signed or voided on it after, so neither holds it again.
  */
 export async function unsignedLines(db: Db, expense: SignoffExpense & Pick<Expense, "state">): Promise<Map<number, LineHold[]>> {
-  const [facts, filled, approval] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id), boardApprovalNeeded(db, expense)]);
-  const closed = expense.state === "qb_complete";
-  const out = new Map<number, LineHold[]>();
-  for (const [lineId, f] of facts) {
-    const missing = lineHolds(approval, f, filled.get(lineId) ?? []).filter((hold) => !closed || (hold !== "BOARD" && hold !== "BOARD_APPROVAL"));
-    if (missing.length > 0) out.set(lineId, missing);
+  return (await unsignedLinesForExpenses(db, [expense])).get(expense.id)!;
+}
+
+/** `unsignedLines` for each of the given expenses, read together. `readOnly` is for reads, which must not freeze the Everyday check. */
+export async function unsignedLinesForExpenses(
+  db: Db,
+  expenses: (SignoffExpense & Pick<Expense, "state">)[],
+  { readOnly = false } = {},
+): Promise<Map<string, Map<number, LineHold[]>>> {
+  const facts = await signoffFactsForExpenses(db, expenses, { readOnly });
+  const out = new Map<string, Map<number, LineHold[]>>();
+  for (const expense of expenses) {
+    const { byLine, filled, boardApprovalNeeded: approval } = facts.get(expense.id)!;
+    const closed = expense.state === "qb_complete";
+    const held = new Map<number, LineHold[]>();
+    for (const [lineId, f] of byLine) {
+      const missing = lineHolds(approval, f, filled.get(lineId) ?? []).filter((hold) => !closed || (hold !== "BOARD" && hold !== "BOARD_APPROVAL"));
+      if (missing.length > 0) held.set(lineId, missing);
+    }
+    out.set(expense.id, held);
   }
   return out;
 }
