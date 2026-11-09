@@ -8,6 +8,7 @@ import { Alert, Anchor, Badge, Button, Group, Mark, Modal, Paper, Stack, Table, 
 import DonationFields, { donorInput, NO_DONATION } from "../components/DonationFields";
 import DuplicateCompare, { type CompareReceipt } from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
+import { useRotation } from "../components/useRotation";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
 import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
@@ -37,6 +38,7 @@ function Flagged({ on, children }: { on: boolean; children: React.ReactNode }) {
 
 interface Receipt extends ReceiptListRow {
   mimeType: string;
+  rotation: number;
   taxCents: number | null;
   shippingCents: number | null;
   discountCents: number | null;
@@ -201,6 +203,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const busy = useRef(false);
 
   const r = receipt.data;
+  const turn = useRotation(id, r?.rotation);
   if (receipt.error) return <Alert color="red">{receipt.error}</Alert>;
   if (!r) return <Text>Loading…</Text>;
 
@@ -416,6 +419,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           onKeepThisOne={() => void act("/keep-this-one", "POST", { shownIds: liveIds }, "Kept; the other copies are rejected", "Couldn't keep this receipt", true).then(redrawCompare)}
           onRejectMatch={(otherId, reason) => void rejectMatch(otherId, reason)}
           onRejectAsCopy={(reason) => void act("/reject", "POST", { reason }, "Rejected", "Couldn't reject this receipt", true).then(redrawCompare)}
+          turn={turn}
         />
       )}
       {!comparing && r.copyOfId && r.copyOfLabel && (
@@ -426,7 +430,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
-          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
+          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} rotation={turn[0]} onRotate={turn[1]} />
         </Paper>
         <Stack miw={280}>
           <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>

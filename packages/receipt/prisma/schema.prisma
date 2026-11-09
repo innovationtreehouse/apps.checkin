@@ -98,6 +98,9 @@ model Receipt {
   // The latest failure's error, shown on the receipt's own page only.
   /// @sensitivity:personal
   lastError          String?   @map("last_error")
+  // Clockwise degrees the file's image displays turned: 0, 90, 180 or 270.
+  /// @sensitivity:internal
+  rotation           Int       @default(0)
 
   details       ReceiptDetail?
   financeReview ReceiptFinanceReview?
