@@ -89,8 +89,8 @@ const GUARDS: GuardSite[] = [
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'DENIED', edge: ['DENIED', 'NONE'], mode: 'helper' },
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'ACTIVE', edge: ['ACTIVE', 'REVOKED'], mode: 'helper' },
     // a paid application's check clears: the household converges to ACTIVE.
-    { file: 'lib/membership/review.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'ACTIVE'], mode: 'helper' },
-    { file: 'lib/membership/review.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'ACTIVE'], mode: 'helper' },
+    { file: 'lib/membership/settleHouseholdBg.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'ACTIVE'], mode: 'helper' },
+    { file: 'lib/membership/settleHouseholdBg.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'ACTIVE'], mode: 'helper' },
 
     // ── left literal on purpose (documented) ──
     // personBgTriggers is an idempotency EXISTENCE set (∅→PENDING_BG_REVIEW is the edge;

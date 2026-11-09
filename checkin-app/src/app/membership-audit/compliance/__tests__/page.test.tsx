@@ -107,7 +107,7 @@ describe("membership-audit/compliance page", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("Background check disputed")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Background check disputed" })).toBeInTheDocument();
     expect(screen.getByText("Pat Lee")).toBeInTheDocument();
     expect(screen.queryByText(/Everyone is in compliance/)).not.toBeInTheDocument();
   });
