@@ -5,6 +5,7 @@ import { Alert, Anchor, Badge, Button, Group, Paper, SimpleGrid, Stack, Table, T
 import { BASE, STATE_LABELS } from "./api";
 import { formatCents } from "@checkin/money";
 import ReceiptFile from "./ReceiptFile";
+import { useRotation } from "./useRotation";
 import { describeKept, describeShort, EXPENSE_REJECTED, REJECTED_AS_COPY } from "../lib/describeReceipt";
 import type { DuplicateGroup, DuplicateMember } from "../lib/duplicateGroup";
 import { retailerKey } from "../lib/retailer";
@@ -44,14 +45,17 @@ export interface CompareReceipt {
 
 const fileHref = (r: CompareReceipt) => `${BASE}/${encodeURIComponent(r.id)}/file`;
 
-function FileView({ title, receipt }: { title: string; receipt: CompareReceipt }) {
+/** `turn` is the page's own rotation of this receipt, so its other copy on the page turns with it. */
+function FileView({ title, receipt, turn }: { title: string; receipt: CompareReceipt; turn?: [number, (by: number) => void] }) {
+  const own = useRotation(receipt.id, receipt.rotation);
+  const [rotation, onRotate] = turn ?? own;
   return (
     <Stack gap={4}>
       <Group justify="space-between">
         <Text fw={500} size="sm">{title}</Text>
         <Anchor href={fileHref(receipt)} download size="xs">Download</Anchor>
       </Group>
-      <ReceiptFile src={fileHref(receipt)} mimeType={receipt.mimeType} title={title} rotation={receipt.rotation} rotationPath={`/${encodeURIComponent(receipt.id)}/rotation`} />
+      <ReceiptFile src={fileHref(receipt)} mimeType={receipt.mimeType} title={title} rotation={rotation} onRotate={onRotate} />
     </Stack>
   );
 }
@@ -174,6 +178,8 @@ interface Props {
   onKeepThisOne: () => void;
   onRejectMatch: (otherId: string, reason: string) => void;
   onRejectAsCopy: (reason: string) => void;
+  /** This receipt's rotation as the page holds it, shared with the page's own view of the file. */
+  turn?: [number, (by: number) => void];
 }
 
 /**
@@ -181,7 +187,7 @@ interface Props {
  * decisions on each match and on the group. Rejecting this receipt, or its uploader discarding
  * it, sits with its other actions.
  */
-export default function DuplicateCompare({ receipt, group, loaded, loadErrors, onRetry, fresh, hrefOf, isFinance, own, onNotThisOne, onUndo, onDifferentPurchases, onKeepThisOne, onRejectMatch, onRejectAsCopy }: Props) {
+export default function DuplicateCompare({ receipt, group, loaded, loadErrors, onRetry, fresh, hrefOf, isFinance, own, onNotThisOne, onUndo, onDifferentPurchases, onKeepThisOne, onRejectMatch, onRejectAsCopy, turn }: Props) {
   const others = group.members.filter((m) => m.id !== receipt.id);
   const viewed = group.members.find((m) => m.id === receipt.id);
   const titleOf = (m: DuplicateMember) => `match ${others.indexOf(m) + 1}`;
@@ -333,7 +339,7 @@ export default function DuplicateCompare({ receipt, group, loaded, loadErrors, o
         </Table.ScrollContainer>
 
         <SimpleGrid cols={{ base: 1, md: columns }}>
-          <FileView title="This receipt's file" receipt={receipt} />
+          <FileView title="This receipt's file" receipt={receipt} turn={turn} />
           {others.map((m) => {
             const o = loaded.get(m.id);
             return o ? <FileView key={m.id} title={`File of ${titleOf(m)}`} receipt={o} /> : <Text key={m.id} size="sm" c="dimmed">The file of {titleOf(m)} is not loaded.</Text>;

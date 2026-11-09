@@ -20,7 +20,11 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: m
 jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
 jest.mock("@checkin/receipt/components/ReceiptFile", () => ({
   __esModule: true,
-  default: ({ src, mimeType, title }: { src: string; mimeType: string; title: string }) => <figure aria-label={title} data-src={src} data-type={mimeType} />,
+  default: ({ src, mimeType, title = "Receipt", rotation, onRotate }: { src: string; mimeType: string; title?: string; rotation?: number; onRotate?: (by: number) => void }) => (
+    <figure aria-label={title} data-src={src} data-type={mimeType} data-rotation={rotation}>
+      {onRotate && <button type="button" aria-label={`Rotate ${title}`} onClick={() => onRotate(90)} />}
+    </figure>
+  ),
 }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
@@ -92,6 +96,16 @@ function row(label: string): HTMLElement {
 }
 
 describe("the N-way compare", () => {
+  it("turns both copies of this receipt's image together", async () => {
+    await wrap();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rotate This receipt's file" }));
+    });
+    expect(screen.getByRole("figure", { name: "This receipt's file" })).toHaveAttribute("data-rotation", "90");
+    expect(screen.getByRole("figure", { name: "Receipt" })).toHaveAttribute("data-rotation", "90");
+    expect(screen.getByRole("figure", { name: "File of match 2" })).toHaveAttribute("data-rotation", "0");
+  });
+
   it("shows every member side by side, the viewed receipt first and the rest in upload order", async () => {
     await wrap();
     expect(within(row("Receipt #")).getAllByRole("cell").map((c) => c.textContent)).toEqual(["Receipt #", "R-9", "R-8", "R-7"]);
