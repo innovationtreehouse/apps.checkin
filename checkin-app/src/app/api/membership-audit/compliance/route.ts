@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
+import { nextBoundary } from "@/lib/membership/renewal";
+import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
+import { personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
@@ -29,20 +31,23 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  * fallen out of compliance but were NOT auto-terminated (the system deliberately
  * never auto-revokes — a human must follow up). Surfaces only what's knowable
  * from real data; there is no GRACE status modeled, so no grace bucket. Reasons:
- *   STALE_BG  — ACTIVE household whose background check aged past bgRecheckMonths
- *               (predicate owned by householdBgIsFresh; skipped when the board
- *               hasn't set the policy — bgRecheckMonths = 0 or no membership-year
- *               boundary).
+ *   STALE_BG  — ACTIVE household that no longer qualifies on its people's checks:
+ *               no lead's check is valid at the boundary, or an adult's check is
+ *               disputed (householdQualifies; skipped when the board hasn't set
+ *               the policy — bgRecheckMonths = 0 or no membership-year boundary).
  *   REVOKED / DENIED — OrgMembership status.
  *   STUCK_BG_CLEARANCE — a process parked at PENDING_BG_CLEARANCE (paid, never cleared).
  * A household with multiple problems gets all its reason tags.
  *
- * Also returns two PERSON-scoped lists (program people may not sit in a member
+ * Also returns three PERSON-scoped lists (program people may not sit in a member
  * household, so they can't key on householdId):
  *   peopleNeedingBgCheck — check-obligated people ≥18 (as of the boundary) with no
  *                          fresh check. Skipped when the policy is unset.
  *   peopleMissingDob     — check-obligated people whose age is unknown (no DOB,
  *                          not declared 25+): data hygiene, NOT bg-needed.
+ *   peopleWithDisputedCheck — people whose own check review is rejected, or whose
+ *                          rejection was sent back and has not cleared (BG_DISPUTED).
+ *                          Listed whatever the policy: a dispute ignores the window.
  * Check-obligated = bgObligatedWhere: program-attached, or a signing adult (lead)
  * of an ACTIVE member household.
  *
@@ -74,17 +79,16 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     };
 
     // 1. Stale background check — only when the board has configured a window AND a
-    //    membership-year boundary. Reuse householdBgIsFresh per household (stale =
-    //    returns false); with either half of the policy unset it always returns false,
-    //    so skip the whole bucket rather than tag every household.
+    //    membership-year boundary. With either half unset no household qualifies, so
+    //    skip the whole bucket rather than tag every household.
     if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
+        const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
         const active = await prisma.orgMembership.findMany({
             where: { status: "ACTIVE" },
             select: { householdId: true },
         });
         for (const m of active) {
-            const fresh = await householdBgIsFresh(m.householdId, boundary, bgRecheckMonths);
-            if (!fresh) add(m.householdId, "STALE_BG");
+            if (!householdQualifies(await householdCheckStandings(prisma, m.householdId, threshold))) add(m.householdId, "STALE_BG");
         }
     }
 
@@ -159,6 +163,26 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             (verdict === "DOB_MISSING" ? peopleMissingDob : peopleNeedingBgCheck).push(row);
         }
     }
+
+    // 4b. People whose check is disputed, from their own open or blocked check reviews.
+    const reviewed = await prisma.orgMembershipProcess.findMany({
+        where: { kind: "PERSON_BG", subjectPersonId: { not: null }, ...personBgOpen.where },
+        select: { subjectPersonId: true },
+    });
+    const reviewedIds = [...new Set(reviewed.flatMap((r) => (r.subjectPersonId === null ? [] : [r.subjectPersonId])))];
+    const reviewsByPerson = await loadCheckReviews(prisma, reviewedIds);
+    const disputedIds = reviewedIds.filter((id) => disputingReviews(reviewsByPerson.get(id) ?? []).length > 0);
+    const disputedPeople = disputedIds.length
+        ? await prisma.person.findMany({ where: { id: { in: disputedIds } }, select: { id: true, name: true, householdId: true }, orderBy: { name: "asc" } })
+        : [];
+    const peopleWithDisputedCheck: PersonRow[] = disputedPeople.map((p) => ({
+        personId: p.id,
+        name: p.name || `Person #${p.id}`,
+        householdId: p.householdId,
+        programId: null,
+        programName: null,
+        reason: "BG_DISPUTED",
+    }));
 
     // 5. Blanket-stamped background checks: a household clearance with no per-adult
     //    subject, where EVERY lead carries the same `new Date()` that set the
@@ -346,7 +370,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const agreementLists = { peopleAwaitingAgreement, peopleNeedingAgreement };
 
     if (reasons.size === 0) {
-        return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
+        return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
     }
 
     const households = await prisma.household.findMany({
@@ -382,5 +406,5 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         };
     });
 
-    return NextResponse.json({ households: result, peopleNeedingBgCheck, peopleMissingDob, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
+    return NextResponse.json({ households: result, peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
 });

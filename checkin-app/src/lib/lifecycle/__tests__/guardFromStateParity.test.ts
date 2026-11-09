@@ -75,12 +75,6 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'PENDING_BG_CLEARANCE'], mode: 'spread' }, // activate, check pending
     { file: 'lib/membership/payment.ts', machine: 'membership', from: 'BLOCKED', mode: 'spread' }, // paid while blocked: stamps paidAt, stays BLOCKED
     { file: 'app/api/finance-ops/membership-payment-plans/refuse/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', mode: 'spread' }, // deny: flag-only, no status edge
-    // merge BG carryover — two flag-only stamps (advanceExternalIfComplete / activate own the
-    // edges those rows later take) and two real clearances on already-declared edges.
-    { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', mode: 'spread' },
-    { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_PAYMENT', mode: 'spread' },
-    { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_REVIEW', edge: ['PENDING_BG_REVIEW', 'PENDING_PAYMENT'], mode: 'spread' },
-    { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'ACTIVE'], mode: 'spread' },
     // board reset / rejector change to approve on a BLOCKED review return it to review.
     { file: 'lib/membership/review.ts', machine: 'membership', from: 'BLOCKED', edge: ['BLOCKED', 'PENDING_PAYMENT'], mode: 'spread' },
     // naming a person closes their empty check review in favour of the one naming them.
@@ -95,8 +89,8 @@ const GUARDS: GuardSite[] = [
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'DENIED', edge: ['DENIED', 'NONE'], mode: 'helper' },
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'ACTIVE', edge: ['ACTIVE', 'REVOKED'], mode: 'helper' },
     // a paid application's check clears: the household converges to ACTIVE.
-    { file: 'lib/membership/review.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'ACTIVE'], mode: 'helper' },
-    { file: 'lib/membership/review.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'ACTIVE'], mode: 'helper' },
+    { file: 'lib/membership/settleHouseholdBg.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'ACTIVE'], mode: 'helper' },
+    { file: 'lib/membership/settleHouseholdBg.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'ACTIVE'], mode: 'helper' },
 
     // ── left literal on purpose (documented) ──
     // personBgTriggers is an idempotency EXISTENCE set (∅→PENDING_BG_REVIEW is the edge;

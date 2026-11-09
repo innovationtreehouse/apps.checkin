@@ -109,7 +109,7 @@ const isVolunteerOf = async (id: number) => (await prisma.orgMembership.findUniq
 
 /**
  * Turn the fresh-check shortcut on. It needs BOTH halves of the policy — a recheck
- * window AND a membership-year boundary — since householdBgIsFresh treats either
+ * window AND a membership-year boundary — since bgFreshThreshold treats either
  * being unset as "no policy, nothing is fresh". The boundary sits ~30 days out, so
  * the freshness threshold (boundary - 12 months) lands ~11 months back and a check
  * stamped today counts as fresh.

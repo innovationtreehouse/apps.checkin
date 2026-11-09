@@ -3,9 +3,9 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { mergeBgNotice } from "@/lib/membership/mergeBgAdvance";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
+import { carriedComplianceDate } from "@/lib/person/merge/plan";
 
 export const dynamic = 'force-dynamic';
 
@@ -80,7 +80,7 @@ export const GET = withAuth(
             // and only a date the survivor would adopt leaves this route.
             const getBgSubject = (id: number) => prisma.person.findUnique({
                 where: { id },
-                select: { householdId: true, isHouseholdLead: true, lastBackgroundCheck: true },
+                select: { lastBackgroundCheck: true },
             });
 
             const [pA, pB, bgA, bgB] = await Promise.all([getParticipant(aId), getParticipant(bId), getBgSubject(aId), getBgSubject(bId)]);
@@ -188,7 +188,11 @@ export const GET = withAuth(
                 collisions.push({ type: 'openVisit', message: 'Both have an open building visit. Close one visit first.' });
             }
 
-            const [bgNoticeAKept, bgNoticeBKept] = await Promise.all([mergeBgNotice(bgA, bgB), mergeBgNotice(bgB, bgA)]);
+            // The date the keeper would adopt; whether the household then qualifies is settled after the merge.
+            const bgNotice = (keep: typeof bgA, merged: typeof bgB) => {
+                const date = carriedComplianceDate(keep.lastBackgroundCheck, merged.lastBackgroundCheck);
+                return date ? { date } : null;
+            };
 
             return NextResponse.json({
                 participants: [pA, pB],
@@ -196,7 +200,7 @@ export const GET = withAuth(
                     aAsKeeper: membershipMergeBlock(a, b),
                     bAsKeeper: membershipMergeBlock(b, a),
                 },
-                bgNotice: { aAsKeeper: bgNoticeAKept, bAsKeeper: bgNoticeBKept },
+                bgNotice: { aAsKeeper: bgNotice(bgA, bgB), bAsKeeper: bgNotice(bgB, bgA) },
                 collisions,
             });
         } catch (error) {

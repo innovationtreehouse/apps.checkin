@@ -54,10 +54,9 @@ jest.mock('@/lib/household/leads', () => {
     return { ...actual, addHouseholdLead: jest.fn() };
 });
 jest.mock('@/lib/membership/renewal', () => ({
-    householdBgIsFresh: jest.fn(),
-    nextBoundary: jest.fn(),
     householdApplicationOpenOrBlockedWhere: { OR: [] },
 }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
     lockAndFindDeniedHousehold: jest.fn(),
@@ -76,7 +75,7 @@ const { upsertPrimaryContact, reconcileHouseholdConflicts } = require('@/lib/eme
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { householdBgIsFresh } = require('@/lib/membership/renewal');
+const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -883,7 +882,6 @@ describe('submitIntake', () => {
     });
 
     it('writes the status and its audit row in one transaction', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         prisma.auditLog.create.mockRejectedValueOnce(new Error('audit write failed'));
 
         await expect(submitIntake(1)).rejects.toThrow('audit write failed');
@@ -901,7 +899,6 @@ describe('submitIntake', () => {
     });
 
     it('CAS from INTAKE: a concurrent archive or double submit (count 0) → no_process, no audit, no advance (F-11)', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
 
         await expect(submitIntake(1)).rejects.toMatchObject({ code: 'no_process' });
@@ -921,36 +918,27 @@ describe('submitIntake', () => {
         });
     });
 
-    it('complete + bgFresh=false → no bgClearedAt stamp, allowlist deferred to the external advance', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
-
+    it('lands at PENDING_EXTERNAL_ACTION without stamping, then settles the household before the external advance', async () => {
         await submitIntake(1);
 
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
             where: { id: 11, status: 'INTAKE' },
             data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
         });
+        // Settle stamps a qualifying household, and blocks one whose adult is disputed.
+        expect(settleHouseholdBg).toHaveBeenCalledWith(7);
+        expect(settleHouseholdBg.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist', async () => {
-        householdBgIsFresh.mockResolvedValue(true);
+    it('a failed settle is logged and the committed intake still returns', async () => {
+        settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
 
-        const result = await submitIntake(1);
-
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 11, status: 'INTAKE' },
-            data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', bgClearedAt: expect.any(Date) }),
-        });
-        expect(prisma.auditLog.create).toHaveBeenCalled();
-        // Fresh-check shortcut skips clearBackgroundCheck for the whole cycle, so
-        // the designation allowlist must be matched here or never.
-        expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
-        expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+        await expect(submitIntake(1)).resolves.toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+        expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 11 });
     });
 
     it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is
         // already met when we arrive — the advance carries the process to PENDING_PAYMENT.
         advanceExternalIfComplete.mockResolvedValue({ id: 11, status: 'PENDING_PAYMENT' });
@@ -962,7 +950,6 @@ describe('submitIntake', () => {
     });
 
     it('falls back to the re-read process when the external advance is a no-op', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         // Nothing pre-marked ⇒ advanceExternalIfComplete finds the gate unmet and
         // returns the still-PENDING_EXTERNAL_ACTION process (here left undefined to
         // exercise the fallback); submitIntake reports the phase it advanced to.
@@ -974,18 +961,4 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
     });
 
-    it('complete + fresh check + intake note → the note does not disqualify the shortcut', async () => {
-        prisma.person.findUnique.mockResolvedValue({
-            ...inFlightUser,
-            household: { ...inFlightUser.household, intakeNotes: 'please treat us as a volunteer household' },
-        });
-        householdBgIsFresh.mockResolvedValue(true);
-
-        await submitIntake(1);
-
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 11, status: 'INTAKE' },
-            data: expect.objectContaining({ bgClearedAt: expect.any(Date) }),
-        });
-    });
 });

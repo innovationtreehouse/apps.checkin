@@ -14,7 +14,7 @@ import { POST as OVERRIDE } from '@/app/api/membership-ops/applications/review-o
 import { GET as COMPLIANCE } from '@/app/api/membership-audit/compliance/route';
 import { eligibleReviewProcessIds } from '@/lib/membership/review';
 import { bgFreshThreshold, personBgVerdict } from '@/lib/membership/personBgCheck';
-import { householdBgIsFresh } from '@/lib/membership/renewal';
+import { householdCheckStandings, householdQualifies } from '@/lib/membership/checkStanding';
 import prisma from '@/lib/prisma';
 import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
@@ -122,10 +122,10 @@ describe('Per-adult background-check subjects', () => {
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.appId } });
         expect(proc?.bgClearedAt).not.toBeNull();
         expect(proc?.status).toBe('PENDING_PAYMENT');
-        // householdBgIsFresh is "ANY lead fresh", which rule 1 requires — per-adult stamping must
-        // not tighten the membership gate to "every lead".
-        const boundary = new Date(Date.now() + 86_400_000);
-        expect(await householdBgIsFresh(hh.householdId, boundary, 12)).toBe(true);
+        // The household qualifies on ANY lead cleared, which rule 1 requires — per-adult stamping
+        // must not tighten the membership gate to "every lead".
+        const threshold = bgFreshThreshold(new Date(Date.now() + 86_400_000), 12);
+        expect(householdQualifies(await householdCheckStandings(prisma, hh.householdId, threshold))).toBe(true);
     });
 
     it('the unnamed adult reads as NEEDED, not FRESH', async () => {
