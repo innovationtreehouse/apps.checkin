@@ -42,10 +42,10 @@ const tree = (u: NavUser, c: TodoCounts | null = released) =>
   visibleLinks(DONATIONS, u, c).map((l) => [l.name, (l.subLinks ?? []).map((s) => s.href)]);
 
 describe("Settings > Finance", () => {
-  it("shows Finance to FINANCE and Board, before Receipt reading, at /settings/finance", () => {
+  it("shows Expenses to FINANCE and Board, before Receipt reading, at /settings/finance", () => {
     expect(hrefs(SETTINGS, finance)).toEqual(["/settings/finance", "/settings/receipt-reading"]);
     expect(hrefs(SETTINGS, board).slice(-2)).toEqual(["/settings/finance", "/settings/receipt-reading"]);
-    expect(visibleLinks(SETTINGS, finance, released)[0].name).toBe("Finance");
+    expect(visibleLinks(SETTINGS, finance, released)[0].name).toBe("Expenses");
   });
 
   it("hides Finance from sysadmin and operations, who never reached expense settings", () => {

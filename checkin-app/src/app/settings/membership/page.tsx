@@ -5,7 +5,6 @@ import { useState } from "react";
 import { Alert, Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useSeedForm } from "@/hooks/useSeedForm";
 import { api, useLoad } from "@/lib/api";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
@@ -228,8 +227,6 @@ export default function MembershipSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="membership" />
-
       {error && <LoadError what="the membership settings" message={error} onRetry={reload} />}
 
       {!data ? (
