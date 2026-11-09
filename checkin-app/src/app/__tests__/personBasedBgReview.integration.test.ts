@@ -189,8 +189,9 @@ describe('the first decision names the person', () => {
 
     it("closes the named person's own empty review in favour of this one (PBR-11)", async () => {
         const f = await family();
-        const own = await ownReview(f.leadId);
         const reviewId = await consent(f);
+        // The sweep opens the lead's own review after the household's.
+        const own = await ownReview(f.leadId);
         await attest(revA, reviewId, { result: 'APPROVE', subjectPersonIds: [f.leadId] });
         expect((await row(own)).status).toBe('ARCHIVED');
         expect((await audits(own)).at(-1)?.newData).toMatchObject({ action: 'replaced by a check review', replacedByReviewId: reviewId });
