@@ -32,11 +32,11 @@ const APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['authenticated', ['everyones:internal']],
 ];
 
-const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'ExpenseQueueReason'] as const;
+const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'ExpenseQueueReason', 'ExpenseWaitingOn'] as const;
 
 // Approver surface: queue, counts, detail and per-line approval. Rows are
 // handler-filtered to the caller's buckets. Sign-off admits every seat holder.
-defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense'], orderedView: APPROVER_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/expense/expenses/count', authorize: 'expense-approver', envelope: null, returns: ['ExpenseListCount'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: APPROVER_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval', 'ExpenseBucketView'], orderedView: APPROVER_VIEW, auditedRead: true });
@@ -47,7 +47,7 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/approve-lines', authori
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/raise-exception', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/signoffs', authorize: 'expense-approver', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs', authorize: 'expense-signer', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/queue', authorize: 'expense-approver', envelope: null, returns: ['Expense'], orderedView: APPROVER_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/queue', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/expense/counts', authorize: 'expense-approver', envelope: null, returns: ['ExpenseCounts'], orderedView: APPROVER_VIEW });
 
 // FINANCE or BOARD: reads, settings, and flag checkoff (a flag carries a FINANCE

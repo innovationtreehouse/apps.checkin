@@ -132,6 +132,11 @@ export const classifications = {
     count: "internal",
     detail: "personal",
   },
+  // Expense list, queue and detail: the server's label for what an expense with an open hold waits on.
+  ExpenseWaitingOn: {
+    expenseId: "internal",
+    label: "internal",
+  },
 } as const;
 
 export const relations = {
