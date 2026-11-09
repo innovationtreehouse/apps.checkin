@@ -198,23 +198,23 @@ let refusedAlerted: string | null = null;
 async function alertRefusedAccount(accountId: string, accountType: string | undefined): Promise<void> {
   if (refusedAlerted === accountId) return;
   refusedAlerted = accountId;
-  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert("finance.expensePaymentAccount", {
+  await emailAlert("finance.expensePaymentAccount", {
     accountId,
     accountKind: accountType ? `a ${accountType} account` : "not in QuickBooks",
     actionLink: `${config.baseUrl()}/books-map`,
-  }, "Expense payment-account alert failed:");
+  });
 }
 
 /** The daily orphan sweep read a full page, so an entry the app created may sit in QuickBooks unchecked. */
 async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
-  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert("finance.expenseSweepIncomplete", {
+  await emailAlert("finance.expenseSweepIncomplete", {
     since: since.toISOString().slice(0, 10),
     actionLink: `${config.baseUrl()}/expense/expenses`,
-  }, "Expense sweep alert failed:");
+  });
 }
 
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };
