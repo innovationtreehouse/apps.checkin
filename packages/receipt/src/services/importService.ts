@@ -4,6 +4,7 @@ import { insertReceiptsTogether } from "../lib/insert";
 import { runFullFlow } from "../lib/receipt-flow";
 import { getOrgId, requireActor } from "../runtime";
 import { ServiceError } from "@checkin/component-kit";
+import { isUniqueConstraintError } from "@checkin/pg-kit";
 
 export interface ImportRowResult {
   importSourceId: string;
@@ -26,7 +27,8 @@ const IMPORT_TRANSACTION_MS = 120_000;
  * only the submitter step and the age gate. Records purchases only, never a reimbursement claim.
  * Idempotent per (org, importSourceId): a re-run skips rows already loaded, and runs the pipeline
  * of any it finds still in "uploaded". A row the daily sweep has moved to flow_error is finance's
- * to restart from its queue, like any other flow_error receipt.
+ * to restart from its queue, like any other flow_error receipt. A run that loses the race to an
+ * overlapping run skips the rows that run loaded, whose pipeline is that run's to finish.
  */
 export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
@@ -69,11 +71,17 @@ export async function importReceipts(rawBatch: unknown) {
       auditAction: "imported",
     })),
     IMPORT_TRANSACTION_MS,
-  ).catch((err: unknown) => {
+  ).catch(async (err: unknown) => {
+    if (isUniqueConstraintError(err)) {
+      // Postgres raises the violation once the other run commits, so this read sees that run's rows.
+      const raced = await db.receiptDetail.count({ where: { orgId, importSourceId: { in: fresh.map(({ row }) => row.importSourceId) } } });
+      if (raced === fresh.length) return [];
+      if (raced > 0) throw new ServiceError(409, "Import refused; nothing was imported. Another import loaded some of these rows at the same time; run this batch again.");
+    }
     throw new ServiceError(500, `Import refused; nothing was imported. ${err instanceof Error ? err.message : String(err)}`);
   });
 
-  const imported = new Map([...resume, ...fresh.map(({ row }, i): [string, string] => [row.importSourceId, ids[i]])]);
+  const imported = new Map([...resume, ...ids.map((id, i): [string, string] => [fresh[i].row.importSourceId, id])]);
   const results: ImportRowResult[] = [];
   for (const { row } of checked.rows) {
     const id = imported.get(row.importSourceId);

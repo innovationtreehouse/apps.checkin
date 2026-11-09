@@ -79,7 +79,7 @@ const RAISE: Act = { act: "raise-exception", primary: false, noteRequired: true 
 const SIGN_T: Act = { act: "sign", seat: "TREASURER", primary: false, noteRequired: false };
 const rowOf = (n: number) => screen.getAllByRole("row")[n];
 
-describe("only the acts the server returns are drawn (3.15, #2433)", () => {
+describe("only the acts the server returns are drawn", () => {
   it("draws no act and no Sign-as button on a line with none, only its status", () => {
     load([{ actions: [], awaiting: ["Awaiting approval", "Awaiting Treasurer"] }]);
     expect(screen.queryByRole("button", { name: /^Sign as/ })).not.toBeInTheDocument();
@@ -201,13 +201,10 @@ describe("required notes (3.16)", () => {
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: "Leader away all month" }, "Approve as Board (program approver) done");
   });
 
-  it("asks no note of an approval the server takes without one", async () => {
+  it("posts an approval the server takes without a reason at once, with no dialog", async () => {
     load([{ actions: [APPROVE] }]);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as Program approver" })); });
-    const confirm = await screen.findByRole("button", { name: "Confirm" });
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(confirm).toBeEnabled();
-    await act(async () => { fireEvent.click(confirm); });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: null }, "Approve as Program approver done");
   });
 });

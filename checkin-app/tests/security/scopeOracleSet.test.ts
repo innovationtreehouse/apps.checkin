@@ -6,12 +6,10 @@
  * of what each role may see. Nothing else pins that they exist.
  *
  * security-boundary-isolation.yml deliberately does NOT treat them as boundary
- * files — a decommission has to update its own oracle, and classifying them as
- * boundary made the exception refuse the shape it exists for. That is the right
- * call, and it costs the one mechanical guard those files had: an oracle can now
+ * files, because a decommission has to update its own oracle. So an oracle can
  * ride along inside an ordinary feature PR, and a deleted test is invisible to a
- * green run. CODEOWNERS still forces a security owner onto the review, but that
- * is a human reading a large diff, which is the failure isolation exists to stop.
+ * green run. CODEOWNERS forces a security owner onto the review, but that is a
+ * human reading a large diff, which is the failure isolation exists to stop.
  *
  * So the set is pinned here. Adding an oracle costs one line and makes a
  * reviewer see the new file; removing one has to be written down on purpose.
@@ -36,6 +34,7 @@ const ORACLES = [
     'donation-strip.test.ts',
     'eligible-candidate-strip.test.ts',
     'emergency-contact-program-scope.test.ts',
+    'event-page-strip.test.ts',
     'expense-card-charge-routes.test.ts',
     'expense-finance-queue-routes.test.ts',
     'expense-line-actions-routes.test.ts',
@@ -44,9 +43,11 @@ const ORACLES = [
     'expense-strip.test.ts',
     'expense-test-data-route.test.ts',
     'file-route.test.ts',
+    'hardship-tier-strip.test.ts',
     'finance-view-audit-guard.test.ts',
     'finance-view-audit.test.ts',
     'finance-views-route.test.ts',
+    'household-archive-routes.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
     'income-strip.test.ts',
@@ -56,11 +57,16 @@ const ORACLES = [
     'mail-alias-routes.test.ts',
     'member-tier.test.ts',
     'payment-plans-strip.test.ts',
+    'problems-retry-route.test.ts',
+    'program-participant-payment-method-strip.test.ts',
     'program-participant-pending-since-strip.test.ts',
     'program-scope-withdrawn.test.ts',
+    'receipt-allowance-reset-routes.test.ts',
     'receipt-flow-status-routes.test.ts',
+    'receipt-ocr-switch-routes.test.ts',
     'receipt-routes.test.ts',
     'receipt-strip.test.ts',
+    'reference-conflict-strip.test.ts',
     'rsvp-program-scope.test.ts',
     'scopeValidators.test.ts',
     'shop-certifications-strip.test.ts',

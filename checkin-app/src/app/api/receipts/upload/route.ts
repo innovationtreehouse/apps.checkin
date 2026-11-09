@@ -3,5 +3,9 @@
 import { routes } from "@checkin/receipt";
 import { handler } from "@/security/handler";
 import { receiptRoute } from "@/lib/receipt/route";
+import { refuseOwnHouseholdDonor } from "@/lib/bulkDonation/donorSelfGuard";
+import prisma from "@/lib/prisma";
 
-export const POST = handler("POST /api/receipts/upload", receiptRoute(routes.receipts.upload));
+export const POST = handler("POST /api/receipts/upload", (ctx) =>
+  receiptRoute(routes.receipts.upload((donor) => refuseOwnHouseholdDonor(prisma, ctx.auth, donor, "Receipt")))(ctx),
+);

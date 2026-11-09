@@ -4,6 +4,7 @@
  * sibling library. Every crossing is one port; flipping a crossing swaps one
  * binding. Unbound ports fall back to the inert adapters below.
  */
+import { NotWiredError } from "@checkin/component-kit";
 import { z } from "zod";
 import type {
   CatalogCheckReferences,
@@ -95,6 +96,8 @@ export interface DonationSink {
 /** S3: load the receipt's goods. The callee applies at most once per source key `receipt:<receiptId>`. */
 export interface InventorySink {
   applyDelta(delta: ResolvedInventoryDelta): Promise<void>;
+  /** How many of each receipt's lines are still open on the receive queue; a receipt with none is left out. */
+  openBackorders(receiptIds: string[]): Promise<Map<string, number>>;
 }
 
 // ── S5: catalog org events ───────────────────────────────────────────────────
@@ -117,22 +120,16 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]>;
 }
 
-/** Alerts the host binds to reach a person. */
-export interface WorkflowAlerts {
-  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
-  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
-}
-
 // ── Inert adapters ───────────────────────────────────────────────────────────
-// A push target that is not wired throws, so the receipt waits in apply_failed;
-// it never reports success with nothing booked or counted.
+// A port that is not wired throws NotWiredError: a push leaves the receipt waiting in apply_failed,
+// and a catalog read says "not connected" rather than "no match". None reports success or an empty answer.
 
 function notWired(port: string): never {
-  throw new Error(`${port} not wired`);
+  throw new NotWiredError(port);
 }
 
 export const inertCatalogReader: CatalogReader = {
-  lookupItems: async () => [],
+  lookupItems: async () => notWired("CatalogReader.lookupItems"),
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
   getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
 };
@@ -154,10 +151,11 @@ export const inertDonationSink: DonationSink = {
 
 export const inertInventorySink: InventorySink = {
   applyDelta: async () => notWired("InventorySink.applyDelta"),
+  openBackorders: async () => new Map(),
 };
 
 export const inertCatalogEventSource: CatalogEventSource = {
-  eventsSince: async () => [],
+  eventsSince: async () => notWired("CatalogEventSource.eventsSince"),
 };
 
 export interface WorkflowRuntimeConfig {
@@ -170,5 +168,4 @@ export interface WorkflowRuntimeConfig {
   donationSink?: DonationSink;
   inventorySink?: InventorySink;
   catalogEventSource?: CatalogEventSource;
-  alerts?: WorkflowAlerts;
 }

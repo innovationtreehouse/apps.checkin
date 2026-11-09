@@ -23,7 +23,6 @@ const facts = (over: Partial<Omit<ReasonFacts, "expense">> & { expense?: Partial
     taxCents: 0,
     receiptTotalCents: 1000,
     qbMatchState: "UNMATCHED",
-    qbPostAttempts: 0,
     ...over.expense,
   },
 });
@@ -66,9 +65,9 @@ describe("deriveReasons", () => {
     expect(taxWaitsOnFinance(500, null, 500)).toBe(false);
   });
 
-  it("reads the QuickBooks reasons from qbMatchState, with the last error and the attempts", () => {
-    expect(deriveReasons(facts({ expense: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 }, lastPostError: "Account is inactive" }))).toEqual([
-      { code: "QB_POST_FAILED", tab: "qb", amountCents: null, count: 5, detail: "Account is inactive" },
+  it("reads the QuickBooks reasons from qbMatchState, with the last error", () => {
+    expect(deriveReasons(facts({ expense: { qbMatchState: "NEEDS_FINANCE" }, lastPostError: "Account is inactive" }))).toEqual([
+      { code: "QB_POST_FAILED", tab: "qb", amountCents: null, count: null, detail: "Account is inactive" },
     ]);
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS" } }))).toEqual(["QB_AWAITING_MATCH"]);
     expect(codes(facts({ expense: { qbMatchState: "AMBIGUOUS", needsReimbursement: true, reimburseePersonId: 4 }, reimburseeVendorLinked: false }))).toEqual(["QB_VENDOR_MISSING"]);
@@ -80,6 +79,10 @@ describe("deriveReasons", () => {
       { code: "QB_NO_CLASS", tab: "qb", amountCents: null, count: null, detail: "Facility" },
     ]);
     expect(codes(facts({ missingClass: { bucketName: null } }))).toEqual(["QB_NO_CLASS"]);
+  });
+
+  it("reads a qb_error expense as waiting for Retry", () => {
+    expect(codes(facts({ expense: { state: "qb_error" } }))).toEqual(["QB_PROCESSING_FAILED"]);
   });
 
   it("a closed expense keeps its QuickBooks reasons and reviews, and drops the rest", () => {
@@ -125,13 +128,15 @@ describe("reasonText", () => {
   it("words each reason without a code or id", () => {
     expect(reasonText(r({ code: "TAX_NOT_REVIEWED", amountCents: 1240 }), "USD")).toBe("Tax $12.40 not reviewed on the receipt");
     expect(reasonText(r({ code: "BOARD_APPROVAL", amountCents: 234_000 }), "USD")).toBe("Board approval of a $2,340.00 purchase not recorded");
-    expect(reasonText(r({ code: "QB_POST_FAILED", count: 5, detail: "Account is inactive" }), "USD")).toBe("Posting failed 5 times: Account is inactive");
+    expect(reasonText(r({ code: "QB_POST_FAILED", detail: "Account is inactive" }), "USD")).toBe("Not posted: Account is inactive");
+    expect(reasonText(r({ code: "QB_POST_FAILED" }), "USD")).toBe("Not posted");
     expect(reasonText(r({ code: "QB_DRIFT", detail: "amount, accounts" }), "USD")).toBe("Changed in QuickBooks after posting: amount, account");
     expect(reasonText(r({ code: "QB_POST_HELD", detail: "closed but not posted: a line is missing a sign-off seat" }), "USD"))
       .toBe("Closed but not posted: a line is missing a sign-off seat");
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 1 }), "USD")).toBe("1 line has no account rule");
     expect(reasonText(r({ code: "ACCOUNT_HOLD", count: 2 }), "USD")).toBe("2 lines have no account rule");
     expect(reasonText(r({ code: "QB_NO_CLASS", detail: "Facility" }), "USD")).toBe("Budget bucket Facility has no QuickBooks class");
+    expect(reasonText(r({ code: "QB_PROCESSING_FAILED" }), "USD")).toBe("Could not be prepared for QuickBooks; it waits for Retry on the Problems list");
     expect(reasonText(r({ code: "QB_NO_CLASS" }), "USD")).toBe("A line has no budget bucket, so it has no QuickBooks class");
   });
 });

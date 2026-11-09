@@ -8,7 +8,7 @@ import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
 
 const repo = () => createItemReferenceRepository(getDb());
-const resolveSchema = z.object({ resolution: z.enum(conflictResolutionEnum) });
+const resolveSchema = z.object({ resolution: z.enum(conflictResolutionEnum), existingGtin13: z.string() });
 
 export const list: CatalogRouteHandler = async ({ req }) => {
   const sp = query(req);
@@ -20,8 +20,8 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 
 export const resolve: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { resolution } = await parseBody(req, resolveSchema);
+  const { resolution, existingGtin13 } = await parseBody(req, resolveSchema);
   const principal = await getPrincipal();
-  await mapServiceErrors(() => resolveConflict(id, principal.id, resolution));
+  await mapServiceErrors(() => resolveConflict(id, principal.id, resolution, existingGtin13));
   return {};
 };

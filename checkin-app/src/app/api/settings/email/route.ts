@@ -3,6 +3,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
+import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { handler } from "@/security/handler";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,9 @@ const SELECT = {
     emailFromAddress: true,
     emailReplyToAddress: true,
     scholarshipNotifyEmail: true,
+    alertEmailAddress: true,
+    boardEmailAddress: true,
+    financeContactEmail: true,
     scholarshipAckSubject: true,
     scholarshipAckMembershipBody: true,
     scholarshipAckProgramBody: true,
@@ -28,13 +32,15 @@ export const GET = handler('GET /api/settings/email', async () => {
 
 /**
  * PUT /api/settings/email — set the Resend From override, Reply-To, the
- * Scholarship Review Team notify address, and the scholarship ACK subject/bodies.
- * Body may include emailFromAddress, emailReplyToAddress, scholarshipNotifyEmail
- * (string|null), scholarshipAckSubject, scholarshipAckMembershipBody, and
+ * Scholarship Review Team notify address, the alert and Board group addresses, the
+ * finance contact address, and the scholarship ACK subject/bodies.
+ * Body may include emailFromAddress, emailReplyToAddress, scholarshipNotifyEmail,
+ * alertEmailAddress, boardEmailAddress, financeContactEmail (string|null), scholarshipAckSubject, scholarshipAckMembershipBody, and
  * scholarshipAckProgramBody. emailFromAddress is a single address shape (bare or
  * `Name <addr@domain>`). scholarshipNotifyEmail/emailReplyToAddress may be a
  * comma-separated list of one or more addresses, each in that same shape (e.g.
- * "info@x.org, ops@x.org") — replies can fan out to more than one inbox. The ACK
+ * "info@x.org, ops@x.org") — replies can fan out to more than one inbox.
+ * alertEmailAddress, boardEmailAddress and financeContactEmail are each one bare address. The ACK
  * subject/bodies are plain text (rendered via lib/scholarshipEmails.ts'
  * renderAckBody — HTML-escaped, not interpreted as markup) capped at
  * ACK_BODY_MAX_LEN chars. A malformed value rejects the whole update (400) so the
@@ -48,6 +54,9 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         emailFromAddress?: string | null;
         emailReplyToAddress?: string | null;
         scholarshipNotifyEmail?: string | null;
+        alertEmailAddress?: string | null;
+        boardEmailAddress?: string | null;
+        financeContactEmail?: string | null;
         scholarshipAckSubject?: string | null;
         scholarshipAckMembershipBody?: string | null;
         scholarshipAckProgramBody?: string | null;
@@ -77,6 +86,12 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             return apiError("scholarshipNotifyEmail must be a comma-separated list of email addresses (each an address or \"Name <addr@domain>\")", 400);
         }
         data.scholarshipNotifyEmail = v || null; // blank clears to null
+    }
+    for (const field of ["alertEmailAddress", "boardEmailAddress", "financeContactEmail"] as const) {
+        if (body[field] === undefined) continue;
+        const v = body[field]?.trim();
+        if (v && !isValidEmail(v)) return apiError(`${field} must be an email address`, 400);
+        data[field] = v || null;
     }
     if (body.scholarshipAckSubject !== undefined) {
         const v = body.scholarshipAckSubject?.trim();

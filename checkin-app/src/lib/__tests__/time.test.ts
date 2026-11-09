@@ -1,4 +1,27 @@
-import { formatDate, formatTime, formatDateTime, formatVisitRange, APP_TIMEZONE, toDatetimeLocal, fromDatetimeLocal, formatDateOnly, parseDateOnly, isYouth, calculateAge, orgCalendarDay } from '../time';
+import { formatDate, formatTime, formatDateTime, formatVisitRange, APP_TIMEZONE, toDatetimeLocal, fromDatetimeLocal, formatDateOnly, parseDateOnly, parseDayAt, isYouth, calculateAge, orgCalendarDay } from '../time';
+
+describe('parseDayAt', () => {
+  it.each(['2026-02-31', '2026-13-01', '2026-00-10', '2026-04-31'])('rejects %s, a day the calendar lacks', (value) => {
+    expect(parseDayAt(value, '00:00:00.000')).toBeNull();
+  });
+
+  it('accepts 29 February in a leap year only', () => {
+    expect(parseDayAt('2028-02-29', '00:00:00.000')).toEqual(new Date('2028-02-29T00:00:00.000'));
+    expect(parseDayAt('2026-02-29', '00:00:00.000')).toBeNull();
+  });
+
+  it('rejects a malformed value', () => {
+    for (const value of ['', 'x', '2026-1-2', '27-10-2026', '2026-01-02T00:00:00']) {
+      expect(parseDayAt(value, '00:00:00.000')).toBeNull();
+    }
+  });
+
+  it('keeps the time of day on a valid day', () => {
+    const d = parseDayAt('2026-10-31', '23:59:59.999')!;
+    expect([d.getFullYear(), d.getMonth() + 1, d.getDate()]).toEqual([2026, 10, 31]);
+    expect([d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()]).toEqual([23, 59, 59, 999]);
+  });
+});
 
 /** The instant formatters take the zone explicitly; these suites pass the org default. */
 const TZ = { timeZone: APP_TIMEZONE };
@@ -126,7 +149,7 @@ describe('isYouth', () => {
     expect(isYouth('', { unknownIs: 'adult' })).toBe(false);
   });
 
-  it('unknown DOB fails closed when the caller opts in (#300)', () => {
+  it('unknown DOB fails closed when the caller opts in', () => {
     expect(isYouth(null, { unknownIs: 'youth' })).toBe(true);
     expect(isYouth(undefined, { unknownIs: 'youth' })).toBe(true);
     // known DOB is never overridden by the option
@@ -163,7 +186,7 @@ describe('time.ts formatting utilities', () => {
   it('formatDate formats dates correctly in Central Time', () => {
     // 12:00 UTC is 06:00 CST (or 07:00 CDT depending on daylight savings, normally Jest uses the system timezone but we forced the options timeZone)
     const formatted = formatDate(testDate, TZ);
-    // Since we aren't strict on the exact locale string structure (which varies based on the environment), we just check it returns a string for now, or mock Intl
+    // The exact locale string varies by environment, so this only checks for a non-empty string.
     expect(typeof formatted).toBe('string');
     expect(formatted.length).toBeGreaterThan(0);
   });

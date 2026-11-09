@@ -3,6 +3,7 @@
  * configureLocalInventory() once at boot; the library reads the configured
  * runtime and never imports the host.
  */
+import { NotWiredError } from "@checkin/component-kit";
 
 /** The acting host user, projected to what inventory rows stamp. */
 export interface InventoryPrincipal {
@@ -36,16 +37,13 @@ export interface InventoryRuntimeConfig {
   org: () => Promise<OrgIdentity>;
   /** S5 replay read; inert (no events) until the host binds it to the catalog. */
   catalogEventSource?: CatalogEventSource;
-  alerts?: InventoryAlerts;
+  /** Active catalog item read; unbound, a catalog part is refused as unreachable. */
+  catalog?: CatalogItemReader;
 }
 
-/** Alerts the host binds to reach a person. */
-export interface InventoryAlerts {
-  /**
-   * Catalog events a catch-up run left undone: newly failed, stalled over its cap, or the catalog
-   * unreadable; or stored resolutions it could not apply to their provisionals (`stuckProvisionals`).
-   */
-  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean; stuckProvisionals?: { gtin13: string; name: string }[] }): Promise<void>;
+/** The approved, non-archived catalog item with this GTIN, or null. */
+export interface CatalogItemReader {
+  getActiveItem(gtin13: string): Promise<{ gtin13: string } | null>;
 }
 
 /** One catalog OrgEvent row; `payload` is its stored JSON body without `eventType`. */
@@ -62,7 +60,12 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
+/** An unbound event source says so rather than answer "no events". */
+export const inertCatalogEventSource: CatalogEventSource = {
+  eventsSince: async () => {
+    throw new NotWiredError("CatalogEventSource.eventsSince");
+  },
+};
 
 /** The slice of a route context a factory consumes: request + path params. */
 export interface InventoryRouteCtx {

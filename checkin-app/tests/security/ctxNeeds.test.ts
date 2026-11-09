@@ -1,7 +1,7 @@
 /**
  * ctxNeeds — the proof the scoped CallerContext prefetch is behavior-neutral.
  *
- * buildCallerContext now fetches only the fields a route's policy can consume
+ * buildCallerContext fetches only the fields a route's policy can consume
  * (spec.ctxNeeds, derived in core.ts from authorize + orderedView roles +
  * granted token scopes). Skipping a fetch leaves that field an EMPTY set, so
  * this suite asserts, for EVERY registered route:
@@ -191,7 +191,7 @@ function maskToNeeds(full: CallerContext, needs: CtxNeeds): CallerContext {
 }
 
 // Representative rows: each carries every field any binding matches on (same
-// shape as the S1 equivalence suite), so one row set exercises all models.
+// shape as scopeBindingsEquivalence.test.ts), so one row set exercises all models.
 const ROWS: Array<Record<string, unknown> | null> = [
     null,
     {},

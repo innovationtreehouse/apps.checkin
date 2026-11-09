@@ -88,7 +88,7 @@ beforeEach(() => {
     db.rawBadgeLog.findMany.mockResolvedValue([parkedRow]);
     db.rawBadgeLog.updateMany.mockResolvedValue({ count: 1 });
     db.rawBadgeLog.findFirst.mockResolvedValue(parkedRow);
-    db.person.findUnique.mockResolvedValue({ id: 12, isKeyholder: false, mergedIntoId: null });
+    db.person.findUnique.mockResolvedValue({ id: 12, isKeyholder: false });
     db.personMerge.findUnique.mockResolvedValue(null);
     db.visit.findFirst.mockResolvedValue(null);
     db.visit.count.mockResolvedValue(0);
@@ -133,12 +133,12 @@ describe("GET /api/system-status/unsynced-scans", () => {
         expect((await GET(listReq())).status).toBe(200);
     });
 
-    it("admits a keyholder (Q15)", async () => {
+    it("admits a keyholder", async () => {
         mockSession.mockResolvedValue(KEYHOLDER);
         expect((await GET(listReq())).status).toBe(200);
     });
 
-    it("403s operations — aggregate attendance only (#1633)", async () => {
+    it("403s operations — aggregate attendance only", async () => {
         mockSession.mockResolvedValue(OPERATIONS);
         expect((await GET(listReq())).status).toBe(403);
         expect(db.rawBadgeLog.findMany).not.toHaveBeenCalled();
@@ -348,19 +348,13 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
 describe("POST /api/system-status/unsynced-scans/[id] (record — merged person)", () => {
     const closedRecord = () =>
         POST(recordReq({ action: "record", departedAt: "2026-08-20T21:00:00.000Z" }), dismissCtx());
-    const people = (rows: Record<number, { mergedIntoId: number | null }>) =>
+    const people = (ids: number[]) =>
         db.person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-            where.id in rows ? { id: where.id, isKeyholder: false, ...rows[where.id] } : null,
+            ids.includes(where.id) ? { id: where.id, isKeyholder: false } : null,
         );
 
-    it("records the visit on the survivor at the end of a tombstone chain", async () => {
-        people({ 12: { mergedIntoId: 13 }, 13: { mergedIntoId: 14 }, 14: { mergedIntoId: null } });
-        expect((await closedRecord()).status).toBe(200);
-        expect(db.visit.create.mock.calls[0][0].data.personId).toBe(14);
-    });
-
-    it("records the visit on the survivor when only the merge archive knows the scanned id", async () => {
-        people({ 14: { mergedIntoId: null } });
+    it("records the visit on the survivor the merge archive names for the scanned id", async () => {
+        people([14]);
         db.personMerge.findUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) =>
             where.fromId === 12 ? { toId: 14 } : null,
         );
@@ -369,14 +363,17 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — merged person)
     });
 
     it("404s, without writing, when the scanned id names no person and no merge", async () => {
-        people({});
+        people([]);
         expect((await closedRecord()).status).toBe(404);
         expect(db.visit.create).not.toHaveBeenCalled();
         expect(db.rawBadgeLog.updateMany).not.toHaveBeenCalled();
     });
 
     it("409s, without writing, when the merge chain leads nowhere", async () => {
-        people({ 12: { mergedIntoId: 13 } });
+        people([]);
+        db.personMerge.findUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) =>
+            where.fromId === 12 ? { toId: 13 } : null,
+        );
         expect((await closedRecord()).status).toBe(409);
         expect(db.visit.create).not.toHaveBeenCalled();
         expect(db.rawBadgeLog.updateMany).not.toHaveBeenCalled();

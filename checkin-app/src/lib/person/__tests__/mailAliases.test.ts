@@ -51,6 +51,7 @@ describe("sign-in email writers", () => {
             "app/api/membership-ops/participants/[id]/route.ts",
             "app/api/membership-ops/participants/route.ts",
             "lib/auth-options.ts",
+            "lib/household/joinQuestion.ts",
             "lib/membership/intake.ts",
             "lib/person/merge/execute.ts",
             "lib/person/ownHousehold.ts",

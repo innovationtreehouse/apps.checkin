@@ -4,7 +4,9 @@ import type { ProvisionalItemRepository } from "../repositories/provisionalItemR
 import type { ProvisionalResolutionRepository } from "../repositories/provisionalResolutionRepository";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "../gtin";
 import { methodsFor, type QuantityMethod } from "../mergeConflictMethods";
+import { logRemovedOrgItem } from "./inventoryService";
 import {
   assertProvisionalTransition,
   assertMergeConflictTransition,
@@ -104,7 +106,9 @@ export function createProvisionalItemService({
             },
             update: { existingQuantity: { increment: provisionalQty } },
           }));
-          await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          // A real row that already existed, or that a racing receipt inserted, keeps its own settings.
+          if (existingRow || realQty !== provisionalQty) await logRemovedOrgItem(tx, removed, null);
         }
         await tx.inventoryLog.create({
           data: realQty === provisionalQty
@@ -122,7 +126,7 @@ export function createProvisionalItemService({
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisionalId, gtin13: provisionalGtin13,
-            eventType: finalStatus, notes: `renamed to ${realGtin13}`,
+            eventType: finalStatus, notes: `renamed to ${formatGtinDisplay(realGtin13)}`,
             performedBy: null, createdAt: now,
           },
         });
@@ -161,7 +165,8 @@ export function createProvisionalItemService({
         data: { existingQuantity: newQty },
       });
       if (provisionalRow) {
-        await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        await logRemovedOrgItem(tx, removed, null);
       }
       await tx.inventoryLog.create({
         data: {
@@ -173,7 +178,7 @@ export function createProvisionalItemService({
       await tx.provisionalItemLog.create({
         data: {
           orgId, provisionalItemId: provisionalId, gtin13: provisionalGtin13,
-          eventType: finalStatus, notes: `merged into ${realGtin13}, qty: ${newQty}`,
+          eventType: finalStatus, notes: `merged into ${formatGtinDisplay(realGtin13)}, qty: ${newQty}`,
           performedBy: null, createdAt: now,
         },
       });
@@ -394,9 +399,10 @@ export function createProvisionalItemService({
         }
 
         if (provisionalRow) {
-          await tx.orgItem.delete({
+          const removed = await tx.orgItem.delete({
             where: { orgGtin: { orgId, gtin13: conflict.provisionalGtin13 } },
           });
+          await logRemovedOrgItem(tx, removed, userId, username);
         }
 
         await tx.inventoryLog.create({
@@ -425,3 +431,28 @@ export function createProvisionalItemService({
 }
 
 export type ProvisionalItemService = ReturnType<typeof createProvisionalItemService>;
+
+/**
+ * Applies a provisional's stored catalog decision once. A failure is recorded on the provisional
+ * (the first failure time kept, the last error replaced) and it then waits for Retry on the
+ * Problems list; a success clears both. Returns whether it applied.
+ */
+export async function reconcileRecorded(
+  db: Db,
+  service: Pick<ProvisionalItemService, "reconcileProvisionalOnCreate">,
+  orgId: string,
+  provisionalGtin13: string,
+): Promise<boolean> {
+  const row = { orgId, provisionalGtin13 };
+  try {
+    await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
+  } catch (err) {
+    console.error(`[local-inventory/provisional] applying the catalog's decision to ${provisionalGtin13} failed`, err);
+    const reconcileLastError = err instanceof Error ? err.message : String(err);
+    await db.inventoryProvisionalItem.updateMany({ where: row, data: { reconcileLastError } });
+    await db.inventoryProvisionalItem.updateMany({ where: { ...row, reconcileFirstFailedAt: null }, data: { reconcileFirstFailedAt: new Date() } });
+    return false;
+  }
+  await db.inventoryProvisionalItem.updateMany({ where: { ...row, reconcileFirstFailedAt: { not: null } }, data: { reconcileFirstFailedAt: null, reconcileLastError: null } });
+  return true;
+}

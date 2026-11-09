@@ -1,6 +1,7 @@
 import type { ReceiptState } from "@checkin/receipt-types";
 import type { Prisma, Receipt, ReceiptDetail } from "../generated/prisma/client";
 import { db, type Db } from "../db";
+import { liveIds, withLivePeople } from "../lib/livePeople";
 
 type Tx = Db | Prisma.TransactionClient;
 
@@ -11,13 +12,16 @@ export class ReceiptStateConflictError extends Error {
   }
 }
 
-/** A receipt and its details, flattened, without the file. */
-type FileColumns = "fileBlob" | "fileKey" | "fileSize";
-export type ReceiptRow = Omit<Receipt, FileColumns | "donorSyncSeq"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
+/** A receipt and its details, flattened, without the file or its failure record (read on its own, for its own page). */
+type OmittedColumns = "fileBlob" | "fileKey" | "fileSize" | "donorSyncSeq" | "firstFailedAt" | "lastError";
+export type ReceiptRow = Omit<Receipt, OmittedColumns> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
 
-const listShape = { omit: { fileBlob: true, fileKey: true, fileSize: true, donorSyncSeq: true }, include: { details: true } } as const;
+const listShape = {
+  omit: { fileBlob: true, fileKey: true, fileSize: true, donorSyncSeq: true, firstFailedAt: true, lastError: true },
+  include: { details: true },
+} as const;
 
-function flatten(r: Omit<Receipt, FileColumns | "donorSyncSeq"> & { details: ReceiptDetail | null }): ReceiptRow {
+function flatten(r: Omit<Receipt, OmittedColumns> & { details: ReceiptDetail | null }): ReceiptRow {
   const { details, ...core } = r;
   if (!details) throw new Error(`receipt ${r.id} has no details row`);
   const { id: _id, orgId: _orgId, ...rest } = details;
@@ -29,19 +33,25 @@ export interface ReceiptUpdate {
   detail?: Prisma.ReceiptDetailUncheckedUpdateInput;
 }
 
+/** Marks the receipt stuck: keeps its first failure's time, and records this failure's error. */
+export async function recordFailure(client: Tx, receiptId: string, err: unknown): Promise<void> {
+  const lastError = err instanceof Error ? err.message : String(err);
+  await client.$executeRaw`UPDATE "receipts" SET "first_failed_at" = COALESCE("first_failed_at", NOW()), "last_error" = ${lastError} WHERE "id" = ${receiptId}`;
+}
+
+/** A step that succeeds leaves the receipt no longer stuck. */
+export const CLEARED = { firstFailedAt: null, lastError: null } as const;
+
 export const receiptRepo = {
-  /** Org-scoped; `uploadedByUserId` narrows to one submitter's receipts. */
-  async find(id: string, orgId: string, uploadedByUserId?: number, tx?: Prisma.TransactionClient): Promise<ReceiptRow | undefined> {
-    const r = await (tx ?? db).receipt.findFirst({
-      where: { id, orgId, ...(uploadedByUserId === undefined ? {} : { uploadedByUserId }) },
-      ...listShape,
-    });
-    return r ? flatten(r) : undefined;
+  /** Org-scoped. Like every read here, it answers with the live people, not the stored ids. */
+  async find(id: string, orgId: string, tx?: Prisma.TransactionClient): Promise<ReceiptRow | undefined> {
+    const r = await (tx ?? db).receipt.findFirst({ where: { id, orgId }, ...listShape });
+    return r ? (await withLivePeople([flatten(r)]))[0] : undefined;
   },
 
   async list(where: Prisma.ReceiptWhereInput): Promise<ReceiptRow[]> {
     const rows = await db.receipt.findMany({ where, ...listShape, orderBy: { uploadedAt: "asc" } });
-    return rows.map(flatten);
+    return withLivePeople(rows.map(flatten));
   },
 
   count: (where: Prisma.ReceiptWhereInput) => db.receipt.count({ where }),
@@ -52,7 +62,7 @@ export const receiptRepo = {
       where,
       select: { id: true, uploadedByUserId: true, reimburseePersonId: true, details: { select: { state: true } } },
     });
-    return rows.flatMap((r) => (r.details ? [{ id: r.id, uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : []));
+    return withLivePeople(rows.flatMap((r) => (r.details ? [{ id: r.id, uploadedByUserId: r.uploadedByUserId, reimburseePersonId: r.reimburseePersonId, state: r.details.state as ReceiptState }] : [])));
   },
 
   /**
@@ -74,8 +84,12 @@ export const receiptRepo = {
   listLineItems: (receiptId: string) =>
     db.receiptLineItem.findMany({ where: { receiptId }, orderBy: { lineNumber: "asc" } }),
 
-  listAuditLogs: (receiptId: string) =>
-    db.receiptAuditLog.findMany({ where: { receiptId }, orderBy: [{ changedAt: "asc" }, { id: "asc" }] }),
+  /** `userId` answers as the live person, so an uploader's old edits still read as theirs. */
+  async listAuditLogs(receiptId: string) {
+    const rows = await db.receiptAuditLog.findMany({ where: { receiptId }, orderBy: [{ changedAt: "asc" }, { id: "asc" }] });
+    const live = await liveIds(rows.flatMap((r) => (r.userId === null ? [] : [r.userId])));
+    return rows.map((r) => (r.userId === null ? r : { ...r, userId: live.get(r.userId) ?? r.userId }));
+  },
 };
 
 export interface Actor {

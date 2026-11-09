@@ -12,15 +12,16 @@
  *   - ACTIVE stops only by REVOKED or DENIED; nothing returns ACTIVE/REVOKED to NONE;
  *   - DENIED never becomes ACTIVE; its only exit is the board's restore to NONE;
  *   - activity that reaches a DENIED household changes nothing and goes to the board
- *     (`raiseDeniedHouseholdActivity`).
+ *     (`raiseDeniedHouseholdActivity`);
+ *   - entering DENIED revokes trusted-adult access and lists program ties for the
+ *     board (`applyHouseholdDenial`); entering REVOKED does neither.
  *
- * Client-safe apart from the lazily-imported raise: Prisma is `import type` only,
+ * Client-safe apart from the lazily-imported raise and denial: Prisma is `import type` only,
  * and the writers take the client as a parameter.
  */
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
 import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
 
 export type HouseholdStatus = "NONE" | "ACTIVE" | "REVOKED" | "DENIED";
@@ -37,7 +38,7 @@ type TState = HouseholdStatus | OriginState;
 const ROUTE = "membership-ops/households/route.ts";
 
 export const TRANSITIONS: readonly Transition<TState>[] = [
-    { from: "∅", to: "NONE", event: "ensureHouseholdMembership", actor: "applicant/board/system", guardSite: "householdStatus.ts upsert by householdId (create only, never sets status)" },
+    { from: "∅", to: "NONE", event: "ensureHouseholdMembership", actor: "applicant/board/system", guardSite: "householdStatus.ts insert by householdId skipping duplicates (create only, never sets status)" },
     { from: "NONE", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
     { from: "REVOKED", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
     { from: "ACTIVE", to: "REVOKED", event: "revoke", actor: "board", guardSite: `${ROUTE} setHouseholdStatus from [ACTIVE] + COI` },
@@ -58,12 +59,10 @@ export function fromWhere(from: HouseholdStatus | readonly HouseholdStatus[]): W
 
 /** ∅→NONE: the household's membership row, created at NONE if missing. Never changes an existing row. */
 export async function ensureHouseholdMembership(db: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
-    return db.orgMembership.upsert({
-        where: { householdId },
-        create: { householdId },
-        update: {},
-        select: { id: true, status: true },
-    });
+    // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
+    // violation would abort a caller's transaction, leaving it unable to read the winner.
+    await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
+    return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
 }
 
 /**
@@ -108,6 +107,11 @@ export async function setHouseholdStatus(
                 newData: { status: to, reason },
             },
         });
+        // A denial's trusted-adult revocations and board items commit with it, whichever path denies.
+        if (to === "DENIED") {
+            const { applyHouseholdDenial } = await import("@/lib/membership/denial");
+            await applyHouseholdDenial(tx, row.householdId, actor);
+        }
         return true;
     });
 }
@@ -152,7 +156,7 @@ export async function raiseDeniedHouseholdActivity(ref: {
     const personId = ref.processId || ref.personId
         ? ref.personId ?? null
         : (await prisma.person.findFirst({
-              where: { householdId: ref.householdId, ...LIVE_PERSON },
+              where: { householdId: ref.householdId },
               orderBy: [{ isHouseholdLead: "desc" }, { id: "asc" }],
               select: { id: true },
           }))?.id ?? null;

@@ -3,8 +3,8 @@ import type { EmergencyContact } from "@/generated/prisma/client";
 import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizePhone } from "./identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import type { DbClient } from "@/lib/db-client";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { openProcess } from "@/lib/membership/lifecycle";
 
 /**
  * Emergency-contact write/read model. Enforces the not-a-household-member rule
@@ -69,7 +69,7 @@ type MemberLike = { id: number; name: string | null; email: string | null; phone
 
 function loadMembers(db: Db, householdId: number): Promise<MemberLike[]> {
     return db.person.findMany({
-        where: { householdId, ...LIVE_PERSON },
+        where: { householdId },
         select: { id: true, name: true, email: true, phone: true },
     });
 }
@@ -328,7 +328,7 @@ export async function reconcileAndWarn(db: Db, householdId: number): Promise<Eme
 export async function findHouseholdsMissingValidContact(db: Db = prisma): Promise<number[]> {
     const scoped = await db.household.findMany({
         where: {
-            orgMembership: { is: { OR: [{ status: "ACTIVE" }, { processes: { some: { status: { not: "ACTIVE" } } } }] } },
+            orgMembership: { is: { OR: [{ status: "ACTIVE" }, { processes: { some: openProcess.where } }] } },
         },
         select: { id: true },
     });

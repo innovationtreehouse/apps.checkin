@@ -148,23 +148,20 @@ Things the app takes as true because they are handled outside it.
   blanks a date of birth showing someone is under 18 and declares them over 25 is
   refused.  [Decision — owner]
 
-- Blanking that date in one save and declaring in a later one is accepted, as is
-  entering an older date in its place. The app does not check IDs and keeps no
-  history to catch this.  [Decision — deliberate limit]
+- That refusal looks at a single save. A date of birth is not verified against
+  ID, and a save is not compared with earlier ones.  [Decision — deliberate limit]
 
 - Date of birth is not retained past 25; the declaration replaces it
-  automatically as members age out. Twenty-five holds three things at once: we
-  keep nothing we do not need, by then nobody's own age restricts what they may
-  do here, and it is young enough that someone of 25 is very unlikely to be the
-  parent of anyone in our programs.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
+  automatically as members age out. Twenty-five holds two things at once: we
+  keep nothing we do not need, and by then nobody's own age restricts what they
+  may do here.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
 
 - Change history can keep a date of birth past 25. A history record copies the
   date when a person's details are saved, and nothing removes that copy later.
   This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21, 2026-10-27]
 
 - Date of birth is the only field with an ageing-out rule. Broader retention is
-  deliberately not automated while the organisation is young and little has
-  accumulated; the general obligation is met by hand until that stops being true.  [Decision — deliberate limit]
+  not automated; the general obligation is met by hand.  [Decision — deliberate limit]
 
 - A youth cannot edit their own profile. As with leadership, an unknown date of
   birth reads as adult.  [Decision — deliberate limit]
@@ -212,6 +209,23 @@ Things the app takes as true because they are handled outside it.
 - A first sign-in through the sign-in service links to the person whose email
   matches, or creates a new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
 
+- An adult whose email a household added is asked at first sign-in whether to join it,
+  and nothing else opens until they answer. They are asked when someone else in that
+  household has already signed in; someone in a household where nobody has signed in
+  claims their record unasked. The question names the household and shows nothing of
+  the record.  [Decision — Board ruling B1/B2, 2026-10-27; scope per owner decision 2026-10-30]
+
+- A yes leaves them in the household. A no leaves the household's record where it is,
+  with everything on it and without the address, and gives the person a new empty record
+  in a household of their own, because nobody knows they are who the household meant.
+  Nothing from the old record reaches them, including any role it holds, and this is
+  the one change to a trusted person's sign-in email made without the Board. Neither answer
+  lands while the household is denied.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+
+- A youth stays in the household that added them, with no question, and cannot answer one. A youth
+  never adds themselves to a household. Age here is what the record says at
+  first sign-in.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+
 - Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
 - A person's identifier is opaque, and its only job is to be unique and to stay
@@ -221,15 +235,17 @@ Things the app takes as true because they are handled outside it.
   the second at the kiosk. Numbers are issued in order from a count the database
   keeps, which a pause cannot skip ahead and a deletion cannot wind back.  [Decision]
 
-- A person is never lost. A merged record is kept and marked as merged rather
-  than removed, and drops out of every live list, count and roster. A record of
-  what happened still names them, because hiding a since-merged identity there
-  would falsify the history rather than protect anyone.  [Decision — *Principle: decisions are reversible*]
+- A person is never lost. A merge deletes the merged-away record and keeps an
+  archive of it, which names the surviving record. The merged-away person drops
+  out of every live list, count and roster. A record of what happened still names
+  them, from the archive, because hiding a since-merged identity there would
+  falsify the history rather than protect anyone. An older merged record that
+  something still refers to stays as a hidden row until that is cleared.  [Decision — owner ruling 2026-10-31; *Principle: decisions are reversible*]
 
 - A merge moves email, sign-in identity and verification together as one unit,
   never split across the two records.  [Decision]
 
-- A merged person's pre-merge state is recorded, so a merge of the wrong two
+- A merged person's pre-merge state is held in the archive, so a merge of the wrong two
   people can be investigated and the person reconstructed. There is no un-merge:
   what the record does not carry is which rows moved, so putting a bad merge right
   is hand work, not a button.  [Decision — *Principle: decisions are reversible*]
@@ -324,8 +340,28 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
+- A board override that denies a change leaves the earlier approval standing.  [Decision — owner ruling 2026-11-01]
+
+- Force-approve refuses an adult the household withdrew, and refuses when the
+  family's household or the adult's own household is denied.  [Decision]
+
+- A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
+  and the family resubmits.  [Decision — owner ruling 2026-11-01]
+
+- Denying a household's membership revokes, at once and in the same act, every
+  review not already revoked or denied — approved, open or expired — on the
+  household's own trusted adults, and on any other household's trusted adult who
+  is a member of the denied household. A review the board already denied stays
+  denied. Each revocation is audited
+  with the person who denied and the reason "household denied". Restoring the
+  household brings none back. Revoking a household's membership revokes no
+  trusted adult.  [Decision]
+
 - An approval lasts a year. The family is warned a month out and resubmits
   without re-entering what the board already holds.  [Decision]
+
+- An approval past its review date no longer authorises, whether or not the expiry
+  job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]
 
 - A withdrawn trusted adult can be hidden from the household's own view, and the
   household cannot bring it back. The record is kept, but no board surface lists

@@ -1,18 +1,43 @@
 import type { DbOrTx } from "../db";
-import { determineAccountsFromMap } from "./account-map-lookup";
+import { determineAccountsFromMap, type AccountConflictReason } from "./account-map-lookup";
 import { ownerRequiredWhere } from "./domain-rules";
-import { sumCents } from "@checkin/money";
+import { allocateCents, sumCents } from "@checkin/money";
 import { DisbursementPayloadV1 } from "@checkin/donations";
+import type { AccountMap, Transaction } from "../generated/prisma/client";
 
-type ConflictRecord = {
+export type ConflictRecord = {
   txId: number;
-  reason: "NO_MATCH" | "MULTIPLE_MATCHES";
+  reason: AccountConflictReason;
   matchedRows: unknown[];
 };
 
 export type AccountDeterminationResult =
   | { type: "PROCESS_SUCCEEDED"; payload: DisbursementPayloadV1 }
   | { type: "ACCOUNT_UNRESOLVED"; conflicts: ConflictRecord[] };
+
+type GiftRow = Pick<Transaction, "transactionId" | "donationAmountCents" | "matchAmountCents" | "causeSupportFeeCents" | "merchantFeeCents" | "checkFeeCents">;
+
+const rowFeeCents = (tx: GiftRow) => sumCents(tx.causeSupportFeeCents ?? 0, tx.merchantFeeCents ?? 0, tx.checkFeeCents ?? 0);
+
+/**
+ * One row's items: its donation and match, each on its rule's account, with the row's fee split
+ * across them in proportion to their amounts and netted in. A zero amount takes no part and makes
+ * no item. The caller holds a row with fees and no amount before this runs.
+ */
+export function giftItems(
+  tx: GiftRow,
+  rule: Pick<AccountMap, "donationAccount" | "donationAccountId" | "matchAccount" | "matchAccountId">,
+): DisbursementPayloadV1["items"] {
+  const [donationFee, matchFee] = allocateCents(rowFeeCents(tx), [tx.donationAmountCents, tx.matchAmountCents]);
+  const items: DisbursementPayloadV1["items"] = [];
+  if (tx.donationAmountCents !== 0 && rule.donationAccountId) {
+    items.push({ type: "donation", account: rule.donationAccount, accountId: rule.donationAccountId, amountCents: tx.donationAmountCents - donationFee, transactionId: tx.transactionId });
+  }
+  if (tx.matchAmountCents !== 0 && rule.matchAccountId) {
+    items.push({ type: "match", account: rule.matchAccount, accountId: rule.matchAccountId, amountCents: tx.matchAmountCents - matchFee, transactionId: tx.transactionId });
+  }
+  return items;
+}
 
 /**
  * True when no transaction in the disbursement still requires an owner.
@@ -39,33 +64,28 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
 
   const rules = await handle.accountMap.findMany({ where: { orgId } });
 
-  type Resolved = {
-    tx: typeof txs[number];
-    donationAccount: string;
-    matchAccount: string;
-    feesAccount: string;
-  };
+  type Resolved = { tx: typeof txs[number]; rule: typeof rules[number] };
 
   const resolved: Resolved[] = [];
   const conflicts: ConflictRecord[] = [];
 
   for (const tx of txs) {
+    // A released row is fees-only, with no amount to book; finance booked its fee by hand.
+    if (tx.feeReleasedAt) continue;
     const lookup = determineAccountsFromMap(rules, {
       companyName: tx.companyName,
       corporatePeerCampaign: tx.corporatePeerCampaign,
       donationMethod: tx.donationMethod,
       donationType: tx.donationType,
+      donationAmountCents: tx.donationAmountCents,
+      matchAmountCents: tx.matchAmountCents,
+      feeCents: rowFeeCents(tx),
     });
 
     if ("conflict" in lookup) {
       conflicts.push({ txId: tx.id, reason: lookup.conflict.reason, matchedRows: lookup.conflict.matchedRows });
     } else {
-      resolved.push({
-        tx,
-        donationAccount: lookup.result.donationAccount,
-        matchAccount: lookup.result.matchAccount,
-        feesAccount: lookup.result.feesAccount,
-      });
+      resolved.push({ tx, rule: lookup.result });
     }
   }
 
@@ -77,19 +97,7 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
   const disbursementDate = firstTx?.disbursementDate ?? null;
   const disbursementFrom = firstTx?.disbursementFrom ?? null;
 
-  const items: Array<{ type: "match" | "donation" | "fees"; account: string; amountCents: number; transactionId: string }> = [];
-  for (const r of resolved) {
-    if (r.tx.donationAmountCents !== 0) {
-      items.push({ type: "donation", account: r.donationAccount, amountCents: r.tx.donationAmountCents, transactionId: r.tx.transactionId });
-    }
-    if (r.tx.matchAmountCents !== 0) {
-      items.push({ type: "match", account: r.matchAccount, amountCents: r.tx.matchAmountCents, transactionId: r.tx.transactionId });
-    }
-    const fees = sumCents(r.tx.causeSupportFeeCents ?? 0, r.tx.merchantFeeCents ?? 0, r.tx.checkFeeCents ?? 0);
-    if (fees !== 0) {
-      items.push({ type: "fees", account: r.feesAccount, amountCents: fees, transactionId: r.tx.transactionId });
-    }
-  }
+  const items = resolved.flatMap(({ tx, rule }) => giftItems(tx, rule));
 
   const payload = DisbursementPayloadV1.parse({
     version: 1 as const,

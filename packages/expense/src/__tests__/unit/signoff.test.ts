@@ -1,4 +1,4 @@
-/** Sign-off seat and approval rules (F2 / F2-COI, the C′ decisions of #2503), pure — no database. */
+/** Sign-off seat and approval rules (Financial Policy F2 / F2-COI), pure — no database. */
 import { describe, it, expect } from "vitest";
 import {
   approvalRefusal,

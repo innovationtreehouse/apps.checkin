@@ -26,6 +26,7 @@ export * from "./lib/qb-match";
 export * from "./lib/in-kind-poster";
 export * from "./lib/deposit-handover";
 export { recordEvent, type EntityType, type WorkflowEventInput } from "./repositories/audit";
+export * from "./services/settingsService";
 export { accountMapService } from "./services/accountMapService";
 export { commentRuleService } from "./services/commentRuleService";
 export { disbursementService } from "./services/disbursementService";
@@ -55,3 +56,5 @@ export { disbursementMachine, STATES } from "./workflows/disbursement.machine";
 export { sendDisbursementEvent, type AuditContext } from "./workflows/disbursement.actor";
 export { WorkflowTransitionError } from "@checkin/workflows";
 export * as routes from "./routes";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

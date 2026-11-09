@@ -5,6 +5,7 @@
 import { db } from "../db";
 import type { MailAcknowledgement, MailPart, MailRefusal, ReceiptReplies } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
+import { withLivePeople } from "../lib/livePeople";
 import { getOrgId, replies } from "../runtime";
 
 /** Messages acknowledged per run; the rest wait for the next run. */
@@ -62,27 +63,28 @@ async function owedSends(out: ReceiptReplies, id: number, receiptId: string | nu
   const row = await db.receiptMailReply.findUniqueOrThrow({ where: { id } });
   const refused = row.refusalSentAt || !row.replyToSender ? [] : (row.refusals as unknown as MailRefusal[]);
   const base = { senderAddress: row.senderAddress, receivedAt: row.receivedAt };
+  const noticeId = (field: Send["fields"][number]) => `${row.gmailMessageId}.${field}`;
   const notice = refused.length > 0 ? ["refusalSentAt" as const] : [];
   const sends: Send[] = [];
 
   if (receiptId) {
     // ponytail: a message whose files finance credits to different people acknowledges only the first; add a reply per receipt if that happens.
-    const receipt = await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } });
+    const [receipt] = await withLivePeople([await db.receipt.findUniqueOrThrow({ where: { id: receiptId }, select: { uploadedByUserId: true } })]);
     const credited = await out.contactOf(receipt.uploadedByUserId);
     const sameAsSender = row.replyToSender && credited !== null && credited.email.toLowerCase() === row.senderAddress;
     const ack = { ...base, receiptId, refused: [] };
     if (row.replyToSender && !row.senderSentAt) {
       sends.push({
         fields: ["senderSentAt", ...notice],
-        ack: { ...ack, refused, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null },
+        ack: { ...ack, refused, to: row.senderAddress, mine: sameAsSender, creditedName: sameAsSender ? credited.name : null, noticeId: noticeId("senderSentAt") },
       });
     }
     if (credited && !sameAsSender && !row.creditedSentAt) {
-      sends.push({ fields: ["creditedSentAt"], ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name } });
+      sends.push({ fields: ["creditedSentAt"], ack: { ...ack, to: credited.email, mine: true, creditedName: credited.name, noticeId: noticeId("creditedSentAt") } });
     }
   }
   if (refused.length > 0 && !sends.some((s) => s.fields.includes("refusalSentAt"))) {
-    sends.push({ fields: notice, ack: { ...base, receiptId: null, refused, to: row.senderAddress, mine: false, creditedName: null } });
+    sends.push({ fields: notice, ack: { ...base, receiptId: null, refused, to: row.senderAddress, mine: false, creditedName: null, noticeId: noticeId("refusalSentAt") } });
   }
   return sends;
 }

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the receipt library (#1265 §3/§6):
+ * Boundary coverage for the receipt library:
  *
  *   1. File bytes are `pii`, never `secret`, file-only (a file route names
  *      them), and no JSON response view lists a file column, so the stripper
@@ -13,12 +13,16 @@
  *      exactly as the generated models do.
  *   4. An ignore-list entry reaches FINANCE whole and never carries file bytes.
  *   5. A duplicate group reaches FINANCE whole; an internal-only view keeps
- *      only each member's state.
+ *      only each member's state, and a submitter's view never holds the uploader.
+ *   6. A duplicates queue row reaches FINANCE whole; an internal-only view loses
+ *      its receipt id and rejected marker.
+ *   7. Audit change values are `pii`: finance and the Board keep them on the
+ *      audit-log route; a view holding `personal` but not `pii` loses them.
  */
 import '@/security/registry';
 import { stripValue } from '@/security/stripper';
+import { getRoute, type Role, type Token } from '@/security/core';
 import type { CallerContext } from '@/security/access-resolvers';
-import type { Token } from '@/security/core';
 import * as receiptGenerated from '@/security/generated/receipt-classifications';
 import * as receiptSynthetic from '@/security/receiptSyntheticClassifications';
 
@@ -115,7 +119,6 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.isInKind).toBe(true);
         expect(out.lineItems).toEqual([{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }]);
         expect(out.reimbursement).toEqual({ paidOn: null });
-        expect(out.pushGivenUp).toBe(true);
         expect(out.lastPushFailedAt).toBe('2026-10-20T00:00:00.000Z');
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure']) {
             expect(out).not.toHaveProperty(f);
@@ -138,6 +141,7 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.donorCompanyName).toBe('Doe Hardware');
         expect(out.validationNotes).toBe('rejected: wrong store');
         expect(out.lastPushFailure).toBe('receiver timed out');
+        expect(out).not.toHaveProperty('pushGivenUp');
     });
 
     it('an internal-only view strips the audit actor name, values and the mail sender', () => {
@@ -148,14 +152,40 @@ describe('receipt donor and reimbursee names', () => {
     });
 });
 
+describe('receipt audit change values', () => {
+    const AUDIT_LOGS = 'GET /api/receipts/[id]/audit-logs';
+    const PERSONAL_ONLY: readonly Token[] = ['everyones:personal', 'everyones:internal', 'public'];
+    const log = { id: 1, receiptId: 'r-1', userId: 7, username: 'Sam Lee', action: 'in_kind_updated', fieldChanged: 'donorCompanyName', valueBefore: 'Acme', valueAfter: 'Doe Hardware' };
+
+    function tokensFor(role: Role): readonly Token[] {
+        const entry = getRoute(AUDIT_LOGS)?.orderedView.find(([r]) => r === role);
+        if (!entry) throw new Error(`no orderedView entry for ${role} on ${AUDIT_LOGS}`);
+        return entry[1];
+    }
+
+    it('are pii', () => {
+        expect(receiptGenerated.classifications.ReceiptAuditLog.valueBefore).toBe('pii');
+        expect(receiptGenerated.classifications.ReceiptAuditLog.valueAfter).toBe('pii');
+    });
+
+    it.each(['isFinance', 'isBoardMember'] as const)('%s keeps them on the audit-log route', (role) => {
+        expect(stripValue('ReceiptAuditLog', log, tokensFor(role), ctx())).toEqual(log);
+    });
+
+    it('a personal-only view loses them', () => {
+        expect(stripValue('ReceiptAuditLog', log, PERSONAL_ONLY, ctx())).toEqual({ id: 1, receiptId: 'r-1', userId: 7, action: 'in_kind_updated', fieldChanged: 'donorCompanyName' });
+    });
+});
+
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         // ReceiptRow omits these columns (repositories/receipt.ts listShape).
-        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq');
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq', 'firstFailedAt', 'lastError');
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
-        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
+        // The three old duplicate columns are still on ReceiptDetail, but no response carries them.
+        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt', 'duplicateFlagClearedAt', 'duplicateSuspectReceiptId', 'duplicateSuspectIsRejected');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 
@@ -176,8 +206,8 @@ describe('ReceiptIgnoredFileView', () => {
 describe('ReceiptDuplicateGroup', () => {
     const group = () => ({
         members: [
-            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2' },
-            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null },
+            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2', uploaderName: 'Pat Doe' },
+            { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null, uploaderName: 'Sam Roe' },
         ],
         dismissed: ['r-3'],
     });
@@ -190,5 +220,23 @@ describe('ReceiptDuplicateGroup', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), INTERNAL_ONLY, ctx())).toEqual({
             members: [{ state: 'rejected' }, { state: 'duplicate_flagged' }],
         });
+    });
+
+    it("a submitter's view of its own member strips the uploader's name", () => {
+        const out = stripValue('ReceiptDuplicateMember', group().members[0], ['their_own:personal', 'their_own:internal'], ctx());
+        expect(out).not.toHaveProperty('uploaderName');
+    });
+});
+
+describe('ReceiptDuplicateQueueRow', () => {
+    const row = { id: 'r-1', retailer: 'Acme', receiptDate: '2026-10-01', receiptTotalCents: 1000, memberCount: 3, includesRejected: true, oldestHeldAt: '2026-10-02' };
+
+    it('FINANCE gets every field', () => {
+        expect(stripValue('ReceiptDuplicateQueueRow', row, FINANCE_VIEW, ctx())).toEqual(row);
+    });
+
+    it('an internal-only view strips the receipt id and the rejected marker', () => {
+        const { id: _id, includesRejected: _rejected, ...rest } = row;
+        expect(stripValue('ReceiptDuplicateQueueRow', row, INTERNAL_ONLY, ctx())).toEqual(rest);
     });
 });

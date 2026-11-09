@@ -45,8 +45,8 @@ const row = {
     inventoryHeldAt: '2026-01-06T00:00:00.000Z',
 };
 
-describe('ProgramParticipant.pendingSince field-stripping (#1409)', () => {
-    it('lead mentor now sees pendingSince (personal, a band this view holds)', () => {
+describe('ProgramParticipant.pendingSince field-stripping', () => {
+    it('lead mentor sees pendingSince (personal, a band this view holds)', () => {
         const tokens = tokensFor(ENDPOINT, 'programLeadMentor');
         const leadCtx = ctx({ programsLed: new Set([7]) });
         const out = stripValue('ProgramParticipant', row, tokens, leadCtx) as Record<string, unknown>;
@@ -60,7 +60,7 @@ describe('ProgramParticipant.pendingSince field-stripping (#1409)', () => {
         expect(out.pendingSince).toBe('2026-01-06T00:00:00.000Z');
     });
 
-    it('a band the lead lacks (:internal) still strips — inventoryHeldAt stays hidden', () => {
+    it('a band the lead lacks (:hardship) still strips — inventoryHeldAt stays hidden', () => {
         const tokens = tokensFor(ENDPOINT, 'programLeadMentor');
         const leadCtx = ctx({ programsLed: new Set([7]) });
         const out = stripValue('ProgramParticipant', row, tokens, leadCtx) as Record<string, unknown>;

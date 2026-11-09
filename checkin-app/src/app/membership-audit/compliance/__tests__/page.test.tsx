@@ -1,9 +1,10 @@
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, act } from "@testing-library/react";
 import { ModalsProvider } from "@mantine/modals";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import CompliancePage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so the confirmed action
@@ -49,14 +50,12 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText(/Everyone is in compliance/)).toBeInTheDocument();
   });
 
-  it("renders the network-error alert when the fetch rejects", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+  it("shows the failure and a retry when the load is refused", async () => {
+    global.fetch = jest.fn(async () => ({ ok: false, status: 403, ...jsonBody({ error: "Forbidden" }) }) as Response) as unknown as typeof fetch;
     renderPage();
 
-    expect(await screen.findByText("Network error loading compliance data.")).toBeInTheDocument();
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.anything());
-    spy.mockRestore();
+    expect(await screen.findByText("Couldn't load compliance data")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("labels the likely subject of a blanket-stamped household and never pre-selects one", async () => {
@@ -98,5 +97,55 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText("Jo Chen")).toBeInTheDocument();
     expect(screen.getByText(/from Jo Chen \(duplicate\)/)).toBeInTheDocument();
     expect(screen.getByText("Unverified provenance")).toBeInTheDocument();
+  });
+});
+
+describe("the Cleared since filter while the list reloads", () => {
+  const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+  const household = (name: string) => [{ ...blanketStamped[0], householdName: name }];
+
+  it("stays mounted and focused while the filtered list loads", async () => {
+    let finish: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("bgClearedSince")) {
+        return new Promise<Response>((resolve) => { finish = () => resolve(answer({ blanketStamped: household("Narrowed Household") })); });
+      }
+      return answer({ blanketStamped });
+    }) as unknown as typeof fetch;
+    renderPage();
+    await screen.findByText("Rivera Household");
+
+    const input = screen.getByLabelText("Cleared since");
+    input.focus();
+    fireEvent.change(input, { target: { value: "2026-07-01" } });
+
+    expect(screen.getByLabelText("Cleared since")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    await act(async () => { finish(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(await screen.findByText("Narrowed Household")).toBeInTheDocument();
+    expect(screen.getByLabelText("Cleared since")).toBe(input);
+  });
+
+  it("keeps the latest date's rows when an earlier date answers last", async () => {
+    let finishEarlier: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const since = new URL(String(input), "http://localhost").searchParams.get("bgClearedSince");
+      if (since === "2026-06-01") {
+        return new Promise<Response>((resolve) => { finishEarlier = () => resolve(answer({ blanketStamped: household("June Household") })); });
+      }
+      if (since === "2026-07-01") return answer({ blanketStamped: household("July Household") });
+      return answer({ blanketStamped });
+    }) as unknown as typeof fetch;
+    renderPage();
+    await screen.findByText("Rivera Household");
+
+    const input = screen.getByLabelText("Cleared since");
+    fireEvent.change(input, { target: { value: "2026-06-01" } });
+    fireEvent.change(input, { target: { value: "2026-07-01" } });
+    expect(await screen.findByText("July Household")).toBeInTheDocument();
+
+    await act(async () => { finishEarlier(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.queryByText("June Household")).not.toBeInTheDocument();
+    expect(screen.getByText("July Household")).toBeInTheDocument();
   });
 });

@@ -4,9 +4,12 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setCheckinEnv, resetRtl } from "@/test-helpers/rtl";
+import { jsonBody } from "@/test-helpers/jsonBody";
+import { invalidateLoads } from "@checkin/component-ui";
+import { settleAfter } from "@/test-helpers/settle";
 import MembershipPage from "../page";
 
 beforeEach(() => { resetRtl(); sessionStorage.clear(); (notifications.show as jest.Mock).mockClear(); });
@@ -44,9 +47,9 @@ describe("membership page", () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") {
-        return { ok: true, json: async () => ({ state: state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) }) } as Response;
+        return { ok: true, ...jsonBody(({ state: state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) })) } as Response;
       }
-      return { ok: true, json: async () => state({}) } as Response;
+      return { ok: true, ...jsonBody(state({})) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -293,12 +296,117 @@ describe("membership page", () => {
     expect(await screen.findByText("Renewal in progress")).toBeInTheDocument();
   });
 
-  it("silently falls back to the become-a-member card when the initial load fails", async () => {
+  describe("the read after a save that returned no state", () => {
+    const intake = { process: { id: 1, kind: "INITIAL", status: "INTAKE" } };
+    const household = { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
+    const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
+    const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
+
+    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws.
+     *  The Key Volunteer panel's status read answers nothing owed and is not counted. */
+    function mockReads(reads: Array<[ok: boolean, body: unknown, status?: number] | "offline">) {
+      let n = 0;
+      const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        void init;
+        if (String(input).includes("/key-volunteer")) return { ok: true, status: 200, ...jsonBody({ owesSignature: false }) } as Response;
+        const read = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] as const : reads[Math.min(n++, reads.length - 1)];
+        if (read === "offline") throw new TypeError("Failed to fetch");
+        const [ok, body, status = ok ? 200 : 403] = read;
+        return { ok, status, ...jsonBody(body) } as Response;
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      return { fetchMock, reads: () => n };
+    }
+    const emName = () => screen.getByLabelText(/Emergency contact name/) as HTMLInputElement;
+    const intakeCalls = (mock: ReturnType<typeof mockReads>) => mock.fetchMock.mock.calls.filter(([url]) => String(url).includes("/intake"));
+    const reloadWarning = /Reload the page before saving again/;
+
+    afterEach(() => jest.useRealTimers());
+
+    it("retries a failed read, so a second save updates the saved people", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], "offline", [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+      jest.useFakeTimers();
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.reads()).toBe(2));
+      await act(() => jest.advanceTimersByTimeAsync(2000));
+      await waitFor(() => expect(mock.reads()).toBe(3));
+      await waitFor(() => expect(emName().value).toBe("From server"));
+      expect(screen.queryByText(reloadWarning)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(intakeCalls(mock)).toHaveLength(2));
+      expect(JSON.parse(String(intakeCalls(mock)[1][1]?.body)).secondaryParent).toMatchObject({ id: 7, name: "Sam Second" });
+    });
+
+    it("asks for a reload and keeps the input when every read fails", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [false, { error: "down" }, 503]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+      jest.useFakeTimers();
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.reads()).toBe(2));
+      await act(() => jest.advanceTimersByTimeAsync(2000));
+      await waitFor(() => expect(mock.reads()).toBe(3));
+      await act(() => jest.advanceTimersByTimeAsync(4000));
+      await waitFor(() => expect(mock.reads()).toBe(4));
+
+      expect(await screen.findByText(reloadWarning)).toBeInTheDocument();
+      expect(emName().value).toBe("Aunt Jo");
+      await act(() => jest.advanceTimersByTimeAsync(60000));
+      expect(mock.reads()).toBe(4);
+    });
+
+    it("keeps unsaved input on a later reload when that read fails", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [false, { error: "denied" }], [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      expect(await screen.findByText("Progress saved.")).toBeInTheDocument();
+      await waitFor(() => expect(mock.reads()).toBe(2));
+
+      fireEvent.change(emName(), { target: { value: "Uncle Bo" } });
+      invalidateLoads();
+      await waitFor(() => expect(mock.reads()).toBe(3));
+      await settleAfter("/api/membership");
+      expect(emName().value).toBe("Uncle Bo");
+    });
+
+    it("fills in the saved people's ids, so a second save updates them", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(emName().value).toBe("From server"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.fetchMock.mock.calls.filter(([url]) => String(url).includes("/intake"))).toHaveLength(2));
+      const [, second] = mock.fetchMock.mock.calls.filter(([url]) => String(url).includes("/intake"));
+      expect(JSON.parse(String(second[1]?.body)).secondaryParent).toMatchObject({ id: 7, name: "Sam Second" });
+    });
+  });
+
+  it("keeps the loader, never the become-a-member card, while a network failure is retried", async () => {
     setSession({ id: 1 });
-    global.fetch = jest.fn(async () => { throw new Error("boom"); }) as unknown as typeof fetch;
+    const fetchMock = jest.fn(async () => { throw new Error("boom"); });
+    global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
 
-    expect(await screen.findByText("Become a member")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByText("Become a member")).not.toBeInTheDocument();
   });
 
   // ── Return from Zoho signing (?signed=1 / ?declined=1) ──────────────────────
@@ -351,10 +459,10 @@ describe("membership page", () => {
       if (String(input).includes("contract/sync")) throw new Error("network down");
       return {
         ok: true,
-        json: async () => state({
+        ...jsonBody(state({
           process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
           external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
-        }),
+        })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -383,10 +491,10 @@ describe("membership page", () => {
   it("keeps the preparing-invoice placeholder when the membership fee request fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/membership/payment")) return { ok: false, json: async () => ({}) } as Response;
+      if (String(input).includes("/api/membership/payment")) return { ok: false, ...jsonBody(({})) } as Response;
       return {
         ok: true,
-        json: async () => state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: false, deepLinkUrl: null } }),
+        ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: false, deepLinkUrl: null } })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -399,7 +507,7 @@ describe("membership page", () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) throw new Error("boom");
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -450,6 +558,8 @@ describe("membership page", () => {
 
     // The orders/paid webhook settles the payment server-side; the next page
     // load renders the real (paid) state and drops the sessionStorage record.
+    // A page load reads afresh, even inside the load cache's dedupe window.
+    invalidateLoads();
     mockFetchJson({
       "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_BG_CLEARANCE" } }),
     });
@@ -549,16 +659,36 @@ describe("membership page", () => {
     expect(await screen.findByText("Couldn't open the signing form. Please try again.")).toBeInTheDocument();
   });
 
+  it("reloads the application when signing is refused, so a signature found at Zoho shows", async () => {
+    setSession({ id: 1 });
+    const fetchMock = mockFetchJson({
+      "/api/membership/contract/sign": { error: "This agreement has already been signed." },
+      "/api/membership": state({
+        process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
+        external: { contractSigned: false, contractStarted: true, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+      }),
+    });
+    renderWithProviders(<MembershipPage />);
+    await screen.findByText("Sign & start your background check", { exact: false });
+    const stateLoads = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/membership").length;
+    const before = stateLoads();
+
+    fireEvent.click(screen.getByRole("button", { name: /Resume signing/ }));
+
+    expect(await screen.findByText("This agreement has already been signed.")).toBeInTheDocument();
+    await waitFor(() => expect(stateLoads()).toBe(before + 1));
+  });
+
   it("shows the server's error when signing fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("contract/sign")) return { ok: false, json: async () => ({ error: "Signing closed" }) } as Response;
+      if (String(input).includes("contract/sign")) return { ok: false, ...jsonBody(({ error: "Signing closed" })) } as Response;
       return {
         ok: true,
-        json: async () => state({
+        ...jsonBody(state({
           process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
           external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
-        }),
+        })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -576,10 +706,10 @@ describe("membership page", () => {
       if (String(input).includes("contract/sign")) throw new Error("down");
       return {
         ok: true,
-        json: async () => state({
+        ...jsonBody(state({
           process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
           external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
-        }),
+        })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -595,8 +725,8 @@ describe("membership page", () => {
   it("shows a server error when starting an application fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === "POST") return { ok: false, json: async () => ({ error: "Applications are closed" }) } as Response;
-      return { ok: true, json: async () => state({}) } as Response;
+      if (init?.method === "POST") return { ok: false, ...jsonBody(({ error: "Applications are closed" })) } as Response;
+      return { ok: true, ...jsonBody(state({})) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -610,7 +740,7 @@ describe("membership page", () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") throw new Error("down");
-      return { ok: true, json: async () => state({}) } as Response;
+      return { ok: true, ...jsonBody(state({})) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -626,9 +756,9 @@ describe("membership page", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/membership/intake") && init?.method === "PATCH") {
-        return { ok: false, json: async () => ({ error: "constraint violated" }) } as Response;
+        return { ok: false, ...jsonBody(({ error: "constraint violated" })) } as Response;
       }
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -644,9 +774,9 @@ describe("membership page", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/membership/intake") && init?.method === "PATCH") {
-        return { ok: true, json: async () => ({ state: null, rejections: [] }) } as Response;
+        return { ok: true, ...jsonBody(({ state: null, rejections: [] })) } as Response;
       }
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -657,7 +787,7 @@ describe("membership page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
 
     expect(await screen.findByText("Progress saved.")).toBeInTheDocument();
-    expect(reads()).toBe(readsBeforeSave + 1);
+    await waitFor(() => expect(reads()).toBe(readsBeforeSave + 1));
   });
 
   it("shows a network error when saving progress throws", async () => {
@@ -665,7 +795,7 @@ describe("membership page", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/membership/intake") && init?.method === "PATCH") throw new Error("down");
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -762,10 +892,10 @@ describe("membership page", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/membership/intake") && init?.method === "PATCH") {
-        return { ok: false, json: async () => ({ error: "Save failed" }) } as Response;
+        return { ok: false, ...jsonBody(({ error: "Save failed" })) } as Response;
       }
-      if (url.includes("/api/membership/intake/submit")) return { ok: true, json: async () => ({ state: state({}) }) } as Response;
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+      if (url.includes("/api/membership/intake/submit")) return { ok: true, ...jsonBody(({ state: state({}) })) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -790,13 +920,13 @@ describe("membership page", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/membership/intake/submit")) {
-        return { ok: false, json: async () => ({ error: "Needs fixes", fields: ["address", "primaryName", "emergencyContact"] }) } as Response;
+        return { ok: false, ...jsonBody(({ error: "Needs fixes", fields: ["address", "primaryName", "emergencyContact"] })) } as Response;
       }
       if (url.includes("/api/membership/intake") && init?.method === "PATCH") {
         // rejections omitted — exercises the `saveData.rejections ?? []` fallback
-        return { ok: true, json: async () => ({ state: state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) }) } as Response;
+        return { ok: true, ...jsonBody(({ state: state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) })) } as Response;
       }
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -823,7 +953,7 @@ describe("membership page", () => {
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/membership/intake") && init?.method === "PATCH") throw new Error("down");
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -846,8 +976,8 @@ describe("membership page", () => {
   it("shows a server error when renewal fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/membership/renew")) return { ok: false, json: async () => ({ error: "Renewal window closed" }) } as Response;
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "RENEWAL", status: "PENDING_RENEWAL" } }) } as Response;
+      if (String(input).includes("/api/membership/renew")) return { ok: false, ...jsonBody(({ error: "Renewal window closed" })) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "RENEWAL", status: "PENDING_RENEWAL" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -862,7 +992,7 @@ describe("membership page", () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/renew")) throw new Error("down");
-      return { ok: true, json: async () => state({ process: { id: 1, kind: "RENEWAL", status: "PENDING_RENEWAL" } }) } as Response;
+      return { ok: true, ...jsonBody(state({ process: { id: 1, kind: "RENEWAL", status: "PENDING_RENEWAL" } })) } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
@@ -1192,9 +1322,9 @@ describe("own background check", () => {
     setSession({ id: 2 });
     global.fetch = jest.fn(async (url: RequestInfo | URL) => {
       if (String(url).includes("/api/membership/bg-consent")) {
-        return { ok: false, status: 409, json: async () => ({ error: "No application is awaiting background-check consent." }) } as Response;
+        return { ok: false, status: 409, ...jsonBody(({ error: "No application is awaiting background-check consent." })) } as Response;
       }
-      return { ok: true, json: async () => memberState(ownCheck) } as Response;
+      return { ok: true, ...jsonBody(memberState(ownCheck)) } as Response;
     }) as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
     await screen.findByRole("heading", { name: "Your background check" });
@@ -1215,7 +1345,7 @@ describe("own background check", () => {
     setSession({ id: 2 });
     global.fetch = jest.fn(async (url: RequestInfo | URL) => {
       if (String(url).includes("/api/membership/bg-consent")) throw new Error("offline");
-      return { ok: true, json: async () => memberState(ownCheck) } as Response;
+      return { ok: true, ...jsonBody(memberState(ownCheck)) } as Response;
     }) as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
     await screen.findByRole("heading", { name: "Your background check" });
@@ -1243,5 +1373,21 @@ describe("own background check", () => {
     expect(screen.getByText("Start your background check")).toBeInTheDocument();
     expect(screen.getAllByRole("checkbox", { name: /I submitted my consent on Averity/ })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Your background check" })).not.toBeInTheDocument();
+  });
+});
+
+describe("failed load", () => {
+  it("shows an error with a retry, never the become-a-member card", async () => {
+    setSession({ id: 1 });
+    mockFetchJson({});
+    renderWithProviders(<MembershipPage />);
+
+    await settleAfter("/api/membership");
+    expect(screen.queryByText("Become a member")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load your membership")).toBeInTheDocument();
+
+    mockFetchJson({ "/api/membership": state({ membershipStatus: "ACTIVE" }) });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("You're a member 🎉", { exact: false })).toBeInTheDocument();
   });
 });

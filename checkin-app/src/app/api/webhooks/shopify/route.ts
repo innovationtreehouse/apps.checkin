@@ -46,6 +46,7 @@ export const POST = withWebhook({ provider: "shopify", verify: (req, rawBody) =>
                 const quantity = li.quantity ?? 1;
                 return { variantId: String(li.variant_id), quantity, currentQuantity: li.current_quantity ?? quantity };
             }),
+            checkoutSig: order.note_attributes?.find((a) => a.name === "CheckMeIn_Checkout_Sig")?.value ?? null,
         };
         const topic = req.headers.get("x-shopify-topic");
         if (topic !== "orders/paid" || !isPaid(facts)) {

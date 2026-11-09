@@ -1,0 +1,26 @@
+[Unit]
+Description=Kiosk client container
+After=docker.service
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+EnvironmentFile=/etc/kiosk/host.conf
+EnvironmentFile=/var/lib/kiosk-host/current.env
+ExecStartPre=-/usr/bin/docker rm -f kiosk-client
+ExecStart=/usr/bin/docker run --name kiosk-client --rm --network host \
+  --read-only --tmpfs /tmp --cap-drop ALL \
+  --device-cgroup-rule 'c 13:* rm' -v /dev/input:/dev/input:ro \
+  --group-add ${KIOSK_INPUT_GID} --user ${KIOSK_UID} \
+  -v /var/lib/kiosk:/data \
+  -v /etc/kiosk/client.key:/data/client.key:ro \
+  -v /etc/kiosk/config.json:/data/config.json:ro \
+  -v /etc/localtime:/etc/localtime:ro \
+  --log-driver journald \
+  ${KIOSK_IMAGE}@${KIOSK_DIGEST}
+ExecStop=/usr/bin/docker stop kiosk-client
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -66,16 +66,9 @@ const AUTHZ_TESTED = new Set<string>([
     // POST deny-path (401 anon / 403 non-board) in membershipPaymentPlansAPI.integration.test.ts.
     'finance-ops/membership-payment-plans/refuse',
     'admin/settings/localization',
-    // facility/badges dropped: its only verb (GET) is handler()-governed now,
-    // so the file carries no `roles:` gate and would fail the stale-entry test.
     'facility/trends',
     // GET is handler()-governed; PATCH/DELETE still carry withAuth roles.
     'facility/visits',
-    // facility/visits/insert dropped: handler()-governed now (POST), so the
-    // file carries no `roles:` gate and would fail the stale-entry test.
-    // finance-ops/payments (GET) and finance-ops/s-read/{sync,diagnose,match-audit,
-    // match-audit/track} dropped: handler()-governed now, so the files carry no
-    // `roles:` gate. Deny paths stay in their route tests and security/__tests__/shopify-read-strip.test.ts.
     'finance-ops/payments/[id]',
     'kioskdisplay/certifications',
     'membership-audit/compliance',

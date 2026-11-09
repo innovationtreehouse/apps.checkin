@@ -1,11 +1,11 @@
 /**
- * The cron sweep for receipts left `applying` with no live push.
+ * The cron sweep for receipts a crash left `applying` with no recorded failure, and the stuck state a
+ * failed push leaves for a person's Retry.
  */
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import {
   APPLY_CLAIM_TTL_MS,
-  MAX_SWEEP_APPLY_ATTEMPTS,
   STUCK_APPLY_SWEEP_CAP,
   sweepStuckApplying,
 } from "../../lib/apply-receipt";
@@ -30,7 +30,7 @@ describeDb("sweepStuckApplying", () => {
     const r = await makeReceipt({ state: "applying" });
     await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
 
-    expect(await sweepStuckApplying()).toEqual({ resolved: 1, failed: 0, applying: 0, skipped: 0, errored: 0, gaveUp: 0 });
+    expect(await sweepStuckApplying()).toEqual({ resolved: 1, failed: 0, applying: 0, skipped: 0, errored: 0 });
 
     expect(sinks.calls.inventory).toHaveLength(1);
     expect(sinks.calls.expense).toHaveLength(1);
@@ -42,7 +42,7 @@ describeDb("sweepStuckApplying", () => {
     await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
     await claim(r.id, new Date());
 
-    expect(await sweepStuckApplying()).toEqual({ resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0, gaveUp: 0 });
+    expect(await sweepStuckApplying()).toEqual({ resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0 });
 
     expect(sinks.calls.inventory).toHaveLength(0);
     expect(await stateOf(r.id)).toBe("applying");
@@ -81,7 +81,7 @@ describeDb("sweepStuckApplying", () => {
   });
 });
 
-describeDb("sweepStuckApplying attempt cap", () => {
+describeDb("a failed push from the sweep", () => {
   // Fails the database writes `when` matches, by trigger, until restored.
   async function failWrites(sql: { table: string; when: string; message: string }) {
     await db.$executeRawUnsafe(`
@@ -120,70 +120,30 @@ describeDb("sweepStuckApplying attempt cap", () => {
     return r;
   };
 
-  it("moves a receipt whose push keeps throwing to apply_failed at the cap", async () => {
+  it("records a push that throws as stuck, and the sweep leaves it for a person", async () => {
     const r = await stuckReceipt();
     await failPushStart(r.id);
     try {
-      for (let i = 1; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) {
-        expect(await sweepStuckApplying()).toMatchObject({ errored: 1, gaveUp: 0 });
-        expect(await row(r.id)).toMatchObject({ state: "applying", applySweepAttempts: i });
-      }
-      expect(await sweepStuckApplying()).toMatchObject({ errored: 1, gaveUp: 1 });
+      expect(await sweepStuckApplying()).toMatchObject({ errored: 1 });
     } finally {
       await restoreWrites("workflow_audit_log");
     }
 
-    const settled = await row(r.id);
-    expect(settled).toMatchObject({ state: "apply_failed", applySweepAttempts: 0 });
-    expect(settled.inventoryUnconfirmedAt).not.toBeNull();
-    expect(settled.validationNotes).toMatch(/Stopped retrying after 3 attempts\. Last error: .*audit write refused/);
-    const gaveUp = await db.workflowAuditLog.findMany({
-      where: { receivedReceiptId: r.id, eventType: "receipt_apply_failed", toState: "apply_failed" },
-    });
-    expect(gaveUp).toHaveLength(1);
-    expect(JSON.parse(gaveUp[0].details ?? "{}")).toMatchObject({ gaveUp: true, sweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS });
+    const stuck = await row(r.id);
+    expect(stuck.state).toBe("applying");
+    expect(stuck.validationNotes).toMatch(/audit write refused/);
+    expect(stuck.applyFirstFailedAt).toBeInstanceOf(Date);
+    expect(await sweepStuckApplying()).toEqual({ resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0 });
+    expect(sinks.calls.expense).toHaveLength(0);
   });
 
-  it.each([
-    { name: "has no inventory leg", recognitionStatus: "unrecognized", assignedGtin13: null, inventoryAppliedAt: null },
-    { name: "already stamped its inventory leg", recognitionStatus: "recognized", assignedGtin13: "0000000000017", inventoryAppliedAt: new Date() },
-  ] as const)("gives up without marking inventory unconfirmed when the receipt $name", async ({ recognitionStatus, assignedGtin13, inventoryAppliedAt }) => {
-    const r = await makeReceipt({ state: "applying" });
-    await makeLineStatus(r.id, { recognitionStatus, assignedGtin13 });
-    await db.receivedReceipt.update({ where: { id: r.id }, data: { inventoryAppliedAt } });
-    await failPushStart(r.id);
-    try {
-      for (let i = 0; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) await sweepStuckApplying();
-    } finally {
-      await restoreWrites("workflow_audit_log");
-    }
-    expect(await row(r.id)).toMatchObject({ state: "apply_failed", inventoryUnconfirmedAt: null });
-  });
-
-  it("moves a receipt whose inventory stamp keeps failing to apply_failed at the cap", async () => {
-    const r = await stuckReceipt();
-    await failInventoryStamp(r.id);
-    try {
-      for (let i = 1; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) {
-        expect(await sweepStuckApplying()).toMatchObject({ applying: 1, gaveUp: 0 });
-      }
-      expect(await sweepStuckApplying()).toMatchObject({ applying: 1, gaveUp: 1 });
-    } finally {
-      await restoreWrites("received_receipts");
-    }
-
-    const settled = await row(r.id);
-    expect(settled).toMatchObject({ state: "apply_failed", inventoryAppliedAt: null, applySweepAttempts: 0 });
-    expect(settled.validationNotes).toMatch(/Last error: .*inventory stamp lost/);
-    expect(await sweepStuckApplying()).toMatchObject({ applying: 0, gaveUp: 0 });
-  });
-
-  it("keeps the lines locked after giving up on a lost inventory stamp, and Retry re-sends only inventory", async () => {
+  it("keeps the lines locked after a lost inventory stamp, never retries it, and Retry re-sends only inventory", async () => {
     // A callee that dedupes per receipt, like local-inventory's per-source guard.
     const changes = new Set<string>();
     configure({
       ...sinks,
       inventorySink: {
+        openBackorders: async () => new Map(),
         applyDelta: async (d) => {
           sinks.calls.inventory.push(d);
           changes.add(d.receiptId);
@@ -194,15 +154,20 @@ describeDb("sweepStuckApplying attempt cap", () => {
     const ls = await db.receivedReceiptLineStatus.findFirstOrThrow({ where: { receivedReceiptId: r.id } });
     await failInventoryStamp(r.id);
     try {
-      for (let i = 0; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) await sweepStuckApplying();
+      expect(await sweepStuckApplying()).toMatchObject({ applying: 1 });
     } finally {
       await restoreWrites("received_receipts");
     }
-    expect(await row(r.id)).toMatchObject({ state: "apply_failed", inventoryAppliedAt: null });
-    expect((await row(r.id)).expenseAppliedAt).not.toBeNull();
+    const stuck = await row(r.id);
+    expect(stuck).toMatchObject({ state: "applying", inventoryAppliedAt: null });
+    expect(stuck.expenseAppliedAt).not.toBeNull();
+    expect(stuck.inventoryUnconfirmedAt).not.toBeNull();
+    expect(stuck.applyFirstFailedAt).toBeInstanceOf(Date);
+    expect(stuck.validationNotes).toMatch(/inventory stamp lost/);
+    expect((await sweepStuckApplying()).applying).toBe(0);
 
     const before = await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } });
-    const locked = { status: 409, message: `Cannot edit lines of a receipt in state "apply_failed"` };
+    const locked = { status: 409, message: `Cannot edit lines of a receipt in state "applying"` };
     await expect(lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" })).rejects.toMatchObject(locked);
     await expect(lineItemService.markNonInventory(r.id, ls.id)).rejects.toMatchObject(locked);
     expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toEqual(before);
@@ -215,34 +180,18 @@ describeDb("sweepStuckApplying attempt cap", () => {
     expect(sinks.calls.inventory).toHaveLength(pushedBefore.inventory + 1);
     expect(sinks.calls.inventory.at(-1)).toEqual(sinks.calls.inventory[0]);
     expect(changes.size).toBe(1);
+    expect(await row(r.id)).toMatchObject({ applyFirstFailedAt: null, validationNotes: null });
     expect((await row(r.id)).inventoryAppliedAt).not.toBeNull();
   });
 
-  it("does not count a sweep that finds a live claim", async () => {
+  it("a refused leg goes to apply_failed at once, stuck with its error", async () => {
+    sinks.fail.expense = true;
     const r = await stuckReceipt();
-    await db.receivedReceipt.update({ where: { id: r.id }, data: { applySweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS - 1 } });
-    await claim(r.id, new Date());
 
-    for (let i = 0; i < MAX_SWEEP_APPLY_ATTEMPTS; i++) await sweepStuckApplying();
+    expect(await sweepStuckApplying()).toMatchObject({ failed: 1 });
 
-    expect(await row(r.id)).toMatchObject({ state: "applying", applySweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS - 1 });
-  });
-
-  it("resets the count when a push succeeds", async () => {
-    const r = await stuckReceipt();
-    await db.receivedReceipt.update({ where: { id: r.id }, data: { applySweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS - 1 } });
-
-    expect((await sweepStuckApplying()).resolved).toBe(1);
-
-    expect(await row(r.id)).toMatchObject({ state: "resolved", applySweepAttempts: 0 });
-  });
-
-  it("resets the count on a manual Retry", async () => {
-    const r = await stuckReceipt();
-    await db.receivedReceipt.update({ where: { id: r.id }, data: { applySweepAttempts: MAX_SWEEP_APPLY_ATTEMPTS - 1 } });
-
-    expect(await receiptService.retryApply(r.id)).toEqual({ state: "applying" });
-
-    expect((await row(r.id)).applySweepAttempts).toBe(0);
+    const stuck = await row(r.id);
+    expect(stuck).toMatchObject({ state: "apply_failed", validationNotes: "Expense: expense down" });
+    expect(stuck.applyFirstFailedAt).toBeInstanceOf(Date);
   });
 });

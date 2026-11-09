@@ -1,5 +1,5 @@
 /**
- * QB-3 drift: the cron step re-reads each app-created or matched QuickBooks entry through the windowed
+ * QuickBooks drift: the cron step re-reads each app-created or matched QuickBooks entry through the windowed
  * readers, over an in-memory QBO company, and flags finance on edits. It only ever reads.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -7,7 +7,8 @@ import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checki
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense, seedLineItem, ORG } from "../helpers/seed";
-import { MAX_DRIFT_CHECKS_PER_RUN, baselineOf, checkQbDrift } from "../../lib/expense-qb-drift";
+import { MAX_DRIFT_CHECKS_PER_RUN } from "@checkin/quickbooks";
+import { baselineOf, checkQbDrift } from "../../lib/expense-qb-drift";
 import { runExpenseQbPosting } from "../../services/sweeps";
 import { raiseFlag } from "../../services/flagService";
 

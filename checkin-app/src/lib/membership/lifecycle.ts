@@ -47,6 +47,20 @@ export type ProcessStatus =
 
 export type ProcessKind = "INITIAL" | "RENEWAL" | "PERSON_BG" | "PERSON_AGREEMENT" | "KEY_VOLUNTEER_AGREEMENT";
 
+/** Every declared status (for reachability's `unreachable` computation). */
+export const ALL_STATUSES: readonly ProcessStatus[] = [
+    "INTAKE",
+    "PENDING_EXTERNAL_ACTION",
+    "PENDING_BG_REVIEW",
+    "PENDING_PAYMENT",
+    "PENDING_BG_CLEARANCE",
+    "ACTIVE",
+    "BLOCKED",
+    "PENDING_RENEWAL",
+    "RENEWAL_PENDING_BG",
+    "ARCHIVED",
+];
+
 // Compile-time parity: these fail to compile if the schema enum drifts from the
 // local union. `import type` keeps the enum out of the client bundle; the
 // TEST does the value-based `assertEnumParity` counterpart.
@@ -195,50 +209,47 @@ export const membershipFeeSettledAwaitingBg = defineStateSet<Where>()({
     flags: { paidAt: true },
 });
 
-// ── renewal grantability & settled-this-cycle ────────────────
+// ── grantability & settled-this-cycle ────────────────
 
 /**
- * The "this renewal is payable now" set the coming-year grant derives from:
- * a RENEWAL at PENDING_PAYMENT — full stop. NOT gated on bgClearedAt: the
- * grant comps PAYMENT ONLY and the background-check gate stays independent, so a
- * parallel-track renewal (paid ahead of BG, bgClearedAt null) is grantable and
- * settles to PENDING_BG_CLEARANCE, while a cleared one settles to ACTIVE — activate()
- * makes that split, BG is never bypassed. Both the list route's `renewalGrantable`
- * probe and `grantRenewalPayment`'s row lookup use this ONE fragment; the COI check
- * inside certifyPaymentPlan stays on top for every actor.
+ * An application a board grant can pay now: joining or renewing, at PENDING_PAYMENT.
+ * NOT gated on bgClearedAt: a grant pays and the background check stays an independent
+ * gate, so activate() settles an uncleared application to PENDING_BG_CLEARANCE.
  */
-export const grantableRenewalWhere: Where = {
-    kind: "RENEWAL",
+export const grantableApplicationWhere: Where = {
+    kind: { in: ["INITIAL", "RENEWAL"] },
     status: "PENDING_PAYMENT",
 };
+
+/** A filter on the recorded year. `appliesToYear: null` would match every row with no year. */
+const recordedYear = (year: number | null) => year ?? { in: [] as number[] };
 
 /**
  * "Settled for the live membership year" — the MONEY question: a process whose
  * membership fee is paid: terminal ACTIVE, or paid and only waiting on background
- * clearance ({@link membershipFeeSettledAwaitingBg}) — stamped on or after the live
- * cycle's `settledSince` (membershipYearCycle), INITIAL and RENEWAL alike,
- * because a family that joins during the window buys the coming year exactly as
- * a renewer does (docs/rules/membership.md). ARCHIVED (a closed application) is
- * deliberately absent: only unpaid applications can be closed, so it must not
- * extend a horizon. Read by the households valid-until,
- * membershipValidThrough and the outreach audiences.
- * KNOWN LIMIT: settlement time is stageEnteredAt (stage completion), so a
- * pre-window payment whose review clears in-window reads as coming-year.
+ * clearance ({@link membershipFeeSettledAwaitingBg}) — that records the live year,
+ * INITIAL and RENEWAL alike (docs/rules/membership.md). ARCHIVED (a closed
+ * application) is deliberately absent: only unpaid applications can be closed, so
+ * it must not extend a horizon. Read by the households valid-until,
+ * membershipValidThrough and the outreach audiences. No live year matches nothing.
  */
-export const settledThisCycleWhere = (settledSince: Date): Where => ({
+export const settledThisCycleWhere = (liveYear: number | null): Where => ({
     OR: [{ status: "ACTIVE" }, membershipFeeSettledAwaitingBg.where],
-    stageEnteredAt: { gte: settledSince },
+    appliesToYear: recordedYear(liveYear),
 });
 
 /**
- * "Nothing more to open this cycle" — the SWEEP question: settled as above, OR
- * ARCHIVED in-window — the board already closed this cycle's application, and
- * opening another would pester a family it just closed out. Only
- * runRenewalSweep's skip-test reads this wider set; money horizons never do.
+ * "Nothing more to open this cycle" — the SWEEP question: ACTIVE for the live year,
+ * OR ARCHIVED in-window — the board already closed this cycle's application, and
+ * opening another would pester a family it just closed out. An archive buys nothing
+ * and has no year, so that arm keeps its date. Only runRenewalSweep's skip-test
+ * reads this wider set; money horizons never do.
  */
-export const handledThisCycleWhere = (windowStart: Date): Where => ({
-    status: { in: ["ACTIVE", "ARCHIVED"] },
-    stageEnteredAt: { gte: windowStart },
+export const handledThisCycleWhere = (liveYear: number | null, windowStart: Date): Where => ({
+    OR: [
+        { status: "ACTIVE", appliesToYear: recordedYear(liveYear) },
+        { status: "ARCHIVED", stageEnteredAt: { gte: windowStart } },
+    ],
 });
 
 // ── fromWhere — the CAS from-state clause ──────────────────────────────────────
@@ -329,10 +340,11 @@ export type OriginState = "∅";
 type TState = ProcessStatus | OriginState;
 
 /**
- * What "Close application" (archiveApplication) accepts: the long-idle, unpaid
- * steps. It also requires `paidAt` null. BLOCKED, PENDING_BG_CLEARANCE and ACTIVE
- * are not closable here — closing would erase a rejection or hide money. Only a
- * board restore closes a BLOCKED one (`RESTORE_CLOSABLE_STATUSES`).
+ * The steps "Close application" (archiveApplication) takes and "Reopen" returns to;
+ * `CLOSABLE_STATUSES` adds the legacy one. Close also requires `paidAt` null.
+ * BLOCKED, PENDING_BG_CLEARANCE and ACTIVE are not closable here — closing would
+ * erase a rejection or hide money. Only a board restore closes a BLOCKED one
+ * (`RESTORE_CLOSABLE_STATUSES`).
  */
 export const ARCHIVABLE_STATUSES = [
     "INTAKE",
@@ -343,10 +355,41 @@ export const ARCHIVABLE_STATUSES = [
 ] as const satisfies readonly ProcessStatus[];
 
 /**
- * What a board restore of a DENIED household closes, unpaid only: the family starts
- * over, so a BLOCKED application closes too (its rejection stays in the audit row).
+ * Every step "Close application" takes, unpaid: the reopenable steps plus the legacy
+ * RENEWAL_PENDING_BG. That one gets a close edge but no reopen edge in TRANSITIONS,
+ * so it stays unreachable there.
  */
-export const RESTORE_CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
+export const CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "RENEWAL_PENDING_BG"] as const satisfies readonly ProcessStatus[];
+
+/**
+ * What a board restore of a DENIED household, or a household archive, closes, unpaid
+ * only: a BLOCKED application closes too (its rejection stays in the audit row).
+ */
+export const RESTORE_CLOSABLE_STATUSES = [...CLOSABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
+
+/**
+ * "Record refund": the step each paid, open application lands in once its refund is
+ * recorded. The background check is untouched. Every step keeps its place, unpaid,
+ * except PENDING_BG_CLEARANCE, which only means "paid, check outstanding", so it
+ * returns to PENDING_PAYMENT. BLOCKED stays BLOCKED: a refund never erases a rejection.
+ * ACTIVE and ARCHIVED are absent: a membership's fee is not refunded here, and a
+ * closed application is never paid.
+ */
+export const REFUND_LANDS_IN: Readonly<Partial<Record<ProcessStatus, ProcessStatus>>> = {
+    INTAKE: "INTAKE",
+    PENDING_EXTERNAL_ACTION: "PENDING_EXTERNAL_ACTION",
+    PENDING_BG_REVIEW: "PENDING_BG_REVIEW",
+    PENDING_PAYMENT: "PENDING_PAYMENT",
+    PENDING_BG_CLEARANCE: "PENDING_PAYMENT",
+    BLOCKED: "BLOCKED",
+    PENDING_RENEWAL: "PENDING_RENEWAL",
+    RENEWAL_PENDING_BG: "RENEWAL_PENDING_BG",
+} satisfies Record<Exclude<ProcessStatus, "ACTIVE" | "ARCHIVED">, ProcessStatus>;
+
+/** Where a recorded refund leaves an application at `status`, or null when no refund applies. */
+export function refundLandsIn(status: ProcessStatus): ProcessStatus | null {
+    return REFUND_LANDS_IN[status] ?? null;
+}
 
 /**
  * Steps a row closed before the unpaid-only rule may still hold in
@@ -379,7 +422,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // Payment convergence
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },
-    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantRenewalPayment", actor: "board", guardSite: "renewal.ts grantRenewalPayment → certifyPaymentPlan (COI) → activate", kind: "RENEWAL" },
+    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantMembership", actor: "board", guardSite: "grant.ts grantMembership → certifyPaymentPlan (COI) → activate" },
     // Clearance convergence
     { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: OrgMembership FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
     { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
@@ -400,10 +443,16 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (paid)" },
     { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
     { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
-    // Refund recorded by the board: money undone, background check untouched. On a
-    // paid BLOCKED row it only clears paidAt (flag-only, no status edge).
-    { from: "PENDING_BG_CLEARANCE", to: "PENDING_PAYMENT", event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" },
-    // Close application — unpaid, long-idle steps only
+    // Refund recorded by the board: money undone, background check untouched. Every
+    // other step only loses paidAt (flag-only, no status edge).
+    ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {
+        const to = refundLandsIn(from);
+        return to && to !== from
+            ? [{ from, to, event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" }]
+            : [];
+    }),
+    // Close application — unpaid steps only
+    { from: "RENEWAL_PENDING_BG", to: "ARCHIVED", event: "archiveApplication", actor: "board", guardSite: "archive.ts updateMany CAS (status read, paidAt null) + COI", legacy: true },
     ...ARCHIVABLE_STATUSES.map(
         (from): Transition<TState, string, ProcessKind> => ({
             from,
@@ -414,7 +463,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
         }),
     ),
     // A board restore closes the denied household's unpaid applications, BLOCKED included.
-    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the restore transaction" },
+    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the household restore or archive transaction" },
     // Reopen — back to the step the close captured. ARCHIVED rests but is not sealed.
     ...ARCHIVABLE_STATUSES.map(
         (to): Transition<TState, string, ProcessKind> => ({
@@ -447,20 +496,6 @@ export const INITIAL_STATES: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENE
 
 /** Every declared kind — the second axis of the exhaustive state-space test. */
 export const ALL_KINDS: readonly ProcessKind[] = ["INITIAL", "RENEWAL", "PERSON_BG", "PERSON_AGREEMENT", "KEY_VOLUNTEER_AGREEMENT"];
-
-/** Every declared status (for reachability's `unreachable` computation). */
-export const ALL_STATUSES: readonly ProcessStatus[] = [
-    "INTAKE",
-    "PENDING_EXTERNAL_ACTION",
-    "PENDING_BG_REVIEW",
-    "PENDING_PAYMENT",
-    "PENDING_BG_CLEARANCE",
-    "ACTIVE",
-    "BLOCKED",
-    "PENDING_RENEWAL",
-    "RENEWAL_PENDING_BG",
-    "ARCHIVED",
-];
 
 /**
  * Every step `unarchiveApplication` restores to: what close accepts today, plus what

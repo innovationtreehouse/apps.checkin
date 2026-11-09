@@ -123,13 +123,45 @@ describe("the receipt tabs", () => {
   });
 
   it("opens a receipt at /receipts/[id], carrying the queue", () => {
-    mockSearch = new URLSearchParams("queue=duplicate_flagged");
-    mockReceiptLoads["?state=duplicate_flagged"] = {
-      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "duplicate_flagged", needsReimbursement: false, isInKind: false }],
+    mockSearch = new URLSearchParams("queue=financial_review");
+    mockReceiptLoads["?state=financial_review"] = {
+      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "financial_review", needsReimbursement: false, isInKind: false }],
       error: null,
     };
     wrap();
-    expect(screen.getByRole("link", { name: /2026/ })).toHaveAttribute("href", "/receipts/r1?queue=duplicate_flagged");
+    expect(screen.getByRole("link", { name: /2026/ })).toHaveAttribute("href", "/receipts/r1?queue=financial_review");
+  });
+
+  it("shows the Duplicates tab as one row per group, opening its oldest held member", () => {
+    mockSearch = new URLSearchParams("queue=duplicate_flagged");
+    mockReceiptLoads["/duplicate-queue"] = {
+      data: [
+        { id: "r1", retailer: "Acme", receiptDate: "2026-10-01", receiptTotalCents: 1000, memberCount: 3, includesRejected: true, oldestHeldAt: new Date(Date.now() - 2 * 86_400_000).toISOString() },
+        { id: "r5", retailer: "Bolt", receiptDate: "2026-10-02", receiptTotalCents: 500, memberCount: 2, includesRejected: false, oldestHeldAt: new Date().toISOString() },
+      ],
+      error: null,
+    };
+    wrap();
+    const acme = screen.getByRole("link", { name: "Acme" });
+    expect(acme).toHaveAttribute("href", "/receipts/r1?queue=duplicate_flagged");
+    const acmeRow = acme.closest("tr") as HTMLElement;
+    expect(acmeRow).toHaveTextContent("3");
+    expect(acmeRow).toHaveTextContent("Includes a rejected receipt");
+    expect(acmeRow).toHaveTextContent("2 days");
+    const boltRow = screen.getByRole("link", { name: "Bolt" }).closest("tr") as HTMLElement;
+    expect(boltRow).not.toHaveTextContent("Includes a rejected receipt");
+    expect(boltRow).toHaveTextContent("Today");
+  });
+
+  it("links the kept receipt on a row rejected as a copy", () => {
+    mockSearch = new URLSearchParams("queue=rejected");
+    mockReceiptLoads["?state=rejected"] = {
+      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "rejected", needsReimbursement: false, isInKind: false, copyOfId: "r9", copyOfLabel: "Acme, uploaded 3 Oct" }],
+      error: null,
+    };
+    wrap();
+    expect(screen.getByRole("link", { name: "Acme, uploaded 3 Oct" })).toHaveAttribute("href", "/receipts/r9?queue=rejected");
+    expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
   });
 
   it("names a duplicate discard on the Discarded tab and links the receipt it duplicates, carrying the queue", () => {

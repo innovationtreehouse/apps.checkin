@@ -184,7 +184,7 @@ describe('mirror registry — stripping', () => {
 
     it('secret columns are stripped even under every grant there is', () => {
         const scopes = ['everyones', 'their_own', 'their_households', 'led_households', 'their_program_participants', 'their_program_households', 'keyholders', 'all_current_visitors'];
-        const all = ['public', 'member', ...scopes.flatMap(s => ['pii', 'personal', 'internal'].map(t => `${s}:${t}`))] as Token[];
+        const all = ['public', 'member', ...scopes.flatMap(s => ['pii', 'personal', 'internal', 'hardship'].map(t => `${s}:${t}`))] as Token[];
         const bag = leakyBag();
         expect(stripValue('ShopifyRawEvent', bag.ShopifyRawEvent, all, ctx())).not.toHaveProperty('payload');
         expect(stripValue('ShopifyBulkExport', bag.ShopifyBulkExport, all, ctx())).not.toHaveProperty('jsonl');

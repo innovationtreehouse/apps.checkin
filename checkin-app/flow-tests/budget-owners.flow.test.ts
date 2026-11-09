@@ -1,5 +1,5 @@
 /**
- * Budget-owner buckets and their approvers (#1280): FINANCE manages buckets,
+ * Budget-owner buckets and their approvers: FINANCE manages buckets,
  * the BOARD alone sets a bucket's owner and treasurers, nobody sets themself or
  * their own household, an org-level bucket takes no approvers, and archive keeps
  * the row. Real HTTP against the running dev server and the seeded DB.
@@ -73,6 +73,43 @@ describe("budget-owner buckets", () => {
     expect(active.json.some((b) => b.id === id)).toBe(false);
     const all = await api<Bucket[]>(finance, "/api/budget-owners?includeArchived=1");
     expect(all.json.find((b) => b.id === id)?.archivedAt).not.toBeNull();
+  });
+});
+
+describe("changing a bucket", () => {
+  const create = async () => (await send(finance, "POST", "/api/budget-owners", { name: `Flow change ${Date.now()}` })).json as Bucket;
+
+  it("finance restores an archived bucket with its Class", async () => {
+    const quickBooksClassId = String(Date.now());
+    const { id } = await create();
+    await send(finance, "PATCH", `/api/budget-owners/${id}`, { quickBooksClassId });
+    await send(finance, "POST", `/api/budget-owners/${id}/archive`);
+    const other = await create();
+    expect((await send(finance, "PATCH", `/api/budget-owners/${other.id}`, { quickBooksClassId })).status).toBe(409);
+
+    expect((await send(board, "PATCH", `/api/budget-owners/${id}`, { archived: false })).status).toBe(403);
+    const restored = await send(finance, "PATCH", `/api/budget-owners/${id}`, { archived: false });
+    expect(restored.status).toBe(200);
+    expect(restored.json).toMatchObject({ archivedAt: null, quickBooksClassId });
+  });
+
+  it("finance changes the flag, refused while the Board's owner or treasurer holds the bucket", async () => {
+    const { id } = await create();
+    await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId });
+    expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
+
+    await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: null });
+    await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
+    expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
+
+    await send(board, "DELETE", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
+    const orgLevel = await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true });
+    expect(orgLevel.status).toBe(200);
+    expect(orgLevel.json).toMatchObject({ isOrgLevel: true });
+
+    const program = await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: false });
+    expect(program.status).toBe(200);
+    expect(program.json).toMatchObject({ isOrgLevel: false });
   });
 });
 

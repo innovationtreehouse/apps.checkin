@@ -362,10 +362,21 @@ consistency follows risk*, and no double booking follows *apply once*.
   Purchase is paid by card or cash, never by check. Writing any other entry type,
   or another field, changes this rule.
 
-- **Finance's books come first.** Nothing is booked into a year that is closed
-  in the books. Until the app starts posting in an area, it only matches what
+- **Finance's books come first.** Nothing dated on or before the closing date
+  finance sets in the books is booked. With no closing date set, nothing dated
+  before the area's posting switched on is booked, and when the date cannot be
+  read nothing is booked. Matching to an entry finance booked is allowed in a
+  closed year, because it changes nothing in the books. Until the app starts posting in an area, it only matches what
   finance has booked; anything it cannot match goes to finance to book or skip.
   After that it books on its own, matching finance's entries first.
+
+- **A split amount is whole cents and sums exactly.** Whenever the app splits an
+  amount across parts, such as an expense's tax, shipping and discount across its
+  lines or a store charge across its order lines, each part is whole cents and
+  the parts sum to the amount exactly. Each part takes its share rounded down,
+  and the leftover cents go one each to the parts with the largest fractions; a
+  tie goes to the larger part, then the earlier one. Parts that are all zero
+  share the amount equally.
 
 - **Nothing is booked twice, and the app never guesses a match.** When the app
   cannot tell which entry something matches, finance decides.
@@ -373,6 +384,12 @@ consistency follows risk*, and no double booking follows *apply once*.
 - **A later change in the books goes back to finance.** If an entry the app
   booked or matched changes or disappears afterwards, finance is told. The app
   never corrects it or matches it again on its own.
+
+- **Finance is told at the alert address.** Finance and QuickBooks alerts go
+  to the alert address, a group address set in app settings. It is not a
+  person's address, so personal email opt-outs do not apply. With no address
+  set, no alert is sent and System Status shows the gap; no one else is sent
+  it instead.
 
 - **Only production reaches the real company.** Development uses only the
   accounting system's test company, and staging has none. The production company

@@ -24,6 +24,7 @@ import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { pdf } from "@react-pdf/renderer";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import PrintBadgesPage from "../page";
 
 beforeEach(() => {
@@ -593,5 +594,55 @@ describe("facility-ops/print-badges page", () => {
       expect.objectContaining({ color: "red", autoClose: false }),
     );
     logged.mockRestore();
+  });
+});
+
+describe("a load that answers after a newer one", () => {
+  const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+
+  it("keeps the selected year's roster when the opening no-year roster answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let finishNoYear: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("roster") === "years") return answer({ years: ["2026-2027"], current: "2026-2027" });
+      if (url.searchParams.get("roster") === "active") {
+        if (url.searchParams.get("year")) return answer({ people: johnRoster });
+        return new Promise<Response>((resolve) => {
+          finishNoYear = () => resolve(answer({ people: johnRoster.map((m) => ({ ...m, year: null })) }));
+        });
+      }
+      return answer({ people: johns });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("John Smith");
+    await waitFor(() => expect(yearCell("John Smith")).toBe("2026-2027"));
+
+    await act(async () => { finishNoYear(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(yearCell("John Smith")).toBe("2026-2027");
+  });
+
+  it("keeps the latest search's rows when an earlier search answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let finishKi: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("roster")) return answer({ people: [] });
+      const q = url.searchParams.get("q");
+      if (q === "Ki") return new Promise<Response>((resolve) => { finishKi = () => resolve(answer({ people: participants })); });
+      if (q === "Kim") return answer({ people: [participants[0]] });
+      return answer({ people: participants });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("Bo Board");
+
+    const box = screen.getByPlaceholderText("Search by name, email, or ID...");
+    fireEvent.change(box, { target: { value: "Ki" } });
+    fireEvent.change(box, { target: { value: "Kim" } });
+    await waitFor(() => expect(screen.queryByText("Bo Board")).not.toBeInTheDocument());
+
+    await act(async () => { finishKi(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.queryByText("Bo Board")).not.toBeInTheDocument();
+    expect(screen.getByText("Kim Keyholder")).toBeInTheDocument();
   });
 });

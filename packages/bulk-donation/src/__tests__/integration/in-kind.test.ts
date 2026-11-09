@@ -1,5 +1,5 @@
 /**
- * In-kind donations with a receipt (FR5): the money side (X9) and the donor (X13) join on
+ * In-kind donations with a receipt: the money side (X9) and the donor (X13) join on
  * receiptId in either order; money first waits as "donor needed", then waits to be accepted;
  * the money side is written once; a withdrawal after money is an anomaly finance settles.
  */
@@ -55,6 +55,15 @@ beforeEach(async () => {
 });
 
 describeDb("in-kind join on receiptId", () => {
+  it.each(["", "usd"])("takes the money side of a receipt with a currency of %j", async (currency) => {
+    await ingestInKind({ ...receipt(R1), currency });
+    expect(await row()).toMatchObject({ receiptTotalCents: 2500 });
+  });
+
+  it("refuses the money side of a receipt with a currency of \"$\"", async () => {
+    await expect(ingestInKind({ ...receipt(R1), currency: "$" })).rejects.toThrow();
+  });
+
   it("money first waits as donor needed, then waits to be accepted once the donor arrives", async () => {
     await ingestInKind(receipt(R1));
     expect((await queue()).map((q) => [q.receiptId, q.state])).toEqual([[R1, "donor"]]);
@@ -127,52 +136,37 @@ describeDb("withdrawInKind", () => {
     expect(await row()).toBeNull();
   });
 
-  it("after money, deletes nothing and raises an anomaly", async () => {
+  it("deletes the row with its money side not yet arrived, and records the withdrawal", async () => {
+    await recordInKindDonor(orgId, R1, DONOR, 0);
+    await withdrawInKind(orgId, R1, 1);
+    expect(await row()).toBeNull();
+    expect(await db.workflowEvent.count({ where: { orgId, eventType: "IN_KIND_WITHDRAWN" } })).toBe(1);
+  });
+
+  it("after money, changes nothing", async () => {
     await ingestInKind(receipt(R1));
     await recordInKindDonor(orgId, R1, DONOR, 0);
     await withdrawInKind(orgId, R1, 0);
     expect(await row()).toMatchObject({ receiptTotalCents: 2500, donorFirstName: "Jane" });
-    expect((await queue()).map((q) => q.withdrawnAfterMoneyAt)).toEqual([expect.any(Date)]);
+    expect((await queue()).map((q) => q.state)).toEqual(["decision"]);
   });
 });
 
-describeDb("settling a receipt gift's anomaly", () => {
+describeDb("settling a receipt gift's replay conflict", () => {
   const giftId = async () => (await row())!.id;
 
-  it("settling a withdrawal clears the donor, keeps the gift and its money, and drops it from the queue", async () => {
-    await ingestInKind(receipt(R1));
-    await recordInKindDonor(orgId, R1, DONOR, 0);
-    await withdrawInKind(orgId, R1, 0);
-    expect((await queue()).map((q) => q.state)).toEqual(["withdrawal"]);
-
-    const result = await inKindService.settle(orgId, await giftId(), "withdrawal", AUDIT);
-    expect(result).toMatchObject({ kind: "withdrawal", settledAt: expect.any(Date) });
-    expect(await row()).toMatchObject({
-      receiptTotalCents: 2500,
-      donorFirstName: null,
-      donorLastName: null,
-      donorCompanyName: null,
-      withdrawalSettledAt: expect.any(Date),
-    });
-    expect(await queue()).toEqual([]);
-    await expect(inKindService.settle(orgId, await giftId(), "withdrawal", AUDIT)).rejects.toMatchObject({ status: 409 });
-    const [event] = await db.workflowEvent.findMany({ where: { orgId, eventType: "IN_KIND_WITHDRAWAL_SETTLED" } });
-    expect(event).toMatchObject({ entityId: R1, actorUserId: 1 });
-    expect(event.payload).not.toMatch(/Jane|Doe|Acme/);
-  });
-
-  it("settling a replay conflict keeps the first values and returns the gift to the queue", async () => {
+  it("keeps the first values and returns the gift to the queue", async () => {
     await ingestInKind(receipt(R1, 2500));
     await recordInKindDonor(orgId, R1, DONOR, 0);
     await ingestInKind(receipt(R1, 9900));
-    await inKindService.settle(orgId, await giftId(), "replay", AUDIT);
+    await expect(inKindService.settle(orgId, await giftId(), "replay", AUDIT)).resolves.toMatchObject({ kind: "replay", settledAt: expect.any(Date) });
     expect(await row()).toMatchObject({ receiptTotalCents: 2500, replayConflictAt: null });
     expect((await queue()).map((q) => q.state)).toEqual(["decision"]);
   });
 
   it("refuses to settle what is not open, or another org's gift", async () => {
     await ingestInKind(receipt(R1));
-    await expect(inKindService.settle(orgId, await giftId(), "withdrawal", AUDIT)).rejects.toMatchObject({ status: 409 });
+    await expect(inKindService.settle(orgId, await giftId(), "replay", AUDIT)).rejects.toMatchObject({ status: 409 });
     await expect(inKindService.settle("other-org", await giftId(), "replay", AUDIT)).rejects.toMatchObject({ status: 404 });
   });
 });
@@ -180,10 +174,11 @@ describeDb("settling a receipt gift's anomaly", () => {
 describeDb("in-kind audit", () => {
   it("records each step with no donor field in any payload", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 0);
+    await withdrawInKind(orgId, R1, 1);
+    await recordInKindDonor(orgId, R1, DONOR, 2);
     await ingestInKind(receipt(R1));
-    await withdrawInKind(orgId, R1, 0);
     const events = await db.workflowEvent.findMany({ where: { orgId, entityType: "in_kind" }, orderBy: { id: "asc" } });
-    expect(events.map((e) => e.eventType)).toEqual(["IN_KIND_DONOR_RECORDED", "IN_KIND_MONEY_RECEIVED", "IN_KIND_WITHDRAWN_AFTER_MONEY"]);
+    expect(events.map((e) => e.eventType)).toEqual(["IN_KIND_DONOR_RECORDED", "IN_KIND_WITHDRAWN", "IN_KIND_DONOR_RECORDED", "IN_KIND_MONEY_RECEIVED"]);
     expect(JSON.stringify(events)).not.toMatch(/Jane|Doe|Acme/);
   });
 });
@@ -191,36 +186,25 @@ describeDb("in-kind audit", () => {
 describeDb("stale donor sends (in-kind findings K2–K4)", () => {
   const OLD_DONOR = { firstName: "Old", lastName: "Donor", companyName: null };
 
-  it("K2: an older donor call landing after a newer one changes nothing", async () => {
+  it("an older donor call landing after a newer one changes nothing", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 1);
     await recordInKindDonor(orgId, R1, OLD_DONOR, 0);
     expect(await row()).toMatchObject({ donorFirstName: "Jane", donorReplacedAt: null });
   });
 
-  it("K2: an older donor call after a withdrawal with no money does not bring the row back", async () => {
+  it("an older donor call after a withdrawal with no money does not bring the row back", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 0);
     await withdrawInKind(orgId, R1, 1);
     await recordInKindDonor(orgId, R1, DONOR, 0);
     expect(await row()).toBeNull();
   });
 
-  it("K3: an older withdrawal landing after the money leaves the gift waiting on a decision", async () => {
+  it("an older withdrawal landing after the money leaves the gift waiting on a decision", async () => {
     await recordInKindDonor(orgId, R1, DONOR, 3);
     await ingestInKind(receipt(R1));
     await withdrawInKind(orgId, R1, 2);
-    expect(await row()).toMatchObject({ withdrawnAfterMoneyAt: null, donorFirstName: "Jane" });
+    expect(await row()).toMatchObject({ receiptTotalCents: 2500, donorFirstName: "Jane" });
     expect((await queue()).map((q) => q.state)).toEqual(["decision"]);
-  });
-
-  it("K4: no donor call writes donor details back onto a settled withdrawal", async () => {
-    await recordInKindDonor(orgId, R1, DONOR, 1);
-    await ingestInKind(receipt(R1));
-    await withdrawInKind(orgId, R1, 2);
-    await inKindService.settle(orgId, (await row())!.id, "withdrawal", AUDIT);
-    await recordInKindDonor(orgId, R1, DONOR, 1);
-    expect(await row()).toMatchObject({ donorFirstName: null, donorLastName: null, donorCompanyName: null });
-    await recordInKindDonor(orgId, R1, DONOR, 3);
-    expect(await row()).toMatchObject({ donorFirstName: null, donorLastName: null, donorCompanyName: null });
   });
 });
 

@@ -304,7 +304,8 @@ export async function setRoleFlag(
                 where: { id: personId },
                 select: { household: { select: { orgMembership: { select: { status: true } } } } },
             });
-            if (target?.household.orgMembership?.status === "DENIED") throw new DeniedHouseholdBoardError();
+            // An archived household reads as null, and its status may be DENIED: refuse it too.
+            if (target && (!target.household || target.household.orgMembership?.status === "DENIED")) throw new DeniedHouseholdBoardError();
         }
 
         if (on && !move && KEY_VOLUNTEER_GATED_FLAGS.includes(flag)) {

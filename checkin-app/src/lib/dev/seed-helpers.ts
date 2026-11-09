@@ -5,7 +5,8 @@ import { systemActor } from "@/lib/auditActor";
 import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
-import { programYearsTouched } from "@/lib/programYear";
+import { nextBoundary, programYearsTouched } from "@/lib/programYear";
+import { orgCalendarDay } from "@/lib/time";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
@@ -365,7 +366,13 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) },
     });
 
-    // 6. Sample program
+    // A placeholder alert address for local and dev, unless one is set. Prod's is set by a person.
+    await prisma.boardSettings.updateMany({
+        where: { id: 1, alertEmailAddress: null },
+        data: { alertEmailAddress: "alerts@example.com" },
+    });
+
+    // 6. Sample programs: Woodworking 101, which the flow tests use, then one per sale state.
     const program = await prisma.program.findFirst({ where: { name: "Woodworking 101" } });
     if (!program) {
         const startAt = new Date();
@@ -387,6 +394,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             },
         });
     }
+    await seedProgramSpread(prisma);
 
     // 7. Budget-owner buckets: one org-level, and one named for the first program
     //    with no approvers until the Board names them.
@@ -401,7 +409,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         }
     }
 
-    console.log("🎉 Seed complete — 9 debug personas, tools, and a sample program are ready.");
+    console.log("🎉 Seed complete — 9 debug personas, tools, and sample programs are ready.");
 }
 
 // A seeded program that crosses the boundary counts in its later year, which
@@ -411,6 +419,132 @@ async function seedProgramYear(prisma: Db, startAt: Date, endAt: Date): Promise<
     const boundary = settings?.orgMembershipYearBoundary;
     if (!boundary) throw new Error("Set the membership year boundary in Board settings before seeding programs.");
     return programYearsTouched(boundary, startAt, endAt).at(-1)!;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A calendar day `offset` days from today in the org's zone. */
+function day(offset: number): Date {
+    return new Date(orgCalendarDay().getTime() + offset * DAY_MS);
+}
+
+type SeedProgram = {
+    name: string;
+    startAt: Date;
+    endAt: Date;
+    offSaleAt?: Date;
+    phase: "UPCOMING" | "RUNNING" | "FINISHED";
+    enrollmentStatus: "OPEN" | "CLOSED";
+    /** Stamped as the daily sale sweep would have, once the off-sale date passed. */
+    saleEnded?: boolean;
+    orgMemberOnly?: boolean;
+    minAge?: number;
+    maxAge?: number;
+    maxParticipants?: number;
+    enroll?: boolean;
+    /** Event start offsets in days; a past event gets attended visits. */
+    events: number[];
+};
+
+// One program per sale state, dated from the day the seed runs. Phase is set by
+// hand in the app; enrollment and saleEndedAt are what the sale sweep leaves.
+async function seedProgramSpread(prisma: Db): Promise<void> {
+    const settings = await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
+    const nextYearStart = nextBoundary(settings.orgMembershipYearBoundary!, day(0));
+    const nextYearOffset = Math.round((nextYearStart.getTime() - day(0).getTime()) / DAY_MS) + 14;
+
+    const specs: SeedProgram[] = [
+        { name: "Seed: finished", startAt: day(-60), endAt: day(-30), phase: "FINISHED", enrollmentStatus: "CLOSED", saleEnded: true, enroll: true, events: [-45] },
+        { name: "Seed: running now", startAt: day(-14), endAt: day(30), phase: "RUNNING", enrollmentStatus: "CLOSED", saleEnded: true, enroll: true, events: [-7, 7] },
+        { name: "Seed: upcoming", startAt: day(21), endAt: day(60), phase: "UPCOMING", enrollmentStatus: "OPEN", events: [21] },
+        { name: "Seed: near off sale", startAt: day(28), endAt: day(70), offSaleAt: day(2), phase: "UPCOMING", enrollmentStatus: "OPEN", events: [28] },
+        { name: "Seed: off sale", startAt: day(14), endAt: day(50), offSaleAt: day(-3), phase: "UPCOMING", enrollmentStatus: "CLOSED", saleEnded: true, events: [14] },
+        { name: "Seed: full", startAt: day(21), endAt: day(60), phase: "UPCOMING", enrollmentStatus: "OPEN", maxParticipants: 2, enroll: true, events: [21] },
+        { name: "Seed: next membership year", startAt: day(nextYearOffset), endAt: day(nextYearOffset + 42), phase: "UPCOMING", enrollmentStatus: "OPEN", events: [nextYearOffset] },
+        { name: "Seed: members only", startAt: day(21), endAt: day(60), phase: "UPCOMING", enrollmentStatus: "OPEN", orgMemberOnly: true, events: [21] },
+        { name: "Seed: ages 12-17", startAt: day(21), endAt: day(60), phase: "UPCOMING", enrollmentStatus: "OPEN", minAge: 12, maxAge: 17, events: [21] },
+    ];
+
+    const { leadId, youthIds } = await seedProgramPeople(prisma);
+
+    for (const spec of specs) {
+        if (await prisma.program.findFirst({ where: { name: spec.name } })) continue;
+        const { events, enroll, saleEnded, ...fields } = spec;
+        const program = await prisma.program.create({
+            data: {
+                ...fields,
+                leadMentorId: leadId,
+                appliesToYear: await seedProgramYear(prisma, spec.startAt, spec.endAt),
+                maxParticipants: spec.maxParticipants ?? 20,
+                saleEndedAt: saleEnded ? (spec.offSaleAt ?? spec.startAt) : null,
+            },
+        });
+        if (enroll) {
+            await prisma.programParticipant.createMany({
+                data: youthIds.map((personId) => ({ programId: program.id, personId, status: "ACTIVE" as const })),
+            });
+        }
+        for (const offset of events) {
+            const startAt = new Date(day(offset).getTime() + 17 * 60 * 60 * 1000);
+            const endAt = new Date(startAt.getTime() + 2 * 60 * 60 * 1000);
+            const past = endAt.getTime() < Date.now();
+            const event = await prisma.event.create({
+                data: {
+                    name: `${spec.name} session`,
+                    programId: program.id,
+                    startAt,
+                    endAt,
+                    // Finished programs have their attendance confirmed; a running one leaves it to the lead.
+                    attendanceConfirmedAt: past && spec.phase === "FINISHED" ? endAt : null,
+                    attendanceConfirmedById: past && spec.phase === "FINISHED" ? leadId : null,
+                },
+            });
+            if (past && enroll) {
+                await prisma.visit.createMany({
+                    data: youthIds.map((personId) => ({ personId, arrivedAt: startAt, departedAt: endAt, associatedEventId: event.id })),
+                });
+            }
+        }
+    }
+}
+
+// The spread's own people, apart from the flow-test personas: a lead, and a
+// member household whose two youths fill the enrolled programs.
+async function seedProgramPeople(prisma: Db): Promise<{ leadId: number; youthIds: number[] }> {
+    const lead = await prisma.person.upsert({
+        where: { email: "program.lead@example.com" },
+        update: {},
+        create: {
+            email: "program.lead@example.com",
+            name: "Program Lead",
+            phone: "555-555-0014",
+            dateOfBirth: yearsAgo(45),
+            household: { create: { name: "Program Lead Household", orgMembership: { create: { status: "ACTIVE" } } } },
+        },
+    });
+    await addHouseholdLead(prisma, lead.householdId, lead.id);
+
+    const parent = await prisma.person.upsert({
+        where: { email: "program.family@example.com" },
+        update: {},
+        create: {
+            email: "program.family@example.com",
+            name: "Program Family Parent",
+            phone: "555-555-0015",
+            dateOfBirth: yearsAgo(42),
+            household: { create: { name: "Program Family", orgMembership: { create: { status: "ACTIVE" } } } },
+        },
+    });
+    await addHouseholdLead(prisma, parent.householdId, parent.id);
+
+    const youthIds: number[] = [];
+    for (const [name, age] of [["Program Family Youth One", 10], ["Program Family Youth Two", 13]] as const) {
+        const youth =
+            (await prisma.person.findFirst({ where: { name, householdId: parent.householdId } })) ??
+            (await prisma.person.create({ data: { name, dateOfBirth: yearsAgo(age), householdId: parent.householdId } }));
+        youthIds.push(youth.id);
+    }
+    return { leadId: lead.id, youthIds };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

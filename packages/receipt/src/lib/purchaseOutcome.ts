@@ -34,12 +34,18 @@ const GIFT: Record<NonNullable<PurchaseOutcome["gift"]>, OutcomeStep> = {
   returned: { label: "Gift returned", tone: "refused", notes: [] },
 };
 
+function receivingStep({ receiving, openBackorders = 0 }: PurchaseOutcome): OutcomeStep {
+  if (!receiving) return { label: "Not yet sent to receiving", tone: "waiting", notes: [] };
+  if (receiving === "received" && openBackorders > 0) return { label: `Received, ${openBackorders} on backorder`, tone: "waiting", notes: [] };
+  return RECEIVING[receiving];
+}
+
 /** Each step the purchase has reached, in flow order: receiving, then the money or the gift. */
 export function outcomeSteps(outcome: PurchaseOutcomeView): OutcomeStep[] {
   if (!outcome) return [];
   if ("unavailable" in outcome) return [{ label: "Status unavailable", tone: "waiting", notes: [] }];
   const steps: OutcomeStep[] = [];
-  steps.push(outcome.receiving ? RECEIVING[outcome.receiving] : { label: "Not yet sent to receiving", tone: "waiting", notes: [] });
+  steps.push(receivingStep(outcome));
   if (outcome.money) steps.push({ ...MONEY[outcome.money.status], notes: outcome.money.notes });
   if (outcome.gift) steps.push(GIFT[outcome.gift]);
   return steps;

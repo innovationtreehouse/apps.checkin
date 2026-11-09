@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * The file-route primitive (plan rule 7, harness H6): defineFileRoute
+ * The file-route primitive: defineFileRoute
  * validation, fileHandler's authenticate → authorize → per-row scope →
  * delivery-header flow, and the guarantee that no JSON route (handler())
  * ever returns a field a file route serves.
@@ -279,7 +279,7 @@ describe('no JSON route returns a file-only field', () => {
     ];
     const EVERY_TOKEN = [
         'public', 'member',
-        ...SCOPES.flatMap(s => ['pii', 'personal', 'internal'].map(t => `${s}:${t}`)),
+        ...SCOPES.flatMap(s => ['pii', 'personal', 'internal', 'hardship'].map(t => `${s}:${t}`)),
     ] as Token[];
 
     // A context in which the caller holds every scope the bindings can derive

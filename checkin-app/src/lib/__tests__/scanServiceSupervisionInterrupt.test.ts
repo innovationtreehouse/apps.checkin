@@ -1,5 +1,5 @@
 /**
- * The departure interrupt ladder (#1436). Drives the REAL supervising-adult test
+ * The departure interrupt ladder. Drives the REAL supervising-adult test
  * through processCheckout, so the two stay wired together:
  *
  *   third supervising adult leaves (two remain) → warning, checkout proceeds
@@ -115,10 +115,8 @@ describe("rung 2 — the next supervising adult leaves", () => {
         expect(body.type).toBe("checkout");
     });
 
-    it("confirms and departs on a second badge just 1s after the warning (#1347 PR-0)", async () => {
-        // The route's debounce used to swallow exactly this scan; the ladder
-        // itself was never the problem -- it accepts any stamp inside the
-        // window, however close to the warning.
+    it("confirms and departs on a second badge just 1s after the warning", async () => {
+        // The ladder accepts any stamp inside the window, however close to the warning.
         const { res, body } = await checkout([10, 20], new Date(Date.now() - 1_000));
 
         expect(res.status).toBe(200);
@@ -212,7 +210,7 @@ describe("youth check-in below two supervising adults", () => {
     });
 });
 
-describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
+describe("a REPLAYED departure skips the ladder entirely", () => {
     // The confirm rung answers 400 {type:"warning"} and records nothing, but the
     // outbox's classify_response acks that shape — a replayed departure hitting
     // it would be deleted from the queue with the visit still open, and no one

@@ -40,6 +40,18 @@ How the pieces are built is described in
   item, across the whole catalog. A change must not create a second item for the
   same GTIN or move a GTIN to a different item. `[Decision]`
 
+- A GTIN shown to a person uses its short form: `P000123` for a provisional GTIN,
+  `03B0042` for one minted from the catalog's category and sequence, and the 13
+  digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
+  digits. `[Decision]`
+
+- A person picks a part from the catalog rather than typing its GTIN. A new org
+  item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
+  names an active catalog item or a pending provisional part of the org. A
+  provisional part the catalog approved or mapped is refused, naming the real
+  part that replaced it; a rejected one is refused. Rows stored before this
+  check are kept as they are. `[Decision]`
+
 - A category is keyed by a letter, and a subcategory by a number within its
   category; each item carries a category, a subcategory and a sequence number.
   The letter and number are part of how items are named, so they must not
@@ -71,6 +83,16 @@ How the pieces are built is described in
 - A reference conflict records the existing and proposed GTINs for a receipt
   line. It is closed by resolving it, which records an outcome and when it was
   resolved, never by deleting it. `[Decision]`
+
+- An open reference conflict shows the item its part is on now, and says so when
+  that is no longer the item it was raised against. The reviewer then acts as
+  normal: "keep existing" keeps the current item. A resolve is refused only if
+  the part moved between the page loading and the click, and the page reloads
+  with the updated question. If the part is already on the proposed item, nothing
+  is left to decide and the conflict is closed as resolved. A resolved conflict
+  records the item it was decided against; its audit entry keeps the item raised.
+  This screen offers no way back to the original item; that is fixed by hand in
+  the global catalog. `[Decision — owner ruling 2026-10-31]`
 
 ### On-hand stock
 
@@ -107,6 +129,12 @@ How the pieces are built is described in
   The factor must match only when merging into existing stock.
   `[Decision — owner]`
 
+- A receipt's or donation's stock change, or a catalog decision, that fails
+  to apply stays failed with its error and the time it first failed. Nothing
+  retries it automatically: a person retries it from the Problems list on
+  System Status. The error shows only on the item's own inventory page.
+  `[Decision — owner]`
+
 ### Receiving
 
 - Receiving is the only way a receipt's goods reach stock, and only after every
@@ -120,10 +148,23 @@ How the pieces are built is described in
   changes a receipt whose goods are already in stock.
   `[Decision — deliberate limit]`
 
+- When a receipt arrives while the catalog is unavailable, its lines are not
+  matched and the receipt shows "Matching pending" while it waits for review.
+  An inventory manager runs matching from the receipt, or maps the lines by
+  hand; matching never re-runs by itself. Matching fills only lines nobody has
+  decided, and a receipt whose every line is then decided is sent to apply, as
+  on arrival.
+  `[Decision — owner]`
+
 - A receipt's lines can be edited only while it waits for review. Once it is
-  sent to apply, its lines can't be edited, even when the apply fails: a
-  failed part is retried with the same lines, and a mistake is corrected by
-  hand outside receiving. `[Decision — owner]`
+  sent to apply, its lines can't be edited, even when the apply fails. A failed
+  apply is never retried automatically: the receipt waits in Apply failed, and
+  on the Problems list, for a person, who either retries it with the same lines
+  or corrects it by hand outside receiving and closes it as handled by hand. A
+  receipt whose part was taken but not confirmed stays applying, on the
+  Problems list, until a person retries it. A close-out names, for each part not applied, whether it
+  was done by hand or isn't needed, and carries a note; a blank note is
+  refused. A closed receipt can't be reopened. `[Decision — owner]`
 
 - The person who uploaded a receipt, or anyone in their household, may map its
   lines in Part mapping (link, propose or mark not inventory) and send it to
@@ -131,6 +172,10 @@ How the pieces are built is described in
   goods are, not what is paid. Finance and the expense sign-off seats decide
   the money side, under the conflict rules in `expenses.md`.
   `[Decision — owner]`
+
+- A receipt reads "Received, N on backorder", not done, while N of its lines
+  are open on the receive queue, and "Received" once none are. A cancelled
+  line counts as closed. `[Decision — owner]`
 
 ### Access
 
@@ -158,8 +203,11 @@ How the pieces are built is described in
   managers change it. `[Decision — *Principle: least privilege*]`
 
 - Only inventory managers, finance and the board may see receiving, because
-  receipts show spending. Only inventory managers act on it.
-  `[Decision — *Principle: least privilege*]`
+  receipts show spending. Only inventory managers act on it, apart from the
+  close-out below. `[Decision — *Principle: least privilege*]`
+
+- Inventory managers retry a receipt in Apply failed and close it out as
+  handled by hand; the board may also close one out. `[Decision — owner]`
 
 - Board membership is enough to view receipt and inventory data, and to edit it
   wherever the app allows an edit. `[Decision — owner]`

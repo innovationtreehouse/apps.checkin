@@ -3,8 +3,9 @@ import { useState, type ReactNode } from "react";
 import {
   Alert, Anchor, Badge, Button, Checkbox, Group, Mark, Menu, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
-import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import { NOT_SENT, QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { reviewKindOf, type ReviewKind } from "../lib/flags";
 import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
@@ -105,16 +106,6 @@ type Detail = Expense | { Expense: Expense; ExpenseQueueReason?: QueueReason[] }
 const expenseOf = (d: Detail | null) => (d && "Expense" in d ? d.Expense : d);
 /** The open reasons; null when the response carried none, so nothing is known about them. */
 const reasonsOf = (d: Detail | null) => (d && "Expense" in d ? d.ExpenseQueueReason ?? null : null);
-
-/** Why the QuickBooks drain is holding an expense back. */
-const NOT_SENT: Record<string, string> = {
-  NOT_TEST_DATA: "Not sent to QuickBooks: not test data",
-  TEST_DATA_REFUSED: "Not sent to QuickBooks: test data is never posted in prod",
-  NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
-  AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
-  UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
-  SKIPPED: "Not sent to QuickBooks: finance skipped it",
-};
 
 const REVIEW_LABEL: Record<ReviewKind, { title: string; act: string }> = {
   QB_DUPLICATE_TO_VOID: { title: "Duplicate entry in QuickBooks needs voiding", act: "I voided it" },
@@ -495,6 +486,10 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const statuses = (signoffs.data ?? []).map((s) => ({ ...s, actions: s.actions ?? [], awaiting: s.awaiting ?? [] }));
   const statusOf = new Map(statuses.map((s) => [s.lineItemId, s]));
 
+  function postAction(action: LineAction, approval: Approval, body: unknown) {
+    return send(`${base}/line-item-approvals/${approval.id}/${approvalRoute(action.act, approval)}`, "POST", body, `${actLabel(action)} done`);
+  }
+
   async function runAction() {
     if (!dialog) return;
     const { action, approval } = dialog;
@@ -504,23 +499,31 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       : action.act === "raise-exception" || action.act === "reject-exception" ? { notes: text }
       : route === "finance-assign" ? { ownerId: Number(bucket), final, note: final ? text : null }
       : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
-    if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
+    if (await postAction(action, approval, body)) {
       setDialog(null);
       await decided();
     }
+  }
+
+  async function approveNow(action: LineAction, approval: Approval) {
+    if (await postAction(action, approval, { reason: null })) await decided();
   }
 
   async function sign(lineItemId: number, seat: string) {
     if (await send(`${base}/line-items/${lineItemId}/signoffs`, "POST", { seat }, `Signed as ${SEAT_LABEL[seat] ?? seat}`)) await decided();
   }
 
-  /** A seat signs at once; every other act opens the dialog for its note or bucket. */
+  /** A seat sign and an approval without a reason act at once; every other act opens the dialog for its note or bucket. */
   function take(lineItemId: number, action: LineAction, approval: Approval | undefined) {
     if (action.act === "sign") {
       void sign(lineItemId, action.seat ?? "");
       return;
     }
     if (!approval) return;
+    if (action.act === "approve" && !action.noteRequired) {
+      void approveNow(action, approval);
+      return;
+    }
     setText(""); setBucket(null); setPermanent(false); setFinal(false);
     setDialog({ action, approval });
   }
@@ -530,7 +533,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog?.action.act === "assign-bucket" || dialog?.action.act === "resolve-bucket";
-  const takesNote = !needsBucket && dialog !== null && (dialog.action.act !== "approve" || dialog.action.noteRequired);
+  const takesNote = !needsBucket && dialog !== null;
   // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
   const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
   const canMapPart = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
@@ -568,7 +571,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           {e.qbMatchState === "NEEDS_FINANCE" && (
             <Button
               size="xs"
-              onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "QuickBooks post retried")) await decided(); }}
+              onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Posted to QuickBooks")) await decided(); else reloadAll(); }}
             >
               Retry QuickBooks post
             </Button>
@@ -578,7 +581,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               <Text size="sm">Not in QuickBooks. Book it to have the app create the entry, or pick the entry finance already booked.</Text>
               <Button
                 size="xs"
-                onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Booked in QuickBooks")) await decided(); }}
+                onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "Booked in QuickBooks")) await decided(); else reloadAll(); }}
               >
                 Book it
               </Button>
@@ -640,7 +643,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             <Table.Th ta="right">Qty</Table.Th>
             <Table.Th ta="right">Unit</Table.Th>
             <Table.Th ta="right">Total</Table.Th>
-            <Table.Th>GTIN-13</Table.Th>
+            <Table.Th>Part No.</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>
@@ -672,7 +675,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 <Table.Td ta="right">{l.quantity}</Table.Td>
                 <Table.Td ta="right">{formatCents(l.unitPriceCents, e.currency)}</Table.Td>
                 <Table.Td ta="right">{formatCents(l.totalPriceCents, e.currency)}</Table.Td>
-                <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ?? "—"}</Text></Table.Td>
+                <Table.Td><Text size="xs" ff="monospace">{l.gtin13 ? formatGtinDisplay(l.gtin13) : "—"}</Text></Table.Td>
                 <Table.Td>
                   <Marked on={(open("BUCKET_TO_ASSIGN") && a?.ownerId == null) || (open("BUCKET_UNKNOWN") && a?.status === "unknown")}>
                     {a?.ownerId != null ? bucketNames.get(a.ownerId) ?? `#${a.ownerId}` : "—"}
@@ -712,7 +715,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         </Table.Tbody>
       </Table>
 
-      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={() => void decided()} />
+      <AccountHoldsPanel expenseId={e.id} holds={e.holds ?? []} lines={e.lineItems} currency={e.currency} isFinance={isFinance} onChanged={() => void decided()} onRefused={reloadAll} />
 
       {isFinance && reviews.length > 0 && <ReviewsPanel e={e} reviews={reviews} onDecided={() => void decided()} />}
 

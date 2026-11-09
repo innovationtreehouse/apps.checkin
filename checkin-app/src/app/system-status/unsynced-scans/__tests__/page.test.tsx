@@ -1,8 +1,10 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import SystemStatusUnsyncedScansPage from "../page";
 
 beforeEach(() => resetRtl());
+afterEach(() => act(() => notifications.clean()));
 
 const scan = (over: Record<string, unknown> = {}) => ({
     id: 5,
@@ -54,10 +56,11 @@ describe("SystemStatusUnsyncedScansPage", () => {
         expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     });
 
-    it("records a closed visit: departure entered, POSTed with the row id, row dropped", async () => {
+    it("records a closed visit: departure entered, POSTed with the row id, queue re-read", async () => {
+        let scans = [scan()];
         const fetchMock = mockFetchJson({
-            "/api/system-status/unsynced-scans/5": {},
-            "/api/system-status/unsynced-scans": { scans: [scan()] },
+            "/api/system-status/unsynced-scans/5": () => { scans = []; return {}; },
+            "/api/system-status/unsynced-scans": () => ({ scans }),
         });
         renderWithProviders(<SystemStatusUnsyncedScansPage />);
 
@@ -110,25 +113,33 @@ describe("SystemStatusUnsyncedScansPage", () => {
             Promise.resolve({
                 ok: false,
                 status: 409,
-                json: () => Promise.resolve({ error: "A visit already covers that scan time — dismiss the row instead." }),
+                text: () => Promise.resolve(JSON.stringify({ error: "A visit already covers that scan time — dismiss the row instead." })),
             } as unknown as Response),
         );
         const dialog = await screen.findByRole("dialog");
         fireEvent.change(within(dialog).getByLabelText("Departure time"), { target: { value: "2026-08-20T17:00" } });
         fireEvent.click(within(dialog).getByRole("button", { name: "Record visit" }));
 
-        expect(
-            await screen.findByText("A visit already covers that scan time — dismiss the row instead."),
-        ).toBeInTheDocument();
+        await waitFor(() =>
+            expect(notificationsStore.getState().notifications).toEqual([
+                expect.objectContaining({
+                    color: "red",
+                    message: "A visit already covers that scan time — dismiss the row instead.",
+                    autoClose: false,
+                }),
+            ]),
+        );
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
         expect(screen.queryByText("● No scans awaiting review.")).not.toBeInTheDocument();
     });
 
-    it("dismisses a row by POSTing to it, then drops it from the list", async () => {
+    it("dismisses a row by POSTing to it, then re-reads the queue", async () => {
+        let scans = [scan()];
         // Longest key first: mockFetchJson matches by substring, so the list
         // route would otherwise swallow the dismiss URL.
         const fetchMock = mockFetchJson({
-            "/api/system-status/unsynced-scans/5": {},
-            "/api/system-status/unsynced-scans": { scans: [scan()] },
+            "/api/system-status/unsynced-scans/5": () => { scans = []; return {}; },
+            "/api/system-status/unsynced-scans": () => ({ scans }),
         });
         renderWithProviders(<SystemStatusUnsyncedScansPage />);
 
@@ -139,6 +150,32 @@ describe("SystemStatusUnsyncedScansPage", () => {
             expect.objectContaining({ method: "POST" }),
         );
         expect(await screen.findByText("● No scans awaiting review.")).toBeInTheDocument();
+    });
+
+    it("shows a refused dismiss in the lower right and keeps the row", async () => {
+        const list = mockFetchJson({ "/api/system-status/unsynced-scans": { scans: [scan()] } });
+        global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
+            init?.method === "POST"
+                ? Promise.resolve(new Response(JSON.stringify({ error: "That scan was already handled." }), { status: 409 }))
+                : list(input, init),
+        ) as unknown as typeof fetch;
+        renderWithProviders(<SystemStatusUnsyncedScansPage />);
+        fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+
+        await waitFor(() =>
+            expect(notificationsStore.getState().notifications).toEqual([
+                expect.objectContaining({ color: "red", message: "That scan was already handled.", autoClose: false }),
+            ]),
+        );
+        expect(screen.getByText(/Ada Lovelace, scanned/)).toBeInTheDocument();
+    });
+
+    it("shows the failure, not an all-clear, when the load fails", async () => {
+        mockFetchJson({});
+        renderWithProviders(<SystemStatusUnsyncedScansPage />);
+
+        expect(await screen.findByText("Couldn't load unsynced scans")).toBeInTheDocument();
+        expect(screen.queryByText("● No scans awaiting review.")).not.toBeInTheDocument();
     });
 
     it("shows an empty state when nothing is awaiting review", async () => {

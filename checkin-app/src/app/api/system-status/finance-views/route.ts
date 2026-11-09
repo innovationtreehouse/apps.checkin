@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { handler, badRequest } from "@/security/handler";
 import { archivedPeople } from "@/lib/person/archivedPeople";
+import { parseDayAt } from "@/lib/time";
 import { FINANCE_VIEWS_PAGE_SIZE, financeViewKindWhere, isFinanceViewKind } from "@/lib/finance/financeViewKinds";
 
 /**
@@ -11,12 +12,10 @@ import { FINANCE_VIEWS_PAGE_SIZE, financeViewKindWhere, isFinanceViewKind } from
  * signal that another page follows.
  */
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-
 function parseDay(value: string | null, label: string, time: string): Date | undefined {
     if (!value) return undefined;
-    const d = new Date(`${value}T${time}`);
-    if (!DAY.test(value) || isNaN(d.getTime())) throw badRequest(`Invalid ${label} date.`);
+    const d = parseDayAt(value, time);
+    if (!d) throw badRequest(`Invalid ${label} date.`);
     return d;
 }
 
@@ -59,8 +58,7 @@ export const GET = handler('GET /api/system-status/finance-views', async ({ req 
         prisma.financeViewLog.groupBy({ by: ['actorId'] }),
     ]);
 
-    // Not LIVE_PERSON-filtered: a viewer since merged away must still be named,
-    // from the merge archive once the merge has deleted their row.
+    // A viewer since merged away has no Person row; they are named from the merge archive.
     const actorIds = actors.map((a) => a.actorId);
     const people: { id: number; name: string | null }[] = actors.length
         ? await prisma.person.findMany({

@@ -11,6 +11,9 @@ export const classifications = {
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
         qbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
+        qbMaxCreatesPerDay: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',
@@ -58,6 +61,9 @@ export const classifications = {
         qbTxnEntity: 'internal',
         qbVendorId: 'internal',
         qbPostAttempts: 'internal',
+        qbFailureKind: 'internal',
+        qbFirstFailedAt: 'internal',
+        qbLastError: 'personal',
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
         qbCreateAttemptedAt: 'internal',
@@ -154,6 +160,18 @@ export const classifications = {
         expenseId: 'internal',
         createdAt: 'internal',
     },
+    ExpenseOutcomeNotice: {
+        id: 'internal',
+        orgId: 'internal',
+        expenseId: 'internal',
+        event: 'internal',
+        claimedAt: 'internal',
+        uploaderSentAt: 'internal',
+        reimburseeSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
+        createdAt: 'internal',
+    },
     ExpenseQbAccount: {
         id: 'internal',
         orgId: 'internal',
@@ -207,6 +225,8 @@ export const classifications = {
         status: 'internal',
         failureReason: 'personal',
         receivedAt: 'internal',
+        replayAttempts: 'internal',
+        firstFailedAt: 'internal',
     },
     ExpenseReceivedOrgEvent: {
         id: 'internal',
@@ -216,6 +236,7 @@ export const classifications = {
         receivedAt: 'internal',
         status: 'internal',
         failureReason: 'personal',
+        firstFailedAt: 'internal',
     },
     CapitalAsset: {
         id: 'internal',
@@ -341,6 +362,8 @@ export const relations = {
         lineItem: { model: 'ExpenseLineItem', isList: false },
     },
     ExpenseEvent: {
+    },
+    ExpenseOutcomeNotice: {
     },
     ExpenseQbAccount: {
     },

@@ -1,16 +1,13 @@
 // Drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
 // when it was edited or removed in QuickBooks afterwards. Read-only: QuickBooks is never changed.
 import { dollarsToCents, sumCents } from "@checkin/money";
-import { MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, MAX_MATCH_WINDOW_DAYS, appKeyOf, qbKey, shiftDate, todaysSlice, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import type { ExpensePosting } from "../contract";
 import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import { raiseFlag } from "../services/flagService";
 import { lineCents } from "../qb-write";
 import { logError } from "./logger";
-
-/** QuickBooks reads per run: one windowed read per checked expense. */
-export const MAX_DRIFT_CHECKS_PER_RUN = 25;
 
 export type DriftField = "missing" | "amount" | "date" | "key" | "accounts" | "vendor";
 
@@ -79,16 +76,6 @@ export function observedOf(entry: QboPurchase | QboBill | undefined, drift: Drif
 }
 
 /**
- * The slice of `ids` to check today. The start moves by the cap each UTC day, so every entry
- * is checked within ceil(n / cap) days without storing a cursor.
- */
-export function todaysSlice<T>(ids: T[], cap: number, now = new Date()): T[] {
-  if (ids.length <= cap) return ids;
-  const start = (Math.floor(now.getTime() / 86_400_000) * cap) % ids.length;
-  return [...ids, ...ids].slice(start, start + cap);
-}
-
-/**
  * Raises QB_DRIFT with the drifted field names, storing what QuickBooks showed for them; an open
  * flag keeps the latest values. Drift finance checked off stays checked off only while
  * QuickBooks still shows the values last stored.
@@ -105,10 +92,10 @@ async function flagDrift(expenseId: string, drift: DriftField[], entry: QboPurch
   await raiseFlag(expenseId, "QB_DRIFT", detail, db, observed);
 }
 
-/** The entry `qbTxnId` through the windowed reader around `receiptDate`; undefined when it is gone. */
+/** The entry `qbTxnId` through the windowed reader around `receiptDate`, at the widest window; undefined when it is gone. */
 async function readEntry(posting: ExpensePosting, entity: string | null, qbTxnId: string, receiptDate: string): Promise<QboPurchase | QboBill | undefined> {
-  const from = shiftDate(receiptDate, -MATCH_WINDOW_DAYS);
-  const to = shiftDate(receiptDate, MATCH_WINDOW_DAYS);
+  const from = shiftDate(receiptDate, -MAX_MATCH_WINDOW_DAYS);
+  const to = shiftDate(receiptDate, MAX_MATCH_WINDOW_DAYS);
   const entries: (QboPurchase | QboBill)[] = entity === "Bill" ? await posting.client.billsBetween(from, to) : await posting.client.purchasesBetween(from, to);
   return entries.find((e) => e.Id === qbTxnId);
 }

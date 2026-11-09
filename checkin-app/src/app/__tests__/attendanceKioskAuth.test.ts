@@ -29,7 +29,10 @@ jest.mock('@/lib/getFullAttendance', () => ({
 // route's needReview count is the one live query on the kiosk path.
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
-    default: { rawBadgeLog: { count: jest.fn().mockResolvedValue(0) } },
+    default: {
+        rawBadgeLog: { count: jest.fn().mockResolvedValue(0) },
+        facilityClose: { findFirst: jest.fn().mockResolvedValue(null) },
+    },
 }));
 
 function makeKeypair() {
@@ -111,11 +114,37 @@ describe('GET /api/attendance — real kiosk signature wiring', () => {
             user: { id: 1, isKeyholder: true, isSysadmin: false, isBoardMember: false },
         });
         const before = await (await GET(attendanceReq({}))).json();
-        expect(before.building).toEqual({ reachable: false, lastSeenAt: null });
+        expect(before.building).toEqual({ reachable: false, lastSeenAt: null, queued: 0 });
 
         await GET(attendanceReq(signedHeaders(signer, freshNonce())));
         const after = await (await GET(attendanceReq({}))).json();
         expect(after.building.reachable).toBe(true);
+    });
+
+    it('a signed roster names the latest nightly close, null if none; a web read omits it', async () => {
+        resetKioskSeen();
+        const prisma = (jest.requireMock('@/lib/prisma') as { default: { facilityClose: { findFirst: jest.Mock } } }).default;
+        (getServerSession as jest.Mock).mockResolvedValue(null);
+        expect((await (await GET(attendanceReq(signedHeaders(signer, freshNonce())))).json()).lastNightlyCloseAt).toBeNull();
+
+        const closedAt = new Date('2026-10-31T03:00:00.000Z');
+        prisma.facilityClose.findFirst.mockResolvedValueOnce({ closedAt });
+        expect((await (await GET(attendanceReq(signedHeaders(signer, freshNonce())))).json()).lastNightlyCloseAt).toBe(closedAt.toISOString());
+
+        (getServerSession as jest.Mock).mockResolvedValue({
+            user: { id: 1, isKeyholder: true, isSysadmin: false, isBoardMember: false },
+        });
+        expect(await (await GET(attendanceReq({}))).json()).not.toHaveProperty('lastNightlyCloseAt');
+    });
+
+    it('a signed poll reporting queued scans makes a web read say syncing', async () => {
+        resetKioskSeen();
+        (getServerSession as jest.Mock).mockResolvedValue({
+            user: { id: 1, isKeyholder: true, isSysadmin: false, isBoardMember: false },
+        });
+        await GET(attendanceReq({ ...signedHeaders(signer, freshNonce()), 'x-kiosk-queue-depth': '4' }));
+        const res = await (await GET(attendanceReq({}))).json();
+        expect(res.building).toMatchObject({ reachable: false, queued: 4 });
     });
 
     it('a signed kiosk poll stays display-only even when a keyholder session is present', async () => {

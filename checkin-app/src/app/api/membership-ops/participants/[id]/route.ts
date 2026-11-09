@@ -8,9 +8,11 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
+import { EMAIL_IN_USE_REFUSAL, isBadEmailChange, isEmailInUseError } from "@/lib/household/emailInUse";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+import { isYouth } from "@/lib/time";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -19,6 +21,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         return apiError("Unauthorized", 401);
     }
 
+    let requestedEmail: unknown;
     try {
         const resolvedParams = await params;
         const id = parseInt(resolvedParams.id, 10);
@@ -27,7 +30,8 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         const body = await request.json();
-        
+        requestedEmail = body.email;
+
         const updateData: Record<string, NonNullable<unknown> | null | string | number | boolean | Date> = {};
         if (body.name !== undefined) {
             const writtenName = nameWrite(body.name);
@@ -44,7 +48,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         }
         const nickname = nicknameWrite(body.nickname);
         if (nickname !== undefined) updateData.nickname = nickname;
-        if (body.email !== undefined) updateData.email = body.email;
+        if (body.email !== undefined) updateData.email = typeof body.email === "string" ? normalizeEmail(body.email) : body.email;
         if (body.phone !== undefined) {
             if (body.phone !== "" && body.phone !== null && !isValidPhone(body.phone)) {
                 return apiError(PHONE_ERROR, 400);
@@ -67,6 +71,10 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             return apiError("Participant not found", 404);
         }
         const { dateOfBirth: priorDob, householdId, ...prior } = existing;
+
+        if (isBadEmailChange(body.email, prior.email)) {
+            return apiError("Invalid email format", 400);
+        }
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row
@@ -93,12 +101,18 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             }
             if (await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
                 table: "Person",
-                attempted: { email: body.email ?? null },
+                attempted: { email: updateData.email ?? null },
             })) {
                 return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
             }
             updateData.emailVerified = null;
             updateData.googleId = null;
+        }
+
+        // A new address gets its own first sign-in, and a youth stays where they were added:
+        // a Board edit closes a household question that the record's youth cannot answer.
+        if (emailChanged || (auth.user.isBoardMember && isYouth(priorDob))) {
+            updateData.householdJoinPending = false;
         }
 
         const updatedParticipant = await prisma.$transaction(async (tx) => {
@@ -157,6 +171,9 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
 
         return NextResponse.json({ participant: formatted });
     } catch (error) {
+        if (isEmailInUseError(error, requestedEmail)) {
+            return apiError(EMAIL_IN_USE_REFUSAL, 400);
+        }
         logger.error("Failed to update participant:", error);
         return apiError("Failed to update participant", 500);
     }

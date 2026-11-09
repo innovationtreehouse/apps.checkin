@@ -16,6 +16,16 @@ jest.mock('@/lib/quickbooks/health', () => ({
     getQuickBooksHealth: async () => [{ id: 'quickbooks-connection', label: 'QuickBooks connection', ok: true, detail: 'Connected to the sandbox company.' }],
 }));
 
+jest.mock('@/lib/receipt/mailboxHealth', () => ({ getReceiptMailboxHealth: async () => [] }));
+
+jest.mock('@/lib/problems', () => ({
+    getProblems: async () => ({
+        items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: new Date('2026-11-01T12:00:00.000Z') }],
+        unread: ['gifts'],
+        notices: ['Receipt reading failed 3 times in the last day'],
+    }),
+}));
+
 import { GET } from '../route';
 import prisma from '@/lib/prisma';
 
@@ -26,6 +36,8 @@ beforeEach(() => {
         { job: 'nightly', _max: { finishedAt: LAST_SUCCESS } },
     ]);
     prisma.cronRunLog.findMany = jest.fn().mockResolvedValue([]);
+    prisma.boardSettings.findUnique = jest.fn().mockResolvedValue({ alertEmailAddress: null });
+    prisma.opsIncident.findMany = jest.fn().mockResolvedValue([]);
 });
 
 const req = () => new Request('http://localhost/api/system-status/config-health');
@@ -62,11 +74,43 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         expect(res.status).toBe(200);
     });
 
+    it('reports an unset alert address as a failing check', async () => {
+        const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
+        const body = await res.json();
+        expect(body.checks).toContainEqual(expect.objectContaining({ id: 'alert-address', ok: false }));
+    });
+
     it('carries the cron run ledger alongside the config checks', async () => {
         const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
         const body = await res.json();
         expect(body.cronJobs).toEqual([
             { job: 'nightly', lastSuccessAt: LAST_SUCCESS.toISOString(), stale: expect.any(Boolean) },
         ]);
+    });
+
+    it('carries the incidents not yet closed, open once notified and watching before', async () => {
+        const firstSeenAt = new Date('2026-11-01T12:00:00.000Z');
+        const row = { key: 'quickbooks:connection', kind: 'connection', cause: 'quickbooks', lanes: ['expenses'], firstSeenAt, runsSeen: 2, itemsAffected: 4 };
+        prisma.opsIncident.findMany = jest.fn().mockResolvedValue([
+            { ...row, notifiedAt: firstSeenAt },
+            { ...row, key: 'ocr:system', notifiedAt: null },
+        ]);
+        const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
+        const body = await res.json();
+        expect(prisma.opsIncident.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { closedAt: null } }));
+        expect(body.incidents).toEqual([
+            { ...row, firstSeenAt: firstSeenAt.toISOString(), status: 'open' },
+            { ...row, key: 'ocr:system', firstSeenAt: firstSeenAt.toISOString(), status: 'watching' },
+        ]);
+    });
+
+    it('carries the receipt flow problems, the libraries\' own lines, and any library it could not read', async () => {
+        const res = await call({ type: 'session', user: { isSysadmin: true, isBoardMember: false } });
+        const body = await res.json();
+        expect(body.problems).toEqual({
+            items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: '2026-11-01T12:00:00.000Z' }],
+            unread: ['gifts'],
+            notices: ['Receipt reading failed 3 times in the last day'],
+        });
     });
 });

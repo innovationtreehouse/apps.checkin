@@ -173,7 +173,7 @@ Two independent disqualifiers:
 
 ### Option D: drift guard only (rejected)
 
-Add the column, add a drift guard like `livePersonDriftGuard.test.ts`, ship the
+Add the column, add a drift guard like the retired `LIVE_PERSON` one, ship the
 per-query filter plus a test that greps for missing ones. This is exactly what
 `LIVE_PERSON` has, and `TOMBSTONE_REMOVAL.md` is a 200-line argument that it does
 not work: the guard missed three shipped bugs before its widening found 13 more.
@@ -580,33 +580,77 @@ The policy is safe to ship before the reader changes for the same reason: no row
 can be archived until the archive route exists, so nothing the policy hides, and
 nothing a reader has yet to tolerate, exists until then.
 
+**Infra goes first.** [infra.aws #201](https://github.com/innovationtreehouse/infra.aws/pull/201)
+must be applied, and one staging copy run while row security is still off, before
+this migration reaches production. Without it, the first staging copy afterwards
+fails, even with no household archived.
+
+### The staging copy
+
+Production's `Household` carries one SELECT policy this migration does not create:
+
+```sql
+CREATE POLICY stg_copy_read_all ON "Household"
+    FOR SELECT TO checkin_prod_ro USING (true);
+```
+
+Infra bootstrap adds it (infra.aws #201), so the contract tests never see it: their
+database is built from migrations alone. Their "no other permissive `SELECT` policy"
+check is about migrations, and does not describe production.
+
+The policy widens one read. `checkin_prod_ro`, whose only member is the staging copy
+role `checkin_stg`, can read archived households in production. The app's DML role
+cannot, because the policy names only `checkin_prod_ro`.
+
+The copy runs differently from a plain dump, for three reasons:
+
+- **The dump uses `--enable-row-security`, behind a guard.** `pg_dump` otherwise runs
+  with `row_security=off`, which errors on any table row security binds. The flag
+  stops the error, but on its own it silently leaves out any row a policy hides. So
+  the copy first refuses to run unless every row-security table in production has an
+  always-true `SELECT` policy for `checkin_prod_ro` and no restrictive policy. A
+  future row-security table stops the copy until someone decides how to copy it.
+- **The copy drops `stg_copy_read_all` after the restore.** Left in place, `checkin_stg`
+  would see archived rows in staging that production's migrate role cannot.
+- **The scrub runs with `FORCE` lifted.** The scrub runs as the loading database's
+  owner, and `FORCE` binds that owner. A bound `UPDATE` skips the rows a policy hides
+  and still exits 0, so an archived household's `intakeNotes` would stay in clear text
+  in staging. The scrub also sets `row_security=off`, which turns any table still bound
+  into an error. `FORCE` is restored before the database is renamed live.
+
 ### Build order
 
-Five PRs, in this order. Each deploys safely on its own.
+The PRs, in this order. Each deploys safely on its own.
 
 1. **Expand.** The nullable column and the test DML role. No policy, no reader
    changes.
 2. **Policy.** The policy migration, `withArchivedHouseholds`, the enforcement
-   contract tests and the opt-in guard.
+   contract tests and the opt-in guard. Reaches production only after infra.aws
+   #201 is applied and a staging copy has run on it
+   (see [The staging copy](#the-staging-copy)).
 3. **Readers.** The opt-in sites, null tolerance on the 24 includes, the explicit
    scan and people-search exclusion, and the audit of person queries with no
    household join.
-4. **Registry.** The archive route's registry entry, as its own boundary PR, based
+4. **Registry.** The Board-only entries for the archive and unarchive routes,
+   in their own PR (#3184).
+5. **Archive action.** The two route files on `handler()` and the screen, based
    on `main`.
-5. **Archive action.** The route and the screen, based on `main`.
+6. **Archived households refuse changes (HA-9).** The write paths keyed by a
+   household or person id that row security does not reach.
 
 ### Route for archival
 
-A new mutation on the existing household admin route
-(`/api/membership-ops/households/[id]`) — a PATCH setting `archivedAt`. Board
-only, and refused while the household has a current Treehouse membership or a
-current program enrollment (Decision #4). Unarchive is the same route nulling
-`archivedAt`. Both writes run through `withArchivedHouseholds`: Prisma's update
-reads the row, an archived row is invisible without the opt-in, and setting
-`archivedAt` produces a row the `SELECT` policy would otherwise reject.
+Two registered routes on `handler()`, with no body:
+`POST /api/membership-ops/households/[id]/archive` sets `archivedAt`, and
+`POST /api/membership-ops/households/[id]/unarchive` nulls it. Their registry
+entries admit the Board only, so a sysadmin who is not on the Board gets 403, and
+return the household with its public fields (id, name, `archivedAt`). The archive
+refuses on any of the conditions in HA-7, HA-8 and HA-10 (Decisions #4, #7 and
+#9). Both writes run through `withArchivedHouseholds`: Prisma's update reads the
+row, an archived row is invisible without the opt-in, and setting `archivedAt`
+produces a row the `SELECT` policy would otherwise reject.
 
-No new route file, no new page. The action sits on the existing household detail
-view.
+No new page. The action sits on the existing household detail view.
 
 ## Interaction with #1456 (TOMBSTONE_REMOVAL)
 
@@ -668,6 +712,27 @@ IDs are kept so earlier references still resolve. All are settled.
    never see the policy work. The archive's RLS tests therefore connect as a
    non-superuser, non-owner test role (see
    [Test role](#test-role-a-dml-like-connection-for-the-rls-suites)).
+
+7. **Open applications (HA-8).** Decided: archiving closes every open INITIAL or
+   RENEWAL application in the same transaction, unpaid BLOCKED ones included. A
+   closed BLOCKED application keeps `archivedFromStatus` BLOCKED and its audit row,
+   as a denied-household restore does. Per-person kinds (PERSON_BG,
+   PERSON_AGREEMENT, KEY_VOLUNTEER_AGREEMENT) are left alone. Archiving is refused
+   while an open application has a payment with no recorded refund; a fee that
+   bought a membership is settled. A denied household is never archived.
+   Unarchiving leaves the closed applications closed. Each archive and unarchive
+   writes an audit row on the household.
+
+8. **Changes to an archived household (HA-9).** Decided: every change to an
+   archived household is refused, including the writes keyed by a household or
+   person id that row security does not reach (adding a member, starting an
+   application, enrolling, assigning a volunteer or leader, a manual visit).
+   Build-order PR 6.
+
+9. **Roles (HA-10).** Decided: archiving is refused while any member holds a
+   role. That covers the app roles (sysadmin, Board, keyholder, background-check
+   reviewer, operations, inventory manager, finance) and a volunteer or lead
+   place on a program not yet finished. The Board removes them first.
 
 ## Test plan
 
@@ -739,8 +804,8 @@ race the other runs that share the cluster.
   archived household's relation and the caller tolerates it.
 - **Raw SQL:** a raw `SELECT` against `Household` as the test DML role honours the
   policy (proves coverage the client extension could never give).
-- **Archive action:** PATCH sets `archivedAt` through the opt-in, household disappears from the
-  standard list; PATCH nulling it (through the opt-in lookup) restores it.
+- **Archive action:** the archive POST sets `archivedAt` through the opt-in, household disappears from the
+  standard list; the unarchive POST nulls it (through the opt-in lookup) and restores it.
 - **Permission:** only the Board can archive or unarchive; a sysadmin who is not
   on the Board and a household lead both get 403.
 - **Refusal:** archiving a household with a current Treehouse membership, or with

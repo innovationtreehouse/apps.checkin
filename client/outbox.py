@@ -55,9 +55,29 @@ PendingRow = namedtuple("PendingRow", (
 ))
 
 
+def _owner_only(path):
+    """The file holds names, so only the kiosk user reads it. A failed chmod
+    never stops scanning. SQLite gives new -wal and -shm files the main file's mode."""
+    if path == ":memory:":
+        return
+    try:
+        os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
+    except OSError as e:
+        log.error(f"Could not create {path}: {e}")
+    for name in (path, f"{path}-wal", f"{path}-shm"):
+        try:
+            os.chmod(name, 0o600)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.error(f"Could not restrict {name}: {e}")
+
+
 class Outbox:
-    """One SQLite file, one table. WAL + synchronous=FULL for
-    crash-consistency across the kiosk.sh respawn loop and power cuts."""
+    """One SQLite file: the scan queue and the kiosk's saved view. WAL +
+    synchronous=FULL for crash-consistency across restarts and power cuts.
+    Schema changes stay additive and nullable, so an older image can run
+    against a newer file."""
 
     def __init__(self, path="outbox.db"):
         self.path = path
@@ -88,13 +108,22 @@ class Outbox:
         shown_empty      INTEGER
     )"""
 
+    # One row: the JSON the kiosk restores on start. Its version is inside it.
+    _SNAPSHOT_SCHEMA_SQL = """CREATE TABLE IF NOT EXISTS kiosk_snapshot (
+        id       INTEGER PRIMARY KEY CHECK (id = 1),
+        snapshot TEXT
+    )"""
+    _SAVE_SNAPSHOT_SQL = "INSERT OR REPLACE INTO kiosk_snapshot (id, snapshot) VALUES (1, ?)"
+
     def _open(self, path):
         def connect_and_init():
+            _owner_only(path)
             conn = sqlite3.connect(path, check_same_thread=False)
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute(self._SCHEMA_SQL)
+                conn.execute(self._SNAPSHOT_SCHEMA_SQL)
                 # Kiosks already carry an outbox.db from the pre-token schema.
                 try:
                     conn.execute("ALTER TABLE outbox ADD COLUMN force_close_token TEXT")
@@ -145,39 +174,62 @@ class Outbox:
 
     def enqueue(self, client_event_id, participant_id, scanned_at, force_close_token=None,
                 intent=None, clock_suspect=False, force_close_confirmed=False, inflight=False,
-                close=None, roster_as_of=None, shown_empty=None):
+                close=None, roster_as_of=None, shown_empty=None, snapshot=None):
         """Idempotent: a retried enqueue of the same event is a no-op.
         inflight=True claims the row for the live POST in the same locked step,
         so the drain can never pick it up between the write and the claim.
         `close` is the keyholder's close decision ("alone" / "confirmed");
         `roster_as_of` is the server time of the roster it was made from.
-        `shown_empty` is an older client's close signal, kept for its queued rows."""
+        `shown_empty` is an older client's close signal, kept for its queued rows.
+        `snapshot` commits in one transaction with the row, so a power cut
+        cannot leave the two disagreeing."""
         with self._lock:
+            with self._conn:
+                if snapshot is not None:
+                    self._conn.execute(self._SAVE_SNAPSHOT_SQL, (snapshot,))
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO outbox "
+                    "(client_event_id, participant_id, scanned_at, created_at, force_close_token, "
+                    " intent, clock_suspect, force_close_confirmed, close, roster_as_of, shown_empty) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        client_event_id,
+                        str(participant_id),
+                        scanned_at,
+                        now_iso(),
+                        force_close_token,
+                        intent,
+                        1 if clock_suspect else 0,
+                        1 if force_close_confirmed else 0,
+                        close,
+                        roster_as_of,
+                        None if shown_empty is None else int(bool(shown_empty)),
+                    ),
+                )
             if inflight:
                 self._inflight.add(client_event_id)
-            self._conn.execute(
-                "INSERT OR IGNORE INTO outbox "
-                "(client_event_id, participant_id, scanned_at, created_at, force_close_token, "
-                " intent, clock_suspect, force_close_confirmed, close, roster_as_of, shown_empty) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    client_event_id,
-                    str(participant_id),
-                    scanned_at,
-                    now_iso(),
-                    force_close_token,
-                    intent,
-                    1 if clock_suspect else 0,
-                    1 if force_close_confirmed else 0,
-                    close,
-                    roster_as_of,
-                    None if shown_empty is None else int(bool(shown_empty)),
-                ),
-            )
-            self._conn.commit()
             n = self.pending_count()
             if n > WARN_QUEUE_SIZE:
                 log.warning(f"Outbox has {n} pending rows -- unusually large backlog")
+
+    def load_snapshot(self):
+        """The saved view's JSON, or None when there is none to read."""
+        with self._lock:
+            try:
+                row = self._conn.execute("SELECT snapshot FROM kiosk_snapshot WHERE id=1").fetchone()
+            except sqlite3.Error as e:
+                log.error(f"Could not read the kiosk view: {e}")
+                return None
+            return row[0] if row else None
+
+    def save_snapshot(self, snapshot):
+        """A failed save leaves the older view and never stops the kiosk."""
+        with self._lock:
+            try:
+                with self._conn:
+                    self._conn.execute(self._SAVE_SNAPSHOT_SQL, (snapshot,))
+            except sqlite3.Error as e:
+                log.error(f"Could not save the kiosk view: {e}")
 
     def has_pending_for_participant(self, participant_id):
         """A fresh scan must not jump its own predecessor in FIFO order."""

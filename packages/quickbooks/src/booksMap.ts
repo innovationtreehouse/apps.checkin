@@ -8,22 +8,26 @@
 /** The named roles a line or a deposit books to, one QuickBooks account each. */
 export const BOOKS_MAP_ROLES = [
   "SHOPIFY_BANK",
-  "SHOPIFY_SALES",
   "SHOPIFY_CHARGE_REMAINDER",
   "SHOPIFY_FEES",
   "SHOPIFY_ADJUSTMENTS",
+  "SHOPIFY_CUSTOM_ITEMS",
   "BENEVITY_BANK",
-  "BENEVITY_DONATIONS",
-  "BENEVITY_MATCHES",
-  "BENEVITY_FEES",
   "EXPENSE_PAYMENT",
   "INKIND_INCOME",
-  "INKIND_EXPENSE",
-  "FIXED_ASSETS",
   "INKIND_CLEARING",
 ] as const;
 
 export type BooksMapRole = (typeof BOOKS_MAP_ROLES)[number];
+
+/** Roles removed from the books map. An expected deposit income stored before its lines named accounts may still carry one; nothing new may. */
+export const RETIRED_BOOKS_MAP_ROLES = ["SHOPIFY_SALES", "BENEVITY_DONATIONS", "BENEVITY_MATCHES", "BENEVITY_FEES", "INKIND_EXPENSE", "FIXED_ASSETS"] as const;
+
+export type RetiredBooksMapRole = (typeof RETIRED_BOOKS_MAP_ROLES)[number];
+
+export function isRetiredBooksMapRole(value: string): value is RetiredBooksMapRole {
+  return (RETIRED_BOOKS_MAP_ROLES as readonly string[]).includes(value);
+}
 
 export function isBooksMapRole(value: string): value is BooksMapRole {
   return (BOOKS_MAP_ROLES as readonly string[]).includes(value);

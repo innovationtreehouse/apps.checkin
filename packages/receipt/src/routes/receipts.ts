@@ -8,7 +8,7 @@ import type { ReceiptFileRouteHandler, ReceiptRouteHandler } from "../contract";
 import { parseListFilter } from "../lib/listFilter";
 import { importReceipts } from "../services/importService";
 import { orgSettingsService } from "../services/orgSettingsService";
-import { receiptService } from "../services/receiptService";
+import { receiptService, type DonorCheck } from "../services/receiptService";
 import { MAX_UPLOAD_BODY_BYTES, ownLine, readJsonCapped, readUploadForm, stampLines } from "./_shared";
 
 /** The org-wide list; `?state=` narrows to one machine state, `?pushed=0|1` to whether it reached receiving. */
@@ -46,11 +46,21 @@ export const getSettings: ReceiptRouteHandler = async () => ({ ReceiptOrgSetting
 
 export const updateSettings: ReceiptRouteHandler = async ({ req }) => ({ ReceiptOrgSettings: await orgSettingsService.update(await readJson(req)) });
 
+export const getOcrSwitch: ReceiptRouteHandler = async () => ({ ReceiptOcrSwitch: await orgSettingsService.ocrSwitch() });
+
+export const updateOcrSwitch: ReceiptRouteHandler = async ({ req }) => ({ ReceiptOcrSwitch: await orgSettingsService.setOcrSwitch(await readJson(req)) });
+
+/** Body `{ reason }`: gives the person a full reading allowance from now. */
+export const resetOcrAllowance: ReceiptRouteHandler = async ({ req, params }) => ({
+  ReceiptOcrAllowance: await receiptService.resetOcrAllowance(parseId(params.personId, "person id"), await readJson(req)),
+});
+
 /**
  * Multipart: `file` is the receipt, `data` an optional JSON string of the upload input. With
  * `data.details` the upload is manual; without, OCR reads the file in this request.
+ * `checkDonor` is the host's refusal hook for a typed-in donor; it runs before anything is written.
  */
-export const upload: ReceiptRouteHandler = async ({ req }) => {
+export const upload = (checkDonor: DonorCheck): ReceiptRouteHandler => async ({ req }) => {
   const form = await readUploadForm(req);
   const file = form.get("file");
   if (!(file instanceof File)) throw httpError(400, "A receipt file is required");
@@ -63,7 +73,7 @@ export const upload: ReceiptRouteHandler = async ({ req }) => {
       throw httpError(400, "data must be JSON");
     }
   }
-  return { ReceiptView: await receiptService.upload(Buffer.from(await file.arrayBuffer()), file.type, input) };
+  return { ReceiptView: await receiptService.upload(Buffer.from(await file.arrayBuffer()), file.type, input, checkDonor) };
 };
 
 /**
@@ -133,7 +143,10 @@ export const confirmation: ReceiptRouteHandler = async ({ req, params }) => {
   return { ReceiptConfirmationView: await receiptService.confirmAsReimbursee(params.id, reason) };
 };
 
-export const inKind: ReceiptRouteHandler = async ({ req, params }) => ({ ReceiptView: await receiptService.setInKind(params.id, await readJson(req)) });
+/** `checkDonor` as on `upload`. */
+export const inKind = (checkDonor: DonorCheck): ReceiptRouteHandler => async ({ req, params }) => ({
+  ReceiptView: await receiptService.setInKind(params.id, await readJson(req), checkDonor),
+});
 
 export const reimbursement: ReceiptRouteHandler = async ({ req, params }) => ({
   ReceiptView: await receiptService.setReimbursement(params.id, await readJson(req)),
@@ -160,6 +173,8 @@ export const file: ReceiptFileRouteHandler = async ({ params, access }) => {
 };
 
 export const duplicateGroup: ReceiptRouteHandler = async ({ params }) => ({ ReceiptDuplicateGroup: await receiptService.duplicateGroup(params.id) });
+
+export const duplicateQueue: ReceiptRouteHandler = async () => ({ ReceiptDuplicateQueueRow: await receiptService.duplicateQueue() });
 
 const NotThisOneBody = z.object({ otherId: z.string().min(1) }).strict();
 

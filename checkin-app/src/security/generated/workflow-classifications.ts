@@ -2,10 +2,6 @@
 // Re-run `prisma generate` after editing /// @sensitivity comments.
 
 export const classifications = {
-    WorkflowSystemData: {
-        id: 'public',
-        orgEventCursor: 'internal',
-    },
     WorkflowAppliedOrgEvent: {
         id: 'public',
         appliedAt: 'public',
@@ -30,7 +26,9 @@ export const classifications = {
         donationAppliedAt: 'public',
         applyClaimedAt: 'public',
         applySweepAttempts: 'public',
+        applyFirstFailedAt: 'public',
         inventoryUnconfirmedAt: 'public',
+        matchingPendingSince: 'internal',
         createdAt: 'public',
         updatedAt: 'public',
     },
@@ -61,8 +59,6 @@ export const classifications = {
 } as const;
 
 export const relations = {
-    WorkflowSystemData: {
-    },
     WorkflowAppliedOrgEvent: {
     },
     WorkflowFailedOrgEvent: {

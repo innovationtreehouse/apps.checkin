@@ -4,9 +4,9 @@
 /**
  * Integration tests for attendanceTransitions.ts — the visit-chunking state
  * machine that splits one open visit into multiple event-associated + gap
- * visits inside a $transaction. The scan tests only ever hit the no-events
- * path; the interesting boundary math (gap-before, back-to-back events,
- * already-closed/missing visits) was untested.
+ * visits inside a $transaction. The scan tests only hit the no-events path;
+ * these cover the boundary math (gap-before, back-to-back events,
+ * already-closed/missing visits).
  */
 import { findAssociatedEventAt, processVisitCheckout } from '@/lib/attendanceTransitions';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';

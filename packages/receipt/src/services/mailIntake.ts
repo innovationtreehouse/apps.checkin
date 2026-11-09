@@ -2,10 +2,10 @@
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
-import { isServiceError, ServiceError } from "@checkin/component-kit";
+import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipal } from "../contract";
+import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
@@ -62,19 +62,69 @@ type Headers = { name: string; value: string }[];
 const headerValues = (headers: Headers | undefined, name: string): string[] =>
   (headers ?? []).filter((h) => h.name.toLowerCase() === name.toLowerCase()).map((h) => h.value);
 
-const ADDR_SPEC = /^[^\s@<>"(),;:]+@[^\s@<>"(),;:]+\.[^\s@<>"(),;:]+$/;
+// ASCII only: lowercasing folds some other letters to ASCII, as the Kelvin sign to `k`, naming another person's address.
+const ADDR_SPEC = /^[^\s@<>"(),;:\u0080-\uffff]+@[^\s@<>"(),;:\u0080-\uffff]+\.[^\s@<>"(),;:\u0080-\uffff]+$/;
+
+/**
+ * An RFC 5322 header with comments as whitespace and each quoted string as a lone `"`, which no
+ * addr-spec may hold. Comments nest and both forms read quoted pairs. Null when either is
+ * unterminated, or a `)` or `\` stands outside them.
+ */
+function withoutCommentsAndQuotes(value: string): string | null {
+  let bare = "";
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (c === ")" || c === "\\") return null;
+    if (c === "(") {
+      for (let depth = 1; depth > 0; ) {
+        i++;
+        if (i >= value.length) return null;
+        if (value[i] === "\\") i++;
+        else if (value[i] === "(") depth++;
+        else if (value[i] === ")") depth--;
+      }
+      bare += " ";
+    } else if (c === '"') {
+      for (i++; value[i] !== '"'; i++) {
+        if (value[i] === "\\") i++;
+        if (i >= value.length) return null;
+      }
+      bare += '"';
+    } else bare += c;
+  }
+  return bare;
+}
 
 /** The addr-spec of the message's single `From` header holding a single address, lowercased; else null. */
 export function fromAddress(headers: Headers | undefined): string | null {
   const froms = headerValues(headers, "From");
   if (froms.length !== 1) return null;
-  const bare = froms[0].replace(/"(?:[^"\\]|\\.)*"/g, "").replace(/\([^()]*\)/g, "");
+  const bare = withoutCommentsAndQuotes(froms[0]);
   // A comma lists two addresses; a colon or semicolon is group syntax.
-  if (/[,;:]/.test(bare)) return null;
-  const angles = [...bare.matchAll(/<([^<>]*)>/g)];
-  const spec = angles.length === 1 ? angles[0][1] : angles.length === 0 && !/[<>]/.test(bare) ? bare : null;
-  const trimmed = spec?.trim().toLowerCase();
-  return trimmed && ADDR_SPEC.test(trimmed) ? trimmed : null;
+  if (bare === null || /[,;:]/.test(bare)) return null;
+  // A display name holds no `@`: one there would be a second candidate address.
+  const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim();
+  return ADDR_SPEC.test(spec) ? spec.toLowerCase() : null;
+}
+
+/** The lowercased addresses a To or Cc header lists; a header that cannot be read lists none. */
+function listedAddresses(headers: Headers | undefined, name: string): string[] {
+  return headerValues(headers, name).flatMap((value) => {
+    const bare = withoutCommentsAndQuotes(value);
+    if (bare === null) return [];
+    return bare.split(/[,;:]/).map((a) => (a.match(/<([^<>]*)>/)?.[1] ?? a).trim().toLowerCase());
+  });
+}
+
+/**
+ * A reply to one of the mailbox's own notices, or a copy on which the mailbox is only in Cc: mail a
+ * "no receipt" notice would only interrupt. A forward can keep the In-Reply-To of the mail it
+ * forwards, so only one naming our notice counts. Mail to an alias lists the mailbox nowhere.
+ */
+export function isSideCopy(headers: Headers | undefined, mailboxAddress: string): boolean {
+  if (headerValues(headers, "In-Reply-To").some((id) => isNoticeMessageId(id, mailboxAddress))) return true;
+  const mine = mailboxAddress.toLowerCase();
+  return listedAddresses(headers, "Cc").includes(mine) && !listedAddresses(headers, "To").includes(mine);
 }
 
 type AuthResToken = { word: string } | { sep: ";" | "=" };
@@ -415,6 +465,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored, refused } = mailFiles(msg, reader);
+    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
+    if (files.length === 0 && refused.length === 0 && !isSideCopy(msg.payload.headers, reader.address)) {
+      refused.push({ file: "your email", reason: "no_receipt" });
+    }
     // Every file already in the ledger: nothing to download.
     const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
     const ledgered = files.length > 0 && rows.length >= files.length;
@@ -663,10 +717,11 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   try {
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
-    console.error("[receipt] mailbox listing failed:", err);
+    const kind = kindOf(err);
+    console.error(`[receipt] mailbox listing failed (${kind}):`, err);
     // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
     try {
-      await ports().alerts.mailListingFailed({ orgId });
+      await ports().alerts.mailListingFailed({ orgId, kind });
     } catch (alertErr) {
       console.error("[receipt] mailbox listing alert failed:", alertErr);
     }

@@ -26,6 +26,17 @@ export interface RefresherEvent {
 export const INVALID_GRANT_MARKER = "GMAIL_INVALID_GRANT";
 
 /**
+ * Thrown when only a person re-running consent can restore the grant. Lambda reports `name`
+ * as the failure's errorType, the one field of the error the app reads.
+ */
+export class ReconsentRequired extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReconsentRequired";
+  }
+}
+
+/**
  * Every call refreshes and nothing is written back: Google keeps the refresh token valid across
  * refreshes, and the app caches the access token. The weekly `keepalive` exists so that an idle
  * grant keeps being used and does not lapse.
@@ -43,6 +54,7 @@ export async function run(event: RefresherEvent, store: CredentialStore): Promis
     // A revoked or lapsed grant needs an operator to re-consent; retrying cannot help.
     if (err instanceof Error && err.message.includes("invalid_grant")) {
       console.error(`${INVALID_GRANT_MARKER}: Gmail refresh token rejected; re-run consent`);
+      throw new ReconsentRequired("Gmail refresh token rejected; re-run consent");
     }
     throw err;
   }

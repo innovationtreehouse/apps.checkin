@@ -165,6 +165,17 @@ describe("Naming who is reimbursed", () => {
     expect(data).not.toHaveProperty("reimburseePersonId");
   });
 
+  it("searches for no one until a name is typed", async () => {
+    apiMock.mockResolvedValue([{ id: 42, name: "Sam Lee" }]);
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(apiMock).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: /Reimburse/ }), { target: { value: "sa" } });
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reimbursee-options?q=sa"));
+    expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+
   it("sends the Person id of someone picked from the search", async () => {
     uploadMock.mockResolvedValue({ id: "r4" });
     apiMock.mockResolvedValue([{ id: 7, name: "Me Myself" }, { id: 42, name: "Sam Lee" }]);
@@ -199,5 +210,29 @@ describe("Naming who is reimbursed", () => {
     const data = await submittedData();
     expect(data).toMatchObject({ needsReimbursement: true, newReimbursee: { name: "Dana Field", isAdult: true } });
     expect(data).not.toHaveProperty("reimburseePersonId");
+  });
+});
+
+describe("Marking a donation", () => {
+  it("turns reimbursement off and sends the uploader as the donor by default", async () => {
+    uploadMock.mockResolvedValue({ id: "r1" });
+    renderManual();
+    fireEvent.click(screen.getByLabelText("Someone needs to be reimbursed"));
+    fireEvent.click(screen.getByLabelText("This is a donation"));
+    expect(screen.queryByLabelText("Someone needs to be reimbursed")).toBeNull();
+    const data = await submittedData();
+    expect(data).toMatchObject({ needsReimbursement: false, isInKind: true, donor: { self: true } });
+  });
+
+  it("holds the upload until a named donor's first and last name are filled in", async () => {
+    uploadMock.mockResolvedValue({ id: "r1" });
+    renderManual();
+    fireEvent.click(screen.getByLabelText("This is a donation"));
+    fireEvent.click(screen.getByText("Someone else donated"));
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+    type("Donor first name", "Ada");
+    type("Donor last name", "Lovelace");
+    const data = await submittedData();
+    expect(data.donor).toEqual({ firstName: "Ada", lastName: "Lovelace", companyName: null });
   });
 });

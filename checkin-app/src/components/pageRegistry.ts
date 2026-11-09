@@ -7,7 +7,7 @@
 // docs/rules/principles.md, "Reachability is not permission".
 
 import type { NavGate } from '@/lib/nav/types';
-import { everyone, linkGate, signedIn } from '@/lib/nav/gates';
+import { anyRole, everyone, linkGate, signedIn } from '@/lib/nav/gates';
 import { isHouseholdLead, seesCertificationGrid } from '@/lib/nav/sections/personal';
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
@@ -18,7 +18,7 @@ import { INVENTORY } from '@/lib/nav/sections/inventory';
 import { FACILITY_OPS } from '@/lib/nav/sections/facilityOps';
 import { MEMBERSHIP_OPS, isMembershipOpsAdmin } from '@/lib/nav/sections/membershipOps';
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
-import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
+import { NEW_PROGRAM_ROLES, PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
 import { DONATIONS as DONATIONS_SECTION } from '@/lib/nav/sections/donations';
 import { FINANCE, FINANCE_REVIEW_PATH } from '@/lib/nav/sections/finance';
@@ -33,6 +33,7 @@ const SHOP = SHOP_OPS.visible;
 const CATALOG = linkGate(INVENTORY, '/catalog/items');
 const ORG_INVENTORY = linkGate(INVENTORY, '/inventory/org-items');
 const INVENTORY_MANAGER = linkGate(INVENTORY, '/inventory/merge-conflicts');
+const CATALOG_MANAGER = linkGate(INVENTORY, '/catalog/reference-conflicts');
 const INVENTORY_RECEIVING = linkGate(INVENTORY, '/inventory/receive-queue');
 const INVENTORY_UNLOCATED = linkGate(INVENTORY, '/inventory/unlocated');
 const INVENTORY_LOG = linkGate(INVENTORY, '/inventory/inventory-log');
@@ -46,8 +47,8 @@ const EXPENSES = linkGate(FINANCE, '/expense/expenses');
 const BUDGETS = linkGate(FINANCE, '/budgets');
 const BOOKS_MAP = linkGate(FINANCE, '/books-map');
 const FINANCE_REVIEW = linkGate(FINANCE, FINANCE_REVIEW_PATH);
-// FINANCE and BOARD reach it from Finance, an inventory manager from Inventory.
-const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || linkGate(INVENTORY, '/receipt-flow')(u, c);
+// FINANCE and BOARD reach it from Finance's tabs; the route also admits an inventory manager.
+const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || (linkGate(INVENTORY, '/inventory/receiving')(u, c) && u?.isInventoryManager === true);
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
 const SYSTEM = SYSTEM_STATUS.visible;
@@ -104,12 +105,16 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/live') },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: linkGate(SHOP_OPS, '/shop-ops/manage') },
 
-  // Inventory (global catalog) — any catalog viewer. The index redirects
-  // to the Global Catalog. Write controls within each screen are INVENTORY_MANAGER-gated.
+  // Inventory (global catalog) — any catalog viewer; Learned References and Reference
+  // Conflicts INVENTORY_MANAGER alone. The index redirects to the Global Catalog.
+  // Write controls within each screen are INVENTORY_MANAGER-gated.
   { href: '/catalog', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
   { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
-  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG },
+  { href: '/catalog/learned-references', label: 'Learned References', section: 'Inventory', keywords: 'item reference part mapping archive', visible: CATALOG_MANAGER },
+  { href: '/catalog/provisional-items', label: 'Provisional Items', section: 'Inventory', keywords: 'proposals provisional item review approve', visible: CATALOG },
+  { href: '/catalog/item-reference-proposals', label: 'Item Reference Proposals', section: 'Inventory', keywords: 'proposals item reference review approve', visible: CATALOG },
+  { href: '/catalog/reference-conflicts', label: 'Reference Conflicts', section: 'Inventory', keywords: 'item reference conflict resolve', visible: CATALOG_MANAGER },
   { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
   // Org inventory — same viewer gate; the receiving screens are
   // INVENTORY_MANAGER, FINANCE or BOARD and the work-queue screens
@@ -181,7 +186,7 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops', label: 'Program Ops', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/programs', label: 'All Programs', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/events', label: 'Events', section: 'Program Ops', visible: PROGRAM_OPS.visible },
-  { href: '/program-ops/new', label: 'New Program', section: 'Program Ops', visible: PROGRAM_OPS.visible },
+  { href: '/program-ops/new', label: 'New Program', section: 'Program Ops', visible: anyRole(NEW_PROGRAM_ROLES) },
   { href: '/program-ops/sessions', label: 'Sessions', section: 'Program Ops', visible: PROGRAM_OPS.visible },
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: PROGRAM_OPS.visible },
 
@@ -232,7 +237,8 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/email', label: 'Email Settings', section: 'Settings', keywords: 'sender from reply-to identity', visible: SETTING('/settings/email') },
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: SETTING('/settings/outreach') },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: SETTING('/settings/shopify-webhook') },
-  { href: '/settings/finance', label: 'Finance Settings', section: 'Settings', keywords: 'expense threshold capital board review note in lieu', visible: SETTING('/settings/finance') },
+  { href: '/settings/finance', label: 'Expenses', section: 'Settings', keywords: 'expense threshold capital board review note in lieu', visible: SETTING('/settings/finance') },
+  { href: '/settings/receipt-reading', label: 'Receipt reading', section: 'Settings', keywords: 'ocr automatic reading receipt scan turn off', visible: SETTING('/settings/receipt-reading') },
 ];
 
 // Routes that exist as page.tsx but are intentionally absent from the directory.
@@ -249,6 +255,6 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/dev',                    // dev-tools hub, redirects to /dev/sent-mail
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev
   '/dev/zoho-sign',          // dev-only Zoho Sign mock interstitial (404 in prod)
-  '/dev/shopify',            // dev-only Shopify orders/paid mock (docs/ops/shopify-dev-store.md); 404s off dev
-  '/dev/bg-consent',         // dev-only background-check consent mock (docs/ops/background-check-mock.md); 404s off dev
+  '/dev/shopify',            // dev-only Shopify orders/paid mock (docs/ops/shopify-dev-store.md); 404s off local
+  '/dev/bg-consent',         // dev-only background-check consent mock (docs/ops/background-check-mock.md); 404s unless the mock is active
 ];

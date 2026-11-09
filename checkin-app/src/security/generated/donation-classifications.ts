@@ -52,6 +52,9 @@ export const classifications = {
         ownerAssignedAt: 'internal',
         ownerAssignedByUserId: 'internal',
         isOrganizationalLevel: 'internal',
+        feeReleasedAt: 'internal',
+        feeReleasedByUserId: 'internal',
+        feeReleasedByName: 'internal',
     },
     TransactionCommentRule: {
         id: 'internal',
@@ -70,7 +73,8 @@ export const classifications = {
         donationType: 'internal',
         donationAccount: 'internal',
         matchAccount: 'internal',
-        feesAccount: 'internal',
+        donationAccountId: 'internal',
+        matchAccountId: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -116,6 +120,8 @@ export const classifications = {
     DonationOrgSettings: {
         orgId: 'internal',
         inKindQbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -175,6 +181,7 @@ export const classifications = {
         description: 'internal',
         valueCents: 'internal',
         suggestedValueCents: 'internal',
+        quickBooksAccountId: 'internal',
     },
     InKindDonationLine: {
         id: 'internal',
@@ -185,6 +192,7 @@ export const classifications = {
         gtin13: 'internal',
         quantity: 'internal',
         valueCents: 'internal',
+        quickBooksAccountId: 'internal',
     },
     InKindBooking: {
         id: 'internal',
@@ -195,6 +203,7 @@ export const classifications = {
         matchState: 'internal',
         qbEntity: 'internal',
         qbTxnId: 'internal',
+        bookedTxnDate: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -206,6 +215,10 @@ export const classifications = {
         matchState: 'internal',
         claimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
+        qbPostAttempts: 'internal',
+        qbFailureKind: 'internal',
+        qbFirstFailedAt: 'internal',
+        qbLastError: 'internal',
         qbNote: 'internal',
         bookedTotalCents: 'internal',
         bookedTxnDate: 'internal',

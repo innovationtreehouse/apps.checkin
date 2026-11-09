@@ -223,9 +223,21 @@ describe('enrollment state — validator oracle over real transitions', () => {
         await assertState('PENDING_HELD_DENIED');
     });
 
+    it('T6f deny with no hold: PENDING_HOLD_FAILED → PENDING_UNPAID, once', async () => {
+        await seed({ req: true, held: false, den: false }); // PENDING_HOLD_FAILED
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const res = await RefusePost(financeReq('http://localhost/api/finance-ops/payment-plans/refuse'));
+        expect(res.status).toBe(200);
+        await assertState('PENDING_UNPAID');
+
+        const again = await RefusePost(financeReq('http://localhost/api/finance-ops/payment-plans/refuse'));
+        expect(again.status).toBe(409);
+        await assertState('PENDING_UNPAID');
+    });
+
     // T7/T8/T9 all funnel through the one shared exit (deleteAndReleaseHold);
     // their end-state is UNENROLLED (row deleted), with +1 iff the row still held.
-    it('T7 non-payment kick: PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
+    it('T7 remove(unpaid): PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await deleteAndReleaseHold(programId, selfId, program);

@@ -87,8 +87,7 @@ describe('withKiosk', () => {
     });
 });
 
-// Coverage gap named by review (2026-07-20): every case above ran with the gate
-// off (isStaging: () => false), so this is the only place the kiosk path is
+// Every case above runs with the gate off (isStaging: () => false), so this is the only place the kiosk path is
 // exercised WITH ops-stg active. A kiosk credential carries no org/canAccessStaging
 // claim, so authenticateRequest's staging check must deny it same as any other
 // non-session caller.

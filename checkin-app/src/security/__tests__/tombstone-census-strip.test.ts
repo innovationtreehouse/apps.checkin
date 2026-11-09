@@ -2,11 +2,10 @@
  * @jest-environment node
  */
 /**
- * Strip round-trip for GET /api/membership-ops/participants/tombstones (#1823
- * review: the registry view only granted pii+public, so PersonMerge.fromId and
- * the internal-tier `roles`/`rawBadgeLogs` relation counts were silently
- * dropped by the stripper — every tombstone read "no archive" and the
- * no-pathway total under-reported). Pulls the live view tokens from the
+ * Strip round-trip for GET /api/membership-ops/participants/tombstones. The view
+ * must keep PersonMerge.fromId and the internal-tier `roles`/`rawBadgeLogs` relation
+ * counts: stripped, every tombstone reads "no archive" and the no-pathway total
+ * under-reports. Pulls the live view tokens from the
  * registry so this tracks any future policy edit, per the payment-plans
  * precedent (payment-plans-strip.test.ts).
  */
@@ -76,7 +75,7 @@ describe.each(['isSysadmin', 'isBoardMember'] as const)(
             });
         });
 
-        it('requires everyones:internal — guards the assumption the fix rests on', () => {
+        it('requires everyones:internal — the assumption the census strip rests on', () => {
             const tokens = tokensFor(ENDPOINT, role);
             expect(tokens).toContain('everyones:internal');
         });

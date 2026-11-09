@@ -1,11 +1,10 @@
 "use client";
 import type { ReactNode } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Anchor, Badge, Checkbox, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { lastPage, LoadError, useUrlChoice, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { EXPENSE_LIST_VIEWS } from "../nav";
 
 interface ExpenseRow {
@@ -81,23 +80,20 @@ export function ExpenseList({
   views?: readonly string[];
   viewBadge?: (view: string) => ReactNode;
 }) {
-  // The view and page ride in the URL, so an expense opened from here returns to the same slice.
-  const router = useRouter();
-  const params = useSearchParams();
   const shown = VIEWS.filter((v) => views.includes(v.value));
-  const current =
-    shown.find((v) => v.value === params.get("view")) ?? shown.find((v) => v.value === defaultView) ?? shown.find((v) => v.value === "all") ?? VIEWS[0];
-  const view = current.value;
-  const page = Math.max(1, Number(params.get("page")) || 1);
+  const fallbackView = (shown.find((v) => v.value === defaultView) ?? shown.find((v) => v.value === "all") ?? VIEWS[0]).value;
+  const [view, setView] = useUrlChoice("view", shown.map((v) => v.value), fallbackView);
+  const current = VIEWS.find((v) => v.value === view) ?? VIEWS[0];
   // Only the All view lists closed expenses; the other views are work still in progress.
-  const onlyActive = params.get("active") !== "0";
+  const [active, setActive] = useUrlFilter("active");
+  const onlyActive = active !== "0";
   const activeOnly = view === "all" && onlyActive;
-  const listHref = (v: string, p: number, active = onlyActive) => `${detailBase}?view=${v}&page=${p}${active ? "" : "&active=0"}`;
-  const show = (v: string, p: number, active = onlyActive) => router.replace(listHref(v, p, active), { scroll: false });
   const counts = useLoad<Record<string, number>>("/counts");
   const filter = `view=${view}${activeOnly ? "&active=1" : ""}`;
-  const rows = useLoad<ExpenseRow[]>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
   const total = useLoad<{ total: number }>(`/expenses/count?${filter}`, { keepPrevious: true });
+  const [page, setPage] = useUrlPage(total.data ? lastPage(total.data.total) : null);
+  const rows = useLoad<ExpenseRow[]>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const listHref = `${detailBase}?view=${view}&page=${page}${onlyActive ? "" : "&active=0"}`;
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];
@@ -112,7 +108,7 @@ export function ExpenseList({
       <SegmentedControl
         mb="md"
         value={view}
-        onChange={(v) => show(v, 1)}
+        onChange={setView}
         data={shown.map((v) => ({ value: v.value, label: label(v) }))}
       />
       <Text c="dimmed" size="sm" mb="md">{current.description}</Text>
@@ -121,7 +117,7 @@ export function ExpenseList({
           mb="md"
           label="Only show active"
           checked={onlyActive}
-          onChange={(e) => show(view, 1, e.currentTarget.checked)}
+          onChange={(e) => setActive(e.currentTarget.checked ? "" : "0")}
         />
       )}
       {rows.error && <LoadError what="expenses" message={rows.error} onRetry={rows.reload} />}
@@ -138,7 +134,7 @@ export function ExpenseList({
           {(rows.data ?? []).map((e) => (
             <Table.Tr key={e.id}>
               <Table.Td>
-                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}?from=${encodeURIComponent(listHref(view, page))}`}>{e.vendorName ?? e.id}</Anchor>
+                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}?from=${encodeURIComponent(listHref)}`}>{e.vendorName ?? e.id}</Anchor>
                 {e.needsReimbursement && <Badge ml="xs" size="xs" variant="light">Reimbursement</Badge>}
               </Table.Td>
               <Table.Td>{e.receiptDate ?? "—"}</Table.Td>
@@ -152,7 +148,7 @@ export function ExpenseList({
       </Table>
       {rows.data?.length === 0 && <Text c="dimmed" mt="md">Nothing in this view.</Text>}
       <Group justify="center" mt="md">
-        <Pagination value={page} onChange={(p) => show(view, p)} total={Math.max(1, Math.ceil((total.data?.total ?? 0) / PAGE_SIZE))} />
+        <Pagination value={page} onChange={setPage} total={lastPage(total.data?.total ?? 0)} />
       </Group>
     </>
   );

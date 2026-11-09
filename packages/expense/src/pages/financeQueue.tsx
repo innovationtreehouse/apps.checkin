@@ -66,8 +66,8 @@ interface ListProps {
 }
 
 /**
- * One expense tab's rows: date, vendor, amount, the reasons in plain words, and how long it has
- * waited. A tab whose rows carry more than one reason shows a chip per reason that filters it.
+ * One expense tab's rows: date, vendor, amount, the reasons in plain words (a failed intake's with
+ * its stored error), and how long it has waited. A tab whose rows carry more than one reason shows a chip per reason that filters it.
  */
 export function FinanceQueueList({ tab, counts, reason, returnHref, onReason }: ListProps) {
   const queue = FINANCE_QUEUE_TABS.find((t) => t.key === tab)!.queue;
@@ -119,6 +119,7 @@ export function FinanceQueueList({ tab, counts, reason, returnHref, onReason }: 
                   {row.reasons.map((x) => (
                     <Badge key={x.code} variant="light" color="gray" mr={4} style={{ textTransform: "none" }}>{x.text}</Badge>
                   ))}
+                  {row.failureReason && <Text size="sm" c="dimmed">{row.failureReason}</Text>}
                   {tab === "toSign" && row.expenseId && <SignAllButton expenseId={row.expenseId} onSigned={rows.reload} />}
                 </Table.Td>
                 <Table.Td>{waited(row.waitingSince)}</Table.Td>

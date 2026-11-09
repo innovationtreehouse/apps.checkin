@@ -8,20 +8,21 @@
  * account, which finance also reads matches against. With either missing, or an account that is
  * neither a bank nor a credit card (finance is emailed), a drain answers "unbound". A daily sweep that
  * could not read every entry emails finance. Whatever the library sends out goes through checkin's outbound gateway, which
- * strips it to the surface's declared tiers.
+ * strips it to the surface's declared tiers. An expense closed with a rejected line, or a reimbursement sent to
+ * the books, is emailed to the receipt's uploader and the person reimbursed (purchaseOutcomeMail.ts).
  */
 import { configureExpense, QuickBooksNotConnectedError, reimburseeVendorId } from "@checkin/expense";
-import type { ExpensePosting, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, OutcomeMail, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
 import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg } from "@/lib/components/host";
-import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
-import { budgetOwners, householdIds, householdOf, householdsOf } from "@/lib/components/ports";
+import { budgetOwners, householdIds, householdOf, householdsOf, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
 import { outboundCall } from "@/security/outbound";
+import { reportTo } from "@/lib/finishRun";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -44,16 +45,17 @@ export const signoff: SignoffDirectory = {
       where: { id: bucketId },
       select: {
         isOrgLevel: true,
-        owner: { select: { id: true, mergedIntoId: true, household: { select: { orgMembership: { select: { status: true } } } } } },
+        owner: { select: { id: true, household: { select: { orgMembership: { select: { status: true } } } } } },
         treasurers: { where: { person: await eligibleSigner() }, select: { personId: true } },
       },
     });
     if (!bucket) return { orgLevel: false, approvers: [], owner: null };
     if (bucket.isOrgLevel) return { orgLevel: true, approvers: [], owner: null };
     const owner = bucket.owner;
-    const ownerEligible = owner && owner.mergedIntoId === null && !orgMembershipStatusBlocksLogin(owner.household?.orgMembership?.status);
+    // Row security returns an archived owner's household as null; an archived owner approves nothing.
+    const ownerEligible = owner && owner.household !== null && !orgMembershipStatusBlocksLogin(owner.household.orgMembership?.status);
     const approvers = [...(ownerEligible ? [owner.id] : []), ...bucket.treasurers.map((t) => t.personId)];
-    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner ? (owner.mergedIntoId ?? owner.id) : null };
+    return { orgLevel: false, approvers: [...new Set(approvers)], owner: owner?.id ?? null };
   },
 
   async bucketsApprovedBy(personId) {
@@ -68,14 +70,15 @@ export const signoff: SignoffDirectory = {
   householdIds,
 
   async personExists(personId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    return (await (await db()).person.count({ where: { id: personId, ...LIVE_PERSON } })) > 0;
+    return (await (await db()).person.count({ where: { id: personId } })) > 0;
   },
 
-  async livePersonFor(personId) {
-    const { resolveMergedPerson } = await import("@/lib/person/mergeChain");
-    const resolved = await resolveMergedPerson(personId);
-    return resolved.kind === "live" ? resolved.person.id : null;
+  async liveIds(personIds) {
+    return (await import("@/lib/person/mergeChain")).liveIdsOf(personIds);
+  },
+
+  async storedIdsOf(personId) {
+    return (await import("@/lib/person/mergeChain")).storedIdsOf(personId);
   },
 
   async isOrgMember(personId) {
@@ -84,24 +87,24 @@ export const signoff: SignoffDirectory = {
   },
 
   async isAdult(personId) {
-    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
-    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { dateOfBirth: true, isDeclaredAdult: true } });
+    const { isKnownAdult } = await import("@/lib/programAge");
+    const person = await (await db()).person.findFirst({ where: { id: personId }, select: { dateOfBirth: true, isDeclaredAdult: true } });
     return person !== null && isKnownAdult(person);
   },
 
   async searchAdults(query, limit) {
-    const [{ isKnownAdult }, { LIVE_PERSON }] = await Promise.all([import("@/lib/programAge"), import("@/lib/person/filters")]);
+    const { isKnownAdult } = await import("@/lib/programAge");
     const matches = await (await db()).person.findMany({
-      where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+      where: { name: { contains: query, mode: "insensitive" }, household: { archivedAt: null } },
       select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
     return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ personId: id, name }));
   },
 
-  async addNonMemberAdult(name) {
+  async addNonMemberAdult(name, actorId) {
     const { addNonMemberAdult } = await import("@/lib/person/ownHousehold");
-    return (await addNonMemberAdult(await db(), name)).id;
+    return (await addNonMemberAdult(await db(), name, actorId)).id;
   },
 };
 
@@ -173,8 +176,7 @@ const qbVendors: QbVendors = {
 
 const people: PeopleDirectory = {
   async nameOf(personId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
-    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { name: true } });
+    const person = await (await db()).person.findFirst({ where: { id: personId }, select: { name: true } });
     return person?.name ?? null;
   },
 };
@@ -196,23 +198,23 @@ let refusedAlerted: string | null = null;
 async function alertRefusedAccount(accountId: string, accountType: string | undefined): Promise<void> {
   if (refusedAlerted === accountId) return;
   refusedAlerted = accountId;
-  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert("finance.expensePaymentAccount", {
+  await emailAlert("finance.expensePaymentAccount", {
     accountId,
     accountKind: accountType ? `a ${accountType} account` : "not in QuickBooks",
     actionLink: `${config.baseUrl()}/books-map`,
-  }, "Expense payment-account alert failed:");
+  });
 }
 
 /** The daily orphan sweep read a full page, so an entry the app created may sit in QuickBooks unchecked. */
 async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
-  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert("finance.expenseSweepIncomplete", {
+  await emailAlert("finance.expenseSweepIncomplete", {
     since: since.toISOString().slice(0, 10),
     actionLink: `${config.baseUrl()}/expense/expenses`,
-  }, "Expense sweep alert failed:");
+  });
 }
 
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };
@@ -245,16 +247,24 @@ export async function expensePostingMissing(): Promise<string[]> {
   return "posting" in resolved ? [] : [resolved.missing];
 }
 
+const outcomeMail: OutcomeMail = {
+  async send(notice, to) {
+    const { sendPurchaseOutcome } = await import("@/lib/purchaseOutcomeMail");
+    return sendPurchaseOutcome(notice, to);
+  },
+};
+
 export function configureRuntime(): void {
   configureExpense({
+    onFailure: reportTo("expense"),
     org: getOrg,
     budgetOwners,
     signoff,
     catalog: catalogReader,
     catalogEvents: { eventsSince: catalogEventsSince },
-    alerts: orgEventAlerts("board.expenseEventsStuck", "Expense catalog event alert failed:"),
     people,
-    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting },
+    quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting, accounts: quickBooksAccounts },
     outbound: outboundCall,
+    outcomeMail,
   });
 }

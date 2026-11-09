@@ -33,7 +33,8 @@ async function resolveAuthResult(
                 req.headers.get('x-kiosk-timestamp'),
                 req.headers.get('x-kiosk-signature'),
                 req.headers.get('x-kiosk-nonce'),
-                pubKeys
+                pubKeys,
+                req.headers.get('x-kiosk-queue-depth')
             );
             if (result.ok) return { type: 'kiosk' };
         } else if (pubKeys.length === 0 && config.isLocal()) {

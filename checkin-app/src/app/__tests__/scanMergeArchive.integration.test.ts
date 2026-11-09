@@ -10,7 +10,7 @@
  * deletes the Person row by hand to reach that state.
  *
  * The delete works only because the RESTRICT relations are repointed — RawBadgeLog
- * above all, which otherwise pins every tombstone that has scanned. The first test
+ * above all, which otherwise pins every merged-away person who has scanned. The first test
  * scans the loser BEFORE deleting it, so the fixture fails with P2003 if that
  * repointing regresses.
  *
@@ -46,11 +46,9 @@ function scanReq(participantId: number) {
 describe('POST /api/scan — badge whose Person row was deleted', () => {
     let survivorId: number;
     let householdId: number;
-    let extraPersonIds: number[];
 
     beforeEach(async () => {
         (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
-        extraPersonIds = [];
 
         // A keyholder, so their own scan opens the facility for the rest.
         const survivor = await prisma.person.create({
@@ -69,15 +67,14 @@ describe('POST /api/scan — badge whose Person row was deleted', () => {
     });
 
     afterEach(async () => {
-        const ids = [survivorId, ...extraPersonIds];
-        await prisma.personMerge.deleteMany({ where: { OR: [{ toId: { in: ids } }, { fromId: { in: ids } }] } });
-        await prisma.visit.deleteMany({ where: { personId: { in: ids } } });
-        await prisma.rawBadgeLog.deleteMany({ where: { personId: { in: ids } } });
-        await prisma.person.deleteMany({ where: { id: { in: ids } } });
+        await prisma.personMerge.deleteMany({ where: { toId: survivorId } });
+        await prisma.visit.deleteMany({ where: { personId: survivorId } });
+        await prisma.rawBadgeLog.deleteMany({ where: { personId: survivorId } });
+        await prisma.person.deleteMany({ where: { id: survivorId } });
         await prisma.household.deleteMany({ where: { id: householdId } });
     });
 
-    /** A merged-away person whose Person row is then deleted, as 2b-3 will do. */
+    /** A merged-away person whose Person row is then deleted. */
     async function archivedPerson(name: string, opts: { scanFirst?: boolean } = {}) {
         const loser = await prisma.person.create({
             data: { name, email: `${name}-${TAG}@example.com`, householdId },
@@ -112,34 +109,6 @@ describe('POST /api/scan — badge whose Person row was deleted', () => {
         });
         expect(logged).not.toBeNull();
         expect(await prisma.rawBadgeLog.count({ where: { personId: goneId } })).toBe(0);
-    });
-
-    // The two arms have to compose, because the tombstone and the archive coexist
-    // for the whole of 2b. Note what the schema rules out: toId is a RESTRICT FK,
-    // and the merge repoints it, so an archive row pointing at a DELETED person
-    // cannot occur — archive-to-archive chains are unreachable, and this
-    // archive-then-tombstone shape is the only multi-hop one the DB permits.
-    it('resolves archive -> tombstone -> live survivor in one walk', async () => {
-        const tombstone = await prisma.person.create({
-            data: { name: 'Middle Tombstone', email: `middle-${TAG}@example.com`, householdId, mergedIntoId: survivorId },
-        });
-        extraPersonIds.push(tombstone.id);
-
-        const loser = await prisma.person.create({
-            data: { name: 'Two Hop', email: `twohop-${TAG}@example.com`, householdId },
-        });
-        extraPersonIds.push(loser.id);
-        await prisma.personMerge.create({
-            data: { fromId: loser.id, toId: tombstone.id, snapshot: { name: 'Two Hop', email: null, lastBackgroundCheck: null } },
-        });
-        await prisma.person.delete({ where: { id: loser.id } });
-
-        const res = await POST(scanReq(loser.id));
-        expect(res.status).toBe(200);
-
-        // Landed on the live survivor, not the tombstone in the middle.
-        expect(await prisma.rawBadgeLog.count({ where: { personId: survivorId } })).toBe(1);
-        expect(await prisma.rawBadgeLog.count({ where: { personId: tombstone.id } })).toBe(0);
     });
 
     it('still 404s an id that is in neither Person nor the archive', async () => {

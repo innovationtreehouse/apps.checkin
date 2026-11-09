@@ -23,7 +23,9 @@ const gap = (
   orderLines: MirrorOrderLine[] = [],
   categories = new Map<string, number | null>(),
   subtotals: Record<string, number> = {},
-) => mappingGap({ txns, orderLines, categories, subtotals: new Map(Object.entries(subtotals)) }, noProblem);
+  accounts = new Map([...categories.keys()].map((v) => [v, "400"])),
+  customItemsAccountId: string | null = "450",
+) => mappingGap({ txns, orderLines, categories, accounts, customItemsAccountId: customItemsAccountId ?? undefined, subtotals: new Map(Object.entries(subtotals)) }, noProblem);
 const custom = (patch: Partial<MirrorOrderLine> = {}) => line("O1", null, patch);
 const noDecisions = new Map<string, number | null>();
 
@@ -51,6 +53,17 @@ describe("mappingGap", () => {
   it("does not hold an order whose lines are custom items or decided", () => {
     const decided = new Map<string, number | null>([["V1", null]]);
     expect(gap([txn("charge", "O1"), txn("charge", "O2", 2)], [line("O1", null), line("O2", "V1")], decided)).toBeNull();
+  });
+
+  it("holds an item with a bucket choice but no QuickBooks account as undecided", () => {
+    const general = new Map<string, number | null>([["V1", null], ["V2", 7]]);
+    expect(gap([txn("charge", "O1")], [line("O1", "V1"), line("O1", "V2")], general, {}, new Map([["V2", "400"]]))).toBe("undecided items: V1");
+  });
+
+  it("holds a custom item while the custom-items account is unset", () => {
+    expect(gap([txn("charge", "O1")], [custom()], noDecisions, {}, new Map(), null)).toBe(
+      "custom items: no account picked for Shopify: custom items",
+    );
   });
 
   it("names every gap together, so a later run's reason shows what is left", () => {

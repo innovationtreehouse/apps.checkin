@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * Admission and file-only coverage for the bulk-donation registry (#1280,
- * registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
+ * Admission and file-only coverage for the bulk-donation registry
+ * (registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only,
  * except the in-kind decision and the settings PATCH, which admit FINANCE or
  * BOARD. Ops (OPERATIONS,
  * INVENTORY_MANAGER) reaches only the no-receipt in-kind entry routes, and never
@@ -12,7 +12,7 @@
  * leaves only through the file route.
  *
  * Callers sign in through the real authenticateRequest: only getServerSession
- * is mocked, so an id-less session takes the production path (plan rule 6).
+ * is mocked, so an id-less session takes the production path.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -83,10 +83,10 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 32 JSON routes (15 reads, 17 writes) and the blob file route', () => {
+    it('registers 32 JSON routes (14 reads, 18 writes) and the blob file route', () => {
         expect(endpoints).toHaveLength(32);
-        expect(reads).toHaveLength(15);
-        expect(writes).toHaveLength(17);
+        expect(reads).toHaveLength(14);
+        expect(writes).toHaveLength(18);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
@@ -98,6 +98,15 @@ describe('donation registry — shape', () => {
         expect(IN_KIND_MANUAL).toHaveLength(3);
         expect(endpoints.filter(e => e.includes('/qb-candidates') || e.includes('/qb-exclusions'))).toEqual([]);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
+    });
+
+    it('registers the fees-only hold release like resubmit: finance only, same models', () => {
+        const { authorize, returns, orderedView } = getRoute('POST /api/donations/disbursement-holds/[disbursementId]/release') ?? {};
+        expect({ authorize, returns, orderedView }).toEqual({
+            authorize: 'finance',
+            returns: ['DisbursementHold', 'DisbursementEvent'],
+            orderedView: [['isFinance', ['everyones:pii', 'everyones:internal', 'public']]],
+        });
     });
 
     it('no view on any donation route belongs to sysadmin', () => {
@@ -364,7 +373,7 @@ describe('in-kind decision routes', () => {
 describe('in-kind settle route', () => {
     it('replies to finance with the settle result and no donor', async () => {
         signIn(7, { isFinance: true });
-        const settled = { id: 1, kind: 'withdrawal', settledAt: '2026-10-17T00:00:00.000Z' };
+        const settled = { id: 1, kind: 'replay', settledAt: '2026-10-17T00:00:00.000Z' };
         const impl = jest.fn(async () => ({ InKindSettleResult: { ...settled, donorLastName: 'Doe' } }));
         const res = await handler(SETTLE, impl)(
             new NextRequest('http://localhost/api/donations/in-kind/receipt/1/settle', { method: 'POST' }),

@@ -1,10 +1,10 @@
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
-import { handler, badRequest, notFound, unauthorized } from "@/security/handler";
+import type { Prisma, Visit } from "@/generated/prisma/client";
+import { handler, ApiResponseError, badRequest, notFound, unauthorized } from "@/security/handler";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Staff insert-for-others at an arbitrary past time: the path for a
 // genuine unenrolled walk-in, which the event-roster mark (program-scoped, event
@@ -40,7 +40,7 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
 
     const subjectId = Number(personId);
     const person = await prisma.person.findFirst({
-        where: { id: subjectId, ...LIVE_PERSON },
+        where: { id: subjectId },
         select: { id: true },
     });
     if (!person) throw notFound("Person not found.");
@@ -49,9 +49,11 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
 
     // Same per-person advisory lock as every other visit write, so this
     // insert can't race the kiosk or the facility-close sweep.
-    const visit = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit }> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${subjectId})`;
-        return tx.visit.create({
+        const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: ar.value, departedAt: dr.value });
+        if (overlaps.openSince) return { openSince: overlaps.openSince };
+        const visit = await tx.visit.create({
             data: {
                 personId: subjectId,
                 arrivedAt: ar.value,
@@ -64,21 +66,22 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
                 associatedEventId: eventId,
             },
         });
+        await tx.auditLog.create({
+            data: {
+                actorId: auth.user.id,
+                action: "CREATE",
+                tableName: "Visit",
+                affectedEntityId: visit.id,
+                secondaryAffectedEntity: subjectId,
+                newData: { arrivedAt: ar.value, departedAt: dr.value, type: "staff_entry", ...overlapFlag(overlaps.closedIds) },
+            },
+        });
+        return { visit };
     });
+    if ('openSince' in result) throw new ApiResponseError(409, await openOverlapRefusal(result.openSince));
     // A closed keyholder visit can cover someone's arrival and clear their
     // "no keyholder" mark on the live roster.
     invalidateAttendanceCache();
 
-    await prisma.auditLog.create({
-        data: {
-            actorId: auth.user.id,
-            action: "CREATE",
-            tableName: "Visit",
-            affectedEntityId: visit.id,
-            secondaryAffectedEntity: subjectId,
-            newData: { arrivedAt: ar.value, departedAt: dr.value, type: "staff_entry" },
-        },
-    });
-
-    return { Visit: visit };
+    return { Visit: result.visit };
 });

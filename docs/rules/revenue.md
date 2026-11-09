@@ -59,8 +59,8 @@ Things the app takes as true because they are handled outside it.
   conflict-of-interest rule on that vote, and the requirement that program money
   flows through the Treehouse.
 
-- The giving platform sends each batch of gifts whole. A gift that turns up
-  after its batch is finished is rare, and finance books it by hand.
+- The giving platform sends each batch of gifts whole. Finance books by hand
+  a gift that turns up after its batch is finished.
 
 - Gifts of goods received before the app started recording them stay in
   the books only.
@@ -71,15 +71,44 @@ Things the app takes as true because they are handled outside it.
 
 ### Ownership
 
-- Finance Ops belongs to the board alone, except that finance reads payment
-  plans; the board approves them.  [Unsettled — which superuser]
+- Apart from the payment-plan read below, Finance Ops belongs to the board alone,
+  and the board approves payment plans.  [Unsettled — which superuser]
 
-- Only the board and finance read membership and program payment plans.  [Decision — owner]
+- Only the board and finance read a scholarship or payment-plan request, for a
+  membership or a program: that one was asked for, which kind, its seat hold, and
+  whether it was approved or refused. No other staff role sees one by default. A
+  household's leads read their own household's requests.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
 
 - The store is the source of truth for what was paid. The app records no
   payment fact of its own.  [Decision]
 
 - Nobody decides a scholarship or payment plan for their own household.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- The books map says which QuickBooks Class each budget bucket books to and which
+  account each named role books to, such as a bank or a gift-of-goods account.
+  Only finance edits it, and each edit is recorded. Expenses, income and gifts of
+  goods read it when they book and keep no copy of their own, so one edit reaches
+  every area.  [Decision — *Principle: least privilege*]
+
+- The books map holds one account each only for what is one account by nature:
+  the bank accounts, card remainder, adjustments, online-store fees, custom
+  items, in-kind income, the in-kind clearing account and the expense payment
+  account.  [Decision — owner]
+
+- Each online-store sale, giving-platform gift and gift of goods books to the
+  account finance mapped for its item. A line with no mapping, or whose account
+  can't be used, waits for finance; nothing books it to a fallback account. A
+  catch-all exists only as a `*` rule finance writes.  [Decision — owner]
+
+- Every account the app books to must be of a QuickBooks type listed for its
+  line or role. The books map, the giving-platform account rules, expense's
+  QuickBooks accounts and account rules, the account finance sets on a held
+  expense line, the one finance sets on a gift-of-goods line and online-store
+  items' accounts refuse any other type on save, reading the type from
+  QuickBooks, and refuse the save while QuickBooks can't be read. A stored
+  account that later reads as another type is flagged on System Status for
+  finance to re-pick; the app never rewrites it. Online-store fees take only an
+  Expense or Other Expense account.  [Decision — owner]
 
 - A financial control flags something for a person to sign off, and the sign-off
   is recorded. It never decides on its own.  [Decision — *Principle: accountability*]
@@ -106,6 +135,10 @@ Things the app takes as true because they are handled outside it.
   membership and enrollment. The app raises it for the board to handle, and apart
   from the refund case below it undoes nothing by itself.
   [Decision — *Principle: people decide about people*]
+
+- A resolved payment exception reopens only on new evidence, such as a further
+  refund or a new dispute, never because the same condition is seen again.
+  [Decision]
 
 - When the store's refund notice says a program refund put seats back on sale,
   the app removes the enrollment of each person the refund identifies: everyone
@@ -164,6 +197,11 @@ Things the app takes as true because they are handled outside it.
 - There is no fee ledger. What a family owes and has paid for a program comes from
   the enrollment itself and the store order behind it, never from a separate
   record of charges and payments.  [Decision — deliberate limit]
+
+- A store order enrolls only children in the buying household, shown by the
+  checkout link the app made for that household when it sent them to the store.
+  Any other order, including one without such a link, enrolls nobody and is
+  raised for the board.  [Decision — *Principle: fail closed*]
 
 - Reconciliation problems are raised in Finance Ops, not under membership or
   programs, because one payment can cover both.  [Decision]
@@ -226,6 +264,14 @@ Income checks each online-store payout against the deposits in the books.
   books. With no closing date set, it books nothing dated before income's posting
   was switched on, and when it cannot read the date it books nothing.  [Decision — owner; *Principle: fail closed*]
 
+- The window for matching a giving-platform deposit, one to 30 days either side
+  of its date, is a setting, seven by default. Finance or the board may change it
+  in either direction. Each change is recorded.  [Decision — owner]
+
+- How many deposits the app may create in one run, and how many dollars' worth for
+  each deposit source, are settings. Finance may lower them; raising one takes the
+  board. Each change is recorded.  [Decision — owner]
+
 - Until income's posting is switched on, the app only matches. A payout it cannot
   match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
 
@@ -236,12 +282,19 @@ Income checks each online-store payout against the deposits in the books.
 
 - The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
-- Sales are booked to the program or fund they belong to. Sales are booked as
-  general Treehouse income only where finance chose that for the item, with one
-  exception: a custom item, typed into an order with no store item behind it, books
-  as general income without asking, because custom items are rare. A payout with a
-  sale of any other item finance has not decided on waits until finance does, and
-  the next run books it once finance decides.  [Decision — owner]
+- Sales are booked to the program or fund they belong to, on the account finance
+  chose for the item. Sales are booked as general Treehouse income only where
+  finance chose that for the item. An item is decided once finance has chosen both
+  its bucket (or general income) and its account. A payout with a sale of an item
+  finance has not decided on waits until finance does, and the next run books it
+  once finance decides; nothing books it to a fallback account.  [Decision — owner]
+
+- A custom item, typed into an order with no store item behind it, needs no
+  per-item decision: it books as general income to the books map's custom-items
+  account. A payout with a custom item waits while that account is unset.  [Decision — owner]
+
+- Online-store fees are merchant-account fees on direct revenue. They book as an
+  expense on their own account, never as a reduction of income.  [Decision — owner]
 
 - Finance can decide on the app's program and membership items before their first
   sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]
@@ -299,6 +352,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   A person looking at their own receipts is not recorded, and neither is a
   count. Only the Board reads the record.  [Decision — owner]
 
+- A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
+
+- Looks at a donor from before the finance-view record began are not in it. They
+  stay in the bulk-donation library's own event history, which keeps them, and
+  are not copied across.  [Decision — owner]
+
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
 
 - A gift of money goes to a program or fund, or is general Treehouse money. One
@@ -312,8 +371,29 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - A giving-platform batch is finished only when every gift in it has a clear place in
   the books. The app never guesses, and a finished batch can't be changed.  [Decision]
 
+- A giving-platform batch finishes only when every gift's rule has an account for
+  each amount the gift carries. Each gift and match books to its rule's account,
+  fixed when the batch finishes; nothing books it to a fallback account.  [Decision — owner]
+
+- A giving-platform fee reduces income. Each spreadsheet row's fee is split across
+  that row's amount columns in proportion to their amounts, and each part is netted
+  into its column's income line. A blank amount counts as zero and takes no part. A
+  row with fees but no amount goes to finance. Rows are never pooled, and the parts
+  sum to the row's fee exactly.  [Decision — owner]
+
+- Finance may release a row with fees but no amount once its fee is booked by hand
+  in QuickBooks. The release records who and when, keeps the fee amount, and
+  removes the fee from the automated booking. The batch's deposit then doesn't
+  match the bank deposit on its own, and finance settles that match by hand. It
+  is final.  [Decision — owner]
+
 - Every finished giving-platform batch must match one deposit in the books.
   Finance settles any the app can't match and records why. [Decision]
+
+- A giving-platform gift with no disbursement date is refused at upload, with the
+  rest of its file. A finished batch that can't be handed over for booking, because
+  it has no date or nets to zero or less, goes to finance once by email to settle
+  by hand. [Decision]
 
 - A gift of goods is handled as a donation, not as spending, even when it comes
   with a receipt. In the books it is both a donation received and an expense of
@@ -339,6 +419,10 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   people, so the person deciding confirms they are outside the donor's household,
   and that is recorded.  [Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
 
+- The person accepting a gift of goods, with a receipt or without one, confirms the
+  goods themselves exist and arrived, not only the receipt, and that is recorded.
+  Refusing or returning a gift needs no such confirmation.  [Decision — owner, 2026-11-01]
+
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
   [Decision — owner]
@@ -353,10 +437,21 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - Gifts of goods follow the closed-books rules in Income, with their own switch-on.
   A gift counts from when its money arrived or it was recorded.  [Decision — owner]
 
-- A gift of goods withdrawn after its money arrived is raised for finance, booked
-  or not. Finance reverses it by hand only if it booked; the app changes nothing
-  in the books. When finance settles a withdrawal, the donor's details are cleared
-  and the gift and its money stay.  [Decision — owner]
+- The window for matching a gift of goods to finance's bookings, one to 30 days
+  either side of its date, is a setting, seven by default. Finance or the board may
+  change it in either direction. How many entries the app may create for gifts of
+  goods in one run is a setting too: finance may lower it, and raising it takes the
+  board. Each change is recorded. Gifts of goods have no daily or dollar limit.
+  [Decision — owner]
+
+- A gift of goods that fails to book goes to finance at once and waits there,
+  stuck, until finance books it or a person retries it from the Problems list.
+  The app never retries it by itself, and it never holds back newer gifts.
+  [Decision — owner, 2026-11-08]
+
+- A gift of goods whose entry in the books is removed, voided or changed after it
+  booked goes back to finance, which matches it again or skips it with a reason.
+  The app never books or matches it again on its own.  [Decision]
 
 - The app sends no donor letter for a gift of goods before it is accepted. A letter
   for a gift of goods describes the goods and states no value; a letter for a gift
@@ -368,7 +463,12 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts
-  as part of that household.  [Decision — owner; *Principle: fail closed*]
+  as part of that household. This covers a gift recorded without a receipt and a
+  donor typed in on a receipt.  [Decision — owner, 2026-10-31; *Principle: fail closed*]
+
+- Someone uploading a receipt may name themselves as the donor by choosing "I am
+  the donor". The person who decides the gift is the independent check.
+  [Decision — owner, 2026-11-01]
 
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]

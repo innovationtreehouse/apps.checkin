@@ -1,5 +1,5 @@
 /**
- * Expense (#1272): the persona matrix over all 46 routes (anonymous, plain member, bucket
+ * Expense: the persona matrix over all 46 routes (anonymous, plain member, bucket
  * approver, Board, FINANCE), field stripping on the approver view, one FINANCE journey and one
  * approver sign-off journey. Real HTTP against the running dev server and the seeded expense DB
  * (docker-compose.flow.yml + packages/expense/prisma/seed.ts).
@@ -221,12 +221,16 @@ describe("expense — FINANCE journey", () => {
     expect(settings.json).toMatchObject({ boardReviewTotalCents: 150_000 });
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: -1 })).status).toBe(400);
 
-    // QuickBooks accounts and an account-mapping rule: create, edit, delete.
-    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: `6100-${stamp}` });
+    // QuickBooks accounts and an account-mapping rule: create, edit, delete. The ids are LOCAL_QUICKBOOKS_ACCOUNTS';
+    // a Bank account is refused, and a rule takes a Fixed Asset account only when it says it's capital.
+    expect((await send(f, "POST", "/api/expense/qb-accounts", { name: `Checking ${stamp}`, qbAccount: "8001" })).status).toBe(400);
+    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: "8006" });
     expect(account.status).toBe(200);
     const accountId = (account.json as { id: number }).id;
-    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: `6110-${stamp}` })).status).toBe(200);
-    const rule = { category: "*", subcategory: "*", partNumber: `P-${stamp}`, isDelayed: null, isCapital: null, qbAccount: `6110-${stamp}` };
+    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: "8007" })).status).toBe(200);
+    const rule = { category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "8006" };
+    expect((await send(f, "POST", "/api/expense/account-mapping", { ...rule, qbAccount: "8009" })).status).toBe(400);
+    expect((await send(f, "POST", "/api/expense/account-mapping", { ...rule, isCapital: true })).status).toBe(400);
     const mapping = await send(f, "POST", "/api/expense/account-mapping", rule);
     expect(mapping.status).toBe(200);
     const mappingId = (mapping.json as { id: number }).id;
@@ -237,7 +241,10 @@ describe("expense — FINANCE journey", () => {
     const buckets = await api<{ id: number; name: string }[]>(f, "/api/expense/local-owners");
     const facility = buckets.json.find((b) => b.name === "Facility")!;
     expect(facility).toBeDefined();
-    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(200);
+    const catalog = await api<Array<{ gtin13: string; name: string }>>(f, "/api/catalog/items?q=Power%20Distribution%20Hub");
+    const part = catalog.json.find((i) => i.name === "Power Distribution Hub")!.gtin13;
+    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(400);
+    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: part, ownerId: facility.id })).status).toBe(200);
 
     // Assign the unassigned line to the org-level bucket: assigning is not the approval, so it waits for a Board member's.
     const U = `/api/expense/expenses/${UNASSIGNED_EXPENSE}`;
@@ -259,7 +266,7 @@ describe("expense — FINANCE journey", () => {
     const [hold] = held.json.Expense.holds;
     expect(hold).toBeDefined();
     const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
-    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
+    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: "8006" })).status).toBe(200);
     expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
 
     // Reimbursee: FINANCE names an adult other than the uploader, never itself or a minor, which clears the queue reason.

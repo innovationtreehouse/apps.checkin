@@ -14,6 +14,7 @@ export const REVIEW_ERROR_STATUS: Record<ReviewError["code"], number> = {
     already_attested: 409,
     not_undoable: 409,
     invalid_subject: 400,
+    shopify_unavailable: 503,
 };
 
 export const PAYMENT_ERROR_STATUS: Record<PaymentError["code"], number> = {

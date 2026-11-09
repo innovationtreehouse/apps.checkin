@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, qbGate, runDrain } from "../drain";
+import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_SAME_CODE_REFUSALS, qbGate, runDrain, type Posted } from "../drain";
 
 type Outcome = "posted" | "failed" | "skipped";
 
@@ -49,6 +49,13 @@ describe("runDrain", () => {
     expect(await runDrain<number, Outcome>(rows(4), { counts: fresh(), failures: ["failed"], noCall: ["skipped"], post: script(pattern) })).toEqual({ by: "failures", remaining: 0 });
   });
 
+  it("ends the run on a stopNow outcome, tallying it", async () => {
+    const counts = fresh();
+    const stop = await runDrain<number, Outcome>(rows(3), { counts, failures: ["failed"], stopNow: ["skipped"], post: async () => "skipped" });
+    expect(stop).toEqual({ by: "stopNow", remaining: 2 });
+    expect(counts.skipped).toBe(1);
+  });
+
   it("ends the run when the lane's post returns null, tallying nothing", async () => {
     const counts = fresh();
     const stop = await runDrain<number, Outcome>(rows(2), { counts, failures: [], post: async () => null });
@@ -61,6 +68,63 @@ describe("runDrain", () => {
       throw new Error("boom");
     };
     await expect(runDrain<number, Outcome>(rows(1), { counts: fresh(), failures: [], post })).rejects.toThrow("boom");
+  });
+});
+
+describe("runDrain on repeated refusal codes", () => {
+  type Refusal = string | string[] | null;
+  const refusing = (codes: Refusal[]) => {
+    const q = [...codes];
+    return async (): Promise<Posted<Outcome>> => {
+      const code = q.shift();
+      return code ? { outcome: "skipped", refusedCodes: typeof code === "string" ? [code] : code } : "posted";
+    };
+  };
+  const lane = (codes: Refusal[], returned: number[][]) => ({
+    counts: fresh(),
+    failures: ["failed"] as Outcome[],
+    post: refusing(codes),
+    unrefuse: async (rs: readonly number[]) => {
+      returned.push([...rs]);
+      return rs.length;
+    },
+  });
+
+  it("keeps going after two refusals with one code, returning nothing", async () => {
+    const returned: number[][] = [];
+    const l = lane(["6000", "6000", null], returned);
+    expect(await runDrain<number, Outcome>(rows(3), l)).toBeNull();
+    expect(returned).toEqual([]);
+    expect(l.counts).toEqual({ posted: 1, failed: 0, skipped: 2 });
+  });
+
+  it("stops on the third refusal with one code and returns all three", async () => {
+    expect(MAX_SAME_CODE_REFUSALS).toBe(3);
+    const returned: number[][] = [];
+    const l = lane(["6000", null, "6000", "6000", null], returned);
+    expect(await runDrain<number, Outcome>(rows(5), l)).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 1 });
+    expect(returned).toEqual([[0, 2, 3]]);
+  });
+
+  it("reports how many records the lane returned, which may be fewer than it was handed", async () => {
+    const l = { ...lane(["6000", "6000", "6000"], []), unrefuse: async () => 2 };
+    expect(await runDrain<number, Outcome>(rows(3), l)).toEqual({ by: "refusals", code: "6000", returned: 2, remaining: 0 });
+  });
+
+  it("counts every fault code a refusal carries toward that code", async () => {
+    const returned: number[][] = [];
+    expect(await runDrain<number, Outcome>(rows(4), lane(["6000", ["6190", "6000"], null, "6000"], returned))).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 0 });
+    expect(returned).toEqual([[0, 1, 3]]);
+  });
+
+  it("does not stop on three refusals with mixed codes", async () => {
+    const returned: number[][] = [];
+    expect(await runDrain<number, Outcome>(rows(4), lane(["6000", "6190", "6000", "2020"], returned))).toBeNull();
+    expect(returned).toEqual([]);
+  });
+
+  it("never stops on refusals for a lane that cannot return them", async () => {
+    expect(await runDrain<number, Outcome>(rows(3), { counts: fresh(), failures: ["failed"], post: refusing(["6000", "6000", "6000"]) })).toBeNull();
   });
 });
 
@@ -85,5 +149,17 @@ describe("qbGate", () => {
     expect(qbGate("2026-09-10", close, onAt, onAt, false).mayCreate).toBe(false);
     expect(qbGate("2026-09-10", close, onAt, onAt, true).mayCreate).toBe(true);
     expect(qbGate("2026-09-10", close, null, after, false).mayCreate).toBe(false);
+  });
+});
+
+describe("runDrain limits passed by the lane", () => {
+  const fresh = () => ({ posted: 0 });
+  it("stops at the lane's per-run limit", async () => {
+    const counts = fresh();
+    expect(await runDrain<number, "posted">([1, 2, 3], { counts, failures: [], maxCreatesPerRun: 2, post: async () => "posted" })).toEqual({ by: "count", remaining: 1 });
+    expect(counts.posted).toBe(2);
+  });
+  it("stops at the lane's per-day limit", async () => {
+    expect(await runDrain<number, "posted">([1], { counts: fresh(), failures: [], createdToday: 3, maxCreatesPerDay: 3, post: async () => "posted" })).toEqual({ by: "day", remaining: 1 });
   });
 });

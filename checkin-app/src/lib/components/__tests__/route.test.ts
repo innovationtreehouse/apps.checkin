@@ -72,6 +72,18 @@ describe("componentRoute", () => {
     expect(err).toMatchObject({ status: 400, message: "amount must be a number" });
   });
 
+  it("renders the names of refused fields in the body, and not what was submitted", async () => {
+    const schema = z.object({ email: z.string().email({ error: "Enter a valid email" }), notes: z.object({}).catchall(z.number()) });
+    const submitted = "submitted-text";
+    const route = componentRoute(async () => schema.parse({ email: submitted, notes: { [submitted]: submitted } }));
+    const err = await route(ctx).catch((e: unknown) => e);
+    const res = renderApiResponseError(err as ApiResponseError);
+    const text = await res.text();
+    expect(res.status).toBe(400);
+    expect(JSON.parse(text)).toEqual({ error: "Enter a valid email", fields: ["email", "notes"] });
+    expect(text).not.toContain(submitted);
+  });
+
   it("passes other errors through untouched, for the host's opaque 500", async () => {
     const boom = new Error("db down");
     await expect(failing(boom)(ctx)).rejects.toBe(boom);

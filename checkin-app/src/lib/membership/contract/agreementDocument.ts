@@ -48,12 +48,12 @@ function s3Client(): S3Client {
 
 /** Read the membership agreement PDF from S3 and the geometry needed to place the signature fields. */
 export function loadAgreementPdf(): Promise<LoadedAgreement> {
-    return loadPdf(config.agreementPdfKey(), "Membership agreement");
+    return loadPdf(config.agreementPdfKey(), "Membership agreement", "AGREEMENT_PDF_S3_KEY");
 }
 
 /** Read the Key Volunteer Agreement PDF (`KVA_PDF_S3_KEY`) the same way. */
 export function loadKvaPdf(): Promise<LoadedAgreement> {
-    return loadPdf(config.kvaPdfKey(), "Key Volunteer Agreement");
+    return loadPdf(config.kvaPdfKey(), "Key Volunteer Agreement", "KVA_PDF_S3_KEY");
 }
 
 /** True when the Key Volunteer Agreement PDF is in the bucket. */
@@ -69,7 +69,7 @@ export async function kvaDocumentInPlace(): Promise<boolean> {
     }
 }
 
-async function loadPdf(key: string, label: string): Promise<LoadedAgreement> {
+async function loadPdf(key: string, label: string, keyEnv: string): Promise<LoadedAgreement> {
     const bucket = config.agreementPdfBucket();
     if (!bucket) {
         throw new AgreementUnavailableError(
@@ -85,7 +85,9 @@ async function loadPdf(key: string, label: string): Promise<LoadedAgreement> {
         // Missing object (not yet uploaded) → unavailable, not a hard error. The
         // task role has s3:ListBucket so this surfaces as NoSuchKey, not a 403.
         if (e instanceof NoSuchKey || (e as { name?: string })?.name === "NoSuchKey") {
-            throw new AgreementUnavailableError(`${label} PDF not found at s3://${bucket}/${key}.`);
+            throw new AgreementUnavailableError(
+                `${label} PDF not found at s3://${bucket}/${key}. Upload it there, or point AGREEMENT_PDF_S3_BUCKET and ${keyEnv} at the existing object.`,
+            );
         }
         throw e;
     }

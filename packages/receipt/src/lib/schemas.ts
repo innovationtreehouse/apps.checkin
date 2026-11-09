@@ -1,7 +1,10 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { dollarsToCents } from "@checkin/money";
+import { CURRENCY_CODE, DEFAULT_CURRENCY, InKindDonorSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
+
+export { CURRENCY_CODE };
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;
@@ -12,8 +15,7 @@ const finite = z.number().finite();
 const nonNegative = finite.nonnegative();
 const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
-/** An ISO 4217 code; money formatting throws on anything else. */
-export const CURRENCY_CODE = /^[A-Z]{3}$/;
+const currencyCode = z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" });
 /** The most a money column holds: its integer cents limit, in dollars. */
 const MAX_DOLLARS = (2 ** 31 - 1) / 100;
 const dollarString = z.string().refine(
@@ -23,6 +25,10 @@ const dollarString = z.string().refine(
   },
   { message: "must be a number from 0 to 21,474,836.47" },
 );
+/** A dollar input from these shapes in cents; a string that does not start with a number counts as 0. */
+export const toCents = (dollars: number | string | undefined): number =>
+  dollarsToCents(typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0));
+
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
 /** A calendar date as the date picker sends it. */
@@ -42,7 +48,7 @@ export const ManualDetailsSchema = z.object({
   retailer: requiredText("The retailer", 500),
   receiptDate: isoDate,
   receiptTotal: dollarString,
-  currency: z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" }).optional(),
+  currency: currencyCode.optional(),
   shipping: dollarString.optional(),
   tax: dollarString.optional(),
   discount: dollarString.optional(),
@@ -55,13 +61,7 @@ export const ManualDetailsSchema = z.object({
 /** "I am the donor", or the donor's name. */
 export const DonorInputSchema = z.union([
   z.object({ self: z.literal(true) }).strict(),
-  z
-    .object({
-      firstName: z.string().trim().min(1).max(100),
-      lastName: z.string().trim().min(1).max(100),
-      companyName: z.string().trim().max(200).nullable().optional(),
-    })
-    .strict(),
+  InKindDonorSchema.extend({ companyName: InKindDonorSchema.shape.companyName.optional() }).strict(),
 ]);
 export type DonorInput = z.infer<typeof DonorInputSchema>;
 
@@ -116,7 +116,7 @@ export const EditReceiptSchema = z
   .object({
     retailer: requiredText("The retailer", 500).optional(),
     receiptDate: isoDate.optional(),
-    currency: z.string().min(1).max(10).optional(),
+    currency: currencyCode.optional(),
     shipping: nonNegative.optional(),
     tax: nonNegative.optional(),
     discount: nonNegative.optional(),
@@ -144,6 +144,8 @@ export const OrgSettingsSchema = z
   })
   .strict();
 
+export const OcrSwitchSchema = z.object({ ocrEnabled: z.boolean() }).strict();
+
 export const ImportLineItemSchema = z.object({
   lineNumber: z.number().int().positive(),
   description: z.string().min(1).max(500),
@@ -169,7 +171,7 @@ export const ImportReceiptSchema = z
     receiptNumber: z.string().max(200).nullable().optional(),
     orderNumber: z.string().max(200).nullable().optional(),
     receiptDate: isoDate,
-    currency: z.string().max(10).default("USD"),
+    currency: currencyCode.default(DEFAULT_CURRENCY),
     shippingCents: cents,
     taxCents: cents,
     discountCents: cents,

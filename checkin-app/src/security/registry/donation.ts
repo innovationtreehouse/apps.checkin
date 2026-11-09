@@ -52,7 +52,6 @@ defineRoute({ endpoint: 'GET /api/donations/comment-rules', authorize: 'finance-
 defineRoute({ endpoint: 'GET /api/donations/account-map', authorize: 'finance-or-board', envelope: null, returns: ['AccountMap'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/disbursement-holds', authorize: 'finance-or-board', envelope: null, returns: ['DisbursementHold', 'Transaction'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/donations/disbursement-events', authorize: 'finance-or-board', envelope: null, returns: ['DisbursementEvent'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
-defineRoute({ endpoint: 'GET /api/donations/nav-counts', authorize: 'finance-or-board', envelope: null, returns: ['DonationNavCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isBoardMember', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindDonation', 'ManualInKindDonationLine'], orderedView: IN_KIND_READ_VIEW, auditedRead: true });
 defineRoute({ endpoint: 'GET /api/donations/in-kind/queue', authorize: 'finance-or-board', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
 // One in-kind gift's page, with its donor, lines and history; same audience as the queue.
@@ -72,6 +71,7 @@ defineRoute({ endpoint: 'POST /api/donations/account-map', authorize: 'finance',
 defineRoute({ endpoint: 'PUT /api/donations/account-map/[id]', authorize: 'finance', envelope: null, returns: ['AccountMap'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'DELETE /api/donations/account-map/[id]', authorize: 'finance', envelope: null, orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/donations/disbursement-holds/[disbursementId]/resubmit', authorize: 'finance', envelope: null, returns: ['DisbursementHold', 'DisbursementEvent'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/disbursement-holds/[disbursementId]/release', authorize: 'finance', envelope: null, returns: ['DisbursementHold', 'DisbursementEvent'], orderedView: FINANCE_VIEW });
 
 // No-receipt in-kind entry — FINANCE or ops; never BOARD.
 defineRoute({ endpoint: 'POST /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindRecordResult'], orderedView: IN_KIND_WRITE_VIEW });

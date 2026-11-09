@@ -118,7 +118,7 @@ describe('Per-adult background-check subjects', () => {
         expect(await householdBgIsFresh(hh.householdId, boundary, 12)).toBe(true);
     });
 
-    it('the unnamed adult now reads as NEEDED instead of FRESH', async () => {
+    it('the unnamed adult reads as NEEDED, not FRESH', async () => {
         const hh = await twoLeadHousehold('NagOn');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
@@ -238,8 +238,7 @@ describe('Per-adult background-check subjects', () => {
     // ── An approval that names nobody ────────────────────────────────────────
     it('an approval naming nobody counts toward nobody, and reports the count it counted', async () => {
         const hh = await twoLeadHousehold('Legacy');
-        // An approval whose subject column is null: what a review in flight across the
-        // subject migration (20260802120000, nullable, no backfill) carries.
+        // An approval whose nullable subject column is empty.
         await prisma.backgroundCheckAttestation.create({ data: { processId: hh.processId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: null } });
 
         as(rev2, { isBackgroundCheckReviewer: true });
@@ -411,23 +410,9 @@ describe('Per-adult background-check subjects', () => {
         });
     });
 
-    it('flags a background-check date a merge carried over', async () => {
-        const hh = await twoLeadHousehold('MergeProvenance');
-        const checkedAt = new Date('2026-06-01T09:00:00.000Z');
-        // The merge rule takes the later date unconditionally, recording nothing about
-        // whose check it was — so the survivor holds a date that traces to no report.
-        await prisma.person.update({ where: { id: hh.sam }, data: { lastBackgroundCheck: checkedAt, mergedIntoId: hh.alex } });
-        await prisma.person.update({ where: { id: hh.alex }, data: { lastBackgroundCheck: checkedAt } });
-
-        as(board, { isBoardMember: true });
-        const data = await (await COMPLIANCE(get('http://localhost:4000/api/membership-audit/compliance') as never)).json();
-        expect(data.mergeInheritedBgChecks.map((r: { personId: number }) => r.personId)).toContain(hh.alex);
-    });
-
-    // This list is permanent, not a cleanup queue. The merged-away Person row can be
-    // gone, so its predicate and `fromName` come from the PersonMerge snapshot: without
-    // it the board stops being told whose check a survivor holds.
-    it('still names the source after the merged-away Person row is gone', async () => {
+    // The merge rule takes the later date unconditionally, recording nothing about whose
+    // check it was; the PersonMerge snapshot is the only record of the merged-away person.
+    it('flags a merge-inherited background-check date and names its source', async () => {
         const hh = await twoLeadHousehold('MergeArchived');
         const checkedAt = new Date('2026-06-01T00:00:00.000Z');
         await prisma.person.update({ where: { id: hh.alex }, data: { lastBackgroundCheck: checkedAt } });
@@ -438,8 +423,6 @@ describe('Per-adult background-check subjects', () => {
                 snapshot: { name: 'Sam Archived', email: null, lastBackgroundCheck: checkedAt.toISOString() },
             },
         });
-        // Sam's Person row never existed as a tombstone here: this is the 2b-3 state,
-        // where the archive is the only record of the merge.
         await prisma.person.delete({ where: { id: hh.sam } });
 
         as(board, { isBoardMember: true });
@@ -448,28 +431,5 @@ describe('Per-adult background-check subjects', () => {
         const row = data.mergeInheritedBgChecks.find((r: { personId: number }) => r.personId === hh.alex);
         expect(row).toBeDefined();
         expect(row.fromName).toBe('Sam Archived');
-    });
-
-    // Both records exist during 2b, and they say the same thing — so the survivor
-    // must appear once, from the archive, not twice.
-    it('prefers the archive over the tombstone without double-counting', async () => {
-        const hh = await twoLeadHousehold('MergeBoth');
-        const checkedAt = new Date('2026-06-01T00:00:00.000Z');
-        await prisma.person.update({ where: { id: hh.sam }, data: { lastBackgroundCheck: checkedAt, mergedIntoId: hh.alex, name: 'Stale Tombstone Name' } });
-        await prisma.person.update({ where: { id: hh.alex }, data: { lastBackgroundCheck: checkedAt } });
-        await prisma.personMerge.create({
-            data: {
-                fromId: hh.sam,
-                toId: hh.alex,
-                snapshot: { name: 'Snapshot Name', email: null, lastBackgroundCheck: checkedAt.toISOString() },
-            },
-        });
-
-        as(board, { isBoardMember: true });
-        const data = await (await COMPLIANCE(get('http://localhost:4000/api/membership-audit/compliance') as never)).json();
-
-        const rows = data.mergeInheritedBgChecks.filter((r: { personId: number }) => r.personId === hh.alex);
-        expect(rows).toHaveLength(1);
-        expect(rows[0].fromName).toBe('Snapshot Name');
     });
 });

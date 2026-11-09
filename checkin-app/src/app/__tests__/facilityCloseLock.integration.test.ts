@@ -45,7 +45,7 @@ function scanReq(participantId: number, extra: Record<string, unknown> = {}) {
     }) as unknown as import('next/server').NextRequest;
 }
 
-describe('POST /api/scan facility-close lock (#254)', () => {
+describe('POST /api/scan facility-close lock', () => {
     let keyholderId: number;
     let otherId: number;
     let racerId: number;

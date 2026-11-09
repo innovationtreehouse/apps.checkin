@@ -2,6 +2,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import { createItemReferenceRepository } from "../repositories/itemReference";
 import { ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "../lib/gtin";
 
 const itemRefRepo = createItemReferenceRepository(db);
 import { normalizeDescription } from "../lib/normalizeDescription";
@@ -168,7 +169,7 @@ async function findAutoConflict(
   const refs = createItemReferenceRepository(tx);
   const conflictLabel = async (gtin13: string) => {
     const it = await tx.item.findFirst({ where: { gtin13 }, select: { name: true } });
-    return it?.name ?? gtin13;
+    return it?.name ?? formatGtinDisplay(gtin13);
   };
 
   if (fields.manufacturer && fields.partNumber) {

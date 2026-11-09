@@ -1,6 +1,7 @@
+import { ServiceError } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
-import { CATCH_UP_CAP, MAX_CONSECUTIVE_PUSH_FAILURES, pushRecords, repushUnpushed, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
+import { CATCH_UP_CAP, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
 import { insertReceiptsTogether } from "../../lib/insert";
 import { DEFAULT_LIMITS } from "../../lib/limits";
 import { importReceipts } from "../../services/importService";
@@ -18,106 +19,67 @@ beforeEach(async () => {
 });
 
 describeDb("catch-up steps", () => {
-  it("re-pushes finalized receipts whose push failed, and counts only", async () => {
-    ports.fail.push = true;
+  it.each([
+    ["data", () => new ServiceError(400, "lineItems: required")],
+    ["bug", () => new ServiceError(403, "Forbidden")],
+    ["system", () => true as const],
+  ])("records a %s push failure as push_failed with its kind, and the receipt as stuck", async (kind, failure) => {
+    ports.fail.push = failure();
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    ports.fail.push = false;
-    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
-    expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).not.toBeNull();
-    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 0 });
+    const rows = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: { startsWith: "push_" } }, select: { action: true, valueBefore: true } });
+    expect(rows).toEqual([{ action: "push_failed", valueBefore: kind }]);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id }, select: { firstFailedAt: true } })).toEqual({ firstFailedAt: expect.any(Date) });
   });
 
-  it("retries a failing receipt until MAX_CONSECUTIVE_PUSH_FAILURES catch-up failures, then skips it", async () => {
-    ports.fail.push = true;
+  it("an answer the receipt cannot read is a bug", async () => {
+    configure({ receiptSink: { ingestReceipt: async () => ({ id: 1.5, state: "pending_review", created: true }) } });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "push_failed" }, select: { valueBefore: true } })).toEqual({ valueBefore: "bug" });
+  });
+
+  it("lists a failed push with its first failure time and no error text; finance reads the error on the receipt's page", async () => {
+    ports.fail.push = new Error("unexpected");
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+
+    const [listed] = await receiptService.list({ state: "receipt_finalized", pushed: false });
+    expect(listed).toMatchObject({ id: r.id, lastPushFailedAt: expect.any(Date) });
+    expect(listed).not.toHaveProperty("lastPushFailure");
+    expect(listed).not.toHaveProperty("lastError");
+    expect(await receiptService.get(r.id, "finance")).toMatchObject({ lastPushFailedAt: expect.any(Date), lastPushFailure: "unexpected" });
+    actAs(ALICE);
+    expect(await receiptService.get(r.id, "submitter")).not.toHaveProperty("lastPushFailure");
+  });
+
+  it("a manual push delivers a failed receipt and takes it off the lists", async () => {
+    ports.fail.push = new ServiceError(400, "lineItems: required");
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    ports.fail.push = false;
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: true });
+    expect(await receiptService.list({ state: "receipt_finalized", pushed: false })).toEqual([]);
+    expect((await receiptService.get(r.id, "finance"))).not.toHaveProperty("lastPushFailure");
+  });
+
+  it("counts each state, the undelivered receipts, and the ones whose push failed", async () => {
+    ports.fail.push = new Error("unexpected");
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) {
-      expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 0 });
-    }
-    const attempts = ports.calls.pushes.length;
-    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
-    expect(ports.calls.pushes).toHaveLength(attempts);
-  });
-
-  it("retries a skipped receipt again after a manual push, and delivers it once the push succeeds", async () => {
-    ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
-    expect(await repushUnpushed()).toMatchObject({ skipped: 1 });
-
-    actAs(FINANCE);
-    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
-    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 0 });
-
     ports.fail.push = false;
-    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
-    expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).not.toBeNull();
-  });
-
-  it("retries a skipped receipt on the run after another receipt is delivered", async () => {
-    ports.fail.push = true;
-    const stuck = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
-
-    ports.fail.push = false;
-    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 1 });
-    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
-    expect((await db.receipt.findUniqueOrThrow({ where: { id: stuck.id } })).pushedAt).not.toBeNull();
-  });
-
-  it("lists an undelivered receipt with its latest failure, marked once catch-up gives up", async () => {
-    ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await db.receipt.updateMany({ data: { pushedAt: null } });
     actAs(FINANCE);
-    const undelivered = () => receiptService.list({ state: "receipt_finalized", pushed: false });
-
-    expect(await undelivered()).toEqual([
-      expect.objectContaining({ id: r.id, pushGivenUp: false, lastPushFailure: "workflow-mapping down", lastPushFailedAt: expect.any(Date) }),
-    ]);
-    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
-    expect(await undelivered()).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true })]);
-
-    ports.fail.push = false;
-    await receiptService.push(r.id);
-    expect(await undelivered()).toEqual([]);
-    expect((await receiptService.list({ state: "receipt_finalized" }))[0]).not.toHaveProperty("pushGivenUp");
+    expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 1 });
   });
 
-  it("reports each receipt's latest push failure, whatever order the receipts' failures interleave in", async () => {
-    ports.fail.push = true;
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
-    for (const [id, message] of [[a.id, "a second"], [b.id, "b second"], [a.id, "a latest"], [b.id, "b latest"]]) {
-      await db.receiptAuditLog.create({ data: { receiptId: id, action: "push_failed", valueAfter: message } });
-    }
-    const records = await pushRecords((await db.receipt.findUniqueOrThrow({ where: { id: a.id } })).orgId, [a.id, b.id]);
-    expect(records.get(a.id)?.lastPushFailure).toBe("a latest");
-    expect(records.get(b.id)?.lastPushFailure).toBe("b latest");
-  });
-
-  it("counts each state, the undelivered receipts, and the ones catch-up gave up on", async () => {
-    ports.fail.push = true;
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
-    actAs(FINANCE);
-    expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 0 });
-    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
-    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 2, pushGivenUp: 2 });
-  });
-
-  it("puts a receipt catch-up gave up on in finance's list and pill, unless the viewer is conflicted", async () => {
-    ports.fail.push = true;
+  it("puts a failed push in finance's list and pill at once, unless the viewer is conflicted", async () => {
+    ports.fail.push = new Error("unexpected");
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
-    expect((await receiptService.countAwaitingFinance(FINANCE.id)).total).toBe(0);
-    expect(await receiptService.listNeedsAttention("finance")).toEqual([]);
-
-    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
 
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toMatchObject({ total: 1, byState: { flow_error: 0 } });
     expect(await receiptService.countAwaitingFinance(ALICE.id)).toMatchObject({ total: 0 });
-    expect(await receiptService.listNeedsAttention("finance")).toEqual([expect.objectContaining({ id: r.id, pushGivenUp: true })]);
+    expect(await receiptService.listNeedsAttention("finance")).toEqual([expect.objectContaining({ id: r.id, lastPushFailedAt: expect.any(Date) })]);
     actAs(ALICE);
     expect(await receiptService.listNeedsAttention("finance")).toEqual([]);
     expect(await receiptService.listNeedsAttention("submitter")).toEqual([]);

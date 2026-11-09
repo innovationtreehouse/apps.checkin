@@ -3,7 +3,8 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
-import { api, errorMessage, useCanWrite, useLoad, when } from "../components/api";
+import { api, errorMessage, isRefusal, loadError, useCanWrite, useLoad, when } from "../components/api";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -39,8 +40,6 @@ interface Gift {
   donorLastName: string | null;
   donorCompanyName: string | null;
   donorReplacedAt: string | null;
-  withdrawnAfterMoneyAt: string | null;
-  withdrawalSettledAt: string | null;
   replayConflictAt: string | null;
   outcome: string | null;
   decidedAt: string | null;
@@ -52,6 +51,7 @@ interface Gift {
   expenseBooking: string | null;
   inventorySourceKey: string | null;
   inventoryLoadedAt: string | null;
+  inventoryLoadFailureReason: string | null;
   lines: GiftLine[];
   events: GiftEvent[];
 }
@@ -62,8 +62,6 @@ const EVENT: Record<string, string> = {
   IN_KIND_MONEY_RECEIVED: "Receipt values received",
   IN_KIND_DONOR_RECORDED: "Donor recorded",
   IN_KIND_REPLAY_CONFLICT: "Receipt resent with different values",
-  IN_KIND_WITHDRAWN_AFTER_MONEY: "In-kind mark cleared after the money arrived",
-  IN_KIND_WITHDRAWAL_SETTLED: "Withdrawal settled",
   IN_KIND_REPLAY_SETTLED: "Kept the first values",
   IN_KIND_DECIDED: "Decided",
   IN_KIND_BUCKET_CHANGED: "Bucket changed",
@@ -90,6 +88,7 @@ function donorName(g: Gift): string {
 function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }) {
   const canWrite = useCanWrite();
   const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
 
   if (gift.source === "receipt") {
     return (
@@ -106,7 +105,8 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
       notifications.show({ message: "Goods loaded into inventory", color: "green" });
       onReload();
     } catch (e) {
-      notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(e), color: "red", autoClose: false });
+      if (isRefusal(e)) setRefusal(e.message);
+      else notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(loadError(e)), color: "red", autoClose: false });
     } finally {
       setBusy(false);
     }
@@ -117,8 +117,18 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
   ) : (
     <Alert color="red" title="Goods not loaded into inventory">
       <Group justify="space-between" wrap="nowrap">
-        <Text size="sm">The load for {gift.inventorySourceKey} failed or has not run.</Text>
-        {canWrite && <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void retry()}>Load again</Button>}
+        <Text size="sm">
+          {refusal ??
+            (gift.inventoryLoadFailureReason
+              ? `The load for ${gift.inventorySourceKey} failed: ${gift.inventoryLoadFailureReason}`
+              : `The load for ${gift.inventorySourceKey} failed or has not run.`)}
+        </Text>
+        {canWrite &&
+          (refusal ? (
+            <Button size="xs" variant="light" color="red" disabled>Can&apos;t be loaded: adjust stock by hand</Button>
+          ) : (
+            <Button size="xs" variant="light" color="red" loading={busy} onClick={() => void retry()}>Load again</Button>
+          ))}
       </Group>
     </Alert>
   );
@@ -145,12 +155,6 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
           {g.state ? <Badge color={IN_KIND_STATE[g.state].color}>{IN_KIND_STATE[g.state].label}</Badge> : <Badge color="gray">Nothing left to do</Badge>}
         </Group>
       </Group>
-      {g.withdrawnAfterMoneyAt && (
-        <Alert color="red">
-          The in-kind mark was cleared {when(g.withdrawnAfterMoneyAt)}, after the money arrived.
-          {g.withdrawalSettledAt ? ` Settled ${when(g.withdrawalSettledAt)}; the donor was cleared.` : ""}
-        </Alert>
-      )}
       {g.replayConflictAt && <Alert color="red">The receipt was resent with different values {when(g.replayConflictAt)}.</Alert>}
       {g.donorReplacedAt && <Alert color="yellow">The donor was replaced {when(g.donorReplacedAt)}.</Alert>}
 
@@ -186,8 +190,8 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
         <Table.Tbody>
           {g.lines.map((l) => (
             <Table.Tr key={l.id}>
-              <Table.Td>{l.description ?? l.gtin13 ?? "—"}</Table.Td>
-              <Table.Td>{l.gtin13 ?? "—"}</Table.Td>
+              <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
+              <Table.Td>{l.gtin13 ? formatGtinDisplay(l.gtin13) : "—"}</Table.Td>
               <Table.Td>{l.quantity}</Table.Td>
               <Table.Td>{l.valueCents === null ? "—" : formatCents(l.valueCents)}</Table.Td>
               {isManual && <Table.Td>{l.suggestedValueCents === null ? "—" : formatCents(l.suggestedValueCents)}</Table.Td>}

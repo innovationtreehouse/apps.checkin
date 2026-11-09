@@ -37,14 +37,18 @@ export const upload: DonationRouteHandler = async ({ req }) => {
     throw httpError(415, "Upload a Benevity .csv file");
   }
   const buffer = Buffer.from(await file.arrayBuffer());
+  const audit = await auditContext(req);
   let rows;
   try {
     rows = parseBenevityCsv(buffer);
   } catch (err) {
     if (err instanceof CsvValidationError) throw httpError(400, err.message);
-    throw httpError(400, "Could not parse the CSV");
+    console.error(`[bulk-donation] upload ${audit.correlationId} ("${file.name}") failed in the CSV parser`, err);
+    throw httpError(
+      500,
+      `The import failed because of an error in the app, not a problem with the file. Nothing was imported. Reference: ${audit.correlationId}`,
+    );
   }
-  const audit = await auditContext(req);
   const orgId = await getOrgId();
   const result = await mapServiceErrors(() =>
     uploadedFileService.processUpload(

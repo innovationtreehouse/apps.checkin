@@ -9,16 +9,24 @@ import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { correctCloseTime } from "@/lib/attendance/close";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
 // covered by the admin everyones band, and stripped for any role a future
 // view adds.
-export const GET = handler('GET /api/facility/visits', async () => {
+//
+// ?closedOut=true lists the visits a close's stamp still ends, newest close
+// first. Visit.facilityCloseId says which close: after a pull-back the close log
+// names both closes, and this column names the one that stands.
+export const GET = handler('GET /api/facility/visits', async ({ req }) => {
+    const closedOut = new URL(req.url).searchParams.get('closedOut') === 'true';
     const visits = await prisma.visit.findMany({
-        take: 50,
-        where: { deletedAt: null },
-        orderBy: { arrivedAt: "desc" },
+        take: closedOut ? 500 : 50,
+        where: closedOut
+            ? { deletedAt: null, departedVia: { in: ["FACILITY_CLOSE", "AUTO_CLOSE"] }, facilityCloseId: { not: null } }
+            : { deletedAt: null },
+        orderBy: closedOut ? [{ facilityCloseId: "desc" }, { arrivedAt: "desc" }] : { arrivedAt: "desc" },
         include: {
             person: {
                 select: { email: true, name: true, isSysadmin: true, isKeyholder: true },
@@ -63,7 +71,7 @@ export const PATCH = withAuth(
             // it takes the same per-person advisory xact lock as /api/scan and re-reads
             // the row inside it — the pre-check above ran unserialized and a racing
             // scan or the facility-close sweep may have closed or removed the visit.
-            const result = await prisma.$transaction(async (tx): Promise<{ error: string; status: number } | { visit: Visit; previous: Visit }> => {
+            const result = await prisma.$transaction(async (tx): Promise<{ error: string; status: number } | { openSince: Date } | { visit: Visit }> => {
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.personId})`;
 
                 const current = await tx.visit.findUnique({ where: { id: visitId } });
@@ -84,6 +92,9 @@ export const PATCH = withAuth(
                 if (!editedArrived && !editedDeparted) {
                     return { error: "Nothing to change.", status: 400 as const };
                 }
+
+                const overlaps = await findVisitOverlaps(tx, current.personId, { arrivedAt: nextArrived, departedAt: nextDeparted }, visitId);
+                if (overlaps.openSince) return { openSince: overlaps.openSince };
 
                 const visit = await tx.visit.update({
                     where: { id: visitId },
@@ -106,38 +117,37 @@ export const PATCH = withAuth(
                     });
                     if (close) await correctCloseTime(tx, close, auth.user.id, nextDeparted);
                 }
-                return { previous: current, visit };
+                // Log the manual edit in the audit trail. secondaryAffectedEntity =
+                // the visit's person, so a correction review can tell self from
+                // acting-for-another by comparison alone. oldData/
+                // significance score against `current` (the in-lock re-read), not
+                // the pre-lock `existing` — a racing scan/close can change the row
+                // between the two reads.
+                if (auth.type === 'session') {
+                    await tx.auditLog.create({
+                        data: {
+                            actorId: auth.user.id,
+                            action: "EDIT",
+                            tableName: "Visit",
+                            affectedEntityId: visitId,
+                            secondaryAffectedEntity: current.personId,
+                            oldData: JSON.parse(JSON.stringify(current)),
+                            newData: JSON.parse(JSON.stringify({
+                                ...visit,
+                                type: "staff_correction",
+                                ...overlapFlag(overlaps.closedIds, editSignificance(current, visit, { byProxy: auth.user.id !== current.personId })),
+                            })),
+                        },
+                    });
+                }
+                return { visit };
             }, { maxWait: 5000, timeout: 15000 });
 
             if ('error' in result) return apiError(result.error, result.status);
+            if ('openSince' in result) return apiError(await openOverlapRefusal(result.openSince), 409);
             invalidateAttendanceCache();
-            const { visit: updatedVisit, previous } = result;
 
-            // Log the manual edit in the audit trail. secondaryAffectedEntity =
-            // the visit's person, so a correction review can tell self from
-            // acting-for-another by comparison alone. oldData/
-            // significance score against `previous` (the in-lock re-read), not
-            // the pre-lock `existing` — a racing scan/close can change the row
-            // between the two reads.
-            if (auth.type === 'session') {
-                await prisma.auditLog.create({
-                    data: {
-                        actorId: auth.user.id,
-                        action: "EDIT",
-                        tableName: "Visit",
-                        affectedEntityId: visitId,
-                        secondaryAffectedEntity: previous.personId,
-                        oldData: JSON.parse(JSON.stringify(previous)),
-                        newData: JSON.parse(JSON.stringify({
-                            ...updatedVisit,
-                            type: "staff_correction",
-                            significance: editSignificance(previous, updatedVisit, { byProxy: auth.user.id !== previous.personId }),
-                        })),
-                    },
-                });
-            }
-
-            return NextResponse.json({ visit: updatedVisit });
+            return NextResponse.json({ visit: result.visit });
         } catch (error) {
             logger.error("Update visit error:", error);
             return apiError("Internal Server Error", 500);
@@ -176,28 +186,27 @@ export const DELETE = withAuth(
                     where: { id: visitId },
                     data: { deletedAt: new Date(), deletedById: auth.type === 'session' ? auth.user.id : null },
                 });
+                // Log the manual deletion in the audit trail — oldData carries the
+                // pre-delete row so the review needs no join.
+                if (auth.type === 'session') {
+                    await tx.auditLog.create({
+                        data: {
+                            actorId: auth.user.id,
+                            action: "DELETE",
+                            tableName: "Visit",
+                            affectedEntityId: visitId,
+                            secondaryAffectedEntity: current.personId,
+                            oldData: JSON.parse(JSON.stringify(current)),
+                            newData: { type: "staff_removal", significance: deleteSignificance(current, { byProxy: auth.user.id !== current.personId }) },
+                        },
+                    });
+                }
                 return current;
             }, { maxWait: 5000, timeout: 15000 });
 
             if (!removed) return apiError("Visit not found.", 404);
             if (removed === "open") return apiError(OPEN_VISIT_REFUSAL, 409);
             invalidateAttendanceCache();
-
-            // Log the manual deletion in the audit trail — oldData carries the
-            // pre-delete row so the review needs no join.
-            if (auth.type === 'session') {
-                await prisma.auditLog.create({
-                    data: {
-                        actorId: auth.user.id,
-                        action: "DELETE",
-                        tableName: "Visit",
-                        affectedEntityId: visitId,
-                        secondaryAffectedEntity: removed.personId,
-                        oldData: JSON.parse(JSON.stringify(removed)),
-                        newData: { type: "staff_removal", significance: deleteSignificance(removed, { byProxy: auth.user.id !== removed.personId }) },
-                    },
-                });
-            }
 
             return NextResponse.json({ success: true });
         } catch (error) {

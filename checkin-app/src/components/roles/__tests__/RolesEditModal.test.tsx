@@ -1,4 +1,4 @@
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 jest.mock("@mantine/modals", () => ({ modals: { openConfirmModal: jest.fn() } }));
 
 import { useState } from "react";
@@ -124,8 +124,8 @@ describe("RolesEditModal", () => {
     });
 
     it("records an open agreement as signed by hand", async () => {
-        (modals.openConfirmModal as jest.Mock).mockImplementation((opts: { onConfirm: () => void }) => opts.onConfirm());
-        const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+        (modals.openConfirmModal as jest.Mock).mockImplementationOnce((opts: { onConfirm: () => void }) => opts.onConfirm());
+        const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "{}" }));
         global.fetch = fetchMock as unknown as typeof fetch;
         const onSaved = jest.fn();
         const kv = { ...stagingTarget, isKeyVolunteer: true, kvaSignedCurrent: false, kvaOpenProcessId: 41 };
@@ -138,7 +138,6 @@ describe("RolesEditModal", () => {
             method: "POST",
             body: JSON.stringify({ processId: 41, action: "mark-contract" }),
         }));
-        (modals.openConfirmModal as jest.Mock).mockReset();
     });
 
     it("no-delta Save closes without opening a confirm modal or calling onSaved", () => {
@@ -176,7 +175,7 @@ describe("RolesEditModal", () => {
         const patchFetch = jest.fn(async () => ({
             ok: true,
             status: 200,
-            json: async () => ({ message: "Roles updated successfully", user: updatedUser }),
+            text: async () => JSON.stringify({ message: "Roles updated successfully", user: updatedUser }),
         }));
         global.fetch = patchFetch as unknown as typeof fetch;
 
@@ -223,7 +222,7 @@ describe("RolesEditModal", () => {
             const patchFetch = jest.fn(async () => ({
                 ok: true,
                 status: 200,
-                json: async () => ({ message: "Roles updated successfully", user: updatedUser }),
+                text: async () => JSON.stringify({ message: "Roles updated successfully", user: updatedUser }),
             }));
             global.fetch = patchFetch as unknown as typeof fetch;
 
@@ -252,6 +251,7 @@ describe("RolesEditModal", () => {
             ok: false,
             status: 409,
             json: async () => ({ error: "Cannot remove the last board member" }),
+            text: async () => JSON.stringify({ error: "Cannot remove the last board member" }),
         }));
         global.fetch = patchFetch as unknown as typeof fetch;
 
@@ -273,7 +273,6 @@ describe("RolesEditModal", () => {
     });
 
     it("toasts a network error and reverts when the PATCH fetch rejects", async () => {
-        const spy = jest.spyOn(console, "error").mockImplementation(() => {});
         const onSaved = jest.fn();
         const onClose = jest.fn();
         renderWithProviders(<RolesEditModal target={jane} me={{ isBoardMember: true }} onClose={onClose} onSaved={onSaved} />);
@@ -283,7 +282,6 @@ describe("RolesEditModal", () => {
         fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
         const call = (modals.openConfirmModal as jest.Mock).mock.calls[0][0];
-        // Reject the fetch itself (not ok:false) so the catch runs, not the else branch.
         global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
 
         await act(async () => {
@@ -292,15 +290,12 @@ describe("RolesEditModal", () => {
 
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(
-                expect.objectContaining({ color: "red", message: "Network error updating roles" }),
+                expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
             ),
         );
-        expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to update roles"), expect.anything());
-
-        // The catch (unlike the ok:false branch) does not revert; it only toasts.
-        // Neither success callback fires.
+        expect(screen.getByLabelText("Keyholder")).toBeChecked();
+        expect(screen.getByLabelText("Operations")).not.toBeChecked();
         expect(onSaved).not.toHaveBeenCalled();
         expect(onClose).not.toHaveBeenCalled();
-        spy.mockRestore();
     });
 });

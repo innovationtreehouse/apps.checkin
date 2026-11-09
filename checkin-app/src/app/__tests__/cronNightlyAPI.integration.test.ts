@@ -291,7 +291,7 @@ describe('Cron Nightly API Integration Tests', () => {
             mockBadVisitIds.clear();
 
             // Let the post-event email fire again on run 1 so we can prove run 2 does not re-send.
-            await prisma.event.update({ where: { id: eventId }, data: { postEventEmailSent: false } });
+            await prisma.event.update({ where: { id: eventId }, data: { postEventEmailSent: false, postEventEmailClaimedAt: null } });
 
             const arrivedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
             await prisma.visit.create({ data: { personId: keyholderId, arrivedAt } });

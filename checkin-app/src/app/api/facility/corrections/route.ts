@@ -95,9 +95,9 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
             tableName: r.tableName,
             affectedEntityId: r.affectedEntityId,
             secondaryAffectedEntity: r.secondaryAffectedEntity,
-            // Rebuilt, not copied: `type` + `significance` only. oldData never
+            // Rebuilt, not copied: these three named fields only. oldData never
             // rides at all — the before-state ships solely via the Visit pair below.
-            newData: { type: newData.type, significance: newData.significance },
+            newData: { type: newData.type, significance: newData.significance, overlapsVisitIds: newData.overlapsVisitIds },
         };
     });
 
@@ -112,10 +112,9 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
     const visitPairs = rows.map((r) => [pickVisit(r.oldData), pickVisit(r.newData)]);
 
     // Actor + subject names, batched — AuditLog has no @relation to Person.
-    // mergedIntoId rides along so the drill-down can follow a since-merged
-    // subject to their surviving record: a merge moves the visits, so an older
-    // audit row can name a person since merged away. A merge deletes the
-    // Person row, so that person comes from the merge archive instead.
+    // An older audit row can name a person since merged away; a merge deletes
+    // the Person row, so that person comes from the merge archive, carrying
+    // their survivor's id as `mergedIntoId` so the UI can mark the row.
     // SYSTEM_ACTOR is a sentinel, not a person id — looking it up would find
     // nobody and the row would render as one person editing another's record.
     const personIds = new Set<number>();
@@ -123,14 +122,10 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
         if (r.actorId !== SYSTEM_ACTOR) personIds.add(r.actorId);
         if (r.secondaryAffectedEntity != null) personIds.add(r.secondaryAffectedEntity);
     }
-    // Deliberately NOT LIVE_PERSON-filtered: an audit row's actor or subject may
-    // since have been merged away, and the drill-down must still name them.
-    // `mergedIntoId` is selected so the UI can mark the row, and because the
-    // drift guard reads its presence as the filter — keep it if the select narrows.
-    const people: { id: number; name: string | null; mergedIntoId: number | null }[] = personIds.size
+    const people: { id: number; name: string | null; mergedIntoId?: number }[] = personIds.size
         ? await prisma.person.findMany({
             where: { id: { in: [...personIds] } },
-            select: { id: true, name: true, mergedIntoId: true },
+            select: { id: true, name: true },
         })
         : [];
     const found = new Set(people.map((p) => p.id));

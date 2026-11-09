@@ -31,10 +31,7 @@ export function createOrgEventsRepository(db: Db) {
 
     async findPending(orgId: string): Promise<ExpenseReceivedOrgEvent[]> {
       return db.expenseReceivedOrgEvent.findMany({
-        where: {
-          orgId,
-          status: { in: ["pending", "failed"] },
-        },
+        where: { orgId, status: "pending" },
         orderBy: { id: "asc" },
       });
     },

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Admission and view invariants for the expense routes (#1272 §5/§6). No DB:
+ * Admission and view invariants for the expense routes. No DB:
  * next-auth's getServerSession is the jest.setup.js mock, and the bucket
  * approver lookup is stubbed per test.
  *

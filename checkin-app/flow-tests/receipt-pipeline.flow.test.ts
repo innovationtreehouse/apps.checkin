@@ -1,5 +1,5 @@
 /**
- * Receipt pipeline (X6 → X5): a receipt uploaded and read by the local OCR mock, confirmed by its
+ * Receipt pipeline (S1 → X5): a receipt uploaded and read by the local OCR mock, confirmed by its
  * uploader, reaches workflow-mapping in the same request (S1), where the manager resolves its
  * line; it proceeds and expense books it under the receipt's id. Once received, the receipt side
  * refuses restarts and edits, and a re-send is answered as a replay. Real HTTP against the

@@ -1,5 +1,5 @@
 /**
- * Client gate ↔ server Authorize token pairs (threat model D35). Each library's
+ * Client gate ↔ server Authorize token pairs. Each library's
  * nav entries, pages and count providers decide visibility with a client
  * predicate; the routes behind them admit with a token resolved in
  * security/access-resolvers.ts. gateEquality.test.ts asserts each pair admits
@@ -147,6 +147,7 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'sub-tab /inventory/inventory-log applies route', client: tab(INVENTORY, '/inventory/inventory-log'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/inventory-log applies route', client: page('/inventory/inventory-log'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
+    { name: 'counts:catalog', client: counts('catalog'), token: routeToken('POST /api/catalog/provisional-items/[id]/approve') },
     { name: 'counts:local-inventory', client: counts('local-inventory'), token: routeToken('POST /api/inventory/receive-queue/[id]/fulfill') },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
@@ -162,7 +163,6 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'sub-tab /income/reconciliation count route', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'counts:income', client: counts('income'), token: routeToken('POST /api/income/reconciliation/[id]/resolve') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
-    { name: 'page /donations nav-counts route', client: page('/donations'), token: routeToken('GET /api/donations/nav-counts') },
     {
         name: 'page /programs-i-lead/expense-approvals',
         client: page('/programs-i-lead/expense-approvals'),

@@ -3,6 +3,7 @@ import { ServiceError } from "@checkin/component-kit";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
+import { logBackendError, logger } from "@/lib/logger";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
@@ -11,6 +12,7 @@ import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
+import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -121,7 +123,9 @@ export type ActivateOutcome =
  * still conditional on the status it read.
  *
  * - A board certify (via "manual") must find the process awaiting payment under
- *   the lock; otherwise it throws.
+ *   the lock; otherwise it throws. With `requireRequested` it must also find the
+ *   payment-plan request still open, and closes it in the write that settles, so
+ *   a racing denial and this approval cannot both take effect.
  * - A refunded, cancelled or disputed order records nothing (`refunded`); the board is told.
  * - A DENIED household changes nothing; the board is told.
  * - BLOCKED records a real membership payment (stays BLOCKED, refund needed).
@@ -135,8 +139,9 @@ export type ActivateOutcome =
  */
 async function settle(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
 ): Promise<{ outcome: ActivateOutcome; householdId?: number }> {
+    if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -148,7 +153,11 @@ async function settle(
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         if (opts.via === "manual") {
-            if (process.status !== "PENDING_PAYMENT" || process.paidAt) {
+            if (opts.requireRequested && !(process.isPaymentPlanRequested && process.status === "PENDING_PAYMENT")) {
+                throw new PaymentError("wrong_phase", "No pending payment-plan request");
+            }
+            if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
+            if (process.status !== "PENDING_PAYMENT") {
                 throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
             }
             if (membership.status === "DENIED") {
@@ -171,6 +180,8 @@ async function settle(
         };
         const actor = personOrSystemActor(opts.actorId, "webhook:shopify-order");
         const missingItem = opts.via === "payment" && opts.hasMembershipItem === false;
+        const closesRequest = opts.via === "manual" && opts.requireRequested === true;
+        const approvalAudit = closesRequest ? { paymentPlanApproved: true, isPaymentPlanRequested: false } : {};
 
         if (process.status === "BLOCKED") {
             // Checked before stamping paidAt: a board reset of a paid BLOCKED row
@@ -220,8 +231,9 @@ async function settle(
             if (!applied) return { outcome: "denied" as const, householdId: membership.householdId };
         }
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null },
-            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE" },
+            where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null, ...(closesRequest ? { isPaymentPlanRequested: true } : {}) },
+            // Leaving PENDING_PAYMENT ends any payment-plan request, approved or not.
+            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false },
         });
         // Under the row lock the status can't have moved; if it did, roll the household write back.
         if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -233,8 +245,8 @@ async function settle(
                 affectedEntityId: processId,
                 oldData: { status: process.status },
                 newData: activating
-                    ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}) }
-                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(certificationNote ? { certificationNote } : {}) },
+                    ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit }
+                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit },
             },
         });
         return activating
@@ -245,11 +257,14 @@ async function settle(
     // Side effects outside the transaction: a slow/failed send must not roll back
     // the write, and only the call that actually recorded the change emits one.
     if (result.outcome === "active" && "isInitial" in result) {
-        await sendCongrats(result.householdId, result.isInitial);
+        const { householdId, isInitial } = result;
+        await afterActivationCommitted("congrats email", processId, householdId, () => sendCongrats(householdId, isInitial));
         // A brand-new (INITIAL) member just activated: open PERSON_BG for the
         // household's check-obligated adults, and the per-adult agreements.
-        if (result.isInitial) await openPersonBgForNewMember(result.householdId, new Date());
-        if (result.isInitial) await openPersonAgreementForNewMember(result.householdId, new Date());
+        if (isInitial) {
+            await afterActivationCommitted("person background-check trigger", processId, householdId, () => openPersonBgForNewMember(householdId, new Date()));
+            await afterActivationCommitted("person agreement trigger", processId, householdId, () => openPersonAgreementForNewMember(householdId, new Date()));
+        }
     }
     if (result.outcome === "denied") {
         await raiseDeniedHouseholdActivity({
@@ -260,6 +275,21 @@ async function settle(
     }
     if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
     return result;
+}
+
+/**
+ * Runs a step whose failure must not change what the settlement reports: the payment
+ * has committed, and a retry finds it already recorded, so a throw would only report a
+ * saved payment as failed.
+ */
+async function afterActivationCommitted(step: string, processId: number, householdId: number, run: () => Promise<unknown>): Promise<void> {
+    try {
+        await run();
+    } catch (error) {
+        const context = { processId, householdId };
+        logger.error(`activation ${step} failed:`, context, error);
+        await logBackendError(error, `activation ${step}`, context);
+    }
 }
 
 async function auditNoItem(tx: Prisma.TransactionClient, processId: number, status: "BLOCKED" | "PENDING_PAYMENT", shopifyOrderId?: string) {
@@ -278,7 +308,7 @@ async function auditNoItem(tx: Prisma.TransactionClient, processId: number, stat
 /** Record a payment against a process (see settle). Returns the process row. */
 export async function activate(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
 ) {
     await settle(processId, opts);
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -289,8 +319,9 @@ export async function activate(
  * Rejects (403) an actor who is not a Board member (a sysadmin is not enough) and
  * the actor's own household; activate() rejects (409) under the row lock unless
  * the process is awaiting payment. Records `year`, or with none the live year.
+ * `requireRequested` makes this the decision on an open payment-plan request (see settle).
  */
-export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number }) {
+export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number; requireRequested?: boolean }) {
     // Only the Board certifies a payment (owner ruling 10-15). Checked here so every
     // caller (grant, renewal grant, payment-plan approve, certify-payment) is covered.
     const actor = await prisma.person.findUnique({ where: { id: actorId }, select: { isBoardMember: true } });
@@ -305,7 +336,7 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
     }
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     const appliesToYear = opts?.year ?? liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
-    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear });
+    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, requireRequested: opts?.requireRequested });
 }
 
 /** An order's membership line and the year it buys; the year is null when no boundary is set. */

@@ -3,7 +3,9 @@ import { useState } from "react";
 import { useViewer } from "@checkin/component-ui";
 import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, useLoad, when } from "../components/api";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { LoadError } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
@@ -14,7 +16,20 @@ interface QueueLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The account finance set on the line by hand; null until then. */
+  quickBooksAccountId: string | null;
 }
+
+/** One account from QuickBooks' live list, as the host's books-map route returns it. */
+interface LiveAccount {
+  id: string;
+  name: string;
+  accountType: string;
+  active: boolean;
+}
+
+// A donated item takes an expense account, donated equipment a fixed-asset one; the drain checks which each line needs.
+const DONATED_TYPES = new Set<string>([...LINE_ACCOUNT_TYPES.donatedGoods, ...LINE_ACCOUNT_TYPES.donatedCapital]);
 
 interface QueueItem {
   id: number;
@@ -70,6 +85,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
     Object.fromEntries(item.lines.map((l) => [l.id, l.valueCents === null && l.suggestedValueCents === null ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
   );
   const [attested, setAttested] = useState(false);
+  const [goodsConfirmed, setGoodsConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const needsValues = item.source === "manual" && !accepted;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
@@ -89,6 +105,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
       outcome,
       confirmOutsideDonorHousehold: true,
       ...(outcome === "accept" ? { bucketId: Number(bucketId) } : {}),
+      ...(outcome === "accept" && !accepted ? { confirmGoodsReceived: true } : {}),
       ...(outcome === "accept" && needsValues ? { lineValues: item.lines.map((l) => ({ lineId: l.id, valueCents: valueCents(l.id) })) } : {}),
     };
     setBusy(true);
@@ -113,7 +130,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
           <Table.Tbody>
             {item.lines.map((l) => (
               <Table.Tr key={l.id}>
-                <Table.Td>{l.description ?? l.gtin13 ?? "—"}</Table.Td>
+                <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
                 <Table.Td>{l.quantity}</Table.Td>
                 <Table.Td>
                   {needsValues ? (
@@ -141,8 +158,15 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
           checked={attested}
           onChange={(e) => setAttested(e.currentTarget.checked)}
         />
+        {!accepted && (
+          <Checkbox
+            label="To accept: I have confirmed these goods exist and arrived, not only read the receipt."
+            checked={goodsConfirmed}
+            onChange={(e) => setGoodsConfirmed(e.currentTarget.checked)}
+          />
+        )}
         <Group>
-          <Button onClick={() => send("accept")} disabled={!attested || !bucketId || (needsValues && !allValued)} loading={busy}>{accepted ? "Change bucket" : "Accept"}</Button>
+          <Button onClick={() => send("accept")} disabled={!attested || (!accepted && !goodsConfirmed) || !bucketId || (needsValues && !allValued)} loading={busy}>{accepted ? "Change bucket" : "Accept"}</Button>
           {!accepted && (
             <>
               <Button variant="light" color="red" onClick={() => send("refuse")} disabled={!attested} loading={busy}>Refuse</Button>
@@ -157,13 +181,16 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
 }
 
 /** The QuickBooks states the drain hands to finance to book, skip or match. */
-const QB_HELD = ["UNBOOKED", "NEEDS_FINANCE", "POST_FAILED"];
+const QB_HELD = ["UNBOOKED", "NEEDS_FINANCE", "NEEDS_ACCOUNT", "POST_FAILED"];
 
 const isHeld = (q: QueueItem) => q.qbState !== null && QB_HELD.includes(q.qbState);
+const isDrifted = (q: QueueItem) => q.qbState === "DRIFT";
 
 /**
  * Finance's QuickBooks actions on one gift: book it, skip it with a reason, or match entries
  * booked by hand by id, while the drain holds it for finance; and clear its note once answered.
+ * A gift whose entry changed in QuickBooks can be matched again or skipped, never booked.
+ * A held gift's lines can each be given an account by hand, which wins over the account rules.
  */
 function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
   const [reason, setReason] = useState("");
@@ -172,8 +199,12 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
   const [depositId, setDepositId] = useState("");
   const [purchaseId, setPurchaseId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [lineAccount, setLineAccount] = useState<Record<number, string | null>>({});
+  const live = useLoad<LiveAccount[]>(isHeld(item) ? "/api/books-map/quickbooks-accounts" : null);
+  const nameOf = new Map((live.data ?? []).map((a) => [a.id, a.name]));
+  const options = (live.data ?? []).filter((a) => a.active && DONATED_TYPES.has(a.accountType)).map((a) => ({ value: a.id, label: `${a.name} (${a.accountType})` }));
 
-  async function send(body: Record<string, string>, label: string) {
+  async function send(body: Record<string, string | number>, label: string) {
     setBusy(true);
     await act(() => api(`/in-kind/${item.source}/${item.id}/qb-resolve`, { method: "POST", body: JSON.stringify(body) }), label, onDone);
     setBusy(false);
@@ -192,10 +223,36 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
         )}
         {isHeld(item) && (
           <>
-            <Group align="end">
-              <Button onClick={() => send({ action: "book" }, "Booked in QuickBooks")} loading={busy}>Book</Button>
-              <Text size="xs" c="dimmed">The app creates the journal entry, unless it finds one already booked.</Text>
-            </Group>
+            {live.error && <LoadError what="QuickBooks' account list" message={live.error} onRetry={live.reload} />}
+            {item.lines.map((l) => (
+              <Group key={l.id} align="end">
+                <Text size="sm" w={240}>
+                  {l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "Donated item")}
+                  <Text span size="xs" c="dimmed" display="block">
+                    {l.quickBooksAccountId ? `Set by hand: ${nameOf.get(l.quickBooksAccountId) ?? l.quickBooksAccountId}` : "From the account rules"}
+                  </Text>
+                </Text>
+                <Select label="Account" searchable data={options} value={lineAccount[l.id] ?? null} onChange={(v) => setLineAccount({ ...lineAccount, [l.id]: v })} w={280} />
+                <Button
+                  variant="light"
+                  onClick={() => send({ action: "set-account", lineId: l.id, quickBooksAccountId: lineAccount[l.id] ?? "" }, "Account set")}
+                  disabled={!lineAccount[l.id]}
+                  loading={busy}
+                >
+                  Set account
+                </Button>
+              </Group>
+            ))}
+          </>
+        )}
+        {isHeld(item) && (
+          <Group align="end">
+            <Button onClick={() => send({ action: "book" }, "Booked in QuickBooks")} loading={busy}>Book</Button>
+            <Text size="xs" c="dimmed">The app creates the journal entry, unless it finds one already booked.</Text>
+          </Group>
+        )}
+        {(isHeld(item) || isDrifted(item)) && (
+          <>
             <Group align="end">
               <TextInput label="Reason" placeholder="Booked by hand, out of scope, …" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={320} />
               <Button variant="light" color="gray" onClick={() => send({ action: "skip", reason }, "Skipped")} disabled={!reason.trim()} loading={busy}>Skip</Button>
@@ -234,15 +291,13 @@ export default function InKindQueuePage() {
 
   const mayDecide = (q: QueueItem) => !q.callerConflicted && (isFinance || (isBoard && q.allFinanceConflicted));
   const decidable = (q: QueueItem) => q.state === "decision" || (q.outcome === "ACCEPTED" && q.revenueBooking === null && q.expenseBooking === null && (q.state === "bucket" || q.state === "capital" || q.state === "booking"));
-  const settleKind = (q: QueueItem) => (q.state === "withdrawal" ? "withdrawal" : q.state === "replay" ? "replay" : null);
 
   return (
     <>
       <Title order={3} mb="md">In-kind queue</Title>
       <Text size="sm" c="dimmed" mb="md">
         Every gift of goods is accepted, refused or returned by a finance holder outside the household of whoever uploaded or recorded it;
-        a Board member decides when every finance holder is conflicted. A withdrawal after money is settled here once any booked
-        side is reversed by hand in QuickBooks; settling clears the donor.
+        a Board member decides when every finance holder is conflicted.
       </Text>
       {queue.error && <LoadError what="the in-kind queue" message={queue.error} onRetry={queue.reload} />}
       {queue.data?.length === 0 && <Text c="dimmed">Nothing in the queue.</Text>}
@@ -257,11 +312,10 @@ export default function InKindQueuePage() {
           <Table.Tbody>
             {queue.data.map((q) => {
               const key = `${q.source}:${q.id}`;
-              const kind = settleKind(q);
               return [
                 <Table.Tr key={key}>
                   <Table.Td>
-                    {q.state ? <Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge> : <Badge color="yellow">QuickBooks note</Badge>}
+                    {isDrifted(q) && q.state === "booking" ? <Badge color="red">Changed in QuickBooks</Badge> : q.state ? <Badge color={STATE[q.state].color}>{STATE[q.state].label}</Badge> : <Badge color="yellow">QuickBooks note</Badge>}
                   </Table.Td>
                   <Table.Td><Anchor href={`/donations/in-kind/${q.source}/${q.id}`}>{q.source === "receipt" ? `Receipt ${q.receiptId}` : "No receipt"}</Anchor></Table.Td>
                   <Table.Td>{q.receiptDate ?? q.donationDate ?? when(q.moneyReceivedAt)}</Table.Td>
@@ -276,12 +330,12 @@ export default function InKindQueuePage() {
                       <Button size="xs" variant="light" onClick={() => setOpen(open === key ? null : key)}>{q.outcome ? "Change bucket" : "Decide"}</Button>
                     )}
                     {decidable(q) && q.callerConflicted && <Text size="xs" c="dimmed">You are conflicted on this gift</Text>}
-                    {kind && isFinance && (
-                      <Button size="xs" variant="light" color="red" onClick={() => act(() => api(`/in-kind/receipt/${q.id}/settle`, { method: "POST", body: JSON.stringify({ kind }) }), "Settled", queue.reload)}>
-                        {kind === "withdrawal" ? "Settle withdrawal" : "Keep first values"}
+                    {q.state === "replay" && isFinance && (
+                      <Button size="xs" variant="light" color="red" onClick={() => act(() => api(`/in-kind/receipt/${q.id}/settle`, { method: "POST", body: JSON.stringify({ kind: "replay" }) }), "Settled", queue.reload)}>
+                        Keep first values
                       </Button>
                     )}
-                    {isFinance && (isHeld(q) || q.qbNote) && (
+                    {isFinance && (isHeld(q) || isDrifted(q) || q.qbNote) && (
                       <Button size="xs" variant="light" onClick={() => setQbOpen(qbOpen === key ? null : key)}>QuickBooks</Button>
                     )}
                   </Table.Td>

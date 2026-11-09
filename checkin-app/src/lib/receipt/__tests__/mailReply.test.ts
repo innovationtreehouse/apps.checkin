@@ -14,6 +14,7 @@ const ack = (over: Partial<MailAcknowledgement> = {}): MailAcknowledgement => ({
     receiptId: 'r-1',
     receivedAt: new Date('2026-10-27T12:00:00Z'),
     refused: [],
+    noticeId: 'm1.senderSentAt',
     ...over,
 });
 
@@ -53,6 +54,16 @@ describe('refused files', () => {
     });
 });
 
+describe('a message with no receipt', () => {
+    it('says no receipt was found and how to send one, naming no file', async () => {
+        const html = await htmlFor({ receiptId: null, mine: false, creditedName: null, refused: [{ file: 'your email', reason: 'no_receipt' }] });
+        expect(html).toContain('We found no receipt file or receipt text in it.');
+        expect(html).not.toContain('no amount');
+        expect(html).toContain('https://app.example.org/receipts/upload');
+        expect(html).not.toContain('We could not accept these files');
+    });
+});
+
 describe('the acknowledgement body', () => {
     it("tells the credited sender it is theirs, links it, and says how to say 'not me'", async () => {
         const html = await htmlFor();
@@ -81,7 +92,12 @@ describe('the acknowledgement body', () => {
 describe('sendMailReply', () => {
     it('sends as an automatic reply', async () => {
         await expect(sendMailReply(ack(), 'receipts@example.org')).resolves.toBe(true);
-        expect(mockSendEmail).toHaveBeenCalledWith('pat@example.org', 'Receipt received', expect.any(String), { 'Auto-Submitted': 'auto-replied' });
+        expect(mockSendEmail).toHaveBeenCalledWith('pat@example.org', 'Receipt received', expect.any(String), expect.objectContaining({ 'Auto-Submitted': 'auto-replied' }));
+    });
+
+    it('names the notice in its Message-ID, on the receipt mailbox domain, so intake knows a reply to it', async () => {
+        await sendMailReply(ack(), 'receipts@example.org');
+        expect(mockSendEmail.mock.calls[0][3]).toEqual({ 'Auto-Submitted': 'auto-replied', 'Message-ID': '<receipt-notice.m1.senderSentAt@example.org>' });
     });
 
     it('reports a failed send', async () => {

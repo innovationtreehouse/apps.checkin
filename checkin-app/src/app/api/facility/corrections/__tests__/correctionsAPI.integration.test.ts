@@ -2,11 +2,10 @@
  * @jest-environment node
  */
 /**
- * Integration test for GET /api/facility/corrections (AT12).
+ * Integration test for GET /api/facility/corrections.
  *
  * Covers: auth rejection (401/403), the tableName='Visit' pin (a Person audit
- * row must never appear), the flagged filter (first JSON-path filter in the
- * repo), the synthesized bag (oldData never rides; newData is rebuilt to
+ * row must never appear), the flagged JSON-path filter, the synthesized bag (oldData never rides; newData is rebuilt to
  * {type, significance}; before/after Visit times are extracted from the raw
  * blobs), and Person name resolution.
  */

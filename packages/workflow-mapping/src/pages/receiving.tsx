@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { STATE_LABEL, api, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
+import { isUnreadableReceiptNote } from "../lib/unreadable-receipt";
 
 interface ReceiptRow {
   id: number;
@@ -14,6 +15,7 @@ interface ReceiptRow {
   receiptTotalCents?: number | null;
   currency: string;
   lineItemCount: number;
+  openBackorders: number;
   validationNotes?: string | null;
   createdAt: string;
 }
@@ -41,23 +43,60 @@ export default function ReceivingPage() {
   const c = counts.data;
   const canRetry = useCanManage() && queue === "failed";
   const [retrying, setRetrying] = useState<number | null>(null);
+  const [bulk, setBulk] = useState<{ at: number; of: number } | null>(null);
+
+  function reloadAll() {
+    rows.reload();
+    counts.reload();
+    notifyNavCounts();
+  }
 
   // Retry resets the receipt to applying, then applies it, as the receipt page's Retry apply does.
-  async function retry(id: number) {
-    setRetrying(id);
+  // "sending": a part went through but wasn't recorded, so the receipt stays applying.
+  async function retryOne(id: number): Promise<{ outcome: "applied" | "sending" } | { outcome: "failed"; message: string }> {
     try {
       await api(`/receipts/${id}/retry-apply`, { method: "POST" });
       const res = await api<{ state?: string; validationNotes?: string | null }>(`/receipts/${id}/apply`, { method: "POST" });
-      if (res.state === "apply_failed") notifications.show({ message: res.validationNotes ?? "Apply failed", color: "red", autoClose: false });
-      else notifications.show({ message: "Applied", color: "green" });
+      if (res.state === "apply_failed") return { outcome: "failed", message: res.validationNotes ?? "Apply failed" };
+      return { outcome: res.state === "applying" ? "sending" : "applied" };
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
-    } finally {
-      setRetrying(null);
-      rows.reload();
-      counts.reload();
-      notifyNavCounts();
+      return { outcome: "failed", message: errorMessage(err) };
     }
+  }
+
+  async function retry(id: number) {
+    setRetrying(id);
+    const result = await retryOne(id);
+    notifications.show(
+      result.outcome === "failed" ? { message: result.message, color: "red", autoClose: false }
+        : result.outcome === "sending" ? { message: "Still sending: it stays In progress and the system retries it automatically.", color: "orange", autoClose: false }
+        : { message: "Applied", color: "green" },
+    );
+    setRetrying(null);
+    reloadAll();
+  }
+
+  // A receipt whose stored data can't be read fails every retry, so Retry all leaves it out.
+  const retryable = canRetry ? (rows.data ?? []).filter((r) => !isUnreadableReceiptNote(r.validationNotes)) : [];
+  const skipped = (rows.data?.length ?? 0) - retryable.length;
+
+  async function retryAll() {
+    const ids = retryable.map((r) => r.id);
+    const tally = { applied: 0, sending: 0, failed: 0 };
+    for (const [i, id] of ids.entries()) {
+      setBulk({ at: i + 1, of: ids.length });
+      tally[(await retryOne(id)).outcome]++;
+    }
+    setBulk(null);
+    const message = [
+      `${tally.applied} applied`,
+      tally.sending ? `${tally.sending} still sending` : "",
+      `${tally.failed} still failed`,
+      skipped ? `${skipped} skipped (stored data unreadable)` : "",
+    ].filter(Boolean).join(", ");
+    const allApplied = tally.applied === ids.length;
+    notifications.show(allApplied ? { message, color: "green" } : { message, color: "red", autoClose: false });
+    reloadAll();
   }
 
   return (
@@ -77,6 +116,14 @@ export default function ReceivingPage() {
           { value: "all", label: "All" },
         ]}
       />
+      {retryable.length > 0 && (
+        <Group mb="md">
+          <Button size="xs" variant="light" loading={bulk !== null} disabled={retrying !== null} onClick={() => void retryAll()}>
+            Retry all ({retryable.length})
+          </Button>
+          {bulk && <Text size="sm" c="dimmed">Retrying {bulk.at} of {bulk.of}…</Text>}
+        </Group>
+      )}
       {rows.error && <Alert color="red" mb="md" title="Couldn't load receipts">{rows.error}</Alert>}
       {rows.data === null ? <Text c="dimmed">Loading…</Text>
         : rows.data.length === 0 ? <Text c="dimmed">No receipts here.</Text>
@@ -102,11 +149,11 @@ export default function ReceivingPage() {
                   <Table.Td>{r.vendorName ?? "—"}</Table.Td>
                   <Table.Td>{formatCents(r.receiptTotalCents, r.currency)}</Table.Td>
                   <Table.Td>{r.lineItemCount}</Table.Td>
-                  <Table.Td><Badge variant="light">{STATE_LABEL[r.state] ?? r.state}</Badge></Table.Td>
+                  <Table.Td><Badge variant="light" color={stateColor(r.state, r.openBackorders)}>{stateLabel(r.state, r.openBackorders)}</Badge></Table.Td>
                   <Table.Td><Text size="sm" c="dimmed">{r.validationNotes ?? ""}</Text></Table.Td>
                   {canRetry && (
                     <Table.Td>
-                      <Button size="xs" variant="light" loading={retrying === r.id} onClick={() => void retry(r.id)}>
+                      <Button size="xs" variant="light" loading={retrying === r.id} disabled={bulk !== null} onClick={() => void retry(r.id)}>
                         Retry
                       </Button>
                     </Table.Td>

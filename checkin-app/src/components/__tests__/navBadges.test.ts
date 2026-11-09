@@ -341,28 +341,35 @@ describe('sectionTabBadge — grouped tabs', () => {
 describe('system-status infra-health badge', () => {
   it('no badge when the payload has no configHealth (non-admin) or zero issues', () => {
     expect(navBadgeFor('/system-status', base)).toEqual([]);
-    expect(navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 0, unhealthyCronJobs: 0 } })).toEqual([]);
+    expect(navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 0, unhealthyCronJobs: 0, openIncidents: 0 } })).toEqual([]);
   });
 
   it('red alert badge counting open config issues', () => {
-    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 2, unhealthyCronJobs: 0 } });
+    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 2, unhealthyCronJobs: 0, openIncidents: 0 } });
     expect(badges).toEqual([{ count: 2, color: 'red', label: '2 config issues' }]);
   });
 
   it('singularizes the label at one issue', () => {
-    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 1, unhealthyCronJobs: 0 } });
+    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 1, unhealthyCronJobs: 0, openIncidents: 0 } });
     expect(badges[0].label).toBe('1 config issue');
   });
 
   it('a stale cron job alone raises the red pill', () => {
-    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 0, unhealthyCronJobs: 1 } });
+    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 0, unhealthyCronJobs: 1, openIncidents: 0 } });
     expect(badges).toEqual([{ count: 1, color: 'red', label: '1 cron job unhealthy' }]);
   });
 
   // One pill, not two: both halves are "infra broken" on the same page.
   it('folds stale cron jobs into the same count as config issues', () => {
-    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 2, unhealthyCronJobs: 3 } });
+    const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 2, unhealthyCronJobs: 3, openIncidents: 0 } });
     expect(badges).toEqual([{ count: 5, color: 'red', label: '2 config issues, 3 cron jobs unhealthy' }]);
+  });
+
+  it('open incidents join the same pill', () => {
+    const one = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 0, unhealthyCronJobs: 0, openIncidents: 1 } });
+    expect(one).toEqual([{ count: 1, color: 'red', label: '1 open problem' }]);
+    const all = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 1, unhealthyCronJobs: 1, openIncidents: 2 } });
+    expect(all).toEqual([{ count: 4, color: 'red', label: '1 config issue, 1 cron job unhealthy, 2 open problems' }]);
   });
 });
 

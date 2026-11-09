@@ -1,0 +1,8 @@
+[Unit]
+Description=Forced kiosk update check, every five minutes
+
+[Timer]
+OnCalendar=*:00/5
+
+[Install]
+WantedBy=timers.target

@@ -82,9 +82,10 @@ model PayoutReconciliation {
   @@map("payout_reconciliations")
 }
 
-// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks category).
-// budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
-// the OwnerDirectory port. Unmapped variants, and rows with no bucket, book at organization level.
+// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks Class) and the
+// QuickBooks income account its sales book to. budget_owner_id is checkin's BudgetOwner.id in
+// another database: no FK, validated through the OwnerDirectory port. A row with no bucket books
+// at organization level; a variant with no row, or a row with no account, is undecided.
 model IncomeItemCategory {
   /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
@@ -95,6 +96,8 @@ model IncomeItemCategory {
   /// @sensitivity:internal
   budgetOwnerId Int?     @map("budget_owner_id")
   /// @sensitivity:internal
+  quickBooksAccountId String? @map("qb_account_id")
+  /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -103,8 +106,9 @@ model IncomeItemCategory {
   @@map("income_item_categories")
 }
 
-// The org's limits on the deposits one outbox drain may create. FINANCE may lower them;
-// raising one takes the board. Every change is written to the audit log.
+// The org's limits on the deposits one outbox drain may create, and the Benevity match window.
+// FINANCE may lower a limit; raising one takes the board. Finance or the board may move the window
+// either way. Every change is written to the audit log.
 model IncomeOrgSettings {
   /// @sensitivity:internal
   orgId                String @id @map("org_id")
@@ -115,6 +119,9 @@ model IncomeOrgSettings {
   /// The cents cap for Benevity deposits, per deposit and per run; maxCreateCentsPerRun is Shopify's.
   /// @sensitivity:internal
   benevityMaxCreateCentsPerRun Int @default(2500000) @map("benevity_max_create_cents_per_run")
+  /// Days either side of a Benevity deposit's date a QuickBooks deposit may match.
+  /// @sensitivity:internal
+  benevityMatchWindowDays Int @default(7) @map("benevity_match_window_days")
   /// When Shopify posting switched on: set once, by the first drain that posts Shopify payouts, never cleared.
   /// @sensitivity:internal
   qbPostingOnAt        DateTime? @map("qb_posting_on_at")

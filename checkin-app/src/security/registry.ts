@@ -216,9 +216,11 @@ defineRoute({
 // resolveAccess keys those on a PROGRAM id). The orderedView below is therefore
 // defense-in-depth over the staff tiers only: admin -> everyones:*, and this
 // event's lead/core-vol -> their_program_participants:* via the per-row scope
-// resolver (mirrors 'GET /api/trusted-adults/operational'). internal tier is
-// granted to that scope so staff keep attendanceConfirmedAt (rendered by
-// program-ops/sessions/[id]).
+// resolver (mirrors 'GET /api/trusted-adults/operational'). That scope stops at
+// personal: the two staff-only fields the session page renders
+// (Event.attendanceConfirmedAt, ProgramVolunteer.isCore) are personal, and every
+// internal ProgramParticipant field says how a family pays, which is not a
+// program leader's (docs/rules/programs.md).
 defineRoute({
     endpoint: 'GET /api/events/[id]',
     authorize: 'authenticated',
@@ -232,7 +234,6 @@ defineRoute({
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['authenticated', ['their_program_participants:pii',
                            'their_program_participants:personal',
-                           'their_program_participants:internal',
                            'their_own:pii',
                            'their_own:personal',
                            'member', 'public']],
@@ -382,9 +383,31 @@ defineRoute({
     ],
 });
 
-// Tombstone census. Lists merged-away Person rows and, per tombstone,
-// the residue still parked on it — the surface a sysadmin/board uses to triage the
-// existing stock before the LIVE_PERSON removal deletes those rows. The bag is
+// Board archives or unarchives a household (docs/in-design/HOUSEHOLD_ARCHIVE.md).
+// Board only, NOT sysadmin: archival is a membership decision. The bag is
+// { Household }, the updated row; the view keeps id, name and archivedAt and
+// drops the address and intake note, which the action's caller does not need.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/households/[id]/archive',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'household',
+    returns: ['Household'],
+    orderedView: [
+        ['isBoardMember', ['public']],
+    ],
+});
+defineRoute({
+    endpoint: 'POST /api/membership-ops/households/[id]/unarchive',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'household',
+    returns: ['Household'],
+    orderedView: [
+        ['isBoardMember', ['public']],
+    ],
+});
+
+// Tombstone census. Lists merged-away Person rows and, per tombstone, the
+// residue still parked on it, for sysadmin/board triage. The bag is
 // { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
 // _count of the residue relations) and { PersonMerge } (fromId only, so the page
 // can flag a tombstone that has no archive row). Exposes tombstone identity,
@@ -539,15 +562,16 @@ defineRoute({
 // deciding — wasOrgMemberAtApproval is only stamped on approval). Board/finance
 // only, no sysadmin, and they hold everyones:* so they see every field — the win
 // is the declared policy: any role later added to this view is field-stripped
-// automatically.
+// automatically. everyones:hardship is the request itself; only Board and
+// finance views hold it.
 defineRoute({
     endpoint: 'GET /api/finance-ops/payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
     returns: ['ProgramParticipant', 'Person', 'Program', 'Household', 'OrgMembership', 'BoardSettings'],
     orderedView: [
-        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
     auditedRead: true,
 });
@@ -600,15 +624,16 @@ defineRoute({
 // OrgMembershipProcess rows the household asked to pay by plan, with the
 // membership + household nested. Board/finance only, no sysadmin, and they hold
 // everyones:* so they see every field — the win is the declared policy: any role
-// later added to this view is field-stripped automatically.
+// later added to this view is field-stripped automatically. everyones:hardship is
+// the request itself; only Board and finance views hold it.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
     returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
-        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
     auditedRead: true,
 });
@@ -817,6 +842,21 @@ defineRoute({
     orderedView: [],
 });
 
+// Retry and Retry all on the Problems list: re-runs each named stuck item's
+// step and answers whether it ran. Admits the people who see System Status;
+// each step's own role check runs inside the route. No error text leaves (see
+// problemsSyntheticClassifications.ts), so neither view needs a personal grant.
+defineRoute({
+    endpoint: 'POST /api/system-status/problems/retry',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'results',
+    returns: ['ProblemRetryResult'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal']],
+        ['isBoardMember', ['everyones:internal']],
+    ],
+});
+
 // Daily QuickBooks expense posting (stranded recovery + outbox drain), a money
 // write, so it answers only to its own secret, never the shared CRON_SECRET.
 // Admission gate only: the response carries no rows.
@@ -928,12 +968,12 @@ defineRoute({
 });
 
 // Membership settings singleton (dues, year boundary, Shopify variant ids —
-// internal tier) — admin surface, full row.
+// internal tier) and the per-year variant rows — admin surface, full rows.
 defineRoute({
     endpoint: 'GET /api/settings/membership',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'settings',
-    returns: ['BoardSettings'],
+    returns: ['BoardSettings', 'MembershipYearVariant'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],

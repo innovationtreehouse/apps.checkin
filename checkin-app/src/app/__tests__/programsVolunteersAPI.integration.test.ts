@@ -226,26 +226,6 @@ describe('Program Volunteers API Integration Tests', () => {
              expect(res.status).not.toBe(500);
         });
 
-        it('refuses a merged-away record and assigns no one', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
-             const created = await prisma.person.create({
-                 data: { email: 'tombstone-volun-api-test@example.com', name: 'Tombstone', household: { create: { name: "Test HH" } } }
-             });
-             const tombstone = await prisma.person.update({ where: { id: created.id }, data: { mergedIntoId: candidateId } });
-             try {
-                 const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
-                     method: 'POST',
-                     body: JSON.stringify({ participantId: tombstone.id })
-                 });
-                 const res = await POST(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
-                 expect(res.status).toBe(400);
-                 expect(await prisma.programVolunteer.count({ where: { personId: tombstone.id } })).toBe(0);
-             } finally {
-                 await prisma.programVolunteer.deleteMany({ where: { personId: tombstone.id } });
-                 await prisma.person.delete({ where: { id: tombstone.id } });
-             }
-        });
-
         it.each([
             ['themself', () => leadId],
             ['someone in their own household', () => leadSpouseId],

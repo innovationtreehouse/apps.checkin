@@ -7,6 +7,7 @@ jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
         person: { findUnique: jest.fn(), findMany: jest.fn() },
+        orgMembershipProcess: { findUnique: jest.fn(async () => null) },
         auditLog: { create: jest.fn() },
         $transaction: jest.fn(),
     },

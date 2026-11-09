@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the bulk-donation classifications (#1280). Tiers are
+ * Boundary coverage for the bulk-donation classifications. Tiers are
  * per field: gift amounts are `internal`, donor identity is `pii`. A view that
  * grants `internal` but not `pii` is the de-identified view — amounts with no
  * names — and the FINANCE/BOARD view (pii + internal) sees both.
@@ -139,7 +139,7 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             donationDate: '2026-10-01',
             qbState: 'unmatched',
             qbNote: 'no clearing-account entry on 2026-10-01',
-            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 60000, suggestedValueCents: 50000 }],
+            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 60000, suggestedValueCents: 50000, quickBooksAccountId: '84' }],
         };
         const row = {
             ...accept,
@@ -160,7 +160,7 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             waitingOn: ['decision'],
             inventorySourceKey: null,
             inventoryLoadFailureReason: null,
-            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null }],
+            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null, quickBooksAccountId: null }],
             events: [{ id: 8, eventType: 'IN_KIND_MONEY_RECEIVED', actorUsername: null, occurredAt: '2026-10-02T00:00:00.000Z', payload: null }],
         };
         const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };

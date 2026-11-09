@@ -24,7 +24,8 @@ const wait = (ms: number) => act(() => { vi.advanceTimersByTime(ms); });
 describe("showSuccess", () => {
   it("goes away by itself and does not interrupt a screen reader", () => {
     act(() => showSuccess("Saved"));
-    expect(shown()).toMatchObject([{ message: "Saved", color: "green", role: "status" }]);
+    expect(shown()).toMatchObject([{ message: "Saved", color: "green" }]);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("Saved");
     wait(5000);
     expect(shown()).toEqual([]);
   });

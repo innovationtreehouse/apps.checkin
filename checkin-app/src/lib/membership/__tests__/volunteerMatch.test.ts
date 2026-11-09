@@ -2,8 +2,8 @@ import { matchesVolunteerDesignation } from "@/lib/membership/review";
 
 /**
  * Volunteer-designation match drives Membership.isVolunteerFamily, which drives the membership fee.
- * These lock the two cases the OLD review normalization got wrong (strip dots on
- * every domain, keep +tag) and canonicalizeEmail now handles correctly.
+ * These lock canonicalizeEmail's Gmail rules: a +tag is dropped, and dots are
+ * ignored only on Gmail.
  */
 describe("matchesVolunteerDesignation", () => {
     it("matches a Gmail +tag parent against the un-tagged designation (was MISSED before)", () => {

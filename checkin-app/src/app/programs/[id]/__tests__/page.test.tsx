@@ -62,6 +62,7 @@ function baseProgram(overrides: Record<string, unknown> = {}) {
         name: "Robotics Club",
         startAt: "2026-06-01T00:00:00.000Z",
         endAt: "2026-12-31T00:00:00.000Z",
+        enrollmentClosedBy: null,
         leadMentorId: 5,
         leadMentor: { name: "Coach K", email: "coach@example.com" },
         participants: [{ personId: 100, status: "ACTIVE" }],
@@ -442,6 +443,52 @@ describe("ProgramEnrollmentPage", () => {
         expect(await screen.findByText(/failed to alert the Scholarship Review Team/)).toBeInTheDocument();
     });
 
+    describe("payment plan for a child who already has an enrollment row", () => {
+        async function requestPlanAfterConflict(plan: { status: number; body: Record<string, unknown> }) {
+            setSession({ id: 101 });
+            const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+                const url = typeof input === "string" ? input : input.toString();
+                if (url.includes("/api/programs/10/request-payment-plan")) return { ok: plan.status < 400, status: plan.status, json: async () => plan.body } as Response;
+                if (url.includes("/api/programs/10/participants")) return { ok: false, status: 409, json: async () => ({ error: "Participant is already enrolled in this program." }) } as Response;
+                if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
+                if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) } as Response;
+                return { ok: false, status: 404, json: async () => ({}) } as Response;
+            });
+            global.fetch = fetchMock;
+            renderPage();
+            await screen.findByText("Robotics Club");
+            fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+            await screen.findByText("Which of your household wants to enroll?");
+
+            await toggleMember("Kid One");
+            await requestPlan();
+            return fetchMock;
+        }
+
+        it("records the request for an unpaid child", async () => {
+            const fetchMock = await requestPlanAfterConflict({ status: 200, body: { success: true } });
+            await waitFor(() =>
+                expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested! Please check your email/) })),
+            );
+            const planCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("request-payment-plan"));
+            expect(planCall).toBeDefined();
+            expect(screen.queryByText(/already enrolled/)).not.toBeInTheDocument();
+        });
+
+        it("names the child and shows the plan route's refusal for a child not awaiting payment", async () => {
+            await requestPlanAfterConflict({ status: 409, body: { error: "This enrollment is not awaiting payment" } });
+            expect(await screen.findByText("Kid One: This enrollment is not awaiting payment")).toBeInTheDocument();
+            expect(screen.queryByText(/Enrolled as pending/)).not.toBeInTheDocument();
+            expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested!/) }));
+        });
+
+        it("does not claim a new enrollment when the plan route fails", async () => {
+            await requestPlanAfterConflict({ status: 500, body: { error: "Failed to request payment plan" } });
+            expect(await screen.findByText(/Kid One: We couldn't send your request to the Scholarship Review Team/)).toBeInTheDocument();
+            expect(screen.queryByText(/Enrolled as pending/)).not.toBeInTheDocument();
+        });
+    });
+
     it("shows a network-error message when requesting a payment plan throws", async () => {
         setSession({ id: 101 });
         mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
@@ -551,6 +598,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com"); // redirect requires a store domain
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         mockFetchJson({
+            "/api/programs/10/discount-code": { code: null, signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
             "/api/programs/10/participants": { ok: true },
@@ -572,7 +620,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const fetchMock = mockFetchJson({
-            "/api/programs/10/discount-code": { code: "PRG10-MOCKED" },
+            "/api/programs/10/discount-code": { code: "PRG10-MOCKED", signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
@@ -630,6 +678,27 @@ describe("ProgramEnrollmentPage", () => {
         expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
     });
 
+    // Without the server's checkout signature the order would activate nobody, so
+    // the page does not send the family to the store.
+    it("stays on the page when the checkout signature can't be fetched", async () => {
+        setSession({ id: 101 });
+        setShopifyStoreDomain("shop.example.com");
+        mockFetchJson({
+            "/api/programs/10/discount-code": { code: null },
+            "/api/household": household,
+            "/api/programs/10": baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
+            "/api/programs/10/participants": { ok: true },
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await toggleMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText("We couldn't start the checkout. Please try again.")).toBeInTheDocument();
+        expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+    });
+
     // The payment-pending resume path: an already-enrolled-but-unpaid household
     // must be able to re-run checkout (participants POST 409s -> folded back in;
     // a FRESH single-use discount code is minted — the old one is 48h/one-use).
@@ -644,7 +713,7 @@ describe("ProgramEnrollmentPage", () => {
             orgMembership: { status: "ACTIVE" },
         } };
         const fetchMock = mockFetchJson({
-            "/api/programs/10/discount-code": { code: "PRG10-FRESH" },
+            "/api/programs/10/discount-code": { code: "PRG10-FRESH", signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 100, status: "PENDING" }],
@@ -688,6 +757,7 @@ describe("ProgramEnrollmentPage", () => {
         setSession({ id: 100, ageBand: 'adult' });
         setShopifyStoreDomain("shop.example.com");
         mockFetchJson({
+            "/api/programs/10/discount-code": { code: null, signature: "sig" },
             "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 102, status: "ACTIVE", person: { name: "Too Young", householdId: 7 } }],
@@ -717,6 +787,7 @@ describe("ProgramEnrollmentPage", () => {
             const url = String(input);
             const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
             if (url.includes("/api/programs/10/participants") && init?.method === "POST") return json({ error: "Participant is already enrolled in this program." }, 409);
+            if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
             if (url.includes("/api/household")) return json(household);
             if (url.endsWith("/api/programs/10")) {
                 programReads += 1;
@@ -754,6 +825,7 @@ describe("ProgramEnrollmentPage", () => {
             const url = String(input);
             const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
             if (url.includes("/api/programs/10/participants")) return json({ ok: true });
+            if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
             if (url.includes("/api/household")) return json(household);
             if (url.endsWith("/api/programs/10")) {
                 programReads += 1;
@@ -785,6 +857,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const fetchMock = mockFetchJson({
+            "/api/programs/10/discount-code": { code: null, signature: "sig" },
             "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
@@ -838,15 +911,15 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.queryByText(/renew your membership first/)).not.toBeInTheDocument();
     });
 
-    it("shows different closed-enrollment reasons depending on fullness, phase, and count source", async () => {
+    it("shows different closed-enrollment reasons depending on the server's cause and the phase", async () => {
         setSession({ id: 101 });
         const cases: [string, Record<string, unknown>][] = [
-            ["Full", { maxParticipants: 1 }],
-            ["Full", { maxParticipants: 5, _count: { participants: 5 } }],
-            ["Running", { maxParticipants: null, phase: "RUNNING" }],
-            ["Ended", { maxParticipants: null, phase: "FINISHED" }],
-            ["", { maxParticipants: null, phase: "SOMETHING_ELSE" }],
-            ["Upcoming", { maxParticipants: 1, phase: "UPCOMING", participants: undefined, _count: undefined }],
+            ["Full", { enrollmentClosedBy: "FULL", phase: "RUNNING" }],
+            ["Sales ended", { enrollmentClosedBy: "SALE_ENDED", phase: "UPCOMING" }],
+            ["Running", { enrollmentClosedBy: "CLOSED", phase: "RUNNING" }],
+            ["Ended", { enrollmentClosedBy: "CLOSED", phase: "FINISHED" }],
+            ["", { enrollmentClosedBy: "CLOSED", phase: "SOMETHING_ELSE" }],
+            ["Upcoming", { enrollmentClosedBy: "CLOSED", phase: "UPCOMING" }],
         ];
         for (const [expected, overrides] of cases) {
             mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", ...overrides }) });
@@ -861,9 +934,110 @@ describe("ProgramEnrollmentPage", () => {
         }
     });
 
+    // enrollmentStatus stays OPEN: the server's cause alone closes the page.
+    it.each([
+        ["Full", "FULL"],
+        ["Sales ended", "SALE_ENDED"],
+    ])("closes an OPEN program the server would refuse (%s)", async (reason, closedBy) => {
+        setSession({ id: 101, ageBand: 'adult' });
+        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentClosedBy: closedBy }) });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: new RegExp(`Enrollment Closed \\(${reason}\\)`) })).toBeDisabled();
+        expect(screen.getByText("Closed")).toBeInTheDocument();
+    });
+
+    it("keeps a full or ended program payable for a household with an unpaid claim", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                enrollmentClosedBy: "FULL",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    });
+
+    // The daily sweep closes enrollment the day after the off-sale date.
+    it.each([
+        ["closed by the off-sale sweep", "SALE_ENDED"],
+        ["closed by hand", "CLOSED"],
+    ])("keeps an unpaid claim payable once enrollment is %s", async (_label, closedBy) => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: closedBy,
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    });
+
+    it("keeps an unpaid claim payable on a running program whose enrollment has closed", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                phase: "RUNNING",
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: "SALE_ENDED",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
+    });
+
+    it("offers no payment once the program has ended and sends the household to the board", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                phase: "FINISHED",
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: "SALE_ENDED",
+                participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.queryByRole("button", { name: "Continue enrollment" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Enrollment Closed/ })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+        expect(screen.getByText(/This program has ended; ask the board about payment\./)).toBeInTheDocument();
+    });
+
+    it("offers no new claim after the off-sale sweep to a household with nothing unpaid", async () => {
+        setSession({ id: 100, householdId: 7, ageBand: 'adult' });
+        mockFetchJson({
+            "/api/programs/10": baseProgram({
+                enrollmentStatus: "CLOSED",
+                enrollmentClosedBy: "SALE_ENDED",
+                participants: [{ personId: 101, status: "ACTIVE", person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+
+        await screen.findByText("Robotics Club");
+        expect(screen.getByRole("button", { name: /Enrollment Closed \(Sales ended\)/ })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+    });
+
     it("shows a disabled closed CTA to a signed-out visitor", async () => {
         setSession(null, "unauthenticated");
-        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", phase: "UPCOMING", maxParticipants: null }) });
+        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", enrollmentClosedBy: "CLOSED", phase: "UPCOMING", maxParticipants: null }) });
         renderPage();
 
         await screen.findByText("Robotics Club");

@@ -52,6 +52,12 @@ export function membershipYearLabel(year: number): string {
     return `${year}-${year + 1}`;
 }
 
+/** The years the membership settings hold a variant slot for: the year in progress, then the coming year. */
+export function variantSlotYears(boundary: Date, now: Date): [number, number] {
+    const inProgress = membershipYearOf(boundary, now);
+    return [inProgress, inProgress + 1];
+}
+
 /**
  * The membership years a program's dates touch, earliest first. An end date on
  * the boundary counts in the year that boundary closes, because coverage of a

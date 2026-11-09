@@ -11,8 +11,10 @@ import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_P
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
+import { isLiveHousehold } from "@/lib/household/archived";
 import { specTrace } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
+import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
 
 // docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
@@ -60,7 +62,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // (docs/rules/attendance-checkin.md, Opening and closing).
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown }, auth) => {
+    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
     if (auth.type !== 'kiosk') return apiError("Check in at the kiosk.", 403);
 
     const startTime = Date.now();
@@ -138,6 +140,8 @@ export const POST = withKiosk(
             body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed' ? "close must be alone or confirmed." :
             requestedClose && body.intent === 'IN' ? "A close is a checkout; intent must be OUT." :
             body.rosterAsOf !== undefined && !rosterAsOfValid ? "rosterAsOf must be a timestamp." :
+            body.scanTimeUncertaintyMs !== undefined && !(typeof body.scanTimeUncertaintyMs === 'number' && Number.isFinite(body.scanTimeUncertaintyMs) && body.scanTimeUncertaintyMs >= 0)
+                ? "scanTimeUncertaintyMs must be a non-negative number." :
             body.clockSuspect !== undefined && typeof body.clockSuspect !== 'boolean' ? "clockSuspect must be a boolean." :
             body.shownEmpty !== undefined && typeof body.shownEmpty !== 'boolean' ? "shownEmpty must be a boolean." :
             body.protocolVersion !== undefined && !(typeof body.protocolVersion === 'number' && Number.isInteger(body.protocolVersion) && body.protocolVersion >= 1)
@@ -167,6 +171,7 @@ export const POST = withKiosk(
 
         const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
         const clockSuspect = body.clockSuspect === true;
+        const uncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
         const slot = (isReplay || isDead) ? "replay" : "live";
         specTrace("ScanRequest", {
             slot, p: body.participantId, cid: clientEventId, intent, close: closeKind,
@@ -196,7 +201,9 @@ export const POST = withKiosk(
         // A dead-lettered read that names no person can never project. It still
         // lands in the review queue -- the scan is never discarded -- keyed by
         // the raw value read, so the kiosk can stop retrying it.
-        const wire = { signedRequest: true };
+        // Read after the scan's transaction, so it never waits on a second connection while holding one.
+        const respond = async (result: ScanResult, closeRefused = false): Promise<Response> =>
+            toResponse(result, { signedRequest: true, closeRefused, lastNightlyCloseAt: await lastNightlyCloseAt() });
         const parkUnresolvable = async (): Promise<Response> => {
             const raw = body.participantId;
             const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
@@ -214,10 +221,10 @@ export const POST = withKiosk(
             } catch (err) {
                 if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
                 specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "duplicate" });
-                return toResponse({ kind: "duplicate" }, wire);
+                return respond({ kind: "duplicate" });
             }
             specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "parked", reason: "unresolvable" });
-            return toResponse({ kind: "parked", reason: "review" }, wire);
+            return respond({ kind: "parked", reason: "review" });
         };
         if (participantId === null) {
             return await parkUnresolvable();
@@ -225,26 +232,22 @@ export const POST = withKiosk(
 
         // 3. Lookup participant. A badge still encoding a merged-away id must not
         // reject its owner at the door: it resolves to the surviving record, and a
-        // broken chain asks the operator to reissue the badge.
+        // broken chain asks the operator to reissue the badge. A member of an
+        // archived household scans exactly as a badge that matches nobody.
         const resolved = await resolveMergedPerson(participantId);
-        if (resolved.kind !== "live") {
+        if (resolved.kind !== "live" || !(await isLiveHousehold(resolved.person.householdId))) {
             if (isDead || isReplay) return await parkUnresolvable();
             specTrace("ScanCommit", { slot, p: participantId, cid: clientEventId, kind: "rejected" });
             return resolved.kind === "broken"
                 ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
                 : apiError(`Participant ${participantId} not found.`, 404);
         }
-        const { person: participant, first: badgeRecord, hops: mergeHops } = resolved;
+        const { person: participant, hops: mergeHops } = resolved;
         if (mergeHops > 0) {
             logger.info("Scan forwarded from merged record", {
                 badgeId: participantId,
-                tombstoneId: badgeRecord?.mergedIntoId ?? null,
                 survivorId: participant.id,
                 hops: mergeHops,
-                // The scanned id had no Person row at all — the archive resolved it.
-                // True means the tombstone was deleted and the archive took over; false
-                // while tombstones are being removed means badges resolve some other way.
-                viaArchive: badgeRecord == null,
             });
         }
 
@@ -278,6 +281,12 @@ export const POST = withKiosk(
                 if (seen) return { kind: "duplicate" };
             }
 
+            // A close inside the scan time's uncertainty: which side of it the scan
+            // belongs on cannot be known, so the scan applies at its time and is flagged.
+            const nearClose = uncertaintyMs > 0 && await tx.facilityClose.count({
+                where: { closedAt: { gte: new Date(eventTime.getTime() - uncertaintyMs), lte: new Date(eventTime.getTime() + uncertaintyMs) } },
+            }) > 0;
+
             // Only a keyholder closes. Live, the server knows the badge's role now,
             // so a non-keyholder's close is refused and the scan is an ordinary
             // checkout; a late delivery can't know the role at its scan time, so
@@ -291,6 +300,7 @@ export const POST = withKiosk(
                 const flag = isDead ? `client_dead:${deadStatus}`
                     : !participant.isKeyholder ? "close_not_keyholder"
                     : (clockSuspect || clockAhead) ? "clock_suspect"
+                    : nearClose ? "close_time_uncertain"
                     : null;
                 await tx.rawBadgeLog.create({
                     data: {
@@ -383,7 +393,7 @@ export const POST = withKiosk(
                 const latestActivityAt = maxDate(activity._max.arrivedAt, activity._max.departedAt);
                 const behind = latestActivityAt !== null && latestActivityAt > eventTime;
                 const stale = Date.now() - eventTime.getTime() > REPLAY_FRESHNESS_WINDOW_MS;
-                reviewReason ??= behind ? "out_of_order" : stale ? "stale_replay" : null;
+                reviewReason ??= nearClose ? "close_time_uncertain" : behind ? "out_of_order" : stale ? "stale_replay" : null;
 
                 if (!intent || !trustsReplays) {
                     hold = reviewReason !== null;
@@ -536,7 +546,7 @@ export const POST = withKiosk(
             if (clientEventId && uniqueViolationFields(err)?.includes("clientEventId")) {
                 specTrace("ScanCommit", { slot, p: participant.id, cid: clientEventId, kind: "duplicate" });
                 await executePendingCloses();
-                return toResponse({ kind: "duplicate" }, wire);
+                return respond({ kind: "duplicate" });
             }
             throw err;
         }
@@ -559,7 +569,7 @@ export const POST = withKiosk(
 
         // A live close from a badge that is not a keyholder went through as an
         // ordinary scan; the kiosk is told why the building did not close.
-        return await toResponse(result, { ...wire, closeRefused });
+        return await respond(result, closeRefused);
     } finally {
         // Errors propagate to withKiosk's top-level catch/500; this finally only
         // records the metric. Times the handler body (post-auth), not rate-limit.

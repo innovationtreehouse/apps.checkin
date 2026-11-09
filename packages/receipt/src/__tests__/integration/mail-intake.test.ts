@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { KindedError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
 import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
@@ -14,6 +15,7 @@ import {
   readMailbox,
 } from "../../services/mailIntake";
 import { createMemoryFileStore } from "../../lib/fileStorage";
+import { createGmailReader } from "../../lib/gmail";
 import { mailQueueService } from "../../services/mailQueueService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
@@ -30,6 +32,7 @@ function fakeMailbox() {
   const attachments = new Map<string, string>();
   const downloads: string[] = [];
   const reader: MailboxReader = {
+    address: "receipts@example.org",
     listRecent: async () => [...messages.keys()],
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
     getAttachment: async (_messageId, attachmentId) => {
@@ -544,7 +547,7 @@ describeDb("mail intake ageing alert", () => {
 describeDb("mail intake listing failure", () => {
   const failListing = () => {
     mail.reader.listRecent = async () => {
-      throw new Error("Gmail request failed: 401");
+      throw new KindedError("connection", "Gmail request failed: 401");
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
   };
@@ -553,7 +556,54 @@ describeDb("mail intake listing failure", () => {
     failListing();
     expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
     expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID }, { orgId: TEST_ORG_ID }]);
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "connection" }, { orgId: TEST_ORG_ID, kind: "connection" }]);
+  });
+
+  it("hands each listing failure to the on-failure port", async () => {
+    failListing();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await readMailbox();
+  });
+
+  it.each([
+    [401, "connection"],
+    [403, "connection"],
+    [404, "settings"],
+    [429, "system"],
+    [503, "system"],
+  ] as const)("names the cause of a Gmail %i in the alert", async (status, kind) => {
+    vi.stubGlobal("fetch", async () => new Response("{}", { status }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mail.reader.listRecent = createGmailReader("receipts@example.org", async () => "token").listRecent;
+    try {
+      expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind }]);
+  });
+
+  it("reads a Gmail that cannot be reached as an outage", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mail.reader.listRecent = createGmailReader("receipts@example.org", async () => "token").listRecent;
+    try {
+      await readMailbox();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "system" }]);
+  });
+
+  it("reads an unsorted failure, such as a token-source error, as a bug", async () => {
+    mail.reader.listRecent = async () => {
+      throw new Error("token source failed");
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await readMailbox();
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "bug" }]);
   });
 
   it("still reports the failure when the alert send fails", async () => {
@@ -601,6 +651,12 @@ describeDb("mail intake sender authentication", () => {
   it("holds a message whose DMARC did not pass, recording that the sender is unverified", async () => {
     send("m1", { auth: [GOOGLE_PASS.replace("dmarc=pass", "dmarc=fail")] });
     await heldAs("alice@example.org");
+    expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
+  });
+
+  it("holds a message whose From address is not ASCII, recording that the sender is unverified", async () => {
+    send("m1", { from: ["Alice <alic\u00e9@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
     expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
   });
 

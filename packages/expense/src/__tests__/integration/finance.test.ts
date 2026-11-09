@@ -315,9 +315,11 @@ describeDb("sign-off seats", () => {
     it("FINANCE adds a non-member by name, who becomes the reimbursee", async () => {
       const { id } = await unknownReimbursee();
       const added: string[] = [];
-      bindPorts({ signoff: directory({ finance: [3], nonMembers: [900], added }) });
+      const addedBy: number[] = [];
+      bindPorts({ signoff: directory({ finance: [3], nonMembers: [900], added, addedBy }) });
       await setReimbursee(ORG, id, { newPerson: { name: "  Dana Field " } }, FINANCE);
       expect(added).toEqual(["Dana Field"]);
+      expect(addedBy).toEqual([FINANCE.id]);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(900);
       expect(await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "reimbursee_set" } })).toMatchObject({ valueAfter: "900" });
     });
@@ -398,6 +400,19 @@ describeDb("capital register", () => {
     const assets = await db.capitalAsset.findMany({ where: { sourceLineItemId: li }, orderBy: { assetNumber: "asc" } });
     expect(assets.map((a) => a.assetNumber)).toEqual(["ITFA08", "ITFA09"]);
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");
+  });
+
+  it("capital review drops a hand-set account from a line whose capital designation it changes, audited, and keeps the rest", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    const flipped = await seedLineItem(id, { manualQbAccount: "5000" });
+    const kept = await seedLineItem(id, { manualQbAccount: "6000" });
+
+    await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: flipped, isCapital: true, capitalOwnerId: 100 }, { lineItemId: kept, isCapital: false }] });
+
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: flipped } })).toMatchObject({ isCapital: true, manualQbAccount: null });
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: kept } })).toMatchObject({ isCapital: false, manualQbAccount: "6000" });
+    const cleared = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "hold_account_cleared" } });
+    expect(cleared).toEqual([expect.objectContaining({ lineItemId: flipped, fieldChanged: "manualQbAccount", valueBefore: "5000", valueAfter: null })]);
   });
 
   it("capital review and depreciation refuse an archived or unlisted bucket", async () => {
@@ -500,10 +515,10 @@ describeDb("QuickBooks match", () => {
    */
   async function qbExpense(
     qb: { purchases?: Entry[]; bills?: Entry[] },
-    opts: { signed?: boolean; reimbursement?: boolean; refs?: boolean } = {},
+    opts: { signed?: boolean; reimbursement?: boolean; refs?: boolean; nonMembers?: number[] } = {},
   ) {
     bindPorts({
-      signoff: directory({ finance: [3], board: [5] }),
+      signoff: directory({ finance: [3], board: [5], nonMembers: opts.nonMembers }),
       quickbooks: {
         reader: {
           ...inertQbReader,
@@ -529,6 +544,18 @@ describeDb("QuickBooks match", () => {
     const id = await qbExpense({ purchases: ["42"] });
     await matchExpenseToQb(FINANCE, id, "42");
     expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
+  it("matches a closed expense whose reimbursee's membership lapsed after close, with no Board seat", async () => {
+    const id = await qbExpense({ bills: ["42"] }, { reimbursement: true, nonMembers: [1] });
+    await db.expenseLineSignoff.deleteMany({ where: { expenseId: id, seat: "BOARD" } });
+
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
+    expect((await linked(id))?.qbTxnId).toBeNull();
+
+    await db.expense.update({ where: { id }, data: { state: "qb_complete" } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Bill" });
   });
 
   it("checks off the expense's open held-post review once it is linked", async () => {

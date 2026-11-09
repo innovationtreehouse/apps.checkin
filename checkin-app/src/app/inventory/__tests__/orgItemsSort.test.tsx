@@ -1,16 +1,20 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 const loaded: string[] = [];
 
 jest.mock("@checkin/local-inventory/components/api", () => ({
   ...jest.requireActual("@checkin/local-inventory/components/api"),
   useCanManage: () => false,
-  useCatalogNames: () => new Map(),
+  useCatalogNames: () => ({ names: new Map(), missing: new Set(), failed: new Set() }),
   useLoad: (path: string | null) => {
     if (path) loaded.push(path);
-    return { data: path?.startsWith("/org-items/count") ? { total: 0 } : [], error: null, reload: jest.fn() };
+    return { data: path?.startsWith("/org-items/count") ? { total: 0 } : path?.startsWith("/org-items") ? { OrgItem: [], InventoryProvisionalItem: [] } : [], error: null, reload: jest.fn() };
   },
 }));
 

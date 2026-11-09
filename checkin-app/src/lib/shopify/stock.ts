@@ -953,7 +953,8 @@ export async function setProgramInventory(
 /**
  * Takes a program's store product off sale by setting its status to draft, so
  * neither the store page nor an old cart link can buy it. Idempotent. A program
- * without a product has nothing to take down and succeeds.
+ * without a product, or whose product Shopify no longer has (404), has nothing
+ * to take down and succeeds.
  *
  * Called by the sale sweep (lib/programs/saleSweep.ts) on the off-sale date for
  * programs that have a reserved-seat product. Nothing re-lists it automatically.
@@ -996,6 +997,10 @@ export async function setProgramProductOffSale(
                 body: JSON.stringify({ product: { id: Number(sentId), status: 'draft' } }),
             }, "Shopify product off sale");
         });
+        if (res.status === 404) {
+            console.log(`[SHOPIFY] Product ${productId} no longer exists; nothing left to take off sale`);
+            return true;
+        }
         if (!res.ok) {
             throw new Error(`Shopify product off-sale failed for ${productId}: ${res.status} ${await res.text()}`);
         }

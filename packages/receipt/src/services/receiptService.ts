@@ -1,5 +1,5 @@
 import { isServiceError, ServiceError } from "@checkin/component-kit";
-import type { ReceiptState } from "@checkin/receipt-types";
+import { DEFAULT_CURRENCY, DONOR_NAME_MAX, InKindDonorSchema, type ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
@@ -16,12 +16,14 @@ import {
   type ReimburseeOption,
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
-import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
+import { EXPENSE_REJECTED, REJECTED_AS_COPY } from "../lib/describeReceipt";
+import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, liveGroup, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
+import { liveIds } from "../lib/livePeople";
+import { lineTotalAfterEdit } from "../lib/lineMath";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
-import { givenUp, pushRecords } from "./catchUp";
 import { oweOutcomeNotice, sendOutcomeNotices } from "./outcomeNotices";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import { listWords, missingDetails } from "../lib/missingDetails";
@@ -31,11 +33,14 @@ import {
   EditLineItemSchema,
   EditReceiptSchema,
   InKindInputSchema,
+  toCents,
   UploadInputSchema,
   type DonorInput,
 } from "../lib/schemas";
 import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
 import { getOrgId, limits, ports, requireActor } from "../runtime";
+import { OCR_OFF_NOTE } from "../lib/ocrOff";
+import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
@@ -53,6 +58,19 @@ export type FinanceCounts = { total: number; byState: Record<string, number> };
 const EDITABLE: ReadonlySet<string> = new Set(["ocr_failed", "validation_failed", "submitter_review"]);
 const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
+
+/** When each stuck receipt of `ids` first failed, as the review list shows it; no error text. */
+async function firstFailures(ids: string[]): Promise<Map<string, { lastPushFailedAt: Date }>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.receipt.findMany({ where: { id: { in: ids }, firstFailedAt: { not: null } }, select: { id: true, firstFailedAt: true } });
+  return new Map(rows.flatMap((r) => (r.firstFailedAt ? [[r.id, { lastPushFailedAt: r.firstFailedAt }] as const] : [])));
+}
+
+/** A stuck receipt's first failure time and latest error, for finance on the receipt's own page. */
+async function failureOf(id: string): Promise<{ lastPushFailedAt: Date; lastPushFailure: string | null } | undefined> {
+  const row = await db.receipt.findUnique({ where: { id }, select: { firstFailedAt: true, lastError: true } });
+  return row?.firstFailedAt ? { lastPushFailedAt: row.firstFailedAt, lastPushFailure: row.lastError } : undefined;
+}
 
 /** The receipt as a submitter sees it: donor names are pii, read by finance only. */
 
@@ -96,9 +114,6 @@ function outcomeOf(r: { id: string; state: string }, outcomes: Map<string, Purch
   return outcomes.get(r.id) ?? { receiving: null, money: null, gift: null };
 }
 
-const toCents = (dollars: number | string | undefined): number =>
-  Math.round((typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0)) * 100);
-
 function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
   const result = schema.safeParse(input);
   if (!result.success) {
@@ -114,8 +129,8 @@ function transitionError(err: unknown): never {
 }
 
 async function load(id: string, access: Access, actor: ReceiptPrincipal): Promise<ReceiptRow> {
-  const row = await receiptRepo.find(id, await getOrgId(), access === "submitter" ? actor.id : undefined);
-  if (!row) throw new ServiceError(404, "Receipt not found");
+  const row = await receiptRepo.find(id, await getOrgId());
+  if (!row || (access === "submitter" && row.uploadedByUserId !== actor.id)) throw new ServiceError(404, "Receipt not found");
   return row;
 }
 
@@ -144,7 +159,7 @@ async function lockForEdit(
   message: string,
 ): Promise<ReceiptRow> {
   await tx.$queryRaw`SELECT id FROM receipt_details WHERE id = ${id} FOR UPDATE`;
-  const locked = await receiptRepo.find(id, orgId, undefined, tx);
+  const locked = await receiptRepo.find(id, orgId, tx);
   if (!locked || !states.has(locked.state)) throw new ServiceError(400, message);
   return locked;
 }
@@ -178,10 +193,20 @@ async function refuse(row: ReceiptRow, actor: ReceiptPrincipal, attempted: strin
 
 type Parties = Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId">;
 
-/** The uploader, the reimbursee, and everyone in either one's household. */
-async function conflictedParties(row: Parties): Promise<number[]> {
+/**
+ * The uploader, the reimbursee, and everyone in either one's household; null when a party names
+ * nobody live, since their household cannot then be known and nobody can be cleared.
+ */
+async function conflictedParties(row: Parties): Promise<number[] | null> {
   const parties = [row.uploadedByUserId, row.reimburseePersonId].filter((id): id is number => id != null);
-  return [...parties, ...(await ports().households.householdOf(parties))];
+  const live = await liveIds(parties);
+  const people = parties.flatMap((id) => live.get(id) ?? []);
+  if (people.length !== parties.length) return null;
+  return [...people, ...(await ports().households.householdOf(people))];
+}
+
+async function isConflicted(row: Parties, personId: number): Promise<boolean> {
+  return (await conflictedParties(row))?.includes(personId) ?? true;
 }
 
 /** The receipt write that records finance's decision, replacing any earlier one. */
@@ -198,7 +223,9 @@ function recordFinanceReview(
 }
 
 async function refuseSelfDecision(row: ReceiptRow, actor: ReceiptPrincipal, attempted: string): Promise<void> {
-  if (!(await conflictedParties(row)).includes(actor.id)) return;
+  const parties = await conflictedParties(row);
+  if (parties === null) return refuse(row, actor, attempted, "This receipt names someone who is no longer on file, so nobody can be cleared to decide it");
+  if (!parties.includes(actor.id)) return;
   await refuse(row, actor, attempted, "You cannot decide on a receipt that you or your household uploaded or is reimbursed for");
 }
 
@@ -216,17 +243,18 @@ async function writeAccess(row: ReceiptRow, access: Access, actor: ReceiptPrinci
 const CLAIM_FIELDS: ReadonlySet<string> = new Set(["receiptDate", "currency", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"]);
 
 /**
- * Clears the submitter's confirmation of a reimbursement when finance changes what they claimed
- * or are paid, so the pipeline sends it back to their review. Audited naming the fields.
+ * Clears the submitter's confirmation of a reimbursement when anyone but the person whose
+ * confirmation it is changes what was claimed or is paid, so the pipeline sends it back to their
+ * review. That person is the reimbursee, or the uploader while no reimbursee is known. Audited
+ * naming the fields.
  */
 async function voidConfirmation(
   tx: Prisma.TransactionClient,
   row: ReceiptRow,
-  asSubmitter: boolean,
   actor: ReceiptPrincipal,
   fields: string[],
 ): Promise<void> {
-  if (asSubmitter || !row.needsReimbursement || !row.reviewedAt || fields.length === 0) return;
+  if (actor.id === (row.reimburseePersonId ?? row.uploadedByUserId) || !row.needsReimbursement || !row.reviewedAt || fields.length === 0) return;
   await tx.receiptDetail.update({ where: { id: row.id }, data: { reviewedAt: null, reviewedByUserId: null, reviewedOnBehalfReason: null } });
   await audit(tx, row.id, actor, {
     action: "submitter_confirmation_voided",
@@ -235,10 +263,21 @@ async function voidConfirmation(
   });
 }
 
+/** The host's refusal hook for a typed-in donor (it throws to refuse). "I am the donor" never reaches it: the person deciding the gift is the independent check. */
+export type DonorCheck = (donor: { lastName: string }) => Promise<void>;
+
+async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput }, checkDonor?: DonorCheck) {
+  if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
+}
+
+/** "I am the donor" checks the profile name with the donor schema donations uses, and stores it as parsed. */
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
-  return "self" in donor
-    ? { donorFirstName: actor.firstName, donorLastName: actor.lastName, donorCompanyName: null }
-    : { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
+  if (!("self" in donor)) return { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
+  const profile = InKindDonorSchema.safeParse({ firstName: actor.firstName, lastName: actor.lastName, companyName: null });
+  if (!profile.success) {
+    throw new ServiceError(400, `Your profile name can't be used as the donor: it needs a first and last name, each up to ${DONOR_NAME_MAX} characters. Fix your profile name, or enter the donor's name.`);
+  }
+  return { donorFirstName: profile.data.firstName, donorLastName: profile.data.lastName, donorCompanyName: null };
 }
 
 function ocrDetail(data: OcrData) {
@@ -264,39 +303,101 @@ const toLine = (li: { description: string; partNumber?: string | null; manufactu
   isDelayed: li.isDelayed,
 });
 
+const OCR_CALL = "ocr_call";
+const OCR_CALL_REFUNDED = "ocr_call_refunded";
+const OCR_ALLOWANCE_RESET = "ocr_allowance_reset";
+
 /**
  * Spends one of the caller's daily model calls, or refuses with 429. Each call is an audit row,
  * so the count survives restarts and is shared by every app process; a per-person lock keeps
- * concurrent requests from all passing the same check.
+ * concurrent requests from all passing the same check. The window starts a day ago, or at the
+ * person's latest allowance reset if that is later. A refund row names the call it gives back,
+ * and counts only while that call is in the window. Returns the call's row id.
  */
-async function reserveOcrCall(actor: ReceiptPrincipal): Promise<void> {
+async function reserveOcrCall(actor: ReceiptPrincipal): Promise<number> {
   const { ocrCallsPerPersonPerDay } = limits();
-  await db.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`receipt-ocr:${actor.id}`}, 0))`;
-    const used = await tx.receiptAuditLog.count({
-      where: { userId: actor.id, action: "ocr_call", changedAt: { gt: new Date(Date.now() - DAY_MS) } },
+    const dayAgo = new Date(Date.now() - DAY_MS);
+    const reset = await tx.receiptAuditLog.findFirst({
+      where: { action: OCR_ALLOWANCE_RESET, fieldChanged: "person", valueBefore: String(actor.id), changedAt: { gt: dayAgo } },
+      orderBy: { changedAt: "desc" },
+      select: { changedAt: true },
     });
-    if (used >= ocrCallsPerPersonPerDay) {
+    const calls = await tx.receiptAuditLog.findMany({
+      where: { userId: actor.id, action: OCR_CALL, changedAt: { gt: reset?.changedAt ?? dayAgo } },
+      select: { id: true },
+    });
+    const refunds = await tx.receiptAuditLog.count({
+      where: { userId: actor.id, action: OCR_CALL_REFUNDED, fieldChanged: OCR_CALL, valueBefore: { in: calls.map((c) => String(c.id)) } },
+    });
+    if (calls.length - refunds >= ocrCallsPerPersonPerDay) {
       throw new ServiceError(429, "You have reached today's limit for automatic reading. Type the details, or try again tomorrow.");
     }
-    await tx.receiptAuditLog.create({ data: { receiptId: null, userId: actor.id, username: actor.name, action: "ocr_call" } });
+    const call = await tx.receiptAuditLog.create({ data: { receiptId: null, userId: actor.id, username: actor.name, action: OCR_CALL } });
+    return call.id;
   });
+}
+
+const ResetReasonSchema = z.object({ reason: z.string().trim().min(1, "A reason is required").max(500) }).strict();
+
+/**
+ * Finance or the Board gives `personId` a full reading allowance from now: one audit row naming
+ * the person, the actor and the reason, which `reserveOcrCall` counts from.
+ */
+async function resetOcrAllowance(personId: number, raw: unknown): Promise<{ personId: number }> {
+  const parsed = ResetReasonSchema.safeParse(raw);
+  if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => i.message).join("; "));
+  const actor = await requireActor();
+  await db.receiptAuditLog.create({
+    data: { receiptId: null, userId: actor.id, username: actor.name, action: OCR_ALLOWANCE_RESET, fieldChanged: "person", valueBefore: String(personId), valueAfter: parsed.data.reason },
+  });
+  return { personId };
+}
+
+/** Gives back `callId` to its person's daily allowance; `receiptId` is null when no receipt was made. */
+async function refundOcrCall(tx: Pick<Prisma.TransactionClient, "receiptAuditLog">, receiptId: string | null, actor: ReceiptPrincipal, callId: number): Promise<void> {
+  await tx.receiptAuditLog.create({
+    data: { receiptId, userId: actor.id, username: actor.name, action: OCR_CALL_REFUNDED, fieldChanged: OCR_CALL, valueBefore: String(callId) },
+  });
+}
+
+type OcrFailure = Extract<OcrResult, { success: false }>;
+
+/** What the submitter reads on a receipt OCR could not read, by the failure's kind. */
+export function ocrFailureNote({ kind, error }: OcrFailure): string {
+  switch (kind) {
+    case "system":
+      return `Automatic reading is unavailable right now: ${error}. Press "Read it again" later, or type the details.`;
+    case "connection":
+      return `Automatic reading is switched off until an administrator reconnects it: ${error}. Type the details, or press "Read it again" once it is back.`;
+    case "settings":
+      return `Automatic reading isn't set up, so type the details.`;
+    case "data":
+      return `This receipt couldn't be read automatically: ${error}. Type the details.`;
+    case "bug":
+      return `Automatic reading failed unexpectedly, and it has been reported. Type the details, or press "Read it again".`;
+  }
 }
 
 /** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
 async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
   const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
-  const bytes = await readStoredFile(file).catch((err: unknown) => {
-    console.error(`[receipt] could not read the file of ${id}:`, err);
-    return null;
-  });
-  const raw: OcrResult = bytes ? await ports().ocr.extract(Buffer.from(bytes), file.mimeType) : { success: false, error: "The receipt file could not be read" };
+  // A missing file reads as null; a store outage throws.
+  const stored = await readStoredFile(file).then(
+    (bytes): Uint8Array | OcrFailure => bytes ?? { success: false, kind: "data", error: "the receipt file is missing" },
+    (err: unknown): OcrFailure => {
+      console.error(`[receipt] could not read the file of ${id}:`, err);
+      return { success: false, kind: "system", error: "the receipt file could not be fetched from storage" };
+    },
+  );
+  const raw: OcrResult = stored instanceof Uint8Array ? await ports().ocr.extract(Buffer.from(stored), file.mimeType) : stored;
   const parsed = raw.success ? OcrDataSchema.safeParse(raw.data) : null;
   const result: OcrResult = !raw.success
     ? raw
     : parsed?.success
       ? { success: true, data: parsed.data }
-      : { success: false, error: "OCR returned invalid receipt data" };
+      : { success: false, kind: "data", error: "the reader's answer was out of bounds" };
   if (result.success) {
     assertExpectedState("auto_upload", { type: "OCR_SUCCEEDED" }, NEUTRAL_CONTEXT, "uploaded");
     const landed = await db.$transaction(async (tx) => {
@@ -316,19 +417,29 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
     await runFullFlow(id, actor);
   } else {
-    await failOcr(id, actor, result.error);
+    await failOcr(id, actor, { notes: ocrFailureNote(result), action: `ocr_failed:${result.kind}`, reason: result.error });
   }
 }
 
-async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Promise<void> {
+/** False while automatic reading is turned off. */
+async function ocrIsOn(): Promise<boolean> {
+  return (await getOrgSettings(await getOrgId())).ocrEnabled;
+}
+
+/** Land an auto upload in `ocr_failed` with the switched-off note, spending no call. */
+const failOcrSwitchedOff = (id: string, actor: ReceiptPrincipal) =>
+  failOcr(id, actor, { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off" });
+
+/** Lands the receipt in `ocr_failed`; a reading's failure is audited as `ocr_failed:<kind>`. */
+async function failOcr(id: string, actor: ReceiptPrincipal, { notes, action, reason }: { notes: string; action: string; reason: string }): Promise<void> {
   assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
   await db.$transaction(async (tx) => {
     const moved = await tx.receiptDetail.updateMany({
       where: { id, state: "auto_upload" },
-      data: { state: "ocr_failed", validationNotes: `OCR failed: ${error}` },
+      data: { state: "ocr_failed", validationNotes: notes },
     });
     if (moved.count === 0) return;
-    await audit(tx, id, actor, { action: "ocr_failed", valueAfter: error });
+    await audit(tx, id, actor, { action, valueAfter: reason });
   });
 }
 
@@ -367,11 +478,19 @@ export async function intakeMailedReceipt(
     afterInsert: ledger,
   });
   await deleteStoredFiles([heldFileKey]);
+  if (!(await ocrIsOn())) {
+    await failOcrSwitchedOff(id, actor);
+    return id;
+  }
   try {
     await reserveOcrCall(actor);
   } catch (err) {
     if (!(isServiceError(err) && err.status === 429)) throw err;
-    await failOcr(id, actor, "daily limit reached");
+    await failOcr(id, actor, {
+      notes: `Today's automatic reading allowance is used up. Type the details, or press "Read it again" tomorrow.`,
+      action: "ocr_failed",
+      reason: DAILY_LIMIT_REACHED,
+    });
     return id;
   }
   // A failed read leaves the receipt in auto_upload, where the interrupted-OCR sweep finds it.
@@ -414,7 +533,7 @@ async function namedReimbursee(
 ): Promise<ReimburseeOption> {
   if (newReimbursee) {
     if (!actor.addsPeople) throw new ServiceError(403, "Only finance, operations or the board may add someone who is not on file");
-    return ports().reimbursees.addNonMemberAdult(newReimbursee.name);
+    return ports().reimbursees.addNonMemberAdult(newReimbursee.name, actor.id);
   }
   if (personId === undefined || personId === actor.id) {
     return { id: actor.id, name: actor.name ?? `${actor.firstName} ${actor.lastName}` };
@@ -470,7 +589,7 @@ async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"se
   if (row.reimburseePersonId == null) return null;
   if (row.reimburseePersonId === actor.id) return "self";
   if (!actor.isBoardMember || (await ports().reimbursees.hasAccount(row.reimburseePersonId))) return null;
-  return (await conflictedParties(row)).includes(actor.id) ? null : "on_behalf";
+  return (await isConflicted(row, actor.id)) ? null : "on_behalf";
 }
 
 /**
@@ -481,7 +600,7 @@ async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"se
 async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: Array<ReceiptRow & { reimburseePersonId: number }>; changed: Map<string, string[]> }> {
   if (!actor.isBoardMember) return { rows: [], changed: new Map() };
   const orgId = await getOrgId();
-  const awaited = await ports().submitterConfirmations.awaiting();
+  const awaited = await awaitedConfirmations();
   const reimburseeOnExpense = new Map(awaited.map((a) => [a.receiptId, a.reimburseePersonId]));
   const inReview = await receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { not: null }, details: { state: "submitter_review" } });
   const sent = await receiptRepo.list({ orgId, id: { in: awaited.map((a) => a.receiptId) } });
@@ -498,12 +617,20 @@ async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: A
   return { rows, changed: new Map(awaited.map((a) => [a.receiptId, a.changedFields])) };
 }
 
+/** What waits on expense, with the live reimbursee; `storedReimburseeId` is the id expense knows them by. */
+async function awaitedConfirmations() {
+  const awaited = await ports().submitterConfirmations.awaiting();
+  const live = await liveIds(awaited.map((a) => a.reimburseePersonId));
+  return awaited.map((a) => ({ ...a, storedReimburseeId: a.reimburseePersonId, reimburseePersonId: live.get(a.reimburseePersonId) ?? a.reimburseePersonId }));
+}
+
 /** Reimbursements waiting for this person's confirmation, before finance and once their expense exists. */
 async function awaitingConfirmation(personId: number): Promise<{ inReview: ReceiptRow[]; sent: Map<string, string[]> }> {
   const orgId = await getOrgId();
+  const ids = await ports().personIds.storedIdsOf(personId);
   const [inReview, awaited] = await Promise.all([
-    receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: personId, uploadedByUserId: { not: personId }, details: { state: "submitter_review" } }),
-    ports().submitterConfirmations.awaiting(),
+    receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { in: ids }, uploadedByUserId: { notIn: ids }, details: { state: "submitter_review" } }),
+    awaitedConfirmations(),
   ]);
   return { inReview, sent: new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields])) };
 }
@@ -634,17 +761,86 @@ async function decideGroup(
   return after;
 }
 
+/**
+ * What only a read adds to a group: each uploader's name, and how a finalized member's expense
+ * ended. Kept apart from the group itself, which also runs under a decision's row locks.
+ */
+async function readableGroup(orgId: string, group: DuplicateGroup): Promise<DuplicateGroup> {
+  const ids = group.members.map((m) => m.id);
+  const [parties, outcomes] = await Promise.all([receiptRepo.listParties({ orgId, id: { in: ids } }), purchaseOutcomes(group.members)]);
+  const uploaderOf = new Map(parties.map((p) => [p.id, p.uploadedByUserId]));
+  const names = await ports().personNames.namesOf([...new Set(uploaderOf.values())]);
+  const label = (m: DuplicateMember): string => {
+    if (m.state !== "receipt_finalized") return m.label;
+    if (!outcomes) return `${m.label} · expense status unavailable`;
+    const money = outcomes.get(m.id)?.money;
+    if (money?.status !== "line_rejected") return m.label;
+    return money.notes.length > 0 ? `${EXPENSE_REJECTED}: ${money.notes.join("; ")}` : EXPENSE_REJECTED;
+  };
+  return {
+    ...group,
+    members: group.members.map((m) => ({ ...m, label: label(m), uploaderName: names.get(uploaderOf.get(m.id) ?? -1) ?? null })),
+  };
+}
+
+type WaitingGroup = { held: ReceiptRow; heldAt: Date | null; members: Array<{ id: string; state: string }> };
+
+/** The groups waiting on finance, oldest hold first. A held receipt with no match left is a group of one. */
+async function waitingGroups(orgId: string): Promise<WaitingGroup[]> {
+  const held = await receiptRepo.list({ orgId, details: { state: "duplicate_flagged" } });
+  held.sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime());
+  const seen = new Set<string>();
+  const groups: WaitingGroup[] = [];
+  for (const row of held) {
+    if (seen.has(row.id)) continue;
+    const members = await liveGroup(orgId, row.id);
+    members.forEach((m) => seen.add(m.id));
+    const ids = new Set(members.map((m) => m.id));
+    const times = held.filter((h) => ids.has(h.id) && h.duplicateFlaggedAt).map((h) => (h.duplicateFlaggedAt as Date).getTime());
+    groups.push({ held: row, heldAt: times.length > 0 ? new Date(Math.min(...times)) : null, members });
+  }
+  return groups.sort((a, b) => (a.heldAt?.getTime() ?? 0) - (b.heldAt?.getTime() ?? 0));
+}
+
+/** The viewer's own other copy of an open receipt they uploaded, earliest first; never another person's. */
+async function ownCopyNotice(row: ReceiptRow, actor: ReceiptPrincipal): Promise<{ matchId: string; uploadedAt: Date } | null> {
+  if (ENDED.has(row.state)) return null;
+  const others = ((await computeGroup(row.orgId, row.id))?.members ?? []).filter((m) => m.id !== row.id && m.state !== "discarded").map((m) => m.id);
+  if (others.length === 0) return null;
+  const mine = await receiptRepo.list({ orgId: row.orgId, id: { in: others }, uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } });
+  const [first] = mine.sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime());
+  return first ? { matchId: first.id, uploadedAt: first.uploadedAt } : null;
+}
+
+/** The kept receipt of each row rejected as a copy, as the group labels it. */
+async function copiesOf(orgId: string, rows: ReceiptRow[]): Promise<Map<string, { copyOfId: string; copyOfLabel: string }>> {
+  const rejected = rows.filter((r) => r.state === "rejected").map((r) => r.id);
+  const found = new Map<string, { copyOfId: string; copyOfLabel: string }>();
+  if (rejected.length === 0) return found;
+  const copies = await db.receiptPairDecision.findMany({ where: { orgId, kind: "copy_of", copyReceiptId: { in: rejected } }, select: { copyReceiptId: true } });
+  for (const id of new Set(copies.flatMap((c) => c.copyReceiptId ?? []))) {
+    const member = (await computeGroup(orgId, id))?.members.find((m) => m.id === id);
+    if (member?.copyOfId && member.label.startsWith(REJECTED_AS_COPY)) {
+      found.set(id, { copyOfId: member.copyOfId, copyOfLabel: member.label.slice(REJECTED_AS_COPY.length) });
+    }
+  }
+  return found;
+}
+
 export const receiptService = {
+  resetOcrAllowance,
+
   /**
    * Upload a receipt. With `details` it is manual: insert at `uploaded` and run the pipeline.
    * Without, it is auto: insert at `auto_upload` and read it with OCR in this request.
    */
-  async upload(file: Buffer, declaredType: string, rawInput: unknown) {
+  async upload(file: Buffer, declaredType: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
     const input = parse(UploadInputSchema, rawInput);
     const check = checkReceiptFile(file, declaredType);
     if (!check.ok) throw new ServiceError(400, check.error);
     if (input.needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
+    await checkTypedDonor(input, checkDonor);
 
     const reimbursee = input.needsReimbursement ? await namedReimbursee(actor, input) : null;
     const reimbursement = reimbursee
@@ -652,9 +848,10 @@ export const receiptService = {
       : {};
     const inKind = input.isInKind && input.donor ? { isInKind: true, donorSync: "pending", ...donorNames(input.donor, actor) } : {};
     const d = input.details;
-    if (!d) await reserveOcrCall(actor);
+    const ocrOff = !d && !(await ocrIsOn());
+    const callId = d || ocrOff ? null : await reserveOcrCall(actor);
 
-    const id = await insertReceipt({
+    const insert = insertReceipt({
       orgId: await getOrgId(),
       actor,
       file,
@@ -664,7 +861,7 @@ export const receiptService = {
         ? {
             retailer: d.retailer,
             receiptDate: d.receiptDate,
-            currency: d.currency || "USD",
+            currency: d.currency || DEFAULT_CURRENCY,
             shippingCents: toCents(d.shipping),
             taxCents: toCents(d.tax),
             discountCents: toCents(d.discount),
@@ -680,9 +877,14 @@ export const receiptService = {
             audit(tx, receiptId, actor, { action: "reimbursee_named", fieldChanged: "reimburseePersonId", valueAfter: String(reimbursee.id) })
         : undefined,
     });
+    const id = await insert.catch(async (err: unknown) => {
+      if (callId !== null) await refundOcrCall(db, null, actor, callId);
+      throw err;
+    });
 
     if (input.isInKind) await sendDonorSync(id, actor);
-    if (d) await runFlowLogged(id, actor);
+    if (ocrOff) await failOcrSwitchedOff(id, actor);
+    else if (callId === null) await runFlowLogged(id, actor);
     else await applyOcr(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
   },
@@ -714,7 +916,7 @@ export const receiptService = {
       const reopensReview = asSubmitter && changed.some(([field]) => SUBMITTER_CORRECTION_FIELDS.includes(field));
       await tx.receiptDetail.update({ where: { id }, data: reopensReview ? { ...next, approvedAt: null } : next });
       if (reopensReview) await tx.receiptFinanceReview.deleteMany({ where: { receiptId: id } });
-      await voidConfirmation(tx, locked, asSubmitter, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
+      await voidConfirmation(tx, locked, actor, changed.map(([field]) => field).filter((f) => CLAIM_FIELDS.has(f)));
       for (const [field, after] of changed) {
         await audit(tx, id, actor, {
           action: "field_edit",
@@ -733,7 +935,7 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     const stateMessage = "Can only add lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
-    const asSubmitter = (await writeAccess(row, access, actor, "add line")) === "submitter";
+    await writeAccess(row, access, actor, "add line");
     return db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const count = await tx.receiptLineItem.count({ where: { receiptId: id } });
@@ -742,7 +944,7 @@ export const receiptService = {
       const [data] = toLineRows([{ ...toLine(line), lineNumber: (last._max.lineNumber ?? 0) + 1 }]);
       const created = await tx.receiptLineItem.create({ data: { ...data, receiptId: id } });
       await audit(tx, id, actor, { action: "line_added", lineItemId: created.id });
-      await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
+      await voidConfirmation(tx, locked, actor, ["lineItems"]);
       return created;
     });
   },
@@ -753,7 +955,7 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     const stateMessage = "Line items can only be edited in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
-    const asSubmitter = (await writeAccess(row, access, actor, "edit line")) === "submitter";
+    await writeAccess(row, access, actor, "edit line");
 
     return db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
@@ -772,6 +974,10 @@ export const receiptService = {
       ];
 
       const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
+      const totalPriceCents = lineTotalAfterEdit(li, { quantity, unitPriceCents });
+      if (totalPriceCents !== li.totalPriceCents) {
+        edited.push({ field: "totalPrice", before: li.totalPriceCents / 100, after: totalPriceCents / 100 });
+      }
       const updated = await tx.receiptLineItem.update({
         where: { id: lineItemId },
         data: {
@@ -780,7 +986,7 @@ export const receiptService = {
           manufacturer: edit.manufacturer === undefined ? li.manufacturer : edit.manufacturer || null,
           quantity,
           unitPriceCents,
-          totalPriceCents: Math.round(quantity * unitPriceCents),
+          totalPriceCents,
           isDelayed: edit.isDelayed ?? li.isDelayed,
         },
       });
@@ -793,7 +999,7 @@ export const receiptService = {
           lineItemId,
         });
       }
-      if (edited.length > 0) await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
+      if (edited.length > 0) await voidConfirmation(tx, locked, actor, ["lineItems"]);
       return updated;
     });
   },
@@ -803,14 +1009,14 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     const stateMessage = "Can only delete lines in ocr_failed, validation_failed or submitter_review state";
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, stateMessage);
-    const asSubmitter = (await writeAccess(row, access, actor, "delete line")) === "submitter";
+    await writeAccess(row, access, actor, "delete line");
     await db.$transaction(async (tx) => {
       const locked = await lockForEdit(tx, row, EDITABLE, stateMessage);
       const li = await tx.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
       if (!li) throw new ServiceError(404, "Line item not found");
       await audit(tx, id, actor, { action: "line_deleted", lineItemId });
       await tx.receiptLineItem.delete({ where: { id: lineItemId } });
-      await voidConfirmation(tx, locked, asSubmitter, actor, ["lineItems"]);
+      await voidConfirmation(tx, locked, actor, ["lineItems"]);
     });
   },
 
@@ -823,8 +1029,15 @@ export const receiptService = {
     } catch (e) {
       transitionError(e);
     }
-    await reserveOcrCall(actor);
-    await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");
+    if (!(await ocrIsOn())) throw new ServiceError(503, OCR_OFF_NOTE);
+    const callId = await reserveOcrCall(actor);
+    try {
+      await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");
+    } catch (err) {
+      // Another retry moved the receipt first; this one never read it.
+      await refundOcrCall(db, id, actor, callId);
+      throw err;
+    }
     await applyOcr(id, actor);
     return load(id, access, actor);
   },
@@ -1029,9 +1242,8 @@ export const receiptService = {
     const row = await receiptRepo.find(id, await getOrgId());
     if (!row || !row.needsReimbursement) throw new ServiceError(404, "Receipt not found");
     // Once the expense exists, its reimbursee is the one confirming: finance may have named them there.
-    const reimbursee = row.pushedAt
-      ? (await ports().submitterConfirmations.awaiting()).find((a) => a.receiptId === id)?.reimburseePersonId
-      : row.reimburseePersonId;
+    const onExpense = row.pushedAt ? (await awaitedConfirmations()).find((a) => a.receiptId === id) : undefined;
+    const reimbursee = row.pushedAt ? onExpense?.reimburseePersonId : row.reimburseePersonId;
     if (reimbursee == null) throw new ServiceError(409, "This receipt is not waiting for a confirmation");
     const role = await confirmerRole({ uploadedByUserId: row.uploadedByUserId, reimburseePersonId: reimbursee }, actor);
     if (!role) throw new ServiceError(403, "Only the person reimbursed, or a Board member on behalf of someone with no account, confirms this receipt");
@@ -1039,8 +1251,8 @@ export const receiptService = {
     if (role === "on_behalf" && !reason) throw new ServiceError(400, "A Board member confirming on the reimbursee's behalf gives the reason");
     const onBehalf = reason ? `on behalf of ${reimbursee}: ${reason}` : null;
 
-    if (row.pushedAt) {
-      if (!(await ports().submitterConfirmations.confirm(id, reimbursee, actor, reason))) {
+    if (onExpense) {
+      if (!(await ports().submitterConfirmations.confirm(id, onExpense.storedReimburseeId, actor, reason))) {
         throw new ServiceError(409, "This receipt is not waiting for a confirmation");
       }
       await audit(db, id, actor, { action: "submitter_reconfirmed", valueAfter: onBehalf });
@@ -1089,16 +1301,27 @@ export const receiptService = {
         valueBefore: String(locked.needsReimbursement),
         valueAfter: String(needsReimbursement),
       });
+      // reimbursementFor is only the display name of this person, and a pii value has no place in the personal-tier audit values.
+      const reimburseePersonId = needsReimbursement ? actor.id : null;
+      if (locked.reimburseePersonId !== reimburseePersonId) {
+        await audit(tx, id, actor, {
+          action: "reimbursement_updated",
+          fieldChanged: "reimburseePersonId",
+          valueBefore: locked.reimburseePersonId === null ? null : String(locked.reimburseePersonId),
+          valueAfter: reimburseePersonId === null ? null : String(reimburseePersonId),
+        });
+      }
     });
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
   /** Set or clear the in-kind mark and its donor, then tell donations (X13). */
-  async setInKind(id: string, rawInput: unknown) {
+  async setInKind(id: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
     const input = parse(InKindInputSchema, rawInput);
     const row = await loadForChange(id, "submitter", actor);
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, EDIT_STATE_MESSAGE);
+    await checkTypedDonor(input, checkDonor);
 
     const donor = input.isInKind && input.donor
       ? donorNames(input.donor, actor)
@@ -1150,7 +1373,22 @@ export const receiptService = {
     await requireActor();
     const group = await computeGroup(await getOrgId(), id);
     if (!group) throw new ServiceError(404, "Receipt not found");
-    return group;
+    return readableGroup(await getOrgId(), group);
+  },
+
+  /** One row per group waiting on finance, for Finance review's Duplicates tab (§5.4). */
+  async duplicateQueue() {
+    await requireActor();
+    const groups = await waitingGroups(await getOrgId());
+    return groups.map(({ held, heldAt, members }) => ({
+      id: held.id,
+      retailer: held.retailer,
+      receiptDate: held.receiptDate,
+      receiptTotalCents: held.receiptTotalCents,
+      memberCount: members.length,
+      includesRejected: members.some((m) => m.state === "rejected"),
+      oldestHeldAt: heldAt,
+    }));
   },
 
   async get(id: string, access: Access) {
@@ -1158,9 +1396,10 @@ export const receiptService = {
     const row = await load(id, access, actor);
     const lineItems = await receiptRepo.listLineItems(id);
     const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
-    const receipt = access === "finance" ? { ...row, rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
+    const receipt = access === "finance" ? { ...row, ...(await failureOf(id)), rejectionUnacknowledged: rejectionUnacknowledged(row) } : toSubmitterView(row);
     const purchaseOutcome = outcomeOf(row, await purchaseOutcomes([row]));
-    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome };
+    const duplicateNotice = row.uploadedByUserId === actor.id ? await ownCopyNotice(row, actor) : null;
+    return { ...receipt, lineItems, financialReviewReasons: reasons, purchaseOutcome, duplicateNotice };
   },
 
   /**
@@ -1169,12 +1408,12 @@ export const receiptService = {
    */
   async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
-    await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, uploadedByUserId: true } });
+    const row = await load(id, access, actor);
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
     const fileBlob = await readStoredFile(file);
     if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
-    return { fileBlob, mimeType: file.mimeType, uploadedByUserId: file.uploadedByUserId };
+    return { fileBlob, mimeType: file.mimeType, uploadedByUserId: row.uploadedByUserId };
   },
 
   /**
@@ -1184,7 +1423,7 @@ export const receiptService = {
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
-    const rows = await receiptRepo.list({ orgId: await getOrgId(), uploadedByUserId: actor.id });
+    const rows = await receiptRepo.list({ orgId: await getOrgId(), uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
     const [paid, outcomes] = await Promise.all([owed.length ? paidStatus(owed) : new Map<string, PaidStatus>(), purchaseOutcomes(rows)]);
 
@@ -1207,11 +1446,12 @@ export const receiptService = {
    */
   async listReimbursedToMe() {
     const actor = await requireActor();
+    const ids = await ports().personIds.storedIdsOf(actor.id);
     const rows = await receiptRepo.list({
       orgId: await getOrgId(),
       needsReimbursement: true,
-      reimburseePersonId: actor.id,
-      uploadedByUserId: { not: actor.id },
+      reimburseePersonId: { in: ids },
+      uploadedByUserId: { notIn: ids },
       details: { state: { in: ["receipt_finalized", "rejected"] } },
     });
     const owed = rows.map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
@@ -1237,15 +1477,15 @@ export const receiptService = {
 
   /**
    * The org's receipts narrowed by `filter`; an unknown state matches no rows. A finalized
-   * receipt not yet delivered to receiving carries its push record.
+   * receipt whose push failed carries when it first failed.
    */
   async list(filter: ReceiptListFilter) {
     await requireActor();
     const orgId = await getOrgId();
     const rows = await receiptRepo.list(listFilterWhere(orgId, filter));
     const undelivered = rows.filter((r) => r.state === "receipt_finalized" && !r.pushedAt).map((r) => r.id);
-    const records = await pushRecords(orgId, undelivered);
-    return rows.map((r) => ({ ...r, ...records.get(r.id) }));
+    const [failed, copies] = await Promise.all([firstFailures(undelivered), copiesOf(orgId, rows)]);
+    return rows.map((r) => ({ ...r, ...failed.get(r.id), ...copies.get(r.id) }));
   },
 
   /**
@@ -1258,43 +1498,51 @@ export const receiptService = {
     const orgId = await getOrgId();
     const [groups, undelivered, finance] = await Promise.all([
       db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
-      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { id: true } }),
+      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { firstFailedAt: true } }),
       financeViewerId === null ? null : receiptService.countAwaitingFinance(financeViewerId),
     ]);
-    const stopped = await givenUp(orgId, undelivered.map((r) => r.id));
     const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
     if (finance) for (const state of FINANCE_ACTION_STATES) byState[state] = finance.byState[state] ?? 0;
+    else if (byState.duplicate_flagged) byState.duplicate_flagged = (await waitingGroups(orgId)).length;
     return {
       byState,
       notPushed: undelivered.length,
-      pushGivenUp: stopped.size,
+      pushGivenUp: undelivered.filter((r) => r.firstFailedAt).length,
     };
   },
 
   /**
    * How many of the org's receipts wait on this FINANCE viewer, for the host's nav pill and the
-   * review queues. The total also holds undelivered receipts catch-up gave up on, which have no
-   * queue state of their own. A receipt the viewer is conflicted on is left out.
+   * review queues. Duplicates count once per group, and a group with any member the viewer is
+   * conflicted on is left out. The total also holds finalized receipts whose push failed,
+   * which have no queue state of their own. A receipt the viewer is conflicted on is left out.
    */
   async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
     const orgId = await getOrgId();
-    const [queued, undelivered] = await Promise.all([
+    const [queued, failedPushes, household] = await Promise.all([
       receiptRepo.listParties({ orgId, details: { state: { in: [...FINANCE_ACTION_STATES] } } }),
-      receiptRepo.listParties({ orgId, pushedAt: null, details: { state: "receipt_finalized" } }),
-    ]);
-    const [stopped, household] = await Promise.all([
-      givenUp(orgId, undelivered.map((r) => r.id)),
+      receiptRepo.listParties({ orgId, pushedAt: null, firstFailedAt: { not: null }, details: { state: "receipt_finalized" } }),
       ports().households.householdOf([viewerId]),
     ]);
     const conflicted = new Set([viewerId, ...household]);
-    const rows = [...queued, ...undelivered.filter((r) => stopped.has(r.id))];
+    const isParty = (r: { uploadedByUserId: number; reimburseePersonId: number | null }) =>
+      conflicted.has(r.uploadedByUserId) || (r.reimburseePersonId != null && conflicted.has(r.reimburseePersonId));
+    const rows = [...queued.filter((r) => r.state !== "duplicate_flagged"), ...failedPushes];
     const byState: Record<string, number> = Object.fromEntries(FINANCE_ACTION_STATES.map((s) => [s, 0]));
     let total = 0;
     rows.forEach((r) => {
-      if (conflicted.has(r.uploadedByUserId) || (r.reimburseePersonId != null && conflicted.has(r.reimburseePersonId))) return;
+      if (isParty(r)) return;
       if (r.state in byState) byState[r.state] += 1;
       total += 1;
     });
+    if (queued.some((r) => r.state === "duplicate_flagged")) {
+      for (const { members } of await waitingGroups(orgId)) {
+        const parties = await receiptRepo.listParties({ orgId, id: { in: members.map((m) => m.id) } });
+        if (parties.some(isParty)) continue;
+        byState.duplicate_flagged += 1;
+        total += 1;
+      }
+    }
     return { total, byState };
   },
 
@@ -1303,15 +1551,13 @@ export const receiptService = {
     const orgId = await getOrgId();
     const rows = await receiptRepo.list({
       orgId,
-      ...(access === "submitter" ? { uploadedByUserId: actor.id } : {}),
+      ...(access === "submitter" ? { uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } } : {}),
       details: { state: { in: NEEDS_ATTENTION } },
     });
     if (access !== "finance") return rows.map(toSubmitterView);
-    const undelivered = await receiptRepo.list({ orgId, pushedAt: null, details: { state: "receipt_finalized" } });
-    const records = await pushRecords(orgId, undelivered.map((r) => r.id));
-    const stopped = undelivered.filter((r) => records.get(r.id)?.pushGivenUp);
-    const parties = await Promise.all(stopped.map(conflictedParties));
-    return [...rows, ...stopped.flatMap((r, i) => (parties[i].includes(actor.id) ? [] : [{ ...r, ...records.get(r.id) }]))];
+    const stopped = await receiptRepo.list({ orgId, pushedAt: null, firstFailedAt: { not: null }, details: { state: "receipt_finalized" } });
+    const [failed, conflicted] = await Promise.all([firstFailures(stopped.map((r) => r.id)), Promise.all(stopped.map((r) => isConflicted(r, actor.id)))]);
+    return [...rows, ...stopped.flatMap((r, i) => (conflicted[i] ? [] : [{ ...r, ...failed.get(r.id) }]))];
   },
 
   /**
@@ -1320,13 +1566,14 @@ export const receiptService = {
    * plus each rejected one they have not yet acknowledged.
    */
   async countAwaitingSubmitter(personId: number): Promise<number> {
+    const ids = await ports().personIds.storedIdsOf(personId);
     return receiptRepo.count({
       orgId: await getOrgId(),
-      uploadedByUserId: personId,
+      uploadedByUserId: { in: ids },
       OR: [
         {
           details: { state: { in: [...SUBMITTER_ACTION_STATES] } },
-          NOT: { needsReimbursement: true, reimburseePersonId: { not: personId }, details: { state: "submitter_review" } },
+          NOT: { needsReimbursement: true, reimburseePersonId: { notIn: ids }, details: { state: "submitter_review" } },
         },
         { details: { state: "rejected", rejectionAcknowledgedAt: null } },
       ],

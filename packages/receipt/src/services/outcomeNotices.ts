@@ -4,6 +4,7 @@
 import { db } from "../db";
 import type { OutcomeMail, OutcomeNotice } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
+import { withLivePeople } from "../lib/livePeople";
 import { getOrgId, outcomeMail } from "../runtime";
 
 /** Notices sent per sweep; the rest wait for the next run. */
@@ -24,10 +25,12 @@ export async function oweOutcomeNotice(tx: Prisma.TransactionClient, orgId: stri
 /** The notice and the copies still owed on a claimed row. */
 async function owedCopies(id: number): Promise<{ notice: OutcomeNotice; owed: Recipient[] }> {
   const row = await db.receiptOutcomeNotice.findUniqueOrThrow({ where: { id } });
-  const receipt = await db.receipt.findUniqueOrThrow({
-    where: { id: row.receiptId },
-    select: { uploadedByUserId: true, reimburseePersonId: true, details: { select: { retailer: true, receiptDate: true } } },
-  });
+  const [receipt] = await withLivePeople([
+    await db.receipt.findUniqueOrThrow({
+      where: { id: row.receiptId },
+      select: { uploadedByUserId: true, reimburseePersonId: true, details: { select: { retailer: true, receiptDate: true } } },
+    }),
+  ]);
   const notice: OutcomeNotice = {
     receiptId: row.receiptId,
     outcome: row.event as OutcomeNotice["outcome"],

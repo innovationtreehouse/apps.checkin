@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../db";
 import { configureExpense } from "../../runtime";
-import type { ExpensePrincipal, Outbound, OwnerDirectory, SignoffDirectory } from "../../contract";
+import { inertSignoffDirectory, type ExpensePrincipal, type Outbound, type OwnerDirectory, type SignoffDirectory } from "../../contract";
 
 export const ORG = "org-1";
 
@@ -12,6 +12,9 @@ export const TEST_BUCKETS: OwnerDirectory = {
     { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01"), quickBooksClassId: "9999" },
   ],
 };
+
+/** Inert, except that every id names itself: a test's people exist unless its directory says otherwise. */
+export const selfNamingDirectory: SignoffDirectory = { ...inertSignoffDirectory, liveIds: async (ids) => new Map(ids.map((id) => [id, id])) };
 
 /** A gateway that passes rows through unstripped; checkin-app's tests run the real one's tiers. */
 export const passthroughOutbound: Outbound = (_surface, bag, send) => send(bag);
@@ -184,9 +187,17 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
   return { id, name: `person-${id}`, isFinance: roles.isFinance ?? false, isBoard: roles.isBoard ?? false };
 }
 
-/** Rebinds the runtime with test ports (org stays ORG). */
+/** QuickBooks' account list as the integration tiers see it: each account id they save, typed Expense. */
+const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense" }));
+const standInAccounts = async () => STAND_IN_ACCOUNTS;
+
+/** Rebinds the runtime with test ports (org stays ORG); QuickBooks' account list is the stand-in unless a test binds one. */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, ...ports });
+  configureExpense({
+    org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, signoff: selfNamingDirectory,
+    ...ports,
+    quickbooks: { accounts: standInAccounts, ...ports.quickbooks },
+  });
 }
 
 /**
@@ -207,6 +218,8 @@ export function directory(d: {
   merged?: Record<number, number>;
   /** Collects the names of non-members added; each gets the id 900 + its index. */
   added?: string[];
+  /** Collects who added each non-member, in the order of `added`. */
+  addedBy?: number[];
   /** Adults the name search finds, whatever the query. */
   adults?: Array<{ personId: number; name: string }>;
 }): SignoffDirectory {
@@ -222,12 +235,14 @@ export function directory(d: {
     householdsOf: async (ids) => new Map(ids.map((id) => [id, live(households.filter((h) => h.includes(id)).flat())])),
     householdIds: async (id) => households.filter((h) => h.includes(id)).flat(),
     personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
-    livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
+    liveIds: async (ids) => new Map(ids.map((id) => [id, d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id)])),
+    storedIdsOf: async (id) => [id, ...Object.entries(d.merged ?? {}).filter(([, to]) => to === id).map(([from]) => Number(from))],
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
     isAdult: async (id) => !(d.minors ?? []).includes(id),
     searchAdults: async (_query, limit) => (d.adults ?? []).slice(0, limit),
-    addNonMemberAdult: async (name) => {
+    addNonMemberAdult: async (name, actorId) => {
       if (!d.added) throw new Error("this directory adds nobody");
+      d.addedBy?.push(actorId);
       return 900 + d.added.push(name) - 1;
     },
   };
@@ -241,6 +256,7 @@ export function catalogResolving(gtinByItemId: Record<number, string>) {
     lookupItems: async () => Object.entries(gtinByItemId).map(([id, gtin13]) => ({ index: Number(id), gtin13, conversionVersion: 1 })),
     getItem: async (gtin13: string) =>
       Object.values(gtinByItemId).includes(gtin13) ? { gtin13, categoryId: 1, subcategoryId: 10 } : null,
+    getActiveItem: async (gtin13: string) => (Object.values(gtinByItemId).includes(gtin13) ? { gtin13, name: "Part" } : null),
     getItemNames: async () => [],
   };
 }

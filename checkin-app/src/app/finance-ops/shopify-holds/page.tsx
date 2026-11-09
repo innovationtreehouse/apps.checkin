@@ -138,7 +138,7 @@ export default function ShopifyHoldsPage() {
             title={ownHousehold(r) ? "You can't deny your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'deny')}
           >
-            Deny (override)
+            Deny request without holding a seat
           </Button>
           <Button
             size="xs" fz={15} color="red" variant="subtle"
@@ -146,7 +146,7 @@ export default function ShopifyHoldsPage() {
             title={ownHousehold(r) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'approve')}
           >
-            Approve (override)
+            Approve request without holding a seat
           </Button>
           <Button size="xs" fz={15} color="blue" onClick={() => openFor(r, 'hold')}>
             Confirm manual hold
@@ -197,7 +197,7 @@ export default function ShopifyHoldsPage() {
         </Group>
       </Modal>
 
-      {/* Approve override — dangerous: no seat is held, so approving comps a phantom seat. */}
+      {/* Approve without a hold — dangerous: no seat is held, so approving comps a phantom seat. */}
       <Modal
         opened={approveOpened}
         onClose={closeApprove}
@@ -211,17 +211,17 @@ export default function ShopifyHoldsPage() {
         <Text mb="lg">
           The correct fix is <strong>Confirm manual hold</strong> on this Shopify Hold Reconciliation
           queue first (remove the seat in Shopify, then record it), which returns the request to the
-          normal approval flow. Override only if you deliberately intend to comp this seat.
+          normal approval flow. Do this only if you deliberately intend to comp this seat.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeApprove}>Go back</Button>
-          <Button color="red" onClick={() => { closeApprove(); post('/api/finance-ops/payment-plans', 'Approved (override) — no seat was held.'); }}>
-            Override &amp; approve anyway
+          <Button color="red" onClick={() => { closeApprove(); post('/api/finance-ops/payment-plans', 'Approved — no seat was held.'); }}>
+            Approve request without holding a seat
           </Button>
         </Group>
       </Modal>
 
-      {/* Deny override — same red gate; denial without a held seat is also deliberate. */}
+      {/* Deny without a hold — same red gate; denial without a held seat is also deliberate. */}
       <Modal
         opened={denyOpened}
         onClose={closeDeny}
@@ -230,17 +230,18 @@ export default function ShopifyHoldsPage() {
       >
         <Alert color="red" mb="md">
           No Shopify seat is held for this request. This row is here because the seat reservation
-          failed, not because the applicant did anything wrong.
+          failed, not because the applicant did anything wrong. Denying sends the family back to
+          paying normally.
         </Alert>
         <Text mb="lg">
           Prefer <strong>Confirm manual hold</strong> on this Shopify Hold Reconciliation queue so the
-          request can be judged on the normal payment-plan queue. Override only if you intend to deny
+          request can be judged on the normal payment-plan queue. Do this only if you intend to deny
           the request outright.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeDeny}>Go back</Button>
-          <Button color="red" onClick={() => { closeDeny(); post('/api/finance-ops/payment-plans/refuse', 'Denied (override).'); }}>
-            Override &amp; deny anyway
+          <Button color="red" onClick={() => { closeDeny(); post('/api/finance-ops/payment-plans/refuse', 'Denied — no seat was held. The family goes back to paying normally.'); }}>
+            Deny request without holding a seat
           </Button>
         </Group>
       </Modal>

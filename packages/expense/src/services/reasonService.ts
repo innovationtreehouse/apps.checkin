@@ -7,8 +7,8 @@ import { callerId } from "../lib/caller";
 import { REVIEW_KINDS, reviewKindOf } from "../lib/flags";
 import { deriveReasons, type DerivedReason, type QueueReason, type ReasonCode } from "../lib/reasons";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
-import { POSTABLE_QB_STATES } from "../lib/expense-qb-poster";
+import { boardApprovalNeeded, isConflicted, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
+import { POSTABLE_QB_STATES, lastPostError } from "../lib/expense-qb-poster";
 import { reimburseeVendorId } from "./reimburseeVendorService";
 
 /** Open flag rows that are reviews: the kept kinds. */
@@ -24,8 +24,10 @@ const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE",
 /** Reasons a conflicted FINANCE holder answers by choosing the line's bucket. */
 const BUCKET_CHOICE = new Set<ReasonCode>(["BUCKET_TO_ASSIGN", "BUCKET_UNKNOWN", "OWNER_EXCEPTION"]);
 
-/** The prefix recordFailure writes before the error in a qb_needs_finance audit note. */
-const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
+/** Whether the expense has an outbox row: the drain retries only these, and the queue reads only these. */
+async function isOutboxed(expenseId: string): Promise<boolean> {
+  return (await db.expenseEvent.findFirst({ where: { expenseId }, select: { id: true } })) !== null;
+}
 
 /**
  * The bucket that stops an outboxed, postable expense for a missing QuickBooks Class, or undefined
@@ -33,7 +35,7 @@ const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
  */
 async function missingClass(expense: { id: string; backfill: boolean; qbTxnId: string | null; qbMatchState: string }, ownerIds: (number | null)[]) {
   if (expense.backfill || expense.qbTxnId || !POSTABLE_QB_STATES.includes(expense.qbMatchState)) return undefined;
-  if (!(await db.expenseEvent.findFirst({ where: { expenseId: expense.id }, select: { id: true } }))) return undefined;
+  if (!(await isOutboxed(expense.id))) return undefined;
   if (ownerIds.includes(null)) return { bucketName: null };
   const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
   const unclassed = ownerIds.find((id) => id !== null && !buckets.get(id)?.quickBooksClassId);
@@ -62,10 +64,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     ? await Promise.all([boardApprovalNeeded(db, expense), signoffFactsByLine(db, expense, { readOnly }), filledSeatsByLine(db, expense.id)])
     : [false, new Map(), new Map()];
   const signerHeld = [...facts].some(([lineId, f]) => blockedSeats(f, filled.get(lineId) ?? []).length > 0);
-  const lastFailure =
-    expense.qbMatchState === "NEEDS_FINANCE"
-      ? await db.expenseAuditLog.findFirst({ where: { expenseId, action: "qb_needs_finance" }, orderBy: { changedAt: "desc" }, select: { notes: true } })
-      : null;
+  const lastFailure = expense.qbMatchState === "NEEDS_FINANCE" ? await lastPostError(expenseId) : null;
   const vendorLinked =
     expense.qbMatchState === "AMBIGUOUS" && expense.needsReimbursement && expense.reimburseePersonId !== null
       ? (await reimburseeVendorId(expense.reimburseePersonId)) !== null
@@ -79,7 +78,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
     heldLines: new Set(expense.holds.map((h) => h.lineItemId)).size,
     boardApprovalNeeded: boardNeeded,
     signerHeld,
-    lastPostError: lastFailure?.notes?.replace(ATTEMPT_PREFIX, "") ?? null,
+    lastPostError: lastFailure,
     reimburseeVendorLinked: vendorLinked,
     missingClass: await missingClass(expense, expense.approvals.map((a) => a.ownerId)),
     openReviews: expense.flags.flatMap((flag) => {
@@ -89,10 +88,11 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   });
 
   const me = callerId(principal);
-  const conflicted = (await conflictedParties(expense)).includes(me);
+  const conflicted = await isConflicted(expense, me);
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
-    if (!principal.isFinance) return false;
+    // The Problems list's Retry answers it, not a queue action.
+    if (!principal.isFinance || r.code === "QB_PROCESSING_FAILED") return false;
     if (BOOKKEEPING.has(r.code) || BUCKET_CHOICE.has(r.code)) return true;
     if (conflicted || r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.

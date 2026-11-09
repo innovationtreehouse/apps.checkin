@@ -204,6 +204,9 @@ export const config = {
     googleClientId: () => requireEnv('GOOGLE_CLIENT_ID'),
     googleClientSecret: () => requireEnv('GOOGLE_CLIENT_SECRET'),
 
+    // Receipt OCR
+    anthropicApiKey: (): string | null => process.env.ANTHROPIC_API_KEY || null,
+
     // Kiosk
     kioskPublicKey: (): string | null => process.env.KIOSK_PUBLIC_KEY || null,
 

@@ -3,6 +3,15 @@ import { POST as ShopifyWebhook } from '@/app/api/webhooks/shopify/route';
 import { GET as CronPending } from '@/app/api/cron/pending-participants/route';
 import prisma from '@/lib/prisma';
 import crypto from 'crypto';
+import { signCheckout } from '@/lib/programs/checkoutSignature';
+
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
+
+/** The signature the program page's checkout puts on the link for the person's own household. */
+async function checkoutSig(programId: number, personId: number): Promise<string> {
+    const { householdId } = await prisma.person.findUniqueOrThrow({ where: { id: personId }, select: { householdId: true } });
+    return signCheckout(programId, [personId], householdId);
+}
 
 // Generic mock implementation
 jest.mock('next-auth/next', () => ({
@@ -193,7 +202,8 @@ describe('Program Lifecycle Integration Tests', () => {
             line_items: [{ variant_id: "test-non-var" }],
             note_attributes: [
                 { name: "CheckMeIn_Account_ID", value: String(testParticipantId) },
-                { name: "Program_ID", value: String(testProgramId) }
+                { name: "Program_ID", value: String(testProgramId) },
+                { name: "CheckMeIn_Checkout_Sig", value: await checkoutSig(testProgramId, testParticipantId) },
             ]
         });
 
@@ -243,7 +253,7 @@ describe('Program Lifecycle Integration Tests', () => {
         let data = await res.json();
         
         expect(res.status).toBe(200);
-        // The cron NEVER removes (reviewer decision, PR #1094): the row is flagged
+        // The cron NEVER removes (reviewer decision): the row is flagged
         // overdue and left for the board. >= because the sweep is global and other
         // suites' rows may share the DB in a full CI run.
         expect(data.kicked).toBeUndefined();

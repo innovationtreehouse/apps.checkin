@@ -10,9 +10,8 @@
  * acknowledged by email (mailReply.ts). A receipt finance rejects is emailed to its uploader and
  * the person reimbursed (purchaseOutcomeMail.ts).
  */
-import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
-import { z } from "zod";
+import type { FailureKind } from "@checkin/component-kit";
 import { expenseOutcomes, reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
@@ -31,9 +30,12 @@ import { ingestReceipt, receivingOutcomes } from "@checkin/workflow-mapping";
 import { giftOutcomes, recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
 import { getOrg, sessionUser } from "@/lib/components/host";
 import { householdOf } from "@/lib/components/ports";
+import { householdWithMembership, IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { parsePersonName } from "@/lib/person/name";
 import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
+import { gmailAccessToken } from "@/lib/receipt/gmailToken";
+import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
 async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
@@ -43,13 +45,16 @@ async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, Purch
     giftOutcomes(receiptIds),
   ]);
   return new Map(
-    receiptIds.map((id) => [id, { receiving: receiving.get(id) ?? null, money: money.get(id) ?? null, gift: gift.get(id) ?? null }]),
+    receiptIds.map((id) => {
+      const r = receiving.get(id);
+      return [id, { receiving: r?.receiving ?? null, openBackorders: r?.openBackorders ?? 0, money: money.get(id) ?? null, gift: gift.get(id) ?? null }];
+    }),
   );
 }
 
 /**
  * The signed-in person as a receipt principal; null for any session checkin refuses or one
- * that names no live Person. Names and adulthood come from the Person row: the uploader's
+ * that names no Person. Names and adulthood come from the Person row: the uploader's
  * names fill "I am the donor", and only an adult may ask to be reimbursed.
  */
 async function getPrincipal(): Promise<ReceiptPrincipal | null> {
@@ -57,7 +62,7 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
   if (!user) return null;
   const [{ default: prisma }, { isKnownAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/programAge")]);
   const person = await prisma.person.findFirst({
-    where: { id: user.id, mergedIntoId: null },
+    where: { id: user.id },
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
   });
   if (!person) return null;
@@ -74,6 +79,13 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
   return { id, name, firstName: given, lastName, isAdult };
 }
 
+/** Each person's name; the library passes ids already resolved through merges. */
+async function personNames(personIds: number[]): Promise<Map<number, string>> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
+  return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
+}
+
 /**
  * The one live, sign-in-verified person whose email or approved mail alias is exactly this
  * address and who would pass the `receipt-submitter` gate if signed in, else null. Claims come
@@ -83,7 +95,7 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
  * holder who typed it.
  */
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
-  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
       import("@/lib/prisma"),
       import("@/lib/person/filters"),
@@ -93,7 +105,6 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
     ]);
   const matches = await prisma.person.findMany({
     where: {
-      ...LIVE_PERSON,
       ...SIGN_IN_VERIFIED_PERSON,
       OR: [{ email: { equals: address, mode: "insensitive" } }, { mailAliases: { some: { address, approvedAt: { not: null } } } }],
     },
@@ -111,6 +122,8 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   const exact = matches.filter((p) => p.email?.toLowerCase() === address || p.mailAliases.length > 0);
   if (matches.length !== 1 || exact.length !== 1) return null;
   const [person] = exact;
+  // Row security returns an archived household as null; its DENIED status still applies.
+  person.household ??= await householdWithMembership(person.householdId);
   // The org-account claim follows the sign-in email, including for mail from an alias.
   const claims: JWT = { id: person.id, email: person.email, hd: person.email?.toLowerCase().split("@")[1], emailVerified: true };
   assignParticipantClaims(claims, person);
@@ -124,13 +137,12 @@ const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: t
 
 /** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
 async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
-  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([
     import("@/lib/prisma"),
-    import("@/lib/person/filters"),
     import("@/lib/programAge"),
   ]);
   const matches = await prisma.person.findMany({
-    where: { ...LIVE_PERSON, name: { contains: query, mode: "insensitive" } },
+    where: { name: { contains: query, mode: "insensitive" }, ...IN_LIVE_HOUSEHOLD },
     select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
   });
@@ -138,105 +150,75 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
 }
 
 async function reimburseeById(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null> {
-  const [{ default: prisma }, { LIVE_PERSON }, { isKnownAdult }] = await Promise.all([
+  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([
     import("@/lib/prisma"),
-    import("@/lib/person/filters"),
     import("@/lib/programAge"),
   ]);
-  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: AGE_FIELDS });
+  const person = await prisma.person.findFirst({ where: { id: personId }, select: AGE_FIELDS });
   return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
 }
 
 /** Whether a live person has an account to sign in with. */
 async function reimburseeHasAccount(personId: number): Promise<boolean> {
-  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  return (await prisma.person.count({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
-async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
+async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
   const [{ default: prisma }, { addNonMemberAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/ownHousehold")]);
-  return addNonMemberAdult(prisma, name);
+  return addNonMemberAdult(prisma, name, actorId);
 }
 
-/** Re-ask the refresher this long before the token it handed out expires. */
-const TOKEN_MARGIN_MS = 5 * 60_000;
-
-const RefresherAnswer = z.object({ accessToken: z.string().min(1), expiresAt: z.number(), mailbox: z.string() });
-
-/**
- * The access token the Infra refresher Lambda publishes, kept until near expiry. The refresher
- * alone holds the refresh token; its answer must name our mailbox, or no token is handed out.
- */
-function refresherAccessToken(functionName: string, mailboxAddress: string): () => Promise<string> {
-  let cached: z.infer<typeof RefresherAnswer> | null = null;
-  return async () => {
-    if (cached && Date.now() < cached.expiresAt - TOKEN_MARGIN_MS) return cached.accessToken;
-    const lambda = new LambdaClient({ region: config.awsRegion() });
-    const res = await lambda.send(new InvokeCommand({ FunctionName: functionName, Payload: JSON.stringify({ action: "current" }) }));
-    // The error payload can echo token-endpoint detail; name only the function.
-    if (res.FunctionError) throw new Error(`Gmail token refresher ${functionName} failed`);
-    const answer = RefresherAnswer.parse(JSON.parse(new TextDecoder().decode(res.Payload)));
-    if (answer.mailbox.toLowerCase() !== mailboxAddress.toLowerCase()) throw new Error("Gmail token refresher holds a different mailbox");
-    cached = answer;
-    return answer.accessToken;
-  };
-}
-
-/**
- * Bound only on CHECKIN_ENV prod, dev or stg (exactly), with both values set; otherwise mail
- * intake reports "unbound". An unset or unknown CHECKIN_ENV binds nothing, though checkinEnv()
- * reads it as prod. Off prod (dev, and ops-stg, which reads as prod) it also needs
- * RECEIPT_PROD_MAILBOX_ADDRESS, naming the real mailbox, and refuses that mailbox: a non-prod
- * instance reads only its own test mailbox.
- */
+/** The Gmail reader when mail intake binds (mailboxConfig.ts); otherwise intake reports "unbound". */
 function receiptMailbox(): MailboxReader | undefined {
-  const functionName = process.env.GMAIL_REFRESHER_FN;
-  const mailboxAddress = process.env.RECEIPT_MAILBOX_ADDRESS;
-  const env = process.env.CHECKIN_ENV;
-  if (env === "local" || !functionName || !mailboxAddress) return undefined;
-  if (env !== "prod" && env !== "dev" && env !== "stg") {
-    console.error(`[receipt] mail intake unbound: CHECKIN_ENV must be prod, dev or stg, not ${JSON.stringify(env ?? "")}`);
+  const mailbox = receiptMailboxConfig();
+  if (!mailbox.bound) {
+    if (mailbox.refused) console.error(`[receipt] mail intake unbound: ${mailbox.refused}`);
     return undefined;
   }
-  if (env !== "prod" || config.isStaging()) {
-    const prodMailbox = process.env.RECEIPT_PROD_MAILBOX_ADDRESS?.trim().toLowerCase();
-    if (!prodMailbox || prodMailbox === mailboxAddress.trim().toLowerCase()) {
-      console.error("[receipt] mail intake unbound: off prod, RECEIPT_PROD_MAILBOX_ADDRESS must be set and name a different mailbox");
-      return undefined;
-    }
-  }
-  return createGmailReader(mailboxAddress, refresherAccessToken(functionName, mailboxAddress));
+  return createGmailReader(mailbox.mailboxAddress, gmailAccessToken(mailbox));
 }
+
+/** The mail-run alert that names the cause of a failed mailbox listing. */
+const MAILBOX_LISTING_ALERT = {
+  connection: "finance.receiptMailboxUnreadable",
+  system: "finance.receiptMailboxUnanswered",
+  settings: "finance.receiptMailboxNotFound",
+  data: "finance.receiptMailboxFailed",
+  bug: "finance.receiptMailboxFailed",
+} as const satisfies Record<FailureKind, string>;
 
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailCeiling", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.receiptMailCeiling", {
       unresolved: String(unresolved),
       refused: String(refused),
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ceiling alert failed:");
+    });
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailAgeing", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    const sent = await emailAlert("finance.receiptMailAgeing", {
       messages: String(messages),
       since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ageing alert failed:");
+    });
+    // Throwing leaves the mail unstamped, so the next run alerts again.
+    if (!sent) throw new Error("Receipt mail ageing alert was not sent");
   },
-  async mailListingFailed() {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailboxUnreadable", {
+  async mailListingFailed({ kind }) {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert(MAILBOX_LISTING_ALERT[kind], {
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mailbox listing alert failed:");
+    });
   },
 };
 
 /** A live, sign-in-verified person's email and name, for a mailed receipt's acknowledgement. */
 async function contactOf(personId: number): Promise<{ email: string; name: string } | null> {
-  const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  const person = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true, name: true } });
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  const person = await prisma.person.findFirst({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true, name: true } });
   return person?.email ? { email: person.email, name: person.name } : null;
 }
 
@@ -247,6 +229,14 @@ const replies: ReceiptReplies = {
     return sendMailReply(ack, process.env.RECEIPT_MAILBOX_ADDRESS);
   },
 };
+
+async function liveIds(personIds: number[]): Promise<Map<number, number | null>> {
+  return (await import("@/lib/person/mergeChain")).liveIdsOf(personIds);
+}
+
+async function storedIdsOf(personId: number): Promise<number[]> {
+  return (await import("@/lib/person/mergeChain")).storedIdsOf(personId);
+}
 
 const outcomeMail: OutcomeMail = {
   async send(notice, to) {
@@ -260,7 +250,9 @@ export function configureRuntime(): void {
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },
+    personIds: { liveIds, storedIdsOf },
     people: { submitterByEmail },
+    personNames: { namesOf: personNames },
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
@@ -273,7 +265,7 @@ export function configureRuntime(): void {
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
     // without the key reads nothing and lands auto uploads in ocr_failed.
-    ocr: config.checkinEnv() === "local" ? fixtureOcr : createAnthropicOcr(process.env.ANTHROPIC_API_KEY),
+    ocr: config.isLocal() ? fixtureOcr : createAnthropicOcr(config.anthropicApiKey() ?? undefined),
     fileStore: receiptFileStore(),
     storeNewFilesInBucket: config.receiptFilesS3(),
   });

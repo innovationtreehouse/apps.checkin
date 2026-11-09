@@ -134,7 +134,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| FE1 | Expense + line-item model; per-line **owner approval** workflow | PORT | NEEDS-DESIGN | L | ? | A,B | #1272 (open) |
+| FE1 | Expense + line-item model; per-line **owner approval** workflow | PORT | NEEDS-DESIGN | L | ? | A,B | #1272 (closed) |
 | FE2 | Budget owners; owner↔PN associations; owner-conflict resolution | PORT | NEEDS-DESIGN | M | ? | A,B | #1273 (open) |
 | FE3 | **QuickBooks posting** + account mapping + vendor mapping/normalization + ambiguity resolution (heavy external coupling) | PORT | NEEDS-DESIGN | XL | ? | A,B | #1274 (open) |
 | FE4 | Capital-asset queuing / identification / depreciation cycle. **NET-NEW beyond the port** (Q66): closing the loop per asset — assign an **asset number**, log it in **QB**, and **remind finance to put the sticker on the physical item** — an endpoint that doesn't exist in Inventory yet | PORT+CREATE | NEEDS-DESIGN | M | ? | A,B,owner | #1275 (open) |
@@ -147,7 +147,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| FD1 | **Benevity** bulk-import + dedup + comment-rule engine + restricted-condition mapping + GL account map | PORT | NEEDS-DESIGN | L | ? | A,B | #1280 (open) |
+| FD1 | **Benevity** bulk-import + dedup + comment-rule engine + restricted-condition mapping + GL account map | PORT | NEEDS-DESIGN | L | ? | A,B | #1280 (closed) |
 | FD2 | Disbursement holds + resubmit; disbursement events/snapshots | PORT | NEEDS-DESIGN | M | ? | A | #1281 (open) |
 | FD3 | Donation entry: online (Shopify), check/cash [board], in-kind [ops]; auto donation-receipt email | PORT | NEEDS-DESIGN | M | ? | A,B | #1282 (open) |
 | FD4 | Income-app **QB reconciliation + conflict resolution** on already-ingested Shopify data (reuse s-read) | PORT | NEEDS-DESIGN | M | ? | A,B | #1283 (open) |

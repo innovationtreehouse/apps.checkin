@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Card, Checkbox, Stack, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, showError } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { LIBRARY_KEYS, LIBRARY_LABELS, type LibraryKey } from "@/lib/libraryRelease";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 
@@ -14,19 +15,14 @@ export function LibraryReleaseCard({ initial }: { initial: readonly string[] }) 
   const toggle = async (lib: LibraryKey, on: boolean) => {
     setSaving(lib);
     try {
-      const res = await fetch("/api/settings/membership", {
+      const { settings } = await api<{ settings: { releasedLibraries: string[] } }>("/api/settings/membership", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ releaseLibrary: { library: lib, released: on } }),
+        body: JSON.stringify({ perYearVariantClient: true, releaseLibrary: { library: lib, released: on } }),
       });
-      if (!res.ok) {
-        const err = (await res.json().catch(() => null)) as { error?: string } | null;
-        notifications.show({ color: "red", autoClose: false, message: err?.error ?? "Failed to save" });
-        return;
-      }
-      const { settings } = (await res.json()) as { settings: { releasedLibraries: string[] } };
       setReleased(settings.releasedLibraries);
       notifyNavRefresh();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(null);
     }

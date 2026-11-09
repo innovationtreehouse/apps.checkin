@@ -5,7 +5,8 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
+import type { FailureKind } from "@checkin/component-kit";
+import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
@@ -49,12 +50,7 @@ export interface ReceiptSink {
 
 // ── X13: in-kind donor → donations ───────────────────────────────────────────
 
-export const InKindDonorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  companyName: z.string().nullable(),
-});
-export type InKindDonor = z.infer<typeof InKindDonorSchema>;
+export { InKindDonorSchema, type InKindDonor } from "@checkin/receipt-types";
 
 /**
  * X13. Both calls are idempotent on `receiptId`; a later recordInKindDonor replaces the donor.
@@ -83,6 +79,8 @@ export interface ReimbursementStatus {
 /** Where a finalized receipt's purchase stands downstream, as its uploader and reimbursee may read it. */
 export const purchaseOutcomeSchema = z.object({
   receiving: z.enum(["waiting", "applying", "stuck", "received"]).nullable(),
+  /** The receipt's lines still open on receiving's receive queue; absent means none. */
+  openBackorders: z.number().int().nonnegative().optional(),
   money: z
     .object({
       status: z.enum(["awaiting_confirmation", "awaiting_approval", "exception", "with_finance", "line_rejected", "complete", "backfill"]),
@@ -132,6 +130,17 @@ export interface ReceiptHouseholds {
   householdOf(personIds: number[]): Promise<number[]>;
 }
 
+/**
+ * The host's record of merges. A receipt keeps the person ids it was written with, and a merge
+ * cannot reach this database, so every read asks here who an id names now.
+ */
+export interface ReceiptPersonIds {
+  /** The live person each id names today, following merges; null for an id that names nobody live. */
+  liveIds(personIds: number[]): Promise<Map<number, number | null>>;
+  /** Every id a row may still hold for this live person: their own and each one merged into them. */
+  storedIdsOf(personId: number): Promise<number[]>;
+}
+
 // ── OCR provider ─────────────────────────────────────────────────────────────
 
 // OCR output is untrusted: it carries the manual-entry bounds, and money stays inside the
@@ -154,7 +163,7 @@ export const OcrDataSchema = z.object({
   receiptNumber: z.string().max(200).optional(),
   orderNumber: z.string().max(200).optional(),
   receiptDate: z.string().max(50),
-  currency: z.string().max(10),
+  currency: z.string().regex(CURRENCY_CODE),
   shipping: ocrMoney,
   tax: ocrMoney,
   discount: ocrMoney,
@@ -166,7 +175,11 @@ export const OcrDataSchema = z.object({
 export type OcrLineItem = z.infer<typeof OcrLineItemSchema>;
 export type OcrData = z.infer<typeof OcrDataSchema>;
 
-export type OcrResult = { success: true; data: OcrData } | { success: false; error: string };
+/** A failure carries its kind and a short reason in plain words, never the service's own text. */
+export type OcrResult = { success: true; data: OcrData } | { success: false; kind: FailureKind; error: string };
+
+/** The reason of a `data` failure the reading service refused outright, so a run of them across receipts can be told apart. */
+export const OCR_FILE_REFUSED = "the reading service refused the file";
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
@@ -179,6 +192,12 @@ export interface OcrProvider {
 export interface ReceiptPeople {
   /** The one live person allowed to submit receipts whom the host identifies by exactly this address, else null. */
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
+}
+
+/** The host's names for its people, for finance reading who uploaded a receipt. */
+export interface ReceiptPersonNames {
+  /** Each person's name by id; an id it can't name is missing. */
+  namesOf(personIds: number[]): Promise<Map<number, string>>;
 }
 
 /** A person the uploader may name as reimbursee. `id` is the Person.id. */
@@ -195,8 +214,8 @@ export interface ReceiptReimbursees {
   byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
   /** Whether this person has an account to sign in with, and so confirms for themself. */
   hasAccount(personId: number): Promise<boolean>;
-  /** Adds a non-member adult known only by name, in a household of their own. */
-  addNonMemberAdult(name: string): Promise<ReimburseeOption>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`. */
+  addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
 
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
@@ -223,6 +242,8 @@ export type MailMessage = z.infer<typeof MailMessageSchema>;
 
 /** Read-only access to the receipt mailbox. */
 export interface MailboxReader {
+  /** The mailbox's own address, from configuration. */
+  address: string;
   /** Ids of messages received in the last `days` days, oldest first. Mail the mailbox sent is not listed. */
   listRecent(days: number): Promise<string[]>;
   getMessage(id: string): Promise<MailMessage>;
@@ -249,11 +270,13 @@ export interface MailAgingOutEvent {
 
 export interface MailListingFailedEvent {
   orgId: string;
+  /** Why the listing failed, which decides the alert's wording. */
+  kind: FailureKind;
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */
-/** Why a mailed file was not accepted. */
-export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling";
+/** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
+export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
 
 export interface MailRefusal {
   file: string;
@@ -272,6 +295,21 @@ export interface MailAcknowledgement {
   receivedAt: Date;
   /** The message's refused files; only ever on the sender's copy. */
   refused: MailRefusal[];
+  /** Unique to this notice; its Message-ID is built from it by `noticeMessageId`. */
+  noticeId: string;
+}
+
+const NOTICE_ID_PREFIX = "<receipt-notice.";
+
+/** The Message-ID a notice goes out with, on the receipt mailbox's domain, so intake can tell a reply to it. */
+export function noticeMessageId(noticeId: string, mailboxAddress: string): string {
+  return `${NOTICE_ID_PREFIX}${noticeId}@${mailboxAddress.slice(mailboxAddress.lastIndexOf("@") + 1).toLowerCase()}>`;
+}
+
+/** True when `messageId` is one `noticeMessageId` made for this mailbox. */
+export function isNoticeMessageId(messageId: string, mailboxAddress: string): boolean {
+  const id = messageId.trim().toLowerCase();
+  return id.startsWith(NOTICE_ID_PREFIX) && id.endsWith(noticeMessageId("", mailboxAddress).slice(NOTICE_ID_PREFIX.length));
 }
 
 /** The host's mail out, for acknowledging mailed receipts. */
@@ -324,8 +362,10 @@ export interface ReceiptConfig {
   submitterConfirmations?: SubmitterConfirmations;
   purchaseOutcomes?: PurchaseOutcomes;
   households?: ReceiptHouseholds;
+  personIds?: ReceiptPersonIds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
+  personNames?: ReceiptPersonNames;
   reimbursees?: ReceiptReimbursees;
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */

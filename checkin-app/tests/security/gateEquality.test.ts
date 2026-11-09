@@ -3,7 +3,7 @@
  */
 /**
  * Every client gate in GATE_PAIRS admits exactly the personas its server token
- * admits, apart from the pair's listed differsFor (threat model D35). No DB: the
+ * admits, apart from the pair's listed differsFor. No DB: the
  * bucket-approver lookup is stubbed to find APPROVER_IDS only.
  */
 import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';

@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Admission and per-row policy for the receipt routes (#1265 §6, plan rules 6
- * and 7), asserted on the registry entries in registry/receipt.ts:
+ * Admission and per-row policy for the receipt routes, asserted on the registry
+ * entries in registry/receipt.ts:
  *
  *   1. An id-less session is denied on every receipt route: lib/auth resolves
  *      it as unauthenticated, so handler() and fileHandler() both 401 and the
@@ -16,8 +16,8 @@
  *   3. FINANCE-only routes refuse a non-finance session; BOARD reads with
  *      FINANCE's view on every finance-or-board route but does not act; a
  *      sysadmin gets nothing beyond the submitter view.
- *   4. The submitter view never returns donor or reimbursee names, or the id
- *      or rejection status of a suspected duplicate (another person's
+ *   4. The submitter view never returns donor or reimbursee names, or the
+ *      receipt kept in place of one rejected as a copy (another person's
  *      receipt); FINANCE sees both.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
@@ -78,6 +78,8 @@ const CONFIRMATION_ROUTES = ['GET /api/receipts/confirmations', 'POST /api/recei
 /** What became of reimbursements someone else uploaded: any signed-in person is admitted, and sees their own. */
 const REIMBURSED_ROUTE = 'GET /api/receipts/reimbursements';
 const REIMBURSEE_ROUTES = [...CONFIRMATION_ROUTES, REIMBURSED_ROUTE];
+/** The automatic-reading switch: sysadmin, FINANCE and BOARD (expenses.md). */
+const OCR_SWITCH = 'PUT /api/receipts/settings/ocr';
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -96,10 +98,14 @@ describe('receipt routes are registered', () => {
     });
 
     it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s own routes', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e))) {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e) && e !== OCR_SWITCH)) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
+    });
+
+    it('opens only the automatic-reading switch to sysadmin, FINANCE and BOARD', () => {
+        expect(getRoute(OCR_SWITCH)?.authorize).toEqual({ anyRole: ['isSysadmin', 'isFinance', 'isBoardMember'] });
     });
 });
 
@@ -165,7 +171,7 @@ describe('role admission', () => {
             'POST /api/receipts/[id]/different-purchases',
             'POST /api/receipts/[id]/keep-this-one',
         ]));
-        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs', 'GET /api/receipts/[id]/duplicate-group']));
+        expect(financeReads).toEqual(expect.arrayContaining(['GET /api/receipts', 'GET /api/receipts/[id]/audit-logs', 'GET /api/receipts/[id]/duplicate-group', 'GET /api/receipts/duplicate-queue']));
     });
 
     it.each([
@@ -243,6 +249,7 @@ describe('receipt submitter admission', () => {
         'POST /api/receipts/[id]/acknowledge-rejection',
         'POST /api/receipts/[id]/discard',
         'POST /api/receipts/[id]/resubmit',
+        'GET /api/receipts/settings/ocr',
     ];
     const RECEIPT_FILE = 'GET /api/receipts/[id]/file';
     const status = async (endpoint: string, flags: Flags) => {
@@ -451,24 +458,26 @@ describe('the submitter view', () => {
         expect(out).toEqual({ lineItems: [{}] });
     });
 
-    it('strips the suspected-duplicate receipt id and rejection status from the uploader on every receipt route', () => {
-        const flagged = { ...row, duplicateSuspectReceiptId: 'r-other', duplicateSuspectIsRejected: true, duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
+    it("returns the uploader the duplicate flag's time on every receipt route", () => {
+        const flagged = { ...row, duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
         for (const endpoint of jsonRoutes) {
             const views = new Map(getRoute(endpoint)!.orderedView);
             const submitter = views.get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
             const out = stripValue('ReceiptView', flagged, submitter, ctx) as Record<string, unknown>;
-            expect({ endpoint, leaked: 'duplicateSuspectReceiptId' in out }).toEqual({ endpoint, leaked: false });
-            expect({ endpoint, leaked: 'duplicateSuspectIsRejected' in out }).toEqual({ endpoint, leaked: false });
             expect(out.duplicateFlaggedAt).toBe(flagged.duplicateFlaggedAt);
         }
     });
 
-    it('returns the suspected-duplicate receipt id and rejection status to FINANCE', () => {
-        const finance = new Map(getRoute('GET /api/receipts/[id]')!.orderedView).get('isFinance')!;
-        const out = stripValue('ReceiptView', { ...row, duplicateSuspectReceiptId: 'r-other', duplicateSuspectIsRejected: true }, finance, { selfId: 5 } as CallerContext) as Record<string, unknown>;
-        expect(out.duplicateSuspectReceiptId).toBe('r-other');
-        expect(out.duplicateSuspectIsRejected).toBe(true);
+    it("strips the kept receipt from the uploader on every receipt route, and keeps the notice of their own copy", () => {
+        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'Acme, uploaded 3 Oct', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
+        for (const endpoint of jsonRoutes) {
+            const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
+            if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
+            const out = stripValue('ReceiptView', copy, submitter, ctx) as Record<string, unknown>;
+            expect({ endpoint, leaked: 'copyOfId' in out || 'copyOfLabel' in out }).toEqual({ endpoint, leaked: false });
+            expect(out.duplicateNotice).toEqual(copy.duplicateNotice);
+        }
     });
 
     it('drops a line item missing its owner stamp (fails closed)', () => {

@@ -1,9 +1,11 @@
 "use client";
+import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import { useState } from "react";
-import { ActionIcon, Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
+import { ActionIcon, Badge, Button, Group, Select, Table, Text, TextInput, Title, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
-import { LoadError, Pager } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, Pager, useUrlPage } from "@checkin/component-ui";
+import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface Mapping {
   id: number;
@@ -19,19 +21,41 @@ interface QbAccount {
   name: string;
   qbAccount: string;
 }
+/** One account from QuickBooks' live list, as the host's books-map route returns it. */
+interface LiveAccount {
+  id: string;
+  accountType: string;
+}
 
 const TRI = [{ value: "any", label: "Any" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }];
 const triOf = (v: string) => (v === "any" ? null : v === "yes");
 const triLabel = (v: boolean | null) => (v === null ? "Any" : v ? "Yes" : "No");
-const EMPTY = { category: "*", subcategory: "*", partNumber: "*", isDelayed: "any", isCapital: "any", qbAccount: "" };
+/** A rule's part as shown: `*`, the part's short ID, or a stored value that no line's GTIN can ever equal. */
+function RulePart({ partNumber }: { partNumber: string }) {
+  if (partNumber === "*" || isValidGtin13(partNumber)) return <>{formatGtinDisplay(partNumber)}</>;
+  return (
+    <Group gap={4} wrap="nowrap">
+      {partNumber}
+      <Tooltip label="Not a part number from the catalog, so this rule never matches a line">
+        <Badge color="red" variant="light" size="sm">never matches</Badge>
+      </Tooltip>
+    </Group>
+  );
+}
+
+const EMPTY ={ category: "*", subcategory: "*", partNumber: "*", isDelayed: "any", isCapital: "any", qbAccount: "" };
 
 /** /expense/account-mapping — rules mapping a resolved line to one QuickBooks account (`*` matches anything). */
 export default function AccountMappingPage() {
   const { isFinance } = useRoles();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const mappings = useLoad<Mapping[]>(paged("/account-mapping", page), { keepPrevious: true });
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
+  const live = useLoad<LiveAccount[]>("/api/books-map/quickbooks-accounts");
   const [form, setForm] = useState(EMPTY);
+  const typeOf = new Map((live.data ?? []).map((a) => [a.id, a.accountType]));
+  const allowed: readonly string[] = form.isCapital === "yes" ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
+  const options = (accounts.data ?? []).filter((a) => allowed.includes(typeOf.get(a.qbAccount) ?? "")).map((a) => ({ value: a.qbAccount, label: a.name }));
 
   async function add() {
     const body = { ...form, isDelayed: triOf(form.isDelayed), isCapital: triOf(form.isCapital) };
@@ -49,14 +73,14 @@ export default function AccountMappingPage() {
       <Table>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Category</Table.Th><Table.Th>Subcategory</Table.Th><Table.Th>Part #</Table.Th>
+            <Table.Th>Category</Table.Th><Table.Th>Subcategory</Table.Th><Table.Th>Part No.</Table.Th>
             <Table.Th>Delayed</Table.Th><Table.Th>Capital</Table.Th><Table.Th>QB account</Table.Th><Table.Th />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {(mappings.data ?? []).map((m) => (
             <Table.Tr key={m.id}>
-              <Table.Td>{m.category}</Table.Td><Table.Td>{m.subcategory}</Table.Td><Table.Td>{m.partNumber}</Table.Td>
+              <Table.Td>{m.category}</Table.Td><Table.Td>{m.subcategory}</Table.Td><Table.Td><RulePart partNumber={m.partNumber} /></Table.Td>
               <Table.Td>{triLabel(m.isDelayed)}</Table.Td><Table.Td>{triLabel(m.isCapital)}</Table.Td><Table.Td>{m.qbAccount}</Table.Td>
               <Table.Td>
                 {isFinance && (
@@ -74,12 +98,18 @@ export default function AccountMappingPage() {
         <Group mt="md" align="end">
           <TextInput label="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.currentTarget.value })} w={120} />
           <TextInput label="Subcategory" value={form.subcategory} onChange={(e) => setForm({ ...form, subcategory: e.currentTarget.value })} w={120} />
-          <TextInput label="Part #" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} w={120} />
+          <CatalogPicker
+            label="Part No."
+            placeholder="* (any part)"
+            value={form.partNumber === "*" ? null : form.partNumber}
+            onChange={(v) => setForm({ ...form, partNumber: v ?? "*" })}
+            w={280}
+          />
           <Select label="Delayed" data={TRI} value={form.isDelayed} onChange={(v) => setForm({ ...form, isDelayed: v ?? "any" })} w={90} />
-          <Select label="Capital" data={TRI} value={form.isCapital} onChange={(v) => setForm({ ...form, isCapital: v ?? "any" })} w={90} />
+          <Select label="Capital" data={TRI} value={form.isCapital} onChange={(v) => setForm({ ...form, isCapital: v ?? "any", qbAccount: "" })} w={90} />
           <Select
             label="QuickBooks account"
-            data={(accounts.data ?? []).map((a) => ({ value: a.qbAccount, label: a.name }))}
+            data={options}
             value={form.qbAccount || null}
             onChange={(v) => setForm({ ...form, qbAccount: v ?? "" })}
             w={200}

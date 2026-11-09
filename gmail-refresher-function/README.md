@@ -58,7 +58,10 @@ rm gmail-token.json
 ```
 
 Run it once per environment. An ERROR log with `GMAIL_INVALID_GRANT` means the grant was revoked
-or lapsed: re-run consent and reseed. Other failures name only Google's error code.
+or lapsed: re-run consent and reseed. That failure is an error named `ReconsentRequired`, which
+Lambda reports as its `errorType`; the app reads only that field and System Status then says the
+receipt mailbox needs reconnecting. Other failures are named `Error` and name only Google's error
+code.
 
 ## Build and test
 

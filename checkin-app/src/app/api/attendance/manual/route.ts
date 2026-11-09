@@ -1,7 +1,7 @@
 import { withAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma, Visit } from "@/generated/prisma/client";
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { logBackendError } from "@/lib/logger";
@@ -9,6 +9,7 @@ import { apiError } from "@/lib/api-response";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { visitSubject } from "@/lib/visit/scope";
 import { appendPresenceEvent, PresenceClass } from "@/lib/presence/events";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Self-service manual visit entry. INTENTIONAL by design: a member records a
 // closed visit for THEMSELVES, or — as a household lead — for a member of their own
@@ -83,8 +84,11 @@ export const POST = withAuth({}, async (req, auth) => {
 
         // Same per-person advisory xact lock as every other visit write, keyed on
         // the SUBJECT.
-        const visit = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit }> => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(subjectId)})`;
+
+            const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: arrivalTime, departedAt: departureTime });
+            if (overlaps.openSince) return { openSince: overlaps.openSince };
 
             const created = await tx.visit.create({
                 data: {
@@ -112,26 +116,28 @@ export const POST = withAuth({}, async (req, auth) => {
                 classification: PresenceClass.PROJECTED,
                 visitId: created.id,
             });
-            return created;
+            // actorId ≠ secondaryAffectedEntity is what marks a lead's entry for a
+            // household member as acting-for-another, without a join.
+            await tx.auditLog.create({
+                data: {
+                    actorId: userId,
+                    action: "CREATE",
+                    tableName: "Visit",
+                    affectedEntityId: created.id,
+                    secondaryAffectedEntity: Number(subjectId),
+                    newData: { arrivedAt, departedAt, type: "manual_entry", ...overlapFlag(overlaps.closedIds) }
+                }
+            });
+            return { visit: created };
         }, {
             maxWait: 5000,
             timeout: 15000,
         });
 
-        invalidateAttendanceCache();
+        if ('openSince' in result) return apiError(await openOverlapRefusal(result.openSince), 409);
+        const { visit } = result;
 
-        // actorId ≠ secondaryAffectedEntity is what marks a lead's entry for a
-        // household member as acting-for-another, without a join.
-        await prisma.auditLog.create({
-            data: {
-                actorId: userId,
-                action: "CREATE",
-                tableName: "Visit",
-                affectedEntityId: visit.id,
-                secondaryAffectedEntity: Number(subjectId),
-                newData: { arrivedAt, departedAt, type: "manual_entry" }
-            }
-        });
+        invalidateAttendanceCache();
 
         return NextResponse.json({ message: "Manual visit recorded successfully.", visit }, { status: 201 });
     } catch (error: unknown) {

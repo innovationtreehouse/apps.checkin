@@ -4,7 +4,7 @@ import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "../lib/gtin";
 import { methodsFor, type QuantityMethod } from "../lib/mergeConflictMethods";
-import { api, errorMessage, useLoad } from "../components/api";
+import { api, errorMessage, notifyNavCounts, useLoad } from "../components/api";
 import { LoadError } from "@checkin/component-ui";
 
 interface ConflictRow {
@@ -30,8 +30,8 @@ function useProvisionalStock(rows: ConflictRow[] | null): ReadonlyMap<string, nu
     let live = true;
     Promise.all(
       gtins.map((g) =>
-        api<{ gtin13: string; existingQuantity: number }[]>(`/org-items?q=${g}`).then(
-          (items) => [g, items.find((i) => i.gtin13 === g)?.existingQuantity ?? 0] as const,
+        api<{ OrgItem: { gtin13: string; existingQuantity: number }[] }>(`/org-items?q=${g}`).then(
+          ({ OrgItem: items }) => [g, items.find((i) => i.gtin13 === g)?.existingQuantity ?? 0] as const,
           () => null,
         ),
       ),
@@ -57,6 +57,7 @@ export default function MergeConflictsPage() {
     setBusy(id);
     try {
       await api(`/inventory-merge-conflicts/${id}/resolve`, { method: "PUT", body: JSON.stringify({ quantityMethod }) });
+      notifyNavCounts();
       notifications.show({ message: "Conflict resolved", color: "green" });
       conflicts.reload();
     } catch (err) {

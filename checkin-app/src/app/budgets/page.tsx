@@ -5,8 +5,10 @@ import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { errorMessage } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { api } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Bucket {
@@ -35,55 +37,9 @@ interface PersonOption {
   name: string;
 }
 
-const UNREACHABLE = "Couldn't reach the server. Check your connection and try again.";
-
-/** Sends a write; returns null on success, else a message saying why it failed. */
-async function send(url: string, method: string, body?: unknown): Promise<string | null> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    return UNREACHABLE;
-  }
-  return res.ok ? null : failureMessage(res);
-}
-
-type Loaded<T> = { ok: true; data: T } | { ok: false; error: string };
-
-/** Reads a list, or sends a write whose reply is a list; never throws, so a failure can always be shown. */
-async function request<T>(url: string, method = "GET", body?: unknown): Promise<Loaded<T>> {
-  let res: Response;
-  try {
-    res = await fetch(url, method === "GET" ? undefined : {
-      method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    return { ok: false, error: UNREACHABLE };
-  }
-  if (!res.ok) return { ok: false, error: await failureMessage(res) };
-  try {
-    return { ok: true, data: (await res.json()) as T };
-  } catch {
-    return { ok: false, error: `The server sent an unreadable reply (${res.status}).` };
-  }
-}
-
-async function failureMessage(res: Response): Promise<string> {
-  const data: unknown = await res.json().catch(() => null);
-  if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
-    return `${data.error} (${res.status})`;
-  }
-  // No JSON error body: the reply came from in front of the app, not from its routes.
-  if (res.status === 502 || res.status === 503 || res.status === 504) {
-    return `The server is unavailable (${res.status}). Try again in a minute.`;
-  }
-  return `The server returned an unexpected error (${res.status}).`;
+/** Sends a write with a JSON body; a failure throws, for `errorMessage` to word. */
+function write<T>(url: string, method: string, body?: unknown): Promise<T> {
+  return api<T>(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 }
 
 // One chip per action, keyed by its title: a new failure replaces it and a success clears it.
@@ -110,21 +66,23 @@ export default function BudgetsPage() {
   const [newName, setNewName] = useState("");
   const [newOrgLevel, setNewOrgLevel] = useState(false);
   const [newClassId, setNewClassId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const [editing, setEditing] = useState<Bucket | null>(null);
   const [editName, setEditName] = useState("");
   const [editClassId, setEditClassId] = useState<string | null>(null);
+  const [editOrgLevel, setEditOrgLevel] = useState(false);
 
   const [approverBucket, setApproverBucket] = useState<Bucket | null>(null);
 
   // Archived buckets are always loaded: their Classes stay taken, so the picker must not offer them.
-  const load = useCallback(() => Promise.all([
-    request<Bucket[]>("/api/budget-owners?includeArchived=1"),
-    request<ClassOption[]>("/api/budget-owners/quickbooks-classes"),
+  const load = useCallback(() => Promise.allSettled([
+    api<Bucket[]>("/api/budget-owners?includeArchived=1"),
+    api<ClassOption[]>("/api/budget-owners/quickbooks-classes"),
   ]).then(([b, c]) => {
-    if (b.ok) { setAllBuckets(b.data); clearError("Buckets not loaded"); } else showError("Buckets not loaded", b.error);
-    setClassesFailed(!c.ok);
-    if (c.ok) { setClasses(c.data); clearError("QuickBooks Classes unavailable"); } else showError("QuickBooks Classes unavailable", c.error);
+    if (b.status === "fulfilled") { setAllBuckets(b.value); clearError("Buckets not loaded"); } else showError("Buckets not loaded", errorMessage(b.reason));
+    setClassesFailed(c.status === "rejected");
+    if (c.status === "fulfilled") { setClasses(c.value); clearError("QuickBooks Classes unavailable"); } else showError("QuickBooks Classes unavailable", errorMessage(c.reason));
     setLoading(false);
   }), []);
 
@@ -132,8 +90,12 @@ export default function BudgetsPage() {
 
   const run = async (url: string, method: string, body: unknown, done: string, failed: string) => {
     clearError(failed);
-    const error = await send(url, method, body);
-    if (error) { showError(failed, error); return false; }
+    try {
+      await write(url, method, body);
+    } catch (e) {
+      showError(failed, errorMessage(e));
+      return false;
+    }
     notifications.show({ message: done });
     setLoading(true);
     await load();
@@ -141,12 +103,18 @@ export default function BudgetsPage() {
   };
 
   const create = async () => {
-    const ok = await run("/api/budget-owners", "POST", {
-      name: newName,
-      isOrgLevel: newOrgLevel,
-      quickBooksClassId: newClassId,
-    }, "Bucket created.", "Bucket not created");
-    if (ok) { setNewName(""); setNewOrgLevel(false); setNewClassId(null); }
+    if (creating) return;
+    setCreating(true);
+    try {
+      const ok = await run("/api/budget-owners", "POST", {
+        name: newName,
+        isOrgLevel: newOrgLevel,
+        quickBooksClassId: newClassId,
+      }, "Bucket created.", "Bucket not created");
+      if (ok) { setNewName(""); setNewOrgLevel(false); setNewClassId(null); }
+    } finally {
+      setCreating(false);
+    }
   };
 
   const saveEdit = async () => {
@@ -154,6 +122,7 @@ export default function BudgetsPage() {
     const ok = await run(`/api/budget-owners/${editing.id}`, "PATCH", {
       name: editName,
       quickBooksClassId: editClassId,
+      isOrgLevel: editOrgLevel,
     }, "Bucket saved.", "Bucket not saved");
     if (ok) setEditing(null);
   };
@@ -161,6 +130,10 @@ export default function BudgetsPage() {
   const archive = (bucket: Bucket) => {
     if (!window.confirm(`Archive "${bucket.name}"? It stays on record but leaves the active list.`)) return;
     void run(`/api/budget-owners/${bucket.id}/archive`, "POST", undefined, "Bucket archived.", "Bucket not archived");
+  };
+
+  const restore = (bucket: Bucket) => {
+    void run(`/api/budget-owners/${bucket.id}`, "PATCH", { archived: false }, "Bucket restored.", "Bucket not restored");
   };
 
   const buckets = showArchived ? allBuckets : allBuckets.filter((b) => !b.archivedAt);
@@ -190,8 +163,8 @@ export default function BudgetsPage() {
           A bucket is a budget that spending, income and gifts are booked to. Its lines post to QuickBooks under
           the bucket&apos;s QuickBooks Class, so a bucket without one holds its lines until finance sets it here. A
           bucket is not a QuickBooks account: the account says what the money was spent on, and Account mapping
-          picks it. A bucket&apos;s owner and treasurers approve its lines, and the Board names them. Finance
-          assigning a line to an org-level bucket approves it.
+          picks it. A bucket&apos;s owner and treasurers approve its lines, and the Board names them. An org-level
+          bucket has neither, and a Board member approves its lines.
         </Text>
 
         {isFinance && (
@@ -201,7 +174,7 @@ export default function BudgetsPage() {
               <TextInput label="Name" value={newName} onChange={(e) => setNewName(e.currentTarget.value)} w={240} />
               <Checkbox
                 label="Org-level"
-                description="No approvers; can't change later"
+                description="No approvers"
                 checked={newOrgLevel}
                 onChange={(e) => setNewOrgLevel(e.currentTarget.checked)}
               />
@@ -216,7 +189,7 @@ export default function BudgetsPage() {
                 onChange={setNewClassId}
                 w={280}
               />
-              <Button onClick={create} disabled={!newName.trim()}>Create</Button>
+              <Button onClick={create} disabled={creating || !newName.trim()} loading={creating}>Create</Button>
             </Group>
           </Card>
         )}
@@ -258,10 +231,13 @@ export default function BudgetsPage() {
                         <Button
                           size="xs"
                           variant="light"
-                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId); }}
+                          onClick={() => { setEditing(b); setEditName(b.name); setEditClassId(b.quickBooksClassId); setEditOrgLevel(b.isOrgLevel); }}
                         >
                           Edit
                         </Button>
+                      )}
+                      {isFinance && b.archivedAt && (
+                        <Button size="xs" variant="light" onClick={() => restore(b)}>Restore</Button>
                       )}
                       {isFinance && !b.archivedAt && (
                         <Button size="xs" variant="light" color="red" onClick={() => archive(b)}>Archive</Button>
@@ -289,6 +265,12 @@ export default function BudgetsPage() {
             data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
             value={editClassId}
             onChange={setEditClassId}
+          />
+          <Checkbox
+            label="Org-level"
+            description="No approvers. The Board removes any owner and treasurers first, and a change back waits for Board signatures open expenses here still need."
+            checked={editOrgLevel}
+            onChange={(e) => setEditOrgLevel(e.currentTarget.checked)}
           />
           <Button onClick={saveEdit} disabled={!editName.trim()}>Save</Button>
         </Stack>
@@ -327,17 +309,15 @@ function ApproversModal({ bucket, canEdit, onClose }: {
 
   useEffect(() => {
     let live = true;
-    void request<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`).then((result) => {
-      if (!live) return;
-      if (result.ok) { applyApprovers(result.data); setLoadFailed(false); clearError("Approvers not loaded"); return; }
-      showError("Approvers not loaded", result.error);
-      setLoadFailed(true);
-    });
+    api<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`).then(
+      (data) => { if (live) { applyApprovers(data); setLoadFailed(false); clearError("Approvers not loaded"); } },
+      (e: unknown) => { if (live) { showError("Approvers not loaded", errorMessage(e)); setLoadFailed(true); } },
+    );
     if (canEdit) {
-      void request<PersonOption[]>("/api/budget-owners/approver-options").then((result) => {
-        if (!live) return;
-        if (result.ok) { setPeople(result.data); clearError("People not loaded"); } else showError("People not loaded", result.error);
-      });
+      api<PersonOption[]>("/api/budget-owners/approver-options").then(
+        (data) => { if (live) { setPeople(data); clearError("People not loaded"); } },
+        (e: unknown) => { if (live) showError("People not loaded", errorMessage(e)); },
+      );
     }
     return () => { live = false; };
   }, [bucket.id, canEdit, applyApprovers]);
@@ -345,9 +325,13 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   const change = async (url: string, method: string, body?: unknown) => {
     setChanging(true);
     clearError("Approvers not changed");
-    const result = await request<Approver[]>(url, method, body);
-    setChanging(false);
-    if (result.ok) applyApprovers(result.data); else showError("Approvers not changed", result.error);
+    try {
+      applyApprovers(await write<Approver[]>(url, method, body));
+    } catch (e) {
+      showError("Approvers not changed", errorMessage(e));
+    } finally {
+      setChanging(false);
+    }
   };
 
   const saveOwner = async () => {

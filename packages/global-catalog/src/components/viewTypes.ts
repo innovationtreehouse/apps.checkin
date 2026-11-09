@@ -128,4 +128,6 @@ export interface ReferenceConflictRow {
   createdAt: string;
   resolvedAt: string | null;
   resolution: string | null;
+  /** Where the part is now; `existingGtin13` is the item the open conflict was raised against. */
+  itemReference: { gtin13: string };
 }

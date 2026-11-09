@@ -150,7 +150,7 @@ describeDb("going back clears every later step of the expense", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
     await seedOrgSettings();
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 9000 });
-    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", qbMatchState, qbPostAttempts: 2 } });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", qbMatchState, qbFirstFailedAt: new Date(), qbLastError: "timeout" } });
     const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000, isCapital: true, partNumber: null, manualQbAccount: "5000" });
     await db.expenseLineItem.update({ where: { id: li }, data: { capitalOwnerId: 100, depreciationYears: 5 } });
     const approvalId = await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
@@ -164,6 +164,14 @@ describeDb("going back clears every later step of the expense", () => {
   const reopen = (id: string, li: number) =>
     db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "finance changed the receipt"));
 
+  it("a qb_error expense, which has no outbox row, leaves its failed step when it goes back", async () => {
+    const { id, li } = await capitalExpense();
+    await db.expenseEvent.deleteMany({ where: { expenseId: id } });
+    await db.expense.update({ where: { id }, data: { state: "qb_error", qbMatchState: "UNMATCHED" } });
+    await reopen(id, li);
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbFirstFailedAt: null, qbLastError: null });
+  });
+
   it("a skipped expense stays skipped when it goes back", async () => {
     const { id, li } = await capitalExpense("SKIPPED");
     await reopen(id, li);
@@ -175,8 +183,9 @@ describeDb("going back clears every later step of the expense", () => {
     const { id, li, approvalId } = await capitalExpense();
     await reopen(id, li);
 
-    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
-    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null });
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbFirstFailedAt: null, qbLastError: null });
+    // The hand-set account was checked against the capital designation, so it goes with it.
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null, manualQbAccount: null });
     expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(0);
     expect(await db.capitalAsset.count({ where: { assetNumber: "ITFA01" } })).toBe(1);
     expect(await db.expenseHold.count({ where: { expenseId: id } })).toBe(0);
@@ -184,10 +193,11 @@ describeDb("going back clears every later step of the expense", () => {
     const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id }, orderBy: { id: "asc" } });
     expect(audit.map((a) => a.action)).toEqual([
       "approval_cleared", "signoff_voided",
-      "capital_designation_cleared", "capital_asset_cleared", "hold_cleared", "qb_outbox_cleared",
+      "capital_designation_cleared", "hold_account_cleared", "capital_asset_cleared", "hold_cleared", "qb_outbox_cleared",
       "state_transition",
     ]);
     expect(audit.find((a) => a.action === "capital_asset_cleared")).toMatchObject({ lineItemId: li, valueBefore: "ITFA90", notes: "finance changed the receipt" });
+    expect(audit.find((a) => a.action === "hold_account_cleared")).toMatchObject({ lineItemId: li, fieldChanged: "manualQbAccount", valueBefore: "5000", valueAfter: null });
 
     // Done again in order, with the same amounts: approval, capital review, depreciation.
     await approveLine(principal(2), id, approvalId);

@@ -3,13 +3,13 @@
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
-  MATCH_WINDOW_DAYS, MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
-  type CloseRead, type FindOrCreateResult, type PostGate, type QboPurchase, type TxnWrite,
+  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
-import { getExpenseRuntime, getOrgId } from "../runtime";
+import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import {
   appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
 } from "../services/qbMatchService";
@@ -21,8 +21,11 @@ import { logError, logWarn } from "./logger";
 import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
+import type { ExpenseSettings } from "../contract";
+import { readExpenseSettings } from "../services/settingsService";
 import { checkOffHeldOnPost, raiseFlag, raiseStray } from "../services/flagService";
 import { NEEDS_VOIDING } from "./flags";
+import { reimburseeVendorLink } from "./livePeople";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
@@ -45,10 +48,12 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
     : { qbMatchState: "NOT_TEST_DATA", note: "not sent to QuickBooks: not test data" };
 }
 
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class";
+/** `failed`: the post failed and the expense is stuck at NEEDS_FINANCE until a person retries it. */
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class" | "unpostable";
 
 /** When the lane's posting switched on, or null while it is off. */
 export async function qbPostingOnAt(orgId: string, client: Db = db): Promise<Date | null> {
+  await assertOrg(orgId);
   return (await client.expenseOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true } }))?.qbPostingOnAt ?? null;
 }
 
@@ -73,8 +78,8 @@ export async function switchQbPostingOn(orgId: string, now = new Date()): Promis
   return at;
 }
 
-/** How one post runs: `book` is finance's "book it"; `close` is the closing date the run already read. */
-export type PostOptions = { book?: boolean; close?: CloseRead };
+/** How one post runs: `book` is finance's "book it"; `close` and `settings` are what the run already read. */
+export type PostOptions = { book?: boolean; close?: CloseRead; settings?: ExpenseSettings };
 
 /** QuickBooks entries created since UTC midnight, counted from the audit rows settle() writes. */
 export async function qbCreatesToday(client: Db = db): Promise<number> {
@@ -95,21 +100,27 @@ async function claimedAndExcluded(orgId: string, entity: "Purchase" | "Bill") {
   };
 }
 
-/** Every failure is recorded; at the limit the drain stops retrying and the expense waits on finance (NEEDS_FINANCE). */
-async function recordFailure(tx: Db, current: Expense, error: string): Promise<"failed" | "needs_finance"> {
-  const attempts = current.qbPostAttempts + 1;
-  const exhausted = attempts >= MAX_POST_ATTEMPTS;
-  const qbMatchState = exhausted ? "NEEDS_FINANCE" : "POST_FAILED";
-  await tx.expense.update({ where: { id: current.id }, data: { qbMatchState, qbPostAttempts: attempts, qbClaimedAt: null } });
-  await writeAudit(tx, SYSTEM_ACTOR, {
-    expenseId: current.id,
-    action: `qb_${qbMatchState.toLowerCase()}`,
-    fieldChanged: "qbMatchState",
-    valueBefore: current.qbMatchState,
-    valueAfter: qbMatchState,
-    notes: `attempt ${attempts} of ${MAX_POST_ATTEMPTS}: ${error}`,
+/** What finance reads on a failed post: a refusal's fault codes and request id, never the fault text; else the error. */
+function failureNote(f: PostFailure): string {
+  if (!f.codes) return f.error;
+  const codes = f.codes.length ? `code ${f.codes.join(", ")}` : "no fault code";
+  return `QuickBooks refused: ${codes} (request ${f.requestId ?? "unknown"})`;
+}
+
+const reportFailure = (f: PostFailure, expenseId: string) => expenseRuntime.failed("posting", postFailureError(f), `expense ${expenseId}`);
+
+/**
+ * Records a failed post: the expense is stuck at NEEDS_FINANCE with the error, and keeps the time
+ * of its first failure, until a person retries it.
+ */
+async function recordFailure(tx: Db, current: Expense, f: PostFailure, note = failureNote(f)): Promise<"failed"> {
+  reportFailure(f, current.id);
+  await tx.expense.update({
+    where: { id: current.id },
+    data: { qbMatchState: "NEEDS_FINANCE", qbLastError: note, qbFirstFailedAt: current.qbFirstFailedAt ?? new Date(), qbClaimedAt: null },
   });
-  return exhausted ? "needs_finance" : "failed";
+  await writeAudit(tx, SYSTEM_ACTOR, { expenseId: current.id, action: "qb_needs_finance", fieldChanged: "qbMatchState", valueBefore: current.qbMatchState, valueAfter: "NEEDS_FINANCE", notes: note });
+  return "failed";
 }
 
 function lockedExpense(tx: Db, orgId: string, expenseId: string) {
@@ -164,7 +175,7 @@ async function writeRows(client: Db, orgId: string, expense: Expense): Promise<O
   const buckets = (await getExpenseRuntime().budgetOwners.list()).filter((b) => bucketIds.has(b.id));
   const vendor =
     expense.needsReimbursement && expense.reimburseePersonId !== null
-      ? await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: expense.reimburseePersonId } })
+      ? await reimburseeVendorLink(client, orgId, expense.reimburseePersonId)
       : null;
   return {
     Expense: expense,
@@ -183,8 +194,10 @@ async function buildWrite(client: Db, orgId: string, expense: Expense, posting: 
 
 type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null };
 
+/** Settles a post that did not fail. Any outcome but `waiting` leaves the posting step, so it clears a failure. */
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
-  await tx.expense.update({ where: { id: before.id }, data: { ...data, qbClaimedAt: null } });
+  const cleared = outcome === "waiting" ? {} : { qbFirstFailedAt: null, qbLastError: null };
+  await tx.expense.update({ where: { id: before.id }, data: { ...cleared, ...data, qbClaimedAt: null } });
   if (data.qbTxnId) await checkOffHeldOnPost(tx, before.id);
   if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
   await writeAudit(tx, SYSTEM_ACTOR, {
@@ -205,10 +218,11 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * found by amount → MATCHED, its baseline taken from the read that matched it; ambiguous or an
  * unmapped reimbursee → AMBIGUOUS; dated in closed books (by the closing date read for the run,
  * re-read before the create, or refused as fault 6210), or not allowed to create → UNBOOKED for
- * finance; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by the
- * drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE (finance's retry re-arms it); an expense the
- * test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. A line whose bucket
- * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At MAX_CREATES_PER_DAY the
+ * finance; any failure → NEEDS_FINANCE, stuck with its error until a person retries it
+ * (recordFailure); an expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
+ * own data cannot make an entry (no receipt date, no lines, a line with no account) → NEEDS_FINANCE
+ * at once with the reason, no attempt counted. A line whose bucket
+ * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At the daily create limit the
  * expense waits for the next UTC day, nothing recorded. With the closing date unread nothing is
  * created, and a miss leaves the expense as it is.
  *
@@ -224,20 +238,37 @@ export async function postExpenseToQb(orgId: string, expenseId: string, opts: Po
 
   let claim: Claim | null = null;
   try {
-    const [close, onAt] = await Promise.all([opts.close ?? readCloseDate(posting.client), qbPostingOnAt(orgId)]);
-    const claimed = await claimForPost(orgId, expenseId, posting, { close, onAt, book });
+    const [close, onAt, settings] = await Promise.all([opts.close ?? readCloseDate(posting.client), qbPostingOnAt(orgId), opts.settings ?? readExpenseSettings(db, orgId)]);
+    const claimed = await claimForPost(orgId, expenseId, posting, { close, onAt, book, settings });
     if (typeof claimed === "string") return claimed;
     claim = claimed.claim;
-    return await callAndSettle(orgId, expenseId, posting, claimed, close);
+    return await callAndSettle(orgId, expenseId, posting, claimed, close, settings.qbMatchWindowDays);
   } catch (err) {
     // The failing transaction rolled back, so the failure is recorded in a fresh one.
     logError("qb_post_threw", { expenseId, orgId }, err);
-    const error = err instanceof Error ? err.message : String(err);
+    const failure = postFailure(err);
     const held = claim;
     return held
-      ? withClaim(orgId, expenseId, held, (tx) => recordFailure(tx, held.before, error))
-      : withPostable(orgId, expenseId, (tx, current) => recordFailure(tx, current, error), book);
+      ? withClaim(orgId, expenseId, held, (tx) => recordFailure(tx, held.before, failure))
+      : withPostable(orgId, expenseId, (tx, current) => recordFailure(tx, current, failure), book);
   }
+}
+
+/**
+ * Retry of a stuck post: re-arms it (NEEDS_FINANCE → POST_FAILED, keeping its first failure time)
+ * and posts once. The lines keep the accounts they were outboxed with. "waiting" when the expense
+ * is not a stuck post.
+ */
+export async function retryFailedPost(orgId: string, expenseId: string): Promise<PostOutcome | "unbound"> {
+  if (!(await getExpenseRuntime().quickbooks.posting())) return "unbound";
+  const rearmed = await db.$transaction(async (tx) => {
+    const current = await lockedExpense(tx, orgId, expenseId);
+    if (current.qbMatchState !== "NEEDS_FINANCE" || !current.qbFirstFailedAt) return false;
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED" } });
+    await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "qb_post_retried", fieldChanged: "qbMatchState", valueBefore: "NEEDS_FINANCE", valueAfter: "POST_FAILED" });
+    return true;
+  });
+  return rearmed ? postExpenseToQb(orgId, expenseId) : "waiting";
 }
 
 type Claimed = {
@@ -251,7 +282,7 @@ type Claimed = {
   afterSwitchOn: boolean;
 };
 
-type ClaimInputs = { close: CloseRead; onAt: Date | null; book: boolean };
+type ClaimInputs = { close: CloseRead; onAt: Date | null; book: boolean; settings: ExpenseSettings };
 
 /**
  * Why an expense may not post: an unknown reimbursee, an unfilled seat or Board approval, or a
@@ -289,7 +320,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     const held = await postingHold(tx, current);
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
-      // A closed expense takes no further sign-off or decision, so only finance can clear its hold.
+      // A closed expense takes no further sign-off or decision, so finance has to be told.
       if (current.state === "qb_complete") await flagHeld(tx, expenseId, `closed but not posted: ${held}`);
       return "waiting";
     }
@@ -304,15 +335,17 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     try {
       built = await buildWrite(tx, orgId, current, posting);
     } catch (e) {
-      built = { error: e instanceof Error ? e.message : String(e) };
+      return recordFailure(tx, current, postFailure(e));
     }
-    if ("error" in built) return recordFailure(tx, current, built.error);
+    if ("error" in built) return recordFailure(tx, current, { error: built.error, failure: "bug" });
+    // Retrying cannot fix the expense's own data, so it waits for finance.
+    if ("unpostable" in built) return settle(tx, current, "unpostable", { qbMatchState: "NEEDS_FINANCE" }, built.unpostable);
     if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
     // State stays postable, so the next drain posts it once the bucket has a Class.
     if ("noClass" in built) return "no_class";
 
     // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
-    if ((await qbCreatesToday(tx)) >= MAX_CREATES_PER_DAY) return "waiting";
+    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
 
     const date = built.write.fields.txnDate;
     const gate = qbGate(date, inputs.close, inputs.onAt, current.submittedAt, inputs.book);
@@ -343,12 +376,13 @@ type PostResult = FindOrCreateResult | { kind: "lookup"; own: Exclude<OwnEntry, 
  * up the entry created since then by the expense's key (kept in its PrivateNote) instead of
  * creating a second one.
  */
-async function callAndSettle(orgId: string, expenseId: string, posting: ExpensePosting, claimed: Claimed, close: CloseRead): Promise<PostOutcome> {
+async function callAndSettle(orgId: string, expenseId: string, posting: ExpensePosting, claimed: Claimed, close: CloseRead, windowDays: number): Promise<PostOutcome> {
   const { claim, write, lineAccounts, gate, attemptedAt, afterSwitchOn } = claimed;
   const { before } = claim;
   const entity: QbMatchEntity = write.entity === "Bill" ? "Bill" : "Purchase";
   const date = write.fields.txnDate;
-  const own: OwnEntry = attemptedAt ? await lookupOwnEntry(posting.client, orgId, expenseId, entity, attemptedAt) : { kind: "none" };
+  const amountCents = sumCents(...write.fields.lines.map((l) => l.amountCents));
+  const own: OwnEntry = attemptedAt ? await lookupOwnEntry(posting.client, orgId, expenseId, entity, attemptedAt, amountCents) : { kind: "none" };
   let result: PostResult;
   if (own.kind !== "none") {
     result = { kind: "lookup", own };
@@ -357,7 +391,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
     result = await findOrCreate(posting.client, {
       write,
       key: qbKey("expense", expenseId),
-      window: { from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) },
+      window: { from: shiftDate(date, -windowDays), to: shiftDate(date, windowDays) },
       closedThrough: gate.closedThrough,
       mayCreate: gate.mayCreate,
       claimedIds,
@@ -388,6 +422,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
       switch (result.kind) {
         case "lookup":
           if (result.own.kind === "own") return linkCreated(tx, result.own.entry.Id, "the app had already booked this expense");
+          if (result.own.kind === "failed") return recordFailure(tx, before, result.own.failure, result.own.note);
           return settle(tx, before, "needs_finance", { qbMatchState: "NEEDS_FINANCE" }, result.own.note);
         case "created":
           return linkCreated(tx, result.id);
@@ -396,7 +431,6 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
           if (!(await claimQbTxn(tx, orgId, entity, result.id))) {
             return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, `QuickBooks ${entity} ${result.id} is already claimed by another expense or line`);
           }
-          const amountCents = sumCents(...write.fields.lines.map((l) => l.amountCents));
           const qbMatchBaseline = matchedBaseline({ amountCents, txnDate: result.txnDate, vendorId: qbVendorId ?? null });
           return settle(tx, before, "matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: entity, qbMatchBaseline });
         }
@@ -410,7 +444,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
           if (!close.ok) return settle(tx, before, "waiting", { qbMatchState: before.qbMatchState });
           return settle(tx, before, "queued", { qbMatchState: "UNBOOKED" });
         case "failed":
-          return recordFailure(tx, before, result.error);
+          return recordFailure(tx, before, result);
       }
     },
     result.kind === "created" ? { entity, id: result.id } : undefined,
@@ -435,21 +469,32 @@ export async function bookExpenseToQb(orgId: string, expenseId: string, actor: A
   const outcome = await postExpenseToQb(orgId, expenseId, { book: true, close });
   if (outcome === "unbound") throw new ServiceError(503, "QuickBooks is not connected");
   const saved = await db.expense.findFirstOrThrow({ where: { id: expenseId, orgId }, select: { qbMatchState: true } });
-  switch (saved.qbMatchState) {
-    case "CREATED":
-    case "MATCHED":
-      return;
+  if (saved.qbMatchState === "CREATED" || saved.qbMatchState === "MATCHED") return;
+  const detail = saved.qbMatchState === "NEEDS_FINANCE" ? await lastPostError(expenseId) : null;
+  throw bookRefusal(saved.qbMatchState, outcome, detail);
+}
+
+/** A failure note may open with an attempt count; finance reads the error alone. */
+const ATTEMPT_PREFIX = /^attempt \d+ of \d+: /;
+
+/** Why the expense last went to NEEDS_FINANCE, as finance reads it on the expense; null when no note says. */
+export async function lastPostError(expenseId: string): Promise<string | null> {
+  const last = await db.expenseAuditLog.findFirst({ where: { expenseId, action: "qb_needs_finance" }, orderBy: { changedAt: "desc" }, select: { notes: true } });
+  return last?.notes?.replace(ATTEMPT_PREFIX, "") || null;
+}
+
+/** The refusal for a "book it" that left the expense in `state`; `detail` is why a NEEDS_FINANCE expense waits. */
+export function bookRefusal(state: string, outcome: PostOutcome, detail: string | null): ServiceError {
+  switch (state) {
     case "UNBOOKED":
-      throw new ServiceError(
+      return new ServiceError(
         409,
         outcome === "waiting"
           ? "Not booked yet: a sign-off is missing, the daily limit is reached, or a post is in flight; try again later"
           : "The expense is dated in closed books; it can only be matched",
       );
-    case "POST_FAILED":
-      throw new ServiceError(503, "QuickBooks failed while booking; the expense waits as POST_FAILED and the drain retries it");
     default:
-      throw new ServiceError(409, `Not booked: the expense now waits as ${saved.qbMatchState}`);
+      return new ServiceError(409, `Not booked: ${detail ? `${detail}; ` : ""}the expense now waits as ${state}`);
   }
 }
 
@@ -457,7 +502,6 @@ export type SweepCounts = { entries: number; flagged: number; full: boolean } | 
 
 export type DrainCounts = Record<PostOutcome, number> & {
   capped: "count" | "day" | null;
-  stoppedAfterFailures: boolean;
   closeDateRead: boolean;
   sweep: SweepCounts;
 };
@@ -467,7 +511,8 @@ export type DrainCounts = Record<PostOutcome, number> & {
  * the last SWEEP_DAYS and finds the expense each app key belongs to. An app entry
  * its expense does not hold raises QB_DUPLICATE_TO_VOID, once per entry; a capped read alerts finance
  * once per run, and a key with no attempted expense is logged. QuickBooks is only read. An
- * expense mid-post is skipped; the next sweep sees it.
+ * expense mid-post is skipped; the next sweep sees it. A $0 entry is skipped: a voided entry keeps
+ * its memo at a zero total, and a stray $0 entry moves no money.
  */
 export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePosting, now = new Date()): Promise<SweepCounts> {
   const oldest = await db.expense.findFirst({
@@ -499,6 +544,7 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
     entries += read.length;
     if (full) logWarn("qb_sweep_full_page", { orgId, entity, since: since.toISOString() });
     for (const entry of read) {
+      if (entry.TotalAmt === 0) continue;
       for (const key of appKeysOf(entry)) {
         if (!key.startsWith("expense:")) continue;
         const expenseId = byKey.get(key);
@@ -524,14 +570,15 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
  * The catch-up drain. It switches the lane's posting on (once, for good) and reads the books
  * closing date once for the run. Then every outboxed expense not yet in QuickBooks, oldest receipt
  * first, plus any claim gone stale, and last the orphan sweep. Stops at the daily and per-run count
- * caps and logs the hit (the alarm hook); the rest waits for the next run. Stops after
- * MAX_CONSECUTIVE_FAILURES failures in a row. Returns counts only.
+ * caps and logs the hit (the alarm hook); the rest waits for the next run. A failed expense is
+ * stuck and the run goes on. Returns counts only.
  */
 export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts | "unbound"> {
   const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) return "unbound";
   const orgId = await getOrgId();
   await switchQbPostingOn(orgId, now);
+  const settings = await readExpenseSettings(db, orgId);
   const close = await readCloseDate(posting.client);
   if (!close.ok) logWarn("qb_drain_close_date_unread", { orgId, error: close.error.slice(0, 200) });
   const outboxed = new Set((await db.expenseEvent.findMany({ select: { expenseId: true } })).map((e) => e.expenseId));
@@ -543,18 +590,18 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   ).filter((e) => outboxed.has(e.id) && isPostable(e, now.getTime()));
 
   const counts: DrainCounts = {
-    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0,
-    capped: null, stoppedAfterFailures: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
+    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0,
+    capped: null, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
   const stop = await runDrain<Expense, PostOutcome>(due, {
     counts,
+    maxCreatesPerRun: settings.qbMaxCreatesPerRun,
+    maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
-    failures: ["failed", "needs_finance"],
-    // No QuickBooks call was made for a missing Class, so it says nothing about QuickBooks being down.
-    noCall: ["no_class"],
+    failures: [],
     post: async (e) => {
       try {
-        const result = await postExpenseToQb(e.orgId, e.id, { close });
+        const result = await postExpenseToQb(e.orgId, e.id, { close, settings });
         return result === "unbound" ? null : result;
       } catch (err) {
         logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
@@ -564,13 +611,10 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   });
   if (stop?.by === "day") {
     counts.capped = "day";
-    logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: stop.remaining });
+    logWarn("qb_daily_cap", { cap: settings.qbMaxCreatesPerDay, remaining: stop.remaining });
   } else if (stop?.by === "count") {
     counts.capped = "count";
-    logWarn("qb_drain_capped", { cap: counts.capped, remaining: stop.remaining });
-  } else if (stop?.by === "failures") {
-    counts.stoppedAfterFailures = true;
-    logWarn("qb_drain_failure_streak", { failures: MAX_CONSECUTIVE_FAILURES, remaining: stop.remaining });
+    logWarn("qb_drain_capped", { cap: settings.qbMaxCreatesPerRun, remaining: stop.remaining });
   }
   // After the posts, so an expense this run linked to its own entry is not reported as a stray.
   counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);

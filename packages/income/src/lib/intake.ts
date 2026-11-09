@@ -1,7 +1,7 @@
 // The ports another lane calls to hand income a deposit it expects and read back what became of
 // it. The caller calls expectDeposit only after its own record has committed, and again from a
 // re-send job for every key depositStatus leaves out; a repeat changes nothing.
-import { isBooksMapRole, type BooksMapRole } from "@checkin/quickbooks";
+import { isBooksMapRole, isRetiredBooksMapRole, type BooksMapRole, type RetiredBooksMapRole } from "@checkin/quickbooks";
 import { ServiceError } from "@checkin/component-kit";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
@@ -9,15 +9,20 @@ import { assertOrg } from "../runtime";
 import { RECON_KIND, RECON_ORIGIN, RECON_RESOLUTION, RECON_STATUS, audit, isClaimed, lockReconciliation } from "./reconcile";
 import { DEPOSIT_SOURCE, type DepositSourceName } from "./sources";
 
-/** One line of an expected deposit: an account role and a budget bucket (null for organization level). */
+/**
+ * One line of an expected deposit: the QuickBooks account it books to and a budget bucket (null for
+ * organization level). A line stored before lanes named accounts, or a fee line stored before fees
+ * reduced income, carries only a retired role, and goes to finance.
+ */
 export type ExpectedDepositLine = {
-  role: BooksMapRole;
+  accountId?: string;
+  role?: RetiredBooksMapRole;
   budgetOwnerId: number | null;
   amountCents: number;
   description?: string;
 };
 
-/** The deposit a lane expects to land in the bank. Income resolves every role and bucket through the books map when it posts. */
+/** The deposit a lane expects to land in the bank. Income resolves its bank role and buckets through the books map when it posts. */
 export type ExpectedDeposit = {
   /** YYYY-MM-DD. */
   txnDate: string;
@@ -39,15 +44,25 @@ export type DepositStatus =
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+const QB_ID = /^\d+$/;
+
 /** The expected deposit, checked; throws a 400 naming the first problem. */
 export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
+  return checkExpected(raw, true);
+}
+
+/** `fresh` is a new hand-over; a stored row may carry a retired-role line from before lanes named accounts. */
+function checkExpected(raw: ExpectedDeposit, fresh: boolean): ExpectedDeposit {
   const bad = (msg: string) => new ServiceError(400, msg);
   if (!DAY.test(raw.txnDate) || Number.isNaN(Date.parse(`${raw.txnDate}T00:00:00Z`))) throw bad("txnDate must be YYYY-MM-DD");
   if (!Number.isInteger(raw.netCents) || raw.netCents <= 0) throw bad("netCents must be a positive whole number");
   if (!isBooksMapRole(raw.bankRole)) throw bad(`bankRole "${raw.bankRole}" is not a books-map role`);
   if (!raw.lines.length) throw bad("an expected deposit needs at least one line");
   for (const l of raw.lines) {
-    if (!isBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a books-map role`);
+    if (l.accountId !== undefined && l.role !== undefined) throw bad("a line names an account or a role, not both");
+    if (l.accountId !== undefined && !QB_ID.test(l.accountId)) throw bad("line accountId must be a QuickBooks id (digits only)");
+    if (l.role !== undefined && !isRetiredBooksMapRole(l.role)) throw bad(`line role "${l.role}" is not a retired books-map role`);
+    if (l.accountId === undefined && (fresh || l.role === undefined)) throw bad("a line needs its QuickBooks account id");
     if (!Number.isInteger(l.amountCents)) throw bad("line amountCents must be a whole number");
     if (l.budgetOwnerId !== null && (!Number.isInteger(l.budgetOwnerId) || l.budgetOwnerId <= 0)) throw bad("line budgetOwnerId must be a positive integer or null");
   }
@@ -58,7 +73,7 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
     netCents: raw.netCents,
     bankRole: raw.bankRole,
     lines: raw.lines.map((l) => ({
-      role: l.role,
+      ...(l.accountId !== undefined ? { accountId: l.accountId } : { role: l.role }),
       budgetOwnerId: l.budgetOwnerId,
       amountCents: l.amountCents,
       ...(l.description ? { description: l.description } : {}),
@@ -69,7 +84,7 @@ export function parseExpected(raw: ExpectedDeposit): ExpectedDeposit {
 
 /** A row's expected deposit, rebuilt in parseExpected's key order (JSONB keeps its own). Null on a Shopify row. */
 export function expectedOf(row: Pick<PayoutReconciliation, "expected">): ExpectedDeposit | null {
-  return row.expected === null ? null : parseExpected(row.expected as ExpectedDeposit);
+  return row.expected === null ? null : checkExpected(row.expected as ExpectedDeposit, false);
 }
 
 /** Whether nothing in QuickBooks can yet depend on the row: no deposit held, no create attempted, no post running, not settled. */

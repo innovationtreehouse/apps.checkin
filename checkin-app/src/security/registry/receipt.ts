@@ -6,7 +6,8 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 // the session id, and grants no pii, so donor and reimbursee names
 // never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
-// nothing extra (revenue.md). A route shared by both audiences lists
+// nothing extra (revenue.md), except the automatic-reading switch below, which
+// the owner opened to sysadmins (expenses.md). A route shared by both audiences lists
 // isFinance first; the route passes `access: "finance"` to the library exactly
 // when that view matched, else `"submitter"`.
 const FINANCE = ['everyones:pii', 'everyones:personal', 'everyones:internal'] as const;
@@ -69,12 +70,13 @@ defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance
 defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
 // A receipt's duplicate group: org-wide, since its members may be anyone's receipts.
 defineRoute({ endpoint: 'GET /api/receipts/[id]/duplicate-group', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
+// Finance review's Duplicates tab: one row per group, across anyone's receipts.
+defineRoute({ endpoint: 'GET /api/receipts/duplicate-queue', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptDuplicateQueueRow'], orderedView: FINANCE_READ_VIEW, auditedRead: true });
 
 // FINANCE actions.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/approve', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/reject', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
-defineRoute({ endpoint: 'POST /api/receipts/[id]/clear-duplicate', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
-// Duplicate-group decisions (2516_RECEIPT_DUPLICATES.md §6): one pair, with its undo, or the whole group.
+// Duplicate-group decisions: one pair, with its undo, or the whole group.
 defineRoute({ endpoint: 'POST /api/receipts/[id]/not-this-one', authorize: 'finance', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'DELETE /api/receipts/[id]/not-this-one/[otherId]', authorize: 'finance', envelope: null, returns: ['ReceiptDuplicateGroup', 'ReceiptDuplicateMember'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/different-purchases', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
@@ -83,6 +85,18 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/restart-flow', authorize: 'fina
 defineRoute({ endpoint: 'POST /api/receipts/[id]/push-to-inventory', authorize: 'finance', envelope: null, returns: ['ReceiptPushResult'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/import', authorize: 'finance', envelope: null, returns: ['ReceiptImportResult'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/settings', authorize: 'finance', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_VIEW });
+
+// The automatic-reading switch, apart from the other receipt settings: sysadmin,
+// FINANCE and BOARD turn it off and on (expenses.md). Every receipt submitter
+// reads it, so their page can hide "Read it again" while reading is off; the
+// three switching roles are Treehouse Volunteers, so they are submitters too.
+const OCR_SWITCH_VIEW: readonly OrderedViewEntry[] = [['authenticated', ['public']]];
+defineRoute({ endpoint: 'GET /api/receipts/settings/ocr', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptOcrSwitch'], orderedView: OCR_SWITCH_VIEW });
+defineRoute({ endpoint: 'PUT /api/receipts/settings/ocr', authorize: { anyRole: ['isSysadmin', 'isFinance', 'isBoardMember'] }, envelope: null, returns: ['ReceiptOcrSwitch'], orderedView: OCR_SWITCH_VIEW });
+
+// FINANCE and BOARD reset one person's daily automatic-reading allowance, for a
+// reason (expenses.md).
+defineRoute({ endpoint: 'POST /api/receipts/allowance/[personId]/reset', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOcrAllowance'], orderedView: [['isFinance', ['public']], ['isBoardMember', ['public']]] });
 
 // Gmail mail queue: FINANCE only (the sender address is read by FINANCE alone).
 defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW, auditedRead: true });

@@ -12,7 +12,7 @@ export * from "./lib/expense-rules";
 export * from "./financeQueue";
 export * from "./lib/flags";
 export * from "./lib/signoff";
-export { allocateAmount, checkAndProcessExpense, recoverStrandedQbExpenses } from "./lib/expense-qb-processor";
+export { checkAndProcessExpense, recoverStrandedQbExpenses } from "./lib/expense-qb-processor";
 export { drainExpenseOutbox, postExpenseToQb, qbPostingOnAt } from "./lib/expense-qb-poster";
 export { checkQbDrift } from "./lib/expense-qb-drift";
 export { isLegalTransition, legalEventTypes, isTerminalState } from "./workflows/expense.invariants";
@@ -27,6 +27,7 @@ export * from "./services/badgeCounts";
 export * from "./services/capitalService";
 export * from "./services/catalogEventConsumer";
 export * from "./services/donatedCapitalService";
+export * from "./services/donatedPartAccounts";
 export * from "./services/expenseOutcomes";
 export * from "./services/financeQueueService";
 export * from "./services/flagService";
@@ -43,3 +44,5 @@ export { expenseStateCounts, EXPENSE_STATES, type ExpenseStateCount } from "./se
 export * from "./services/sweeps";
 
 export * as routes from "./routes";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

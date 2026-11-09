@@ -89,3 +89,26 @@ export function roleMergeBlock(
     }
     return null;
 }
+
+/** One merge subject's background-check reviews, as the disputed-check refusal reads them. */
+export type CheckSide = {
+    /** The reviews that make this record DISPUTED. */
+    disputing: readonly { id: number }[];
+    /** Open or blocked check reviews naming this record; the merged-away side's are re-pointed onto the keeper. */
+    openReviews: number;
+};
+
+/**
+ * Why this merge must be refused because it changes a disputed person's check facts,
+ * or null (docs/in-design/person-based-bg-review.md §6). Either record disputed makes
+ * the person disputed. The facts change when the keeper takes the merged-away date, or
+ * when a merged-away review lands on a keeper that already has a review or a dispute.
+ */
+export function disputedCheckBlock(keep: CheckSide, merge: CheckSide, carriesDate: boolean): string | null {
+    const review = keep.disputing[0] ?? merge.disputing[0];
+    if (!review) return null;
+    const repointsSecondReview = merge.openReviews > 0 && (keep.openReviews > 0 || keep.disputing.length > 0);
+    if (!carriesDate && !repointsSecondReview) return null;
+    const change = carriesDate ? "carry in a newer background-check date" : "move a second check review onto this person";
+    return `Cannot merge: this person's background check is disputed by review #${review.id}, and the merge would ${change}. The Board settles that review first: a reset and two new approvals, or the rejection stands and the merge goes ahead without changing the check.`;
+}

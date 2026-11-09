@@ -4,7 +4,9 @@ import { ActionIcon, Button, Checkbox, Group, Modal, Table, Text, Textarea, Titl
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad } from "../components/api";
+import {
+  api, CatalogNamesUnavailable, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
+} from "../components/api";
 import { LoadError } from "@checkin/component-ui";
 
 interface QueueRow {
@@ -17,13 +19,16 @@ interface QueueRow {
   cancelledAt: string | null;
   cancelReason: string | null;
 }
+interface QueueBag { ReceiveQueue: QueueRow[]; InventoryProvisionalItem: ProvisionalName[] }
 
 /** /inventory/receive-queue — backordered lines waiting to be received into stock. */
 export default function ReceiveQueuePage() {
   const canManage = useCanManage();
   const [includeFulfilled, setIncludeFulfilled] = useState(false);
-  const queue = useLoad<QueueRow[]>(`/receive-queue?includeFulfilled=${includeFulfilled}`);
-  const names = useCatalogNames((queue.data ?? []).map((r) => r.gtin13));
+  const queue = useLoad<QueueBag>(`/receive-queue?includeFulfilled=${includeFulfilled}`);
+  const lines = queue.data?.ReceiveQueue ?? null;
+  const catalogNames = useCatalogNames((lines ?? []).map((r) => r.gtin13));
+  const names = withProvisionalNames(catalogNames, queue.data?.InventoryProvisionalItem);
   const [busy, setBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueRow | null>(null);
   const [reason, setReason] = useState("");
@@ -63,8 +68,9 @@ export default function ReceiveQueuePage() {
         <Checkbox label="Show fulfilled and cancelled" checked={includeFulfilled} onChange={(e) => setIncludeFulfilled(e.currentTarget.checked)} />
       </Group>
       {queue.error && <LoadError what="the receive queue" message={queue.error} onRetry={queue.reload} />}
-      {queue.data === null ? <Text c="dimmed">Loading…</Text>
-        : queue.data.length === 0 ? <Text c="dimmed">No items in the receive queue.</Text>
+      <CatalogNamesUnavailable lookup={catalogNames} />
+      {lines === null ? <Text c="dimmed">Loading…</Text>
+        : lines.length === 0 ? <Text c="dimmed">No items in the receive queue.</Text>
         : (
           <Table striped highlightOnHover withTableBorder>
             <Table.Thead>
@@ -79,7 +85,7 @@ export default function ReceiveQueuePage() {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {queue.data.map((item) => (
+              {lines.map((item) => (
                 <Table.Tr key={item.id}>
                   <Table.Td>{item.retailer || "—"}</Table.Td>
                   <Table.Td>{names.get(item.gtin13) ?? <Text span c="dimmed" size="sm">Unknown</Text>}</Table.Td>

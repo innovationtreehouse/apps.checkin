@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
@@ -78,7 +77,7 @@ export function visitHadNoKeyholder(arrivedAt: Date, keyholderVisits: Span[]): b
 
 async function computeFullAttendance(kiosk: boolean) {
     const activeVisits = await prisma.visit.findMany({
-        where: { departedAt: null, deletedAt: null, person: LIVE_PERSON },
+        where: { departedAt: null, deletedAt: null },
         include: {
             person: {
                 select: {
@@ -173,17 +172,16 @@ async function computeFullAttendance(kiosk: boolean) {
     // A keyholder check-in scanned by the latest close but delivered after it
     // ran is one that close should have ended, so it does not reopen the
     // building. Its scan time is before the close ran; a live arrival after the
-    // close is stamped after it, and reopens. The nightly sweep runs on an empty
-    // building, so any arrival within the skew of it is such a check-in.
+    // close is stamped after it, and reopens.
     const lastClose = keyholderVisits.length === 0 ? null : await prisma.facilityClose.findFirst({
         where: { executedAt: { not: null } },
         orderBy: { closedAt: "desc" },
-        select: { closedAt: true, executedAt: true, via: true },
+        select: { closedAt: true, executedAt: true },
     });
     const opensBuilding = (arrivedAt: Date) =>
         !lastClose
         || arrivedAt.getTime() > lastClose.closedAt.getTime() + LATE_CLOSE_SKEW_MS
-        || (lastClose.via !== "NIGHTLY_SWEEP" && arrivedAt >= lastClose.executedAt!);
+        || arrivedAt >= lastClose.executedAt!;
 
     const safety = {
         facilityOpen: keyholderVisits.some(v => opensBuilding(v.arrivedAt)),

@@ -71,14 +71,14 @@ async function main() {
 
         console.log(`Designations: ${designations.length}`);
         console.log(`Households with lead email(s): ${byHousehold.size}`);
-        console.log(`Households whose volunteer-match RESULT changes: ${changed.length}`);
+        console.log(`Households whose volunteer-match RESULT differs between the two rules: ${changed.length}`);
         if (changed.length === 0) {
-            console.log("\n✅ EMPTY DIFF — normalization flip is match-equivalent on this data. Safe.");
+            console.log("\n✅ EMPTY DIFF — canonicalizeEmail (the rule review.ts uses) and oldNormalize give the same match on this data.");
         } else {
             console.log("\n⚠️  NON-EMPTY DIFF — HUMAN REVIEW REQUIRED. Affected households (isVolunteerFamily drives the membership fee):\n");
             for (const c of changed) {
-                const verb = c.now ? "GAINS volunteer status" : "LOSES volunteer status";
-                console.log(`  household ${c.householdId}: ${verb} (old=${c.old} new=${c.now}) leads=[${c.parentEmails.join(", ")}]`);
+                const rule = c.now ? "canonicalizeEmail" : "oldNormalize";
+                console.log(`  household ${c.householdId}: matches only under ${rule} (oldNormalize=${c.old} canonicalizeEmail=${c.now}) leads=[${c.parentEmails.join(", ")}]`);
             }
         }
     } finally {

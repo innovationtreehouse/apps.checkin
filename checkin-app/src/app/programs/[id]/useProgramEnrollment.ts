@@ -7,6 +7,7 @@ import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
 import { checkoutVariantId } from '@/lib/programs/variants';
+import type { EnrollmentClosedBy } from '@/lib/programs/saleState';
 import { useIsLocalInstance, useShopifyStoreDomain } from '@/components/EnvProvider';
 
 
@@ -25,6 +26,8 @@ export type ProgramDetail = {
   phase: string;
   maxParticipants: number | null;
   enrollmentStatus: string;
+  // Server-derived: why a new claim would be refused, null when open.
+  enrollmentClosedBy: EnrollmentClosedBy | null;
   orgMemberPriceCents: number | null;
   nonOrgMemberPriceCents: number | null;
   // Single-pool model: the ONE variant for both tiers — member pricing comes
@@ -212,19 +215,20 @@ export function useProgramEnrollment(id: string) {
 
     try {
       for (const participantId of selectedParticipantIds) {
-        let res = await fetch(`/api/programs/${id}/participants`, {
+        const enrollRes = await fetch(`/api/programs/${id}/participants`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ participantId })
         });
 
-        if (!res.ok) {
-          const data = await res.json();
+        // A 409 means the row already exists; the plan route decides whether it can take a request.
+        if (!enrollRes.ok && enrollRes.status !== 409) {
+          const data = await enrollRes.json();
           errors.push(data.error || "Failed to start enrollment.");
           continue;
         }
 
-        res = await fetch(`/api/programs/${id}/request-payment-plan`, {
+        const res = await fetch(`/api/programs/${id}/request-payment-plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           // One choice covers the whole selected batch: the ask is the household's
@@ -234,8 +238,13 @@ export function useProgramEnrollment(id: string) {
 
         if (res.ok) {
           anyRequested = true;
-        } else {
+        } else if (enrollRes.ok && res.status >= 500) {
           errors.push("Enrolled as pending, but failed to alert the Scholarship Review Team for one member. Please email them directly.");
+        } else {
+          const name = householdMembers.find((m) => m.id === participantId)?.name ?? "One member";
+          errors.push(res.status < 500
+            ? `${name}: ${(await res.json()).error ?? "This request can't go ahead."}`
+            : `${name}: We couldn't send your request to the Scholarship Review Team. Please email them directly.`);
         }
       }
 
@@ -346,9 +355,11 @@ export function useProgramEnrollment(id: string) {
         // Every checkout starts at the server: it refuses a checkout naming
         // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
         // single-pool programs when the household's membership fee covers the program. A
-        // mint or network failure is non-fatal: an undiscounted link is always a
-        // safe fallback, per lib/shopify/discounts.ts's mintMemberDiscountCode contract.
+        // mint failure is non-fatal: an undiscounted link is always a safe fallback,
+        // per lib/shopify/discounts.ts's mintMemberDiscountCode contract. The checkout
+        // signature is not optional: without it the order activates nobody.
         let discountCode: string | null = null;
+        let signature: string | null = null;
         if (isPayingOnShopify) {
           let refusal: string | null = null;
           try {
@@ -357,9 +368,12 @@ export function useProgramEnrollment(id: string) {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ participantIds: enrolledIds }),
             });
-            if (discRes.ok) discountCode = pricingEligible ? (await discRes.json()).code ?? null : null;
-            else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
-          } catch { /* undiscounted link is an acceptable fallback */ }
+            if (discRes.ok) {
+              const data = await discRes.json();
+              discountCode = pricingEligible ? data.code ?? null : null;
+              signature = data.signature ?? null;
+            } else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
+          } catch { /* no signature: refused below */ }
           if (refusal) {
             setMessage(refusal);
             fetchProgram();
@@ -381,10 +395,15 @@ export function useProgramEnrollment(id: string) {
           }
           fetchProgram();
         } else if (isPayingOnShopify && program && variantId && storeDomain) {
+          if (!signature) {
+            setMessage("We couldn't start the checkout. Please try again.");
+            fetchProgram();
+            return;
+          }
           setSuccessMessage("Redirecting to Shopify for secure payment...");
           navigating = true;
           // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
-          window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, discountCode);
+          window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, signature, discountCode);
           return; // spinner stays; page unloads on redirect
         } else {
           notifications.show({ message: enrolledIds.length > 1 ? `Successfully enrolled ${enrolledIds.length} members!` : "Successfully enrolled!" });

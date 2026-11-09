@@ -20,9 +20,9 @@ import {
 import { currentKvaVersion, KVA_KIND } from "@/lib/membership/keyVolunteerProcess";
 import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { personActor } from "@/lib/auditActor";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isYouth } from "@/lib/time";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 const PERSON_SELECT = {
     id: true,
@@ -68,7 +68,8 @@ export const GET = withAuth(
     async () => {
         try {
             const rows = await prisma.person.findMany({
-                where: LIVE_PERSON,
+                // A member of an archived household stays listed while they hold a role, so it can be removed.
+                where: { OR: [IN_LIVE_HOUSEHOLD, { roles: { some: {} } }] },
                 select: {
                     id: true,
                     email: true,

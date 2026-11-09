@@ -83,7 +83,7 @@ describe("Revenue Ops layout role gate", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("redirects a sysadmin (finance-ops is board-only, issue #1083)", () => {
+  it("redirects a sysadmin (finance-ops is board-only)", () => {
     renderLayout("/finance-ops/payment-plan", {
       data: { user: { id: 3, isSysadmin: true, isBoardMember: false } },
       status: "authenticated",

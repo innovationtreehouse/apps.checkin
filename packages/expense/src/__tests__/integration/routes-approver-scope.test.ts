@@ -1,5 +1,5 @@
 /**
- * Handler-side bucket filtering on the approver routes (#1272 §5). The registry admits any
+ * Handler-side bucket filtering on the approver routes. The registry admits any
  * bucket approver to these routes; the factories must then confine each caller to the buckets
  * they approve. One case per approver route: an admitted caller who approves no bucket of the
  * expense reads zero rows, and an expense in another bucket answers 404.

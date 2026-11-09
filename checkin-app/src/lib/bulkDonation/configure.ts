@@ -13,18 +13,20 @@
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
  * An accepted gift's lines go to the expense library's capital review, which
- * keeps donated equipment at or over its thresholds. Boot stays DB-free.
+ * keeps donated equipment at or over its thresholds, and each gift line's account comes from the
+ * expense library's account rules. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { IncomeDeposits, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
+import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/components/host";
-import { booksMap, budgetOwners, quickBooks } from "@/lib/components/ports";
+import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
 import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation/donorSurname";
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import { reportTo } from "@/lib/finishRun";
 
 /** What handing Benevity deposits to income lacks, in plain words; empty when it binds. Income's books map holds the bank. */
 export function donationPostingMissing(): string[] {
@@ -39,6 +41,15 @@ const incomeDeposits: IncomeDeposits = {
   },
   async depositStatus(orgId, disbursementIds) {
     return (await import("@checkin/income")).depositStatus(orgId, "benevity", disbursementIds);
+  },
+  async handOverFailing(failures) {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    const sent = await emailAlert("finance.donationDepositHandOver", {
+      batches: failures.map((f) => `${f.disbursementId}: ${f.reason}`).join("; "),
+      actionLink: `${config.baseUrl()}/donations/events`,
+    });
+    // Throwing leaves the failures unraised, so the next run alerts again.
+    if (!sent) throw new Error("Donation hand-over alert was not sent");
   },
 };
 
@@ -60,11 +71,11 @@ function inKindQbPosting(): InKindQbPosting | undefined {
     client: quickBooks,
     booksMap,
     async sweepIncomplete({ since }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert("finance.inKindSweepIncomplete", {
+      const { emailAlert } = await import("@/lib/emailRecipients");
+      await emailAlert("finance.inKindSweepIncomplete", {
         since: since.toISOString().slice(0, 10),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
-      }, "In-kind sweep alert failed:");
+      });
     },
   };
 }
@@ -99,8 +110,15 @@ const capital: InKindCapital = {
   },
 };
 
+const partAccounts: InKindAccounts = {
+  async resolve(orgId, parts) {
+    return (await import("@checkin/expense")).resolveDonatedPartAccounts(orgId, parts);
+  },
+};
+
 export function configureRuntime(): void {
   configureBulkDonation({
+    onFailure: reportTo("bulk-donation"),
     auth: { getPrincipal },
     org: getOrg,
     owners: budgetOwners,
@@ -110,5 +128,7 @@ export function configureRuntime(): void {
     deposits: donationPostingMissing().length ? undefined : incomeDeposits,
     inKind,
     capital,
+    quickBooksAccounts,
+    partAccounts,
   });
 }

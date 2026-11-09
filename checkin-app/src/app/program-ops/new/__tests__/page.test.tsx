@@ -19,10 +19,13 @@ async function pickMentor() {
 }
 
 describe("CreateProgramPage", () => {
-  it("redirects a caller without sysadmin/board-member role", () => {
-    setSession({ id: 1 });
+  it.each([
+    ["no role", { id: 1 }],
+    ["a sysadmin off the Board", { id: 1, isSysadmin: true }],
+  ])("redirects %s", (_label, user) => {
+    setSession(user);
     renderWithProviders(<CreateProgramPage />);
-    expect(router.push).toHaveBeenCalledWith("/system-status");
+    expect(router.push).toHaveBeenCalledWith("/program-ops/programs");
   });
 
   it("shows a loader while the session resolves", () => {
@@ -32,7 +35,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("lets an authorized admin fill out the name field and toggle pricing", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({});
     renderWithProviders(<CreateProgramPage />);
 
@@ -55,7 +58,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("flags an invalid date range and disables submit", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({});
     renderWithProviders(<CreateProgramPage />);
     await screen.findByLabelText("Program Name", { exact: false });
@@ -67,7 +70,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("warns when the member price exceeds the non-member price", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({});
     renderWithProviders(<CreateProgramPage />);
     await screen.findByLabelText("Program Name", { exact: false });
@@ -80,7 +83,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("defaults max participants to 50 and disables submit when it is cleared", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({ "/api/people/search": { people: [mentor] } });
     renderWithProviders(<CreateProgramPage />);
     const nameInput = await screen.findByLabelText("Program Name", { exact: false });
@@ -99,7 +102,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("searches for and selects a program leader, then clears the selection", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({ "/api/people/search": { people: [mentor] } });
     renderWithProviders(<CreateProgramPage />);
     await screen.findByLabelText("Program Name", { exact: false });
@@ -112,7 +115,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("handles a failed mentor search (unmatched route -> empty results)", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     const fetchMock = mockFetchJson({});
     renderWithProviders(<CreateProgramPage />);
     await screen.findByLabelText("Program Name", { exact: false });
@@ -124,7 +127,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("creates a program and redirects to it", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     const fetchMock = mockFetchJson({
       "/api/people/search": { people: [mentor] },
       "/api/programs": { program: { id: 42 } },
@@ -169,7 +172,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("reveals 'Show to non-members' only for a members-only program and sends publiclyVisible", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     const fetchMock = mockFetchJson({
       "/api/people/search": { people: [mentor] },
       "/api/programs": { program: { id: 42 } },
@@ -199,7 +202,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("shows a server error message when creation fails", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     // A custom fetch stub: the create endpoint needs a 400 response, which
     // mockFetchJson's all-or-nothing 200/404 routing can't express.
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
@@ -226,7 +229,7 @@ describe("CreateProgramPage", () => {
   });
 
   it("shows a network error message when the create request throws", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({ "/api/people/search": { people: [mentor] } });
     renderWithProviders(<CreateProgramPage />);
     const nameInput = await screen.findByLabelText("Program Name", { exact: false });

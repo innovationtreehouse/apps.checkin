@@ -1,5 +1,5 @@
 /**
- * Bulk donation (#1280): the persona matrix (FINANCE, BOARD, a plain member,
+ * Bulk donation: the persona matrix (FINANCE, BOARD, a plain member,
  * anonymous) over every /api/donations route, UploadedFile.fileBlob absent from
  * every JSON response, the stored-CSV download, and one finance journey
  * (upload → assign with a comment rule → hold → account rule → resubmit →
@@ -7,6 +7,7 @@
  * server and the seeded bulk-donation DB (see docker-compose.flow.yml +
  * packages/bulk-donation/prisma/seed.ts).
  */
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { BASE, loginAs, api, type Session } from "./helpers";
 
 const FINANCE = "finance@example.com";
@@ -22,7 +23,6 @@ const READS = [
   "/api/donations/account-map",
   "/api/donations/disbursement-holds",
   "/api/donations/disbursement-events",
-  "/api/donations/nav-counts",
 ];
 const WRITES: Array<[string, string, unknown?]> = [
   ["POST", "/api/donations/uploaded-files"],
@@ -58,7 +58,7 @@ const send = (s: Session, method: string, path: string, body?: unknown) =>
   api(s, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
 const HEADER =
-  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Merchant Fee,Donor First Name,Donor Last Name,Donor Comment";
+  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee,Check Fee,Donor First Name,Donor Last Name,Donor Comment";
 
 /** POST a Benevity CSV as multipart, the way the upload screen does. */
 async function upload(s: Session, name: string, lines: string[]) {
@@ -165,8 +165,8 @@ describe("bulk donation — finance journey", () => {
     const disbursement = `FLOW-${stamp}`;
     const comment = `robotics ${stamp}`;
     const firstFile = [
-      `${company},Spring,${disbursement},2026-09-10,${stamp}-1,2026-09-01,40.00,40.00,1.00,Org,Level,`,
-      `${company},Spring,${disbursement},2026-09-10,${stamp}-2,2026-09-02,60.00,0,1.50,Rosa,Parks,${comment}`,
+      `${company},Spring,${disbursement},2026-09-10,${stamp}-1,2026-09-01,40.00,40.00,0.00,1.00,0.00,Org,Level,`,
+      `${company},Spring,${disbursement},2026-09-10,${stamp}-2,2026-09-02,60.00,0,0.00,1.50,0.00,Rosa,Parks,${comment}`,
     ];
 
     // Upload: the comment-less gift is organizational-level; the other waits for an owner.
@@ -199,16 +199,25 @@ describe("bulk donation — finance journey", () => {
     const ours = held.json.filter((h) => h.disbursementId === disbursement);
     expect(ours.length).toBeGreaterThan(0);
     expect(ours[0].transaction?.companyName).toBe(company);
-    const counts = await api<{ unassignedQueue: number; disbursementHolds: number }>(f, "/api/donations/nav-counts");
-    expect(counts.json.disbursementHolds).toBeGreaterThan(0);
+    // A fresh seed releases no library, and the count reaches a non-board viewer only once bulk-donation is released.
+    const board = await loginAs(BOARD);
+    const releaseBulkDonation = (released: boolean) =>
+      send(board, "PUT", "/api/settings/membership", { perYearVariantClient: true, releaseLibrary: { library: "bulk-donation", released } });
+    const wasReleased = (await api<TodoCounts>(f, "/api/nav/todo-counts")).json.releasedLibraries?.includes("bulk-donation") ?? false;
+    expect((await releaseBulkDonation(true)).status).toBe(200);
+    try {
+      const counts = await api<TodoCounts>(f, "/api/nav/todo-counts");
+      expect(counts.json.libraries?.["bulk-donation"]?.disbursementHolds).toBeGreaterThan(0);
+    } finally {
+      if (!wasReleased) await releaseBulkDonation(false);
+    }
 
     // Add the rule, resubmit: the hold clears and a booking batch appears.
     const rule = await send(f, "POST", "/api/donations/account-map", {
       companyName: company,
       corporatePeerCampaign: "*",
-      donationAccount: "Contributions:Corporate Giving",
-      matchAccount: "Contributions:Corporate Match",
-      feesAccount: "Fees:Benevity",
+      donationAccountId: "8003",
+      matchAccountId: "8003",
     });
     expect(rule.status).toBe(200);
     expect((await send(f, "POST", `/api/donations/disbursement-holds/${disbursement}/resubmit`)).status).toBe(200);
@@ -220,7 +229,7 @@ describe("bulk donation — finance journey", () => {
 
     // A later gift with the same comment takes the rule's owner at upload.
     expect((await upload(f, `flow-${stamp}-b.csv`, [
-      `${company},Spring,${disbursement}-B,2026-09-11,${stamp}-3,2026-09-03,10.00,0,0.25,Ruth,Ginsburg,${comment}`,
+      `${company},Spring,${disbursement}-B,2026-09-11,${stamp}-3,2026-09-03,10.00,0,0.00,0.25,0.00,Ruth,Ginsburg,${comment}`,
     ])).status).toBe(200);
     const assignedGifts = await api<GiftRow[]>(f, "/api/donations/transactions?assigned=true");
     expect(assignedGifts.json.find((g) => g.transactionId === `${stamp}-3`)?.ownerId).toBe(facility.id);

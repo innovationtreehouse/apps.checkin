@@ -28,6 +28,9 @@ model ReceiptOrgSettings {
   enforceReceiptAgeLimit      Boolean @default(true) @map("enforce_receipt_age_limit")
   /// @sensitivity:internal
   receiptAgeLimitDays         Int     @default(90) @map("receipt_age_limit_days")
+  /// False stops every automatic reading: uploads and mail go to manual entry, retry refuses.
+  /// @sensitivity:internal
+  ocrEnabled                  Boolean @default(true) @map("ocr_enabled")
 
   @@map("org_settings")
 }
@@ -82,6 +85,12 @@ model Receipt {
   // Stamped when the S1 push returns; null means not yet delivered.
   /// @sensitivity:internal
   pushedAt           DateTime? @map("pushed_at")
+  // When the step it is stuck in first failed; null while nothing is stuck. Times the Problems list.
+  /// @sensitivity:internal
+  firstFailedAt      DateTime? @map("first_failed_at")
+  // The latest failure's error, shown on the receipt's own page only.
+  /// @sensitivity:personal
+  lastError          String?   @map("last_error")
 
   details       ReceiptDetail?
   financeReview ReceiptFinanceReview?
@@ -240,9 +249,10 @@ model ReceiptAuditLog {
   action       String
   /// @sensitivity:internal
   fieldChanged String?  @map("field_changed")
-  /// @sensitivity:personal
+  // The values can hold a donor's name or company, so they are pii.
+  /// @sensitivity:pii
   valueBefore  String?  @map("value_before")
-  /// @sensitivity:personal
+  /// @sensitivity:pii
   valueAfter   String?  @map("value_after")
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")

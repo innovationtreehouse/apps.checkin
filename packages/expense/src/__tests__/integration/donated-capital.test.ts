@@ -10,13 +10,13 @@ import {
   reviewDonatedLine,
   submitDonatedLines,
   unitCosts,
-  type DonatedLine,
 } from "../../services/donatedCapitalService";
+import type { DonatedCapitalLine } from "@checkin/receipt-types";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
 
-const line = (giftLineId: number, costCents: number, quantity = 1): DonatedLine => ({
+const line = (giftLineId: number, costCents: number, quantity = 1): DonatedCapitalLine => ({
   giftSource: "receipt",
   giftId: 41,
   giftLineId,
@@ -36,6 +36,10 @@ describe("donated capital — guards", () => {
     await expect(listDonatedCapital(principal(9))).rejects.toMatchObject({ status: 403 });
     await expect(reviewDonatedLine(principal(9), 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
     await expect(reviewDonatedLine(BOARD, 1, { isCapital: false })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("refuses lines sent for another org", async () => {
+    await expect(submitDonatedLines("other-org", [line(1, 250_000)])).rejects.toThrow(/not this org/);
   });
 });
 

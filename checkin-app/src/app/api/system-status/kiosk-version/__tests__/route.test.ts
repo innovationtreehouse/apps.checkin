@@ -24,7 +24,7 @@ describe('GET /api/system-status/kiosk-version', () => {
     it('advertises the build SHA and the scan protocol generation', async () => {
         const body = await getWithSha('abc123');
         expect(body.version).toBe('abc123');
-        // The contract bit the kiosk gates replay behavior on (#1347 §2).
+        // The contract bit the kiosk gates replay behavior on.
         expect(body.scanProtocolVersion).toBe(SCAN_PROTOCOL_VERSION);
     });
 

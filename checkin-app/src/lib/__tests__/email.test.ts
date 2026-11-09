@@ -91,8 +91,8 @@ describe('sendEmail no-key logging + capture', () => {
     });
 
     it('captures on a dev instance even under a production BUILD (cloud-dev runs the prod image)', async () => {
-        // Regression: the old NODE_ENV fuse made capture (and /dev/sent-mail) dead on
-        // cloud-dev, whose container sets NODE_ENV=production exactly like prod's.
+        // A NODE_ENV fuse would make capture (and /dev/sent-mail) dead on cloud-dev,
+        // whose container sets NODE_ENV=production exactly like prod's.
         setNodeEnv('production');
         mockDevToolsActive = true;
         mockCapture.mockResolvedValue(true);
@@ -115,7 +115,7 @@ describe('sendEmail no-key logging + capture', () => {
 
     it('still captures on a dev instance when no From is configured either', async () => {
         // The no-key path runs first, so a dev box with neither an API key nor a
-        // sender keeps working exactly as before.
+        // sender still captures.
         mockDevToolsActive = true;
         mockIdentity = { from: null };
         mockCapture.mockResolvedValue(true);

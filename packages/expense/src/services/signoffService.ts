@@ -2,13 +2,13 @@
 // line's approval. The signer is always the principal; a line with an unfilled seat holds its
 // expense out of the QB outbox.
 import type { Expense, Prisma } from "../generated/prisma/client";
-import { db, isUniqueConstraintError } from "../db";
+import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { boardApprovalNeeded, clearFrom, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
+import { boardApprovalNeeded, clearFrom, isConflicted, filledSeatsByLine, lineHolds, lockBucketLines, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
 import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
@@ -19,6 +19,45 @@ import { ServiceError } from "@checkin/component-kit";
 
 type Actor = ReturnType<typeof actorOf>;
 type SignedLine = { lineItemId: number; seat: Seat; facts: SignoffFacts; filled: FilledSeat[] };
+
+/**
+ * How many open lines in the bucket wait on a Board signature because of the bucket they are in:
+ * non-Everyday card charges with no Board authorization and no Board seat signed. The host refuses
+ * to make an org-level bucket a program bucket while any is open, since that removes the seat.
+ */
+export async function linesAwaitingBoardSeat(bucketId: number, client: Db = db): Promise<number> {
+  const expenses = await client.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      needsReimbursement: false,
+      state: { notIn: [...CLOSED_STATES] },
+      OR: [{ everydayWithinLimits: false }, { everydayWithinLimits: null }],
+      approvals: { some: { ownerId: bucketId } },
+    },
+  });
+  const facts = await signoffFactsForExpenses(client, expenses, { readOnly: true });
+  let count = 0;
+  for (const { byLine, filled, approvals } of facts.values()) {
+    for (const [lineId, line] of byLine) {
+      const signed = (filled.get(lineId) ?? []).some((f) => f.seat === "BOARD");
+      if (approvals.get(lineId)?.ownerId === bucketId && line.boardSeat && !signed) count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Runs `change` holding the bucket against new lines; `awaiting` counts its lines that wait on a
+ * Board seat. The host commits its flag change inside `change`, so no line enters the bucket
+ * between the count and that commit.
+ */
+export async function holdBucketLines<T>(bucketId: number, change: (awaiting: () => Promise<number>) => Promise<T>): Promise<T> {
+  return db.$transaction(async (tx) => {
+    await lockBucketLines(tx, bucketId, "exclusive");
+    return change(() => linesAwaitingBoardSeat(bucketId, tx));
+  }, { timeout: 15_000 });
+}
 
 /** Refuses an expense that takes no sign-off now. */
 function requireSignable(expense: { backfill: boolean; state: string; needsReimbursement: boolean; reimburseePersonId: number | null }): void {
@@ -142,7 +181,7 @@ export async function reimburseeOptions(orgId: string, expenseId: string, query:
   if (!expense) throw new ServiceError(404, "Expense not found");
   const text = query.trim();
   if (text.length < 2) return [];
-  if ((await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: null })).includes(actor.userId)) return [];
+  if (await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: null }, actor.userId)) return [];
   const dir = getExpenseRuntime().signoff;
   const ownHousehold = new Set([actor.userId, ...(await dir.householdOf([actor.userId]))]);
   return (await dir.searchAdults(text, REIMBURSEE_SEARCH_LIMIT + ownHousehold.size)).filter((p) => !ownHousehold.has(p.personId)).slice(0, REIMBURSEE_SEARCH_LIMIT);
@@ -172,13 +211,13 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, pri
   const dir = getExpenseRuntime().signoff;
   const conflicted = "You cannot name the reimbursee on an expense that you or your household submitted or would be reimbursed for";
   // A new person's household holds only them, so only the submitter's side can conflict; checked before anyone is added.
-  if ("newPerson" in choice && (await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: null })).includes(actor.userId)) {
+  if ("newPerson" in choice && await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: null }, actor.userId)) {
     throw new ServiceError(403, conflicted);
   }
-  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim());
+  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim(), actor.userId);
   if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
   if (!(await dir.isAdult(personId))) throw new ServiceError(400, "Only an adult can be named as reimbursee");
-  if ((await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: personId })).includes(actor.userId)) {
+  if (await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: personId }, actor.userId)) {
     throw new ServiceError(403, conflicted);
   }
 

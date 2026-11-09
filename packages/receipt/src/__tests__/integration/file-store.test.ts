@@ -1,4 +1,4 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { createMemoryFileStore, sha256Hex } from "../../lib/fileStorage";
 import { insertReceipt } from "../../lib/insert";
@@ -6,7 +6,7 @@ import type { ReceiptLimits } from "../../lib/limits";
 import { mailQueueService } from "../../services/mailQueueService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { actAs, ALICE, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, actions, ALICE, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 let store: ReturnType<typeof createMemoryFileStore>;
 let seq = 0;
@@ -86,6 +86,19 @@ describeDb("receipt file store", () => {
     configure({ ocr, storeNewFilesInBucket: true, fileStore: { ...failing, put: async () => {}, get: async () => null } });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(await stateOf(r.id)).toBe("ocr_failed");
+    expect(await actions(r.id)).toContain("ocr_failed:data");
+  });
+
+  it("a store outage at OCR fails the reading as an outage", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const failing = createMemoryFileStore();
+    const down = async () => {
+      throw new Error("store unreachable");
+    };
+    configure({ ocr: okOcr(), storeNewFilesInBucket: true, fileStore: { ...failing, put: async () => {}, get: down } });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    expect(await stateOf(r.id)).toBe("ocr_failed");
+    expect(await actions(r.id)).toContain("ocr_failed:system");
   });
 
   it("a failed insert takes its object back", async () => {

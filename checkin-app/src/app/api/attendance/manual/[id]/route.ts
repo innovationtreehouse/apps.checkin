@@ -10,6 +10,7 @@ import { emailBoardMembers } from "@/lib/emailRecipients";
 import { logBackendError } from "@/lib/logger";
 import { formatDateTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
+import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
@@ -117,6 +118,8 @@ export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]'
             if (nextDeparted && !withinMaxDuration(nextArrived, nextDeparted)) {
                 throw badRequest("A visit cannot be longer than 24 hours.");
             }
+            const overlaps = await findVisitOverlaps(tx, visit.personId, { arrivedAt: nextArrived, departedAt: nextDeparted }, visitId);
+            if (overlaps.openSince) return { openSince: overlaps.openSince };
             // A corrected time becomes a typed clock: an edited arrival stamps
             // arrivedVia TYPED, an edited departure stamps departedVia TYPED.
             // Significance already read the pre-edit source above, so restamping
@@ -138,23 +141,23 @@ export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]'
                 });
                 if (close) await correctCloseTime(tx, close, userId, nextDeparted!);
             }
+            await tx.auditLog.create({
+                data: {
+                    actorId: userId,
+                    action: "EDIT",
+                    tableName: "Visit",
+                    affectedEntityId: edited.id,
+                    secondaryAffectedEntity: visit.personId,
+                    oldData: { id: visit.id, arrivedAt: visit.arrivedAt, departedAt: visit.departedAt, arrivedVia: visit.arrivedVia, departedVia: visit.departedVia },
+                    newData: { arrivedAt: nextArrived, departedAt: nextDeparted, type: "self_correction", ...overlapFlag(overlaps.closedIds, significance) },
+                }
+            });
             return edited;
         }, { maxWait: 5000, timeout: 15000 });
         if (!updated) throw notFound("Visit not found.");
+        if ('openSince' in updated) throw new ApiResponseError(409, await openOverlapRefusal(updated.openSince));
         invalidateAttendanceCache();
         const surviving = updated;
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: userId,
-                action: "EDIT",
-                tableName: "Visit",
-                affectedEntityId: surviving.id,
-                secondaryAffectedEntity: visit.personId,
-                oldData: { id: visit.id, arrivedAt: visit.arrivedAt, departedAt: visit.departedAt, arrivedVia: visit.arrivedVia, departedVia: visit.departedVia },
-                newData: { arrivedAt: nextArrived, departedAt: nextDeparted, type: "self_correction", significance },
-            }
-        });
 
         if (significance.flagged) {
             // Server-side: no TimezoneProvider here, so the configured zone is passed in.
@@ -195,25 +198,26 @@ export const DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id
         // a 404 rather than a re-stamped deletedAt.
         const tombstoned = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
-            return tx.visit.updateMany({
+            const { count } = await tx.visit.updateMany({
                 where: { id: visitId, personId: visit.personId, deletedAt: null },
                 data: { deletedAt: new Date(), deletedById: userId },
             });
+            if (count === 0) return false;
+            await tx.auditLog.create({
+                data: {
+                    actorId: userId,
+                    action: "DELETE",
+                    tableName: "Visit",
+                    affectedEntityId: visitId,
+                    secondaryAffectedEntity: visit.personId,
+                    oldData: { arrivedAt: visit.arrivedAt, departedAt: visit.departedAt, arrivedVia: visit.arrivedVia, departedVia: visit.departedVia },
+                    newData: { type: "self_correction", significance },
+                }
+            });
+            return true;
         });
-        if (tombstoned.count === 0) throw notFound("Visit not found.");
+        if (!tombstoned) throw notFound("Visit not found.");
         invalidateAttendanceCache();
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: userId,
-                action: "DELETE",
-                tableName: "Visit",
-                affectedEntityId: visitId,
-                secondaryAffectedEntity: visit.personId,
-                oldData: { arrivedAt: visit.arrivedAt, departedAt: visit.departedAt, arrivedVia: visit.arrivedVia, departedVia: visit.departedVia },
-                newData: { type: "self_correction", significance },
-            }
-        });
 
         // Every delete flags: that is the floor.
         const timeZone = await resolveDisplayTimezone();

@@ -137,7 +137,7 @@ describe('New-program announce notification trigger', () => {
 
     // announcedAt is a once-per-program-lifetime claim.
     describe('once-per-lifetime announcedAt claim', () => {
-        it('sets announcedAt on the first fire, and closing + reopening enrollment does NOT re-fire (F2)', async () => {
+        it('sets announcedAt on the first fire, and closing + reopening enrollment does NOT re-fire', async () => {
             const name = `${PROGRAM_NAME_TAG} reopen`;
             const program = await prisma.program.create({
                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },
@@ -178,7 +178,7 @@ describe('New-program announce notification trigger', () => {
             expect(mockNotify).toHaveBeenCalledTimes(1);
         });
 
-        it('writes an AuditLog row for the blast with the triggering actor (F6)', async () => {
+        it('writes an AuditLog row for the blast with the triggering actor', async () => {
             const name = `${PROGRAM_NAME_TAG} audit`;
             const program = await prisma.program.create({
                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true },

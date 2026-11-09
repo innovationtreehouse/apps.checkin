@@ -6,8 +6,10 @@ import type {
   ReceiptFileStore,
   MailboxReader,
   ReceiptHouseholds,
+  ReceiptPersonIds,
   ReceiptAlerts,
   ReceiptPeople,
+  ReceiptPersonNames,
   ReceiptReplies,
   ReceiptReimbursees,
   ReceiptPrincipal,
@@ -61,9 +63,20 @@ export const inertHouseholds: ReceiptHouseholds = {
   householdOf: async () => [],
 };
 
+/** Knows no merges: every id names itself. */
+export const inertPersonIds: ReceiptPersonIds = {
+  liveIds: async (personIds) => new Map(personIds.map((id) => [id, id])),
+  storedIdsOf: async (personId) => [personId],
+};
+
 /** Knows nobody: every mailed receipt is held for finance. */
 export const inertPeople: ReceiptPeople = {
   submitterByEmail: async () => null,
+};
+
+/** Knows no names: an uploader shows as unnamed until the host binds them. */
+export const inertPersonNames: ReceiptPersonNames = {
+  namesOf: async () => new Map(),
 };
 
 /** Knows nobody: only the uploader can be reimbursed until the host binds its people. */
@@ -90,7 +103,7 @@ export const inertAlerts: ReceiptAlerts = {
 };
 
 export const inertOcr: OcrProvider = {
-  extract: async () => ({ success: false, error: "OCR is not configured" }),
+  extract: async () => ({ success: false, kind: "settings", error: "OCR is not configured" }),
 };
 
 export const inertFileStore: ReceiptFileStore = {
@@ -125,8 +138,10 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     submitterConfirmations: r.submitterConfirmations ?? inertSubmitterConfirmations,
     purchaseOutcomes: r.purchaseOutcomes ?? inertPurchaseOutcomes,
     households: r.households ?? inertHouseholds,
+    personIds: r.personIds ?? inertPersonIds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
+    personNames: r.personNames ?? inertPersonNames,
     reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
   };

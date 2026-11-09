@@ -40,6 +40,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 | `pii` | Personally identifying (email, phone, dob, googleId) |
 | `personal` | Private but not identifying (Household.address, emergency contacts) |
 | `internal` | Role/audit metadata (sysadmin flag, lastBackgroundCheck, audit logs) |
+| `hardship` | Whether a person or household asked for, holds, was granted or was refused help with a fee: a payment plan, a scholarship, a comp. Granted only to Board and finance views, and to a family on its own rows |
 | `secret` | Cryptographic — never returned to any client (oauth tokens) |
 
 **Scope** (per-row, computed by the handler for each row in the response):
@@ -55,7 +56,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 
 **Token grammar:**
 - `'public'` — bare. Public-tier fields, no row gate.
-- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal}`. Grant applies on rows where the caller holds `<scope>`.
+- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal, hardship}`. Grant applies on rows where the caller holds `<scope>`.
 - `'secret'` — never appears in any view (type error at registration).
 
 **Field visibility per row:** a field is exposed iff one of:
@@ -176,7 +177,7 @@ The file route is registered and migrated like any route: the route-coverage lin
 
 ## What this layer does NOT cover (yet)
 
-- **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work. An `ApiResponseError` renders as `{ error }`, or `{ error, code }` when its thrower passed a `code`; nothing derives a code from any other error.
+- **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work. An `ApiResponseError` renders as `{ error }`, plus `code` and `fields` when its thrower passed them; nothing derives a code from any other error. `fields` holds the names of refused inputs, never their submitted values. An error body skips the stripper, so its thrower answers for what it holds.
 - **AuditLog content.** `oldData`/`newData` JSON blobs can carry any field — they're written before this layer sees them.
 - **Server Components.** All pages are currently `"use client"` and hit `/api/`, so the registry covers everything. A future Server Component reading Prisma directly needs to register too.
 - **Per-row scope correctness in the generic contract test.** The generic contract asserts every visible field has a grantable tier, but doesn't verify per-row scope-holding (that would require route-specific personas). Route-specific tests (e.g. `programsIdAPI.test.ts`) cover those.

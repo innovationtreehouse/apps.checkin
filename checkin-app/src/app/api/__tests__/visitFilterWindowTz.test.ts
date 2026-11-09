@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Finding 8: the ±7-day visit-filter window is built from a date-only string
+ * The ±7-day visit-filter window is built from a date-only string
  * that parses to UTC midnight, so the arithmetic must be UTC too. `getDate` /
  * `setDate` read and write LOCAL calendar fields, which on a server west of UTC
  * carries the server's DST offset into the bounds — the window edge lands an

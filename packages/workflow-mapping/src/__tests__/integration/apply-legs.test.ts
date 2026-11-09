@@ -203,6 +203,7 @@ describeDb("a leg that applied but lost its stamp", () => {
     configure({
       ...sinks,
       inventorySink: {
+        openBackorders: async () => new Map(),
         applyDelta: async (d) => {
           sinks.calls.inventory.push(d);
           changes.add(d.receiptId);
@@ -282,6 +283,7 @@ describeDb("a leg that applied but lost its stamp", () => {
     configure({
       ...sinks,
       inventorySink: {
+        openBackorders: async () => new Map(),
         applyDelta: async () => {
           throw new Error("This source was already applied with a different inventory delta.");
         },

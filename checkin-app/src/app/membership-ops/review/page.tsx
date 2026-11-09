@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Alert, Button, Card, Checkbox, Container, Group, Radio, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
+import { useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { clearingApprovals, establishedSubject } from "@/lib/membership/approvals";
 
@@ -33,9 +35,10 @@ export default function MembershipReviewPage() {
   const canReset = !!session?.user?.isBoardMember;
   // No h1 here: this page always renders inside the Membership Ops layout, whose
   // tab bar already labels it.
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [forbidden, setForbidden] = useState(false);
+  const { data, error: loadError, status: loadStatus, reload } = useLoad<{ queue?: QueueItem[] }>(
+    sessionStatus === "authenticated" ? "/api/membership/reviews" : null,
+  );
+  const queue = data?.queue ?? [];
   const [busyId, setBusyId] = useState<number | null>(null);
   const [volunteer, setVolunteer] = useState<Record<number, boolean>>({});
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -45,43 +48,12 @@ export default function MembershipReviewPage() {
   const [message, setMessage] = useState<{ processId: number; text: string; tone: AlertTone } | undefined>();
   const [showMine, setShowMine] = useState(false);
   // Reviews this reviewer already approved that have not cleared.
-  const [mine, setMine] = useState<QueueItem[]>([]);
+  const { data: mineAnswer, error: mineError, reload: reloadMine } = useLoad<{ queue?: QueueItem[] }>(showMine ? "/api/membership/reviews?mine=1" : null);
+  const mine = mineAnswer?.queue ?? [];
   const [showRejected, setShowRejected] = useState(false);
   // Blocked reviews whose rejection is this reviewer's.
-  const [rejected, setRejected] = useState<QueueItem[]>([]);
-
-  const fetchQueue = useCallback(() =>
-    fetch("/api/membership/reviews")
-      .then(async (res) => {
-        if (res.status === 403) setForbidden(true);
-        else if (res.ok) setQueue((await res.json()).queue || []);
-      })
-      .finally(() => setLoading(false)), []);
-
-  const load = () => {
-    setLoading(true);
-    return fetchQueue();
-  };
-
-  const loadMine = useCallback(() =>
-    fetch("/api/membership/reviews?mine=1")
-      .then(async (res) => { if (res.ok) setMine((await res.json()).queue || []); }), []);
-
-  useEffect(() => {
-    if (sessionStatus === "authenticated") fetchQueue();
-  }, [sessionStatus, fetchQueue]);
-
-  useEffect(() => {
-    if (showMine) loadMine();
-  }, [showMine, loadMine]);
-
-  const loadRejected = useCallback(() =>
-    fetch("/api/membership/reviews?rejected=1")
-      .then(async (res) => { if (res.ok) setRejected((await res.json()).queue || []); }), []);
-
-  useEffect(() => {
-    if (showRejected) loadRejected();
-  }, [showRejected, loadRejected]);
+  const { data: rejectedAnswer, error: rejectedError, reload: reloadRejected } = useLoad<{ queue?: QueueItem[] }>(showRejected ? "/api/membership/reviews?rejected=1" : null);
+  const rejected = rejectedAnswer?.queue ?? [];
 
   const changeToApprove = async (processId: number, subjectPersonIds: number[]) => {
     setBusyId(processId);
@@ -98,7 +70,8 @@ export default function MembershipReviewPage() {
       } else {
         notifications.show({ color: "red", message: data.error || "Could not change your answer.", autoClose: false });
       }
-      await Promise.all([load(), loadRejected()]);
+      reload();
+      reloadRejected();
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
     } finally {
@@ -156,11 +129,12 @@ export default function MembershipReviewPage() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Review started over — reviewers have been notified." });
-        await Promise.all([load(), loadMine()]);
+        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
+        await Promise.all([reload(), reloadMine()]);
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: false });
-        await loadMine();
+        reloadMine();
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -199,7 +173,8 @@ export default function MembershipReviewPage() {
       } else {
         notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: false });
       }
-      await Promise.all([load(), loadMine()]);
+      reload();
+      reloadMine();
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
     } finally {
@@ -248,11 +223,11 @@ export default function MembershipReviewPage() {
       if (res.ok) {
         notifications.show({ message: result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified." });
         setSubjects((s) => { const next = { ...s }; delete next[processId]; return next; });
-        await load();
+        reload();
         notifyNavRefresh();
       } else if (data.code === "already_attested") {
         notifications.show({ color: "red", message: data.error || "Already attested.", autoClose: false });
-        await load();
+        reload();
       } else {
         setMessage({ processId, text: data.error || "Could not record your attestation.", tone: "error" });
       }
@@ -337,11 +312,11 @@ export default function MembershipReviewPage() {
     });
   };
 
-  if (sessionStatus === "loading" || (loading && sessionStatus === "authenticated")) {
+  if (sessionStatus === "loading" || (sessionStatus === "authenticated" && data === null && !loadError && loadStatus !== 403)) {
     return <PageLoader />;
   }
 
-  if (forbidden || sessionStatus === "unauthenticated") {
+  if (loadStatus === 403 || sessionStatus === "unauthenticated") {
     return (
       <Container size="xs" py="xl">
         <Card withBorder radius="md" padding="xl" ta="center">
@@ -378,7 +353,8 @@ export default function MembershipReviewPage() {
 
       {showRejected && (
         <Stack mt="md">
-          {rejected.length === 0 ? (
+          {rejectedError && <LoadError what="the reviews you rejected" message={rejectedError} onRetry={reloadRejected} />}
+          {rejectedAnswer === null ? null : rejected.length === 0 ? (
             <Text size="sm" c="dimmed">None — no blocked review carries your rejection.</Text>
           ) : rejected.map((item) => (
             <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
@@ -396,7 +372,8 @@ export default function MembershipReviewPage() {
 
       {showMine && (
         <Stack mt="md">
-          {mine.length === 0 ? (
+          {mineError && <LoadError what="the reviews you approved" message={mineError} onRetry={reloadMine} />}
+          {mineAnswer === null ? null : mine.length === 0 ? (
             <Text size="sm" c="dimmed">None — every review you approved has cleared.</Text>
           ) : mine.map((item) => {
             const settled = settledSubject(item);
@@ -432,7 +409,9 @@ export default function MembershipReviewPage() {
         </Stack>
       )}
 
-      {queue.length === 0 ? (
+      {loadError && <Stack mt="md"><LoadError what="the review queue" message={loadError} onRetry={reload} /></Stack>}
+
+      {data === null ? null : queue.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center" mt="md">
           <Text c="dimmed">Nothing awaiting your review right now.</Text>
         </Card>

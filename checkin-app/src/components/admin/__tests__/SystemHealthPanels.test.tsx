@@ -1,6 +1,7 @@
-import { screen, fireEvent } from "@testing-library/react";
+import { act, screen, fireEvent } from "@testing-library/react";
+import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
-import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox } from "../SystemHealthPanels";
+import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
 
@@ -54,10 +55,17 @@ describe("BadgeScanChart", () => {
     expect(screen.getByText("P99")).toBeInTheDocument();
   });
 
-  it("shows a failure message when the health endpoint has no data", async () => {
-    mockFetchJson({});
+  it("shows a failure message when the health endpoint answers without data", async () => {
+    mockFetchJson({ "/api/system-status/health": {} });
     renderWithProviders(<BadgeScanChart />);
     expect(await screen.findByText("Failed to load metrics.")).toBeInTheDocument();
+  });
+
+  it("shows the load failure with a retry when the health endpoint refuses", async () => {
+    mockFetchJson({});
+    renderWithProviders(<BadgeScanChart />);
+    expect(await screen.findByText("Couldn't load metrics")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });
 
@@ -142,5 +150,150 @@ describe("KioskHeartbeatBox", () => {
     });
     renderWithProviders(<KioskHeartbeatBox />);
     expect(await screen.findByText(/Kiosk last seen 1m ago/)).toBeInTheDocument();
+  });
+
+  const renderHeartbeat = (rows: { metric: string; value: number }[]) => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: rows.map((r) => ({ ...r, timestamp: new Date().toISOString() })),
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+  };
+
+  it("says it can't confirm the clock with no reading", async () => {
+    renderHeartbeat([]);
+    expect(await screen.findByText(/Kiosk clock: can't confirm/)).toBeInTheDocument();
+  });
+
+  it.each([29, -29])("does not warn at %d seconds", async (value) => {
+    renderHeartbeat([{ metric: "kiosk_clock_skew", value }]);
+    expect(await screen.findByText(/Kiosk clock agrees with the server/)).toBeInTheDocument();
+  });
+
+  it.each([
+    [30, /30s ahead of the server/],
+    [-30, /30s behind the server/],
+    [-300, /5m behind the server/],
+  ])("warns at %d seconds", async (value, copy) => {
+    renderHeartbeat([{ metric: "kiosk_last_seen", value: 5 }, { metric: "kiosk_clock_skew", value }]);
+    expect(await screen.findByText(copy)).toBeInTheDocument();
+    expect(screen.getByText(/Kiosk last seen 5s ago/)).toBeInTheDocument();
+  });
+
+  it("shows a failed read at once, without retrying", async () => {
+    const fetchFn = mockFetchJson({ "/api/system-status/kiosk-heartbeat": () => { throw new Error("down"); } });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText("Couldn't load kiosk last-seen")).toBeInTheDocument();
+    expect(screen.queryByText(/Kiosk clock/)).not.toBeInTheDocument();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the last clock line when a refresh fails", async () => {
+    let down = false;
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": () => {
+        if (down) throw new Error("down");
+        return { heartbeat: [{ metric: "kiosk_clock_skew", value: 0, timestamp: new Date().toISOString() }] };
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText(/Kiosk clock agrees with the server/)).toBeInTheDocument();
+
+    down = true;
+    act(() => invalidateLoads());
+
+    expect(await screen.findByText("Couldn't load kiosk last-seen")).toBeInTheDocument();
+    expect(screen.queryByText(/Kiosk clock/)).not.toBeInTheDocument();
+  });
+
+  it("warns for a kiosk refused before it was ever accepted, with no last-seen row", async () => {
+    renderHeartbeat([{ metric: "kiosk_clock_skew", value: 90 }]);
+    expect(await screen.findByText(/90s ahead of the server/)).toBeInTheDocument();
+    expect(screen.getByText(/No kiosk request since this task started/)).toBeInTheDocument();
+  });
+});
+
+describe("OpenProblemsBox", () => {
+  const incident = (over: Record<string, unknown>) => ({
+    key: "quickbooks:connection", status: "open", kind: "connection", cause: "quickbooks",
+    lanes: ["expenses", "gifts"], firstSeenAt: "2026-11-01T12:00:00.000Z", runsSeen: 3, itemsAffected: 7, ...over,
+  });
+
+  it("lists each incident with its kind, cause, lanes and counts, and badges only the open ones", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        incidents: [incident({}), incident({ key: "ocr:system", status: "watching", kind: "system", cause: "ocr", lanes: ["receipts"], runsSeen: 1, itemsAffected: 2 })],
+      },
+    });
+    renderWithProviders(<OpenProblemsBox />);
+
+    expect(await screen.findByText("quickbooks")).toBeInTheDocument();
+    expect(screen.getByText("expenses, gifts")).toBeInTheDocument();
+    expect(screen.getByText(/3 runs, 7 items/)).toBeInTheDocument();
+    expect(screen.getByText("● Open")).toBeInTheDocument();
+    expect(screen.getByText("ocr")).toBeInTheDocument();
+    expect(screen.getByText("● Watching")).toBeInTheDocument();
+    expect(screen.getByTitle("1 open problem(s)")).toBeInTheDocument();
+  });
+
+  it("says so when nothing is open", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("No open problems.")).toBeInTheDocument();
+  });
+
+  it("says so when the panel cannot load", async () => {
+    mockFetchJson({});
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
+  });
+
+  it("shows the failed state, not Checking forever, when the answer has no incidents", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { checks: [] } });
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
+  });
+});
+
+describe("ProblemsBox", () => {
+  it("lists each stuck item with its library, step, a link to its page and its time, then each job not on time", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems: {
+          items: [
+            { library: "expense", id: "e1", step: "QuickBooks posting", href: "/expense/expenses/e1", failedAt: "2026-11-01T12:00:00.000Z" },
+            { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
+          ],
+          unread: ["gifts"],
+          notices: ["Receipt reading failed 3 times in the last day"],
+        },
+        cronJobs: [
+          { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
+          { job: "qbo-posting", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true },
+        ],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    expect((await screen.findByText("e1")).closest("a")).toHaveAttribute("href", "/expense/expenses/e1");
+    expect(screen.getByText("7").closest("a")).toBeNull();
+    expect(screen.getByText("qbo-posting")).toBeInTheDocument();
+    expect(screen.queryByText("nightly")).not.toBeInTheDocument();
+    expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
+    expect(screen.getByText("Receipt reading failed 3 times in the last day")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  it("says so when nothing is stuck", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Nothing is stuck.")).toBeInTheDocument();
+  });
+
+  it("shows the failed state when the answer has no problems", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Unable to load the Problems list.")).toBeInTheDocument();
   });
 });

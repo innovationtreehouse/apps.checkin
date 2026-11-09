@@ -1,3 +1,4 @@
+import { isDbUnavailableError } from '@checkin/pg-kit'
 import { Prisma } from '@/generated/prisma/client'
 
 // The cloud dev DB is Aurora Serverless v2 with min-capacity 0 + auto-pause; the
@@ -16,7 +17,7 @@ export async function withAuroraResumeRetry<T>(
         try {
             return await fn();
         } catch (error) {
-            if (!isDbResumeError(error) || i >= attempts) throw error;
+            if (!isDbUnavailableError(error) || i >= attempts) throw error;
             await new Promise((r) => setTimeout(r, delayMs));
         }
     }
@@ -37,33 +38,6 @@ export async function withAuroraResumeRetry<T>(
 export const AURORA_RESUME_DEADLINE_MS = 45_000;
 const RESUME_RETRY_DELAY_MS = 2_000;
 
-/**
- * Connection-phase failures a resuming Aurora produces. P1001 is Prisma's
- * can't-reach-server; the pg driver-adapter pool can independently time out
- * ACQUIRING a connection mid-resume (connectionTimeoutMillis, 10s in
- * lib/prisma.ts) — that surfaces as P2024 or the pool's own "timeout exceeded
- * when trying to connect" message, not P1001, which is how the public
- * programs directory 500'd at ~30s (three sequential 10s pool timeouts)
- * instead of riding out the resume.
- *
- * "Connection terminated due to connection timeout" is the pg *client's* own
- * connectionTimeoutMillis firing while the socket is still connecting — again a
- * connection-ACQUISITION failure (the connection never established, the query
- * never ran), distinct from a mid-query "connection terminated UNEXPECTEDLY"
- * drop, which we still must not retry. Missing it meant the jwt-callback role
- * re-sync (auth-options.ts) threw against a paused DB instead of riding out the
- * resume, surfacing as NextAuth JWT_SESSION_ERROR — i.e. users bounced to
- * sign-in ~15min (updateAge) into an idle-then-return, and flaky cold sign-in
- * (adapter_error_getUserByAccount). Prod evidence: 2026-07-19/20.
- */
-export function isDbResumeError(error: unknown): boolean {
-    const e = error as { code?: string; message?: string } | null;
-    if (!e) return false;
-    if (e.code === 'P1001' || e.code === 'P2024') return true;
-    return typeof e.message === 'string'
-        && /timeout exceeded when trying to connect|connection terminated due to connection timeout/i.test(e.message);
-}
-
 /** Deadline-based sibling of withAuroraResumeRetry (exported for tests). */
 export async function retryP1001UntilDeadline<T>(
     fn: () => Promise<T>,
@@ -75,7 +49,7 @@ export async function retryP1001UntilDeadline<T>(
         try {
             return await fn();
         } catch (error) {
-            if (!isDbResumeError(error) || Date.now() >= deadline) throw error;
+            if (!isDbUnavailableError(error) || Date.now() >= deadline) throw error;
             await new Promise((r) => setTimeout(r, delayMs));
         }
     }

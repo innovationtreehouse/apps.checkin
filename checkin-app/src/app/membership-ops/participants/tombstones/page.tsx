@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { Badge, Group, Stack, Table, Text, Title, Tooltip } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { summarizeResidue, type Disposition } from "@/lib/person/tombstoneResidue";
@@ -36,16 +37,7 @@ const DISPOSITION_TOOLTIP: Record<Disposition, string> = {
 
 export default function TombstoneCensus() {
   const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
-  const [bag, setBag] = useState<CensusBag | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!ready) return;
-    fetch("/api/membership-ops/participants/tombstones")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to load census."))))
-      .then(setBag)
-      .catch((e) => setError(e.message));
-  }, [ready]);
+  const { data: bag, error, reload } = useLoad<CensusBag>(ready ? "/api/membership-ops/participants/tombstones" : null);
 
   if (authLoading || !ready) return <PageLoader />;
 
@@ -76,9 +68,10 @@ export default function TombstoneCensus() {
         linked surfaces, then re-check here.
       </Text>
 
-      {error && <AlertBanner tone="error" message={error} />}
+      {error && <LoadError what="the census" message={error} onRetry={reload} />}
+      {!bag && !error && <PageLoader minHeight="20vh" />}
 
-      {bag && (
+      {bag && !error && (
         <>
           <Group gap="xl">
             <Stat label="Tombstones" value={totals.tombstones} />

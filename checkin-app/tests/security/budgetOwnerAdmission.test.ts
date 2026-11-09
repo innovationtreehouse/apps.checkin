@@ -3,8 +3,8 @@
  */
 /**
  * Admission and view invariants for the budget-owner bucket and bucket-approver
- * routes (#1280). No DB: next-auth's getServerSession is the jest.setup.js mock.
- * No program-treasurer route is registered any more; the path filter below keeps it so.
+ * routes. No DB: next-auth's getServerSession is the jest.setup.js mock.
+ * No program-treasurer route is registered; the path filter below keeps it so.
  *
  * 1. An id-less session holding every flag gets 401 from handler() on every route,
  *    and the route body never runs (boundary rule 6).

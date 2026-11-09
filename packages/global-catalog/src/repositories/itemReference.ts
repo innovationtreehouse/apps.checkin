@@ -123,6 +123,7 @@ export function createItemReferenceRepository(db: Prisma.TransactionClient) {
         db.referenceConflict.count({ where }),
         db.referenceConflict.findMany({
           where,
+          include: { itemReference: { select: { gtin13: true } } },
           orderBy: { createdAt: "desc" },
           take: limit,
           skip: (page - 1) * limit,

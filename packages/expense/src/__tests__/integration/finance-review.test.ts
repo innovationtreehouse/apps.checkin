@@ -1,4 +1,4 @@
-/** Decisions on the expense record (#2481): reasons, the closing acts, required notes and Approve tax. */
+/** Decisions on the expense record: reasons, the closing acts, required notes and Approve tax. */
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -128,7 +128,7 @@ describeDb("expense reasons", () => {
   it("bookkeeping stays actionable for a conflicted finance holder, as the rules allow", async () => {
     bind();
     const id = await seedExpense({ state: "capital_review", taxCents: 500 });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date() } });
     expect((await expenseReasons(CONFLICTED_FINANCE, id)).map((r) => [r.code, r.actionable])).toEqual([
       ["CAPITAL_REVIEW", true],
       ["TAX_NOT_REVIEWED", false],
@@ -136,13 +136,13 @@ describeDb("expense reasons", () => {
     ]);
   });
 
-  it("an exhausted post carries the last error in plain words", async () => {
+  it("a failed post carries the last error in plain words", async () => {
     bind();
     const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date() } });
     await writeAudit(db, { userId: 0 }, { expenseId: id, action: "qb_needs_finance", notes: "attempt 5 of 5: Account is inactive" });
     expect(await expenseReasons(FINANCE, id)).toEqual([
-      { code: "QB_POST_FAILED", tab: "qb", actionable: true, amountCents: null, count: 5, detail: "Account is inactive" },
+      { code: "QB_POST_FAILED", tab: "qb", actionable: true, amountCents: null, count: null, detail: "Account is inactive" },
     ]);
   });
 

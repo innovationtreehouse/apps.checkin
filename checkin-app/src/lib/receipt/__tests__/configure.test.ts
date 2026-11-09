@@ -1,7 +1,7 @@
 import { configureReceipt, type ReceiptConfig } from '@checkin/receipt';
 import type { Session } from 'next-auth';
 import prisma from '@/lib/prisma';
-import { notifyFinanceAlert } from '@/lib/emailRecipients';
+import { emailAlert } from '@/lib/emailRecipients';
 import { expenseOutcomes } from '@checkin/expense';
 import { receivingOutcomes } from '@checkin/workflow-mapping';
 import { giftOutcomes } from '@checkin/bulk-donation';
@@ -21,7 +21,7 @@ jest.mock('@checkin/expense', () => ({ reimbursementStatus: {}, expenseOutcomes:
 jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn(), receivingOutcomes: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn(), giftOutcomes: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn(), sessionUser: jest.fn() }));
-jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
+jest.mock('@/lib/emailRecipients', () => ({ emailAlert: jest.fn().mockResolvedValue(true) }));
 jest.mock('@/lib/purchaseOutcomeMail', () => ({ sendPurchaseOutcome: jest.fn() }));
 
 const ADULT_DOB = new Date('1980-01-01');
@@ -66,7 +66,6 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(found).toEqual({ id: 7, name: 'Pat Example', firstName: 'Pat', lastName: 'Example', isAdult: true, raisedMailLimit: false });
         expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
             where: {
-                mergedIntoId: null,
                 accounts: { some: {} },
                 OR: [{ email: { equals: 'pat@example.org', mode: 'insensitive' } }, { mailAliases: { some: { address: 'pat@example.org', approvedAt: { not: null } } } }],
             },
@@ -171,21 +170,32 @@ describe('receipt runtime: mail intake bindings', () => {
 
     it('alerts finance when mail is about to leave the window unread', async () => {
         await boundConfig().alerts?.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: new Date('2026-10-25T09:00:00Z') });
-        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
         expect(key).toBe('finance.receiptMailAgeing');
         expect(values).toMatchObject({ messages: '4', since: expect.stringContaining('25 Oct 2026'), actionLink: expect.stringContaining('/receipts/mail') });
     });
 
-    it('alerts finance when the mailbox cannot be listed', async () => {
-        await boundConfig().alerts?.mailListingFailed({ orgId: 'org' });
-        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
-        expect(key).toBe('finance.receiptMailboxUnreadable');
+    it('throws when the ageing alert was not sent, so the mail stays unmarked and is alerted again', async () => {
+        jest.mocked(emailAlert).mockResolvedValueOnce(false);
+        await expect(boundConfig().alerts!.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: null })).rejects.toThrow('not sent');
+    });
+
+    it.each([
+        ['connection', 'finance.receiptMailboxUnreadable'],
+        ['system', 'finance.receiptMailboxUnanswered'],
+        ['settings', 'finance.receiptMailboxNotFound'],
+        ['data', 'finance.receiptMailboxFailed'],
+        ['bug', 'finance.receiptMailboxFailed'],
+    ] as const)('alerts finance with the cause when the mailbox cannot be listed (%s)', async (kind, template) => {
+        await boundConfig().alerts?.mailListingFailed({ orgId: 'org', kind });
+        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
+        expect(key).toBe(template);
         expect(values).toMatchObject({ actionLink: expect.stringContaining('/receipts/mail') });
     });
 
     it('alerts finance when mail intake stops holding mail', async () => {
         await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
-        const [key, values] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
         expect(key).toBe('finance.receiptMailCeiling');
         expect(values).toMatchObject({ unresolved: '500', refused: '3', actionLink: expect.stringContaining('/receipts/mail') });
     });
@@ -197,15 +207,15 @@ describe('receipt runtime: reimbursee bindings', () => {
     const adult = { id: 8, name: 'Sam Lee', dateOfBirth: ADULT_DOB, isDeclaredAdult: false };
     const minor = { id: 9, name: 'Sam Kid', dateOfBirth: new Date(), isDeclaredAdult: false };
     const unknownAge = { id: 10, name: 'Sam Who', dateOfBirth: null, isDeclaredAdult: false };
-    // No household or membership is read: someone without an account is named like any adult.
+    // No membership is read: someone without an account is named like any adult.
     const declaredNonMember = { id: 11, name: 'Sam Guest', dateOfBirth: null, isDeclaredAdult: true };
 
     it('searches live people by name and offers only known adults, members or not, as id and name', async () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([adult, minor, unknownAge, declaredNonMember]);
         expect(await boundConfig().reimbursees?.search('sam', 20)).toEqual([{ id: 8, name: 'Sam Lee' }, { id: 11, name: 'Sam Guest' }]);
         const query = jest.mocked(prisma.person.findMany).mock.calls[0][0];
-        expect(query).toMatchObject({ where: { mergedIntoId: null, name: { contains: 'sam', mode: 'insensitive' } } });
-        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['mergedIntoId', 'name']);
+        expect(query).toMatchObject({ where: { name: { contains: 'sam', mode: 'insensitive' }, household: { archivedAt: null } } });
+        expect(Object.keys(query?.where ?? {}).sort()).toEqual(['household', 'name']);
     });
 
     it('caps the search after dropping anyone not known to be an adult', async () => {
@@ -226,7 +236,7 @@ describe('receipt runtime: reimbursee bindings', () => {
     it('names nobody by id once their record is merged away', async () => {
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().reimbursees?.byId(8)).toBeNull();
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8, mergedIntoId: null } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 8 } });
     });
 });
 
@@ -236,7 +246,7 @@ describe('receipt runtime: mailed receipt acknowledgements', () => {
     it("gives a live person's sign-in email and name", async () => {
         prisma.person.findFirst = jest.fn().mockResolvedValue({ email: 'pat@example.org', name: 'Pat Example' });
         expect(await boundConfig().replies?.contactOf(7)).toEqual({ email: 'pat@example.org', name: 'Pat Example' });
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null, accounts: { some: {} } } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, accounts: { some: {} } } });
     });
 
     it('gives nobody for a person without an email, without a sign-in, or merged away', async () => {
@@ -262,15 +272,17 @@ describe('receipt runtime: outcome emails', () => {
 
 describe('receipt runtime: purchase outcome binding', () => {
     it('joins receiving, the expense and the gift for each receipt asked about', async () => {
-        jest.mocked(receivingOutcomes).mockResolvedValue(new Map([['r-1', 'received'], ['r-2', 'waiting']]));
+        jest.mocked(receivingOutcomes).mockResolvedValue(
+            new Map([['r-1', { receiving: 'received', openBackorders: 2 }], ['r-2', { receiving: 'waiting', openBackorders: 0 }]]),
+        );
         jest.mocked(expenseOutcomes.forReceipts).mockResolvedValue(new Map([['r-1', { status: 'line_rejected', notes: ['Not a program cost'] }]]));
         jest.mocked(giftOutcomes).mockResolvedValue(new Map());
         const answer = await boundConfig().purchaseOutcomes?.forReceipts(['r-1', 'r-2', 'r-3']);
         expect(answer).toEqual(
             new Map([
-                ['r-1', { receiving: 'received', money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null }],
-                ['r-2', { receiving: 'waiting', money: null, gift: null }],
-                ['r-3', { receiving: null, money: null, gift: null }],
+                ['r-1', { receiving: 'received', openBackorders: 2, money: { status: 'line_rejected', notes: ['Not a program cost'] }, gift: null }],
+                ['r-2', { receiving: 'waiting', openBackorders: 0, money: null, gift: null }],
+                ['r-3', { receiving: null, openBackorders: 0, money: null, gift: null }],
             ]),
         );
     });
@@ -298,12 +310,30 @@ describe('receipt runtime: principal', () => {
             isBoardMember: true,
             addsPeople: true,
         });
-        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7, mergedIntoId: null } });
+        expect(jest.mocked(prisma.person.findFirst).mock.calls[0][0]).toMatchObject({ where: { id: 7 } });
     });
 
     it('refuses a session whose Person is gone', async () => {
         jest.mocked(sessionUser).mockResolvedValue({ id: 7 } as Session['user']);
         prisma.person.findFirst = jest.fn().mockResolvedValue(null);
         expect(await boundConfig().auth?.getPrincipal()).toBeNull();
+    });
+});
+
+describe('receipt runtime: person ids', () => {
+    afterEach(() => jest.clearAllMocks());
+
+    it('names a live id itself, a merged-away id its survivor, and an unknown id nobody', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 2 }]);
+        prisma.person.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { id: number } }) => (where.id === 2 ? { id: 2 } : null));
+        prisma.personMerge.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { fromId: number } }) => (where.fromId === 1 ? { toId: 2 } : null));
+        const live = await boundConfig().personIds?.liveIds([1, 2, 4]);
+        expect(live).toEqual(new Map([[2, 2], [1, 2], [4, null]]));
+    });
+
+    it('lists a live person and every id merged into them', async () => {
+        prisma.personMerge.findMany = jest.fn().mockResolvedValue([{ fromId: 1 }, { fromId: 3 }]);
+        await expect(boundConfig().personIds?.storedIdsOf(2)).resolves.toEqual([2, 1, 3]);
+        expect(prisma.personMerge.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { toId: 2 } }));
     });
 });

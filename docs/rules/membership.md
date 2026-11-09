@@ -273,18 +273,22 @@ Procedure below is built on them.
   requires documentation only for a disqualifying offence. An approval needs
   none.  [Decision — *Policy: Membership Policy, Art. IX*]
 
-- The board may close an unpaid application ("Close application"); there is no
-  minimum wait. It is never destroyed, and "Reopen" returns it to the step it
-  was closed from. A paid, blocked, clearance-waiting or active application
-  cannot be closed; the one exception is a restore, below, which also closes a
+- The board may close an unpaid application ("Close application"), at any open
+  step but blocked, older steps included; there is no minimum wait. It is never
+  destroyed, and "Reopen" returns it to the step it was closed from. A paid,
+  blocked or active application cannot be closed: a paid one only once its
+  refund is recorded. The one exception is a restore, below, which also closes a
   blocked application. Reopening refuses a denied household, or one with another
   open application. The word "archive" is reserved for archiving a household.  [Decision —
-  *Principle: decisions are reversible*]
+  *Principle: decisions are reversible*; owner ruling 2026-11-07]
 
 - A refund made in the online store is recorded by the board ("Record refund"),
-  with a reason, by someone outside the household. A paid application waiting on
-  its background check returns to awaiting payment, check untouched; a paid
-  blocked application stays blocked.  [Decision]
+  with a reason, by someone outside the household, on a paid application at any
+  step that never became a membership. It stays offered until it is recorded,
+  including after a denial. The application keeps its step, unpaid, and the
+  background check is untouched; a paid application waiting on its background
+  check returns to awaiting payment. A blocked application stays blocked: a
+  refund never unblocks it or erases the rejection.  [Decision — owner ruling 2026-11-07]
 
 - Pre-designating a household volunteer-only sets what it owes and nothing else
   — it does not skip review or open payment. The policy grants only the
@@ -309,11 +313,11 @@ Procedure below is built on them.
 - From there payment and review run in parallel, and membership activates on
   whichever finishes last. Neither alone activates.  [Decision]
 
-- Granting the coming year completes the payment step on a renewal already under
-  way. It stamps no other gate.  [Decision]
+- A board grant completes the payment step on an application already under way,
+  joining or renewing. It stamps no other gate.  [Decision]
 
 - Only an application completing — paid and background check cleared — makes a
-  household a member. Granting the current year is money only: it pays the
+  household a member. A board grant is money only: it pays the
   household's application under way, or opens one for the family to complete,
   and never sets membership directly or skips the check. A household already
   active stays active.  [Decision]
@@ -330,6 +334,18 @@ Procedure below is built on them.
   grant or a household move — changes nothing and goes to the board's
   payment-problems queue with an email. Any other board action on a denied
   household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
+
+- Denying a household revokes trusted-adult access in the same act, both ways;
+  `people-households.md` (Trusted adults) states it. Nothing else the household
+  holds is removed by the denial. Each program enrollment, pending or active, and
+  each program role, volunteer or lead, held by one of its members in a program
+  not yet finished goes to the board's payment-problems queue for removal by hand,
+  so the board can speak to the program's leaders first. The board gets one email
+  per denial that leaves it something to remove.  [Decision — *Principle: people decide about people*]
+
+- Revoking a household's membership does none of this: its trusted adults, its
+  members' trusted-adult authorisations and its program ties are left as they
+  are, and nothing goes to the board.  [Decision]
 
 - A denied household is sent no outreach. Denial is checked again as each
   message goes out.  [Decision]
@@ -375,6 +391,10 @@ Procedure below is built on them.
   plan. Only the board certifies a payment; a sysadmin cannot.
   [Decision — *Policy: Membership Policy, Art. XIII*]
 
+- A board grant records the membership year the Board chooses: the year in
+  progress, or, inside the renewal window, the coming year. Each grant control
+  names the year it records.  [Decision]
+
 - A membership order the app cannot apply settles nothing and is raised for the
   board: a second order on an application already paid, one arriving after the
   board certified or closed the application or before payment was due, and one
@@ -388,6 +408,9 @@ Procedure below is built on them.
   app, and the decline sends nothing: the request clears and the household returns
   to owing its membership fee by the normal route. The decision is recorded; carrying it to
   the family is not the app's job.  [Decision — deliberate limit; *Principle: people decide about people*]
+
+- A payment-plan request is decided once: an approval and a denial racing each
+  other cannot both take effect.  [Decision]
 
 - A household that has settled its membership fee but is still waiting on its background
   check, and is not denied, is a member for program pricing and for reaching
@@ -412,12 +435,12 @@ Procedure below is built on them.
 - Renewals open only inside the renewal window, and opening skips every
   household already handled this cycle — renewed, granted the coming year,
   joined in-window, or closed by the board — so no family is billed twice. The
-  one exception is the board granting the current year to a lapsed active
+  one exception is a board grant to a lapsed active
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
 - Renewals start only from the board's own actions: its "open renewals" button
-  opens them for every household due, and granting the current year opens one
+  opens them for every household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6, 2026-10-27*]
 
@@ -429,11 +452,11 @@ Procedure below is built on them.
   nothing it can see. Lapsing changes what the membership covers and nothing
   else: status does not move, and only a person revokes.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. XI*; *Principle: people decide about people*]
 
-- Settling inside the renewal window buys the coming membership year — for a
-  family joining (INITIAL) exactly as for one renewing. The derived valid-until,
-  program-pricing coverage, and the renewal sweep's skip-test all read this one
-  rule, so a family that joins in-window is covered through the following
-  boundary and is not asked to renew for the year it just bought.  [Decision]
+- A membership payment or grant records the one membership year it buys, and
+  coverage, the renewal sweep and member pricing read that recorded year. A
+  checkout offered from the day the renewal window opens sells the coming year, to
+  a family joining exactly as to one renewing; a background check clearing later
+  never changes the year bought.  [Decision]
 
 - A household is never told its background check has gone stale, because nothing
   acts on staleness between renewals. It is read inside a renewal, where it
@@ -451,6 +474,10 @@ Procedure below is built on them.
 - The sysadmin role never shows a household's intake note; a sysadmin sees it
   only through another role they hold (a lead of that household, the Board, a
   reviewer).  [Decision]
+
+- Whether an application asked for a scholarship or payment plan, and which, is
+  read by the board and finance only. A sysadmin or background-check reviewer
+  works an application without it.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
 
 ### Compliance
 
@@ -472,8 +499,8 @@ Procedure below is built on them.
 
 - A signing adult whom the household's own review did not name is covered here
   rather than by that review, because a clearance covers only the adult who took
-  the check. Otherwise the second parent on the application — often the one
-  holding a key — belongs to no track at all.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*]
+  the check. Otherwise the second parent on the application belongs to no track
+  at all.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*]
 
 - The obligation follows an active membership. Leads of households that only ever
   started an application, were denied or revoked, or were created by an import owe

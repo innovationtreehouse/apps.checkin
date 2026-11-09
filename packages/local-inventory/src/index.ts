@@ -17,6 +17,7 @@ export {
   getOrgId,
   getNavCounts,
   inventoryApply,
+  openBackordersByReceipt,
 } from "./runtime";
 export type {
   InventoryPrincipal,
@@ -28,5 +29,6 @@ export type {
   InventoryRouteHandler,
   OrgEventRecord,
   CatalogEventSource,
-  InventoryAlerts,
 } from "./contract";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

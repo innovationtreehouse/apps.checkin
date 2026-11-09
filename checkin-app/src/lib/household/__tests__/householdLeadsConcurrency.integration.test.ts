@@ -3,7 +3,7 @@
  */
 /**
  * Direct integration test for addHouseholdLead — the atomic household-lead cap
- * enforcer (issue #269).
+ * enforcer.
  *
  * The function counts existing leads then creates, under a Household-row
  * FOR UPDATE lock taken first, so two concurrent promotions for the last slot

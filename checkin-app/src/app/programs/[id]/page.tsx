@@ -43,7 +43,6 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
       // Only a household lead receives status (lib/programs/paymentVisibility).
       unpaid: p.status === 'PENDING',
     }));
-  const isClosed = program.enrollmentStatus === 'CLOSED';
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
   // A youth is shown no payment obligation, action, or status — their own or
   // their household's (docs/rules/programs.md). An unverifiable age is NOT a
@@ -55,15 +54,22 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     : program.minAge !== null ? `ages ${program.minAge} and up`
     : program.maxAge !== null ? `ages ${program.maxAge} and under` : null;
 
-  // Why is enrollment closed? Full wins over phase.
   const enrolledCount = program._count?.participants ?? program.participants?.length ?? 0;
   const isFull = program.maxParticipants != null && enrolledCount >= program.maxParticipants;
-  const closedReason = !isClosed ? null
-    : isFull ? 'Full'
+  // The server decides whether a new claim would be refused; full wins over phase.
+  const closedBy = program.enrollmentClosedBy;
+  const isClosed = closedBy !== null;
+  const closedReason = closedBy === 'FULL' ? 'Full'
+    : closedBy === 'SALE_ENDED' ? 'Sales ended'
+    : closedBy === null ? null
     : program.phase === 'RUNNING' ? 'Running'
     : program.phase === 'UPCOMING' ? 'Upcoming'
     : program.phase === 'FINISHED' ? 'Ended'
     : null;
+  // An ended program offers no payment; the board settles a late one by hand.
+  const hasEnded = program.phase === 'FINISHED';
+  // Until then a household with an unpaid claim keeps its way to pay however enrollment closed; the server refuses only new claims.
+  const canResume = !viewerIsYouth && !hasEnded && myEnrolled.some((m) => m.unpaid);
   const closedSuffix = closedReason && <Text component="span" c="white"> ({closedReason})</Text>;
 
   return (
@@ -89,6 +95,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           myEnrolled={myEnrolled}
           viewerIsYouth={viewerIsYouth}
           isClosed={isClosed}
+          hasEnded={hasEnded}
           onPayNow={startEnrollmentProcess}
         />
 
@@ -108,14 +115,15 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           {!showEnrollmentSelection ? (
             <Group justify="center" wrap="wrap">
               {session ? (
-                <Button size="md" onClick={startEnrollmentProcess} disabled={isClosed || viewerIsYouth}>
+                <Button size="md" onClick={startEnrollmentProcess} disabled={(isClosed && !canResume) || viewerIsYouth}>
                   {/* A payment-pending household reads "Continue enrollment" — the
                       button resumes their checkout (see the pending picker state),
                       it doesn't start a new one. A youth is told who may act
                       instead, which holds whether or not the program is priced. */}
-                  {isClosed ? <>Enrollment Closed{closedSuffix}</>
+                  {canResume ? "Continue enrollment"
+                    : isClosed ? <>Enrollment Closed{closedSuffix}</>
                     : viewerIsYouth ? "A household lead must enroll you"
-                    : myEnrolled.some((m) => m.unpaid) ? "Continue enrollment" : "Enroll"}
+                    : "Enroll"}
                 </Button>
               ) : (
                 // Auth-first: route through /signin (which picks Google vs. the
@@ -133,7 +141,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
               ageGated={program.minAge !== null || program.maxAge !== null}
               ageRange={ageRange}
               hasPrice={hasPrice}
-              isClosed={isClosed}
+              isClosed={isClosed && !canResume}
               viewerIsYouth={viewerIsYouth}
               controls={picker}
             />

@@ -1,14 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { Button, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from "@/components/TimezoneProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import type { ReceiptFlowStatus, StateCount } from "@/lib/receiptFlow/status";
 import { RECEIPT_FLOW_ROLES } from "@/lib/nav/sections/finance";
-
-const UNREACHABLE = "Couldn't load the counts. Check your connection and try again.";
 
 interface FlowRow {
   section: string;
@@ -40,21 +39,7 @@ function flowRows(data: ReceiptFlowStatus): FlowRow[] {
 export default function ReceiptFlowStatusPage() {
   const { loading, ready } = useRequireRole(RECEIPT_FLOW_ROLES);
   const { formatDateTime } = useOrgTime();
-  const [data, setData] = useState<ReceiptFlowStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => fetch("/api/receipt-flow/status")
-    .then(async (res) => {
-      if (!res.ok) {
-        setError(`Couldn't load the counts (error ${res.status}).`);
-        return;
-      }
-      setData((await res.json()) as ReceiptFlowStatus);
-      setError(null);
-    })
-    .catch(() => setError(UNREACHABLE)), []);
-
-  useEffect(() => { if (ready) void load(); }, [ready, load]);
+  const { data, error, reload } = useLoad<ReceiptFlowStatus>(ready ? "/api/receipt-flow/status" : null);
 
   if (loading) return <PageLoader />;
   if (!ready) return null;
@@ -66,11 +51,11 @@ export default function ReceiptFlowStatusPage() {
           <Title order={2}>Receipt flow status</Title>
           {data && <Text size="sm" c="dimmed">As of {formatDateTime(data.asOf)}</Text>}
         </div>
-        <Button variant="default" onClick={() => void load()}>Refresh</Button>
+        <Button variant="default" onClick={reload}>Refresh</Button>
       </Group>
-      {error && <Alert color="red">{error}</Alert>}
+      {error && <LoadError what="the counts" message={error} onRetry={reload} />}
       {!data && !error && <PageLoader minHeight="20vh" />}
-      {data && (
+      {data && !error && (
         <Table striped verticalSpacing={4} aria-label="Records in each state">
           <Table.Thead>
             <Table.Tr>

@@ -5,7 +5,8 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
-import { deleteAndReleaseHold, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
+import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
+import { deleteAndReleaseHold, type ExitOptions, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
 import { householdLeadship } from "@/lib/household/leads";
@@ -13,6 +14,7 @@ import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
+import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -67,14 +69,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
         }
 
-        // A family that claimed in time can always pay: an existing PENDING
-        // claim skips every limit below (capacity would count its own row) and
-        // gets the 409 the program page folds back into its checkout.
+        // A family that claimed in time can pay until the program ends: an existing
+        // PENDING claim skips every limit below (capacity would count its own row) and
+        // gets the 409 the program page folds back into its checkout. Once ended, the
+        // Board settles it by hand.
         const existingClaim = await prisma.programParticipant.findUnique({
             where: { programId_personId: { programId, personId: participantId } },
             select: { status: true },
         });
         if (existingClaim?.status === 'PENDING') {
+            if (currentProgram.phase === 'FINISHED') return apiError(PROGRAM_ENDED_PAYMENT, 400);
             return apiError("Participant is already enrolled in this program.", 409);
         }
 
@@ -210,18 +214,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // One row per (person, program): re-enrolment reactivates the withdrawn
             // row and clears the last stint's fields, so its order, plan request and
             // clocks never join the new stint.
+            const reenroll = initialStatus === 'ACTIVE' ? ENROLLMENT_WRITES.reenrollComp : ENROLLMENT_WRITES.reenrollPaid;
             const { count } = await tx.programParticipant.updateMany({
-                where: { programId, personId: participantId, status: 'WITHDRAWN' },
+                where: { programId, personId: participantId, ...reenroll.where },
                 data: {
-                    status: initialStatus,
+                    ...reenroll.data(),
                     endedAt: null,
                     pendingSince: new Date(),
-                    isPaymentPlanRequested: false,
                     scholarshipRequestKind: null,
-                    paymentPlanDeniedAt: null,
                     wasOrgMemberAtApproval: null,
                     shopifyOrderId: null,
-                    inventoryHeldAt: null,
                     seatTakenWithoutSaleAt: takesSeatWithoutSale ? new Date() : null,
                 },
             });
@@ -400,12 +402,28 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         // A seat taken out of Shopify without a payment — a scholarship hold, or
         // a comped/approved place — goes back on sale (+1) with the exit, exactly
-        // once (see deleteAndReleaseHold / withdrawParticipant).
+        // once (see deleteAndReleaseHold / withdrawParticipant). The audit commits
+        // with the exit: a removal's audit is the only record that its order spent a seat.
+        const exitOptions: ExitOptions = {
+            inRequest: true,
+            audit: (tx, enrollment) => tx.auditLog.create({
+                data: {
+                    actorId: currentUserId,
+                    action: mode === 'withdraw' ? 'EDIT' : 'DELETE',
+                    tableName: 'ProgramParticipant',
+                    affectedEntityId: participantId,
+                    secondaryAffectedEntity: programId,
+                    ...(mode === 'withdraw'
+                        ? { newData: { ...enrollment, ...(reason && { reason }) } }
+                        : { oldData: enrollment, ...(reason && { newData: { reason } }) }),
+                },
+            }),
+        };
         let exit: Awaited<ReturnType<typeof withdrawParticipant>>;
         try {
             exit = mode === 'withdraw'
-                ? await withdrawParticipant(programId, participantId, currentProgram, only, { inRequest: true })
-                : await deleteAndReleaseHold(programId, participantId, currentProgram, only, { inRequest: true });
+                ? await withdrawParticipant(programId, participantId, currentProgram, only, exitOptions)
+                : await deleteAndReleaseHold(programId, participantId, currentProgram, only, exitOptions);
         } catch (error) {
             if (!isPrismaError(error, 'P2025')) throw error;
             exit = null;
@@ -434,20 +452,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
             return NextResponse.json({ success: true, idempotent: true });
         }
-        const { enrollment, released, shopifyOk } = exit;
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
-                action: mode === 'withdraw' ? 'EDIT' : 'DELETE',
-                tableName: 'ProgramParticipant',
-                affectedEntityId: participantId,
-                secondaryAffectedEntity: programId,
-                ...(mode === 'withdraw'
-                    ? { newData: { ...enrollment, ...(reason && { reason }) } }
-                    : { oldData: enrollment, ...(reason && { newData: { reason } }) }),
-            }
-        });
+        const { released, shopifyOk } = exit;
 
         // Nothing here may reveal whether a scholarship hold existed: this route
         // is reachable by the program's lead mentor, who must never see

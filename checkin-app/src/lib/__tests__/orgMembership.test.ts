@@ -11,7 +11,7 @@
  *     running through a given date.
  *   - programCoverageDate: the date a program's member pricing must be valid
  *     through (the boundary closing its stated year, else endAt).
- * Prisma mocked — no DB. nextBoundary/renewalSeasonWindow run for real (from
+ * Prisma mocked — no DB. nextBoundary runs for real (from
  * @/lib/membership/renewal) so the boundary arithmetic is exercised, not stubbed.
  */
 import {
@@ -83,9 +83,9 @@ describe('membershipValidThrough', () => {
 
         const now = new Date(Date.UTC(2027, 0, 10));
         expect(await membershipValidThrough(1, now)).toEqual(new Date(Date.UTC(2027, 11, 25)));
-        // The probe asks since the live year's window opened (Oct 25 2026), not "never".
+        // The probe asks for the live year, the one the Dec 25 2026 boundary opened.
         const where = prisma.orgMembershipProcess.findFirst.mock.calls[0][0].where;
-        expect(where.stageEnteredAt).toEqual({ gte: new Date(Date.UTC(2026, 9, 25)) });
+        expect(where.appliesToYear).toBe(2026);
     });
 
     it('a membership with no fee-paid process is not settled, however recently it began (bare manual grant)', async () => {
@@ -172,7 +172,7 @@ describe('isActiveOrgMemberThrough', () => {
     });
 });
 
-// #1397: a household that has paid its membership fee but is still waiting on background
+// A household that has paid its membership fee but is still waiting on background
 // clearance gets the MEMBER rate and members-only programs. The widening is
 // program-scoped — every other "is this a member?" question stays ACTIVE-only.
 describe('program access for a paid, not-yet-cleared household', () => {

@@ -23,7 +23,7 @@ per-environment deploy checklist are in `packages/quickbooks/README.md`.
 | `packages/quickbooks/src/write.ts` | `findOrCreate`, `findOrCreateInKindJournal`, `createVendor`; the closed-books gate |
 | `packages/quickbooks/src/match.ts` | `findMatch`: pure, no reads or writes |
 | `packages/quickbooks/src/guard.ts` | Which company a deployment may reach; the test-data prefix |
-| `packages/quickbooks/src/drain.ts` | The fixed caps and timings, the closed-books gate, the run loop |
+| `packages/quickbooks/src/drain.ts` | The caps' defaults, the fixed timings, the closed-books gate, the run loop |
 | `packages/expense/src/lib/expense-qb-processor.ts` | Account resolution, allocation, the outbox commit, stranded recovery, finance's retry |
 | `packages/expense/src/qb-write.ts` | Composes the entry from rows the outbound gateway passed |
 | `packages/expense/src/lib/expense-qb-poster.ts` | Claim, call, settle; the drain and the orphan sweep |
@@ -95,7 +95,10 @@ unchanged and is retried on each run; the queue shows it as `QB_NO_CLASS`.
 
 The poster passes the rows through the outbound gateway (surface
 `quickbooks.create`) first, so `composeWrite` sees only the tiers that surface
-declares. A field it needs that did not pass fails the post.
+declares. A field it needs that did not pass fails the post. An expense whose own
+data cannot make an entry (no receipt date, no lines, or a line with no resolved
+account) goes to `NEEDS_FINANCE` at once with the reason. It is waiting on finance,
+not a failed post, so it is not on the Problems list.
 
 **The writer.** `QuickBooksClient` has one private `post`, reached through two
 symbol-keyed methods that `packages/quickbooks/src/internal.ts` keeps off the
@@ -118,8 +121,8 @@ short, so the note is what makes a retry days later safe.
 
 ## Match before create
 
-For one expense, `findOrCreate` reads entries of the right type in a window of seven
-days either side of the receipt date. A Purchase candidate must have the exact
+For one expense, `findOrCreate` reads entries of the right type within `qbMatchWindowDays`
+(seven by default) either side of the receipt date. A Purchase candidate must have the exact
 amount and the payment account; a Bill candidate must have the exact amount and the
 Vendor. Entries already claimed or excluded are dropped.
 
@@ -145,6 +148,29 @@ those ids are unique per entity only. A claim covers expenses and lines alike, s
 two records never hold one entry. `ExpenseQbMatchExclusion` is unique on org and id
 with no entity, so an exclusion drops that id for both Purchases and Bills.
 
+### Voided entries
+
+QuickBooks keeps a voided entry's memo, and so the app's key, at a $0 total. Every
+lookup for a record's own entry therefore skips a keyed entry that totals $0:
+
+| Lane | Lookup | Skips a $0 keyed entry |
+|---|---|---|
+| Expense | `lookupOwnEntry`, and `findMatch` on its key hits | Unless the expense itself totals $0 |
+| Income | `ownEntry`, which finance's match and dismiss also call | Unless the payout nets to $0 |
+| In-kind | `lookupOwnJournal` | Always, since a gift worth $0 or less never posts |
+
+The orphan sweeps in all three lanes skip every $0 entry. So when finance voids an
+entry the app created and never linked, the record's next post books a replacement
+with no further step: the next drain for expense and in-kind, finance's retry for
+income. If finance voided it because the record should never be booked, finance skips
+or dismisses the record before that post. An entry a record is already linked to goes
+through the drift check instead, where a void shows as an amount change.
+
+The app tells a void only by its $0 total. A keyed entry that finance sets to $0 by
+hand, without voiding it, is treated the same way: the record gets a replacement
+booking. Finance that zeroes an entry to cancel a booking skips or dismisses the
+record, as for a void.
+
 ### Match states
 
 | `qbMatchState` | Means | What moves it |
@@ -155,8 +181,8 @@ with no entity, so an exclusion drops that id for both Purchases and Bills.
 | `MATCHED` | A hand-booked entry is linked, with a baseline for drift | Terminal |
 | `AMBIGUOUS` | Several candidates, or no Vendor | Finance |
 | `UNBOOKED` | Not in QuickBooks, and the app may not create it | Finance |
-| `POST_FAILED` | A post failed | The drain, up to five attempts |
-| `NEEDS_FINANCE` | Posts kept failing, or the app may already have booked it and cannot tell | Finance |
+| `POST_FAILED` | Re-armed by a retry, or taken over from a stale claim, on its way to a post | That post, or the next drain |
+| `NEEDS_FINANCE` | A post failed (stuck, with `qbFirstFailedAt` and `qbLastError`), the expense's own data cannot make an entry, or the app may already have booked it and cannot tell | Finance, or Retry on the Problems list |
 | `SKIPPED` | Finance skipped it, with a reason | Terminal |
 | `NOT_TEST_DATA`, `TEST_DATA_REFUSED` | Stopped by the test-data gate | Re-checked each run |
 
@@ -174,7 +200,11 @@ expense whose vendor name starts `TEST-` posts; production never posts an
    sign-off seats and the line approvals, builds the entry, and sets `POSTING`. A
    post that may create stamps `qbCreateAttemptedAt` the first time, and the stamp
    never moves. A hold makes the post wait; on a closed expense it also raises
-   `QB_POST_HELD`, since only finance can clear that hold.
+   `QB_POST_HELD`, since the app takes no further sign-off on it. A closed expense
+   is held only for a missing submitter or Treasurer seat, an unapproved line or an
+   unknown reimbursee. Its Board seat and Board approval were settled at the outbox
+   commit, so later changes to the reimbursee's membership or the Board-review total
+   do not hold it.
 2. **Call.** If `qbCreateAttemptedAt` was already set, it first reads what QuickBooks
    created since then and keeps entries carrying this key, so it finds an entry even
    after finance re-dated it. Otherwise it goes straight to `findOrCreate`.
@@ -190,29 +220,47 @@ takes over the stale claim finds the entry by key instead of creating a second o
 `GET /api/cron/qbo-posting` answers only to `QBO_POSTING_CRON_SECRET`, runs daily,
 and returns `{}`. Counts go to the log, and a failed step is recorded on the cron
 run. Expense's step, `runExpenseQbPosting`, runs first, ahead of the donation
-hand-over, in-kind and income, and each lane fails on its own. It has three parts,
+hand-over, in-kind and income, and each lane fails on its own. It has four parts,
 each also failing on its own:
 
-- `recoverStrandedQbExpenses`: expenses left in `qb_pending` or `qb_error` with no
-  outbox row, at most 50.
+- `recoverStrandedQbExpenses`: expenses a crash left in `qb_pending` with no outbox
+  row, at most 50. An expense that failed to prepare for QuickBooks (account
+  resolution, the catalog, the outbox commit) is in `qb_error`, stuck with
+  `qbFirstFailedAt` and `qbLastError` until a person retries it from the Problems
+  list.
 - `drainExpenseOutbox`: every outboxed expense not yet in QuickBooks, oldest receipt
   first, then the orphan sweep.
 - `checkQbDrift`: the drift check below.
+- `sweepOutcomeNotices`: the outcome emails still owed to a receipt's uploader and
+  the person reimbursed, at most 50, each given up after three failed sends.
 
 Expense's non-QuickBooks catch-up, `runExpenseCatchUp` (intake replay and catalog
 events), runs from `/api/cron/reconcile-shopify` instead.
+
+### A failed post
+
+Any failed post, whatever its cause, leaves the expense at `NEEDS_FINANCE`, stuck.
+`qbFirstFailedAt` keeps the first failure's time and `qbLastError` the latest error;
+a refusal's error is "QuickBooks refused: code N (request R)", never the fault text.
+The drain never retries a stuck expense and never stops on a failure: an outage
+leaves every expense it reached stuck. Finance's retry, or Retry on the Problems list
+(`retryStuckItem`), runs the post once; the claim and the key lookup make it safe to
+repeat. A post that settles clears both fields. The failure's kind is still reported
+to the on-failure port.
 
 ### Limits
 
 | Limit | Value | What happens |
 |---|---|---|
-| Entries created per drain | 25 | The run stops and logs; the rest wait |
-| Entries created per UTC day | 50, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
-| Failures in a row in one drain | 3 | The run stops, since QuickBooks is likely down |
-| Failed attempts on one expense | 5 | `NEEDS_FINANCE` |
+| Entries created per drain | `qbMaxCreatesPerRun`, 25 by default | The run stops and logs; the rest wait |
+| Entries created per UTC day | `qbMaxCreatesPerDay`, 50 by default, counted from `qb_created` audit rows | Posts wait, finance's "book it" included |
 | Drift reads per run | 25 | The slice moves each UTC day, so every entry is checked in turn |
 
-These caps count entries; nothing caps the total amount. Hitting a drain cap writes a
+The two create limits and the match window are org settings, read once per drain run;
+finance lowers a limit, raising one takes the Board, and finance or the Board moves the
+window either way, from 1 to 30 days. The drift check reads at 30 days either side, so
+narrowing the window never reports a linked entry as gone. These caps count entries;
+nothing caps the total amount. Hitting a drain cap writes a
 log line.
 
 ---
@@ -226,7 +274,7 @@ expense's state.
 |---|---|---|
 | Pick a candidate | `matchExpenseToQb` | `MATCHED`; needs every sign-off |
 | Book it | `bookExpenseToQb` | One post with creating allowed; still matches first and stops at the closing date |
-| Retry | `retryQbPost` | Re-resolves accounts from the current mappings, resets the attempt count, posts once |
+| Retry | `retryQbPost` | Re-resolves accounts from the current mappings, posts once |
 | Skip, with a reason | `skipExpenseQb` | `SKIPPED` for good; refused to a conflicted person |
 | Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again |
 | Link or create a Vendor | `reimburseeVendorService` | The reimbursee's Vendor is set; a same-name Vendor must be confirmed by picking it |
