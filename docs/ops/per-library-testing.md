@@ -60,9 +60,9 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 
 | Changed file is in | Local tests |
 |---|---|
-| a library package | tsc for checkin and any function workspace that consumes it; eslint on the changed files; that library's vitest unit tier; the area's app tests; the library-boundary check |
+| a library package | tsc for the package, checkin, and each consumer with a `typecheck` script; eslint on the changed files; that library's vitest unit tier; the area's app tests; the library-boundary check |
 | a library's checkin paths | tsc for checkin; eslint on the changed files; the area's app tests |
-| a shared package | eslint on the changed files; vitest unit for the package and its consumers; tsc for checkin and any function workspace among them; the app unit tests related to checkin files that import it |
+| a shared package | eslint on the changed files; vitest unit for the package and its consumers; tsc for the package, checkin, and each consumer with a `typecheck` script; the app unit tests related to checkin files that import it |
 | security or boundary files (`src/security/`, `src/middleware.ts`, `prisma/schema.prisma`, `tests/security/`) | everything the area needs, plus the whole security unit tier |
 | checkin core | tsc for checkin; eslint on the changed files; app unit tests related to the changed files, found by jest's related-tests search |
 | docs, CI, deploy, root scripts | nothing |
