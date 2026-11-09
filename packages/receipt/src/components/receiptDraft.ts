@@ -120,18 +120,21 @@ export function draftHeader(r: ServerReceipt, draft: Draft): Header {
   return { ...headerFromServer(r), ...draft.header };
 }
 
-/** Whether a person typed this line's total, rather than leaving the stored or calculated one. */
-export function totalTyped(line: DraftLine, saved?: ServerLine): boolean {
-  return line.total.trim() !== "" && (!saved || line.total !== toDollars(saved.totalPriceCents));
+/**
+ * Whether a person typed this line's total: a saved line's draft edits hold one, or an added line
+ * has one. A blank field leaves the total to the stored or calculated one.
+ */
+export function totalTyped(total: string | undefined): boolean {
+  return Boolean(total?.trim());
 }
 
 /** A draft line as the server would store it; null while its quantity, unit price or typed total is unreadable. */
-function storedLine(line: DraftLine, saved?: ServerLine): StoredLine | null {
+function storedLine(line: DraftLine, typed: boolean, saved?: ServerLine): StoredLine | null {
   const quantity = parseQuantity(line.quantity);
   const unitPriceCents = parseCents(line.unitPrice);
   if (quantity === null || unitPriceCents === null) return null;
   const after = { quantity, unitPriceCents };
-  if (totalTyped(line, saved)) {
+  if (typed) {
     const typed = parseCents(line.total);
     return typed === null ? null : { ...after, totalPriceCents: typed };
   }
@@ -156,8 +159,8 @@ const sumOrNull = (values: (number | null)[]) => (values.some((v) => v === null)
 
 /** The receipt's figures as the draft would save them. */
 export function draftBalance(r: ServerReceipt, draft: Draft): Balance {
-  const kept = r.lineItems.filter((l) => !draft.removed.includes(l.id)).map((l) => storedLine({ ...lineFromServer(l), ...draft.lines[l.id] }, l));
-  const lines = [...kept, ...draft.added.map((a) => storedLine(a))];
+  const kept = r.lineItems.filter((l) => !draft.removed.includes(l.id)).map((l) => storedLine({ ...lineFromServer(l), ...draft.lines[l.id] }, totalTyped(draft.lines[l.id]?.total), l));
+  const lines = [...kept, ...draft.added.map((a) => storedLine(a, totalTyped(a.total)))];
   const header = draftHeader(r, draft);
   const [shipping, tax, discount, total] = [header.shipping, header.tax, header.discount, header.receiptTotal].map(parseCents);
   const lineTotalsCents = lines.map((l) => l?.totalPriceCents ?? null);
@@ -251,8 +254,11 @@ export function planSave(r: ServerReceipt, draft: Draft): SaveOp[] {
   for (const l of r.lineItems) {
     const edits = draft.lines[l.id];
     if (!edits || draft.removed.includes(l.id)) continue;
-    // A cleared total leaves the line's total to the server.
-    const fields = changed(lineFromServer(l), edits).filter((f) => f !== "total" || Boolean(edits.total?.trim()));
+    const fields: (keyof DraftLine)[] = changed(lineFromServer(l), edits).filter((f) => f !== "total");
+    // A typed total is sent when it differs from the stored one, or when the quantity or unit price
+    // changes, since the server would otherwise recalculate it. A cleared total leaves it to the server.
+    const totalChanged = edits.total !== toDollars(l.totalPriceCents) || fields.includes("quantity") || fields.includes("unitPrice");
+    if (totalTyped(edits.total) && totalChanged) fields.push("total");
     if (fields.length > 0) ops.push({ path: `/line-items/${l.id}`, method: "PATCH", body: lineBody(edits, fields) });
   }
   for (const a of draft.added) {

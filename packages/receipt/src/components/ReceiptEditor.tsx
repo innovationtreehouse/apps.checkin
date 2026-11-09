@@ -40,7 +40,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
   const kept = receipt.lineItems.filter((l) => !draft.removed.includes(l.id));
   const keptLines = kept.map((l) => {
     const line = { ...lineFromServer(l), ...draft.lines[l.id] };
-    return { id: l.id, line, typed: totalTyped(line, l) };
+    return { id: l.id, line, typed: totalTyped(draft.lines[l.id]?.total) };
   });
   const lineCount = kept.length + draft.added.length;
 
@@ -128,7 +128,7 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
             <Table.Tbody>
               {keptLines.map(({ id, line, typed }, i) => row(`line-${id}`, line, typed, balance.lineTotalsCents[i], (p) => setLine(id, p), () => removeLine(id), `Line ${i + 1}`))}
               {draft.added.map((a, i) =>
-                row(`added-${a.key}`, a, totalTyped(a), balance.lineTotalsCents[keptLines.length + i], (p) => setAdded(a.key, p), () => removeAdded(a.key), `Line ${keptLines.length + i + 1}`),
+                row(`added-${a.key}`, a, totalTyped(a.total), balance.lineTotalsCents[keptLines.length + i], (p) => setAdded(a.key, p), () => removeAdded(a.key), `Line ${keptLines.length + i + 1}`),
               )}
             </Table.Tbody>
           </Table>

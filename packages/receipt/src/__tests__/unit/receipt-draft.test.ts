@@ -3,8 +3,6 @@ import {
   canAddLine,
   draftBalance,
   draftMath,
-  draftHeader,
-  draftLines,
   draftProblem,
   EMPTY_DRAFT,
   EMPTY_LINE,
@@ -164,6 +162,15 @@ describe("planSave", () => {
     expect(planSave(receipt, { ...EMPTY_DRAFT, lines: { 2: { total: " " } } })).toEqual([]);
     const added = { ...EMPTY_LINE, key: 1, description: "Hinge", quantity: "3", unitPrice: "3.33", total: "10.00" };
     expect(planSave(receipt, { ...EMPTY_DRAFT, added: [added] })[0].body).toMatchObject({ quantity: 3, unitPrice: 3.33, totalPrice: 10 });
+  });
+
+  it("keeps a typed total equal to the stored one when the unit price changes, and sends it", () => {
+    // Stored $10.00 for 3 × $3.33; the unit price is corrected to $3.30 and the printed $10.00 is typed back.
+    const printed: ServerReceipt = { ...receipt, lineItems: [{ ...line(1, 3, 333), totalPriceCents: 1000 }] };
+    const draft: Draft = { ...EMPTY_DRAFT, lines: { 1: { unitPrice: "3.30", total: "10.00" } } };
+    expect(draftBalance(printed, draft).lineTotalsCents).toEqual([1000]);
+    expect(planSave(printed, draft)).toEqual([{ path: "/line-items/1", method: "PATCH", body: { unitPrice: 3.3, totalPrice: 10 } }]);
+    expect(planSave(printed, { ...EMPTY_DRAFT, lines: { 1: { total: "10.00" } } })).toEqual([]);
   });
 
   it("patches an edited line with its changed fields only", () => {

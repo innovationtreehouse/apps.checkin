@@ -130,6 +130,18 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ totalPrice: 10 }) });
   });
 
+  it("keeps a typed total that equals the stored one when the unit price changes, and saves it", async () => {
+    // Line 2 is stored as $10.00; the unit price is corrected and the printed $10.00 typed back in.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), { ...line(12, "Hinges", 3, 333), totalPriceCents: 1000 }] };
+    wrap();
+    type("Line 2 unit price", "3.30");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("9.90");
+    type("Line 2 total", "10.00");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("10.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 3.3, totalPrice: 10 }) }));
+  });
+
   it("names a line whose printed total no rounding explains, and matches once its unit price is corrected", async () => {
     // Read as 1 × $9.90 against a printed $10.00 line.
     mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), { ...line(12, "Bolts", 1, 990), totalPriceCents: 1000 }] };

@@ -109,7 +109,7 @@ const NOISE = 1e-6;
  * (0.37 × $4.99 is 184.63¢, printed $1.84 or $1.85).
  */
 function lineRoundingAllowance(quantity: number): number {
-  return Math.max(1, Math.abs(quantity));
+  return Math.max(1, quantity);
 }
 
 /** Whether a line's total is quantity × unit price, rounded or truncated; a difference of the full allowance does not agree. */
