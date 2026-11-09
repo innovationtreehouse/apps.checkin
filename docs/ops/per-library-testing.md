@@ -60,9 +60,9 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 
 | Changed file is in | Local tests |
 |---|---|
-| a library package | tsc for checkin and any function workspace that consumes it; that library's vitest unit tier; the area's app tests; the library-boundary check |
+| a library package | tsc for checkin and any function workspace that consumes it; eslint on the changed files; that library's vitest unit tier; the area's app tests; the library-boundary check |
 | a library's checkin paths | tsc for checkin; eslint on the changed files; the area's app tests |
-| a shared package | vitest unit for the package and its consumers; tsc for checkin and any function workspace among them; the app unit tests related to checkin files that import it |
+| a shared package | eslint on the changed files; vitest unit for the package and its consumers; tsc for checkin and any function workspace among them; the app unit tests related to checkin files that import it |
 | security or boundary files (`src/security/`, `src/middleware.ts`, `prisma/schema.prisma`, `tests/security/`) | everything the area needs, plus the whole security unit tier |
 | checkin core | tsc for checkin; eslint on the changed files; app unit tests related to the changed files, found by jest's related-tests search |
 | docs, CI, deploy, root scripts | nothing |
@@ -88,7 +88,9 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 2. `tsc --noEmit` for checkin and each affected `*-function` workspace. This
    does not type-check `packages/*` yet. CI does: run
    `npm run typecheck -w <package>` for a package you changed.
-3. eslint, with no warnings allowed, on the changed checkin files.
+3. eslint, with no warnings allowed, on the changed checkin files and the
+   changed `packages/*` files. Package files use the root config, as CI's
+   `lint:packages` does.
 4. The library-boundary check, if a library or the test harness changed.
 5. `vitest run` for each affected workspace, with `PG_TEST_HARNESS=off` and every
    `*DATABASE_URL` variable removed. The harness starts no container and each
