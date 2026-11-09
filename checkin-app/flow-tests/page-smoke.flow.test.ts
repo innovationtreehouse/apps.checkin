@@ -76,7 +76,9 @@ const expenseList = async (v: Viewer, href: string): Promise<string[]> => {
     const filter = `view=${view}${view === "all" ? "&active=1" : ""}`;
     urls.push(`${href}?view=${view}&page=1`, `/api/expense/expenses?${filter}&page=1&limit=${PAGE_SIZE}`, `/api/expense/expenses/count?${filter}`);
   }
-  const id = await firstId<{ id: string }>(v.session, `/api/expense/expenses?view=all&page=1&limit=1`);
+  const listed = await api<{ Expense: { id: string }[] }>(v.session, `/api/expense/expenses?view=all&page=1&limit=1`);
+  if (listed.status === 200 && !Array.isArray(listed.json.Expense)) throw new Error("the expense list did not answer { Expense: [...] }");
+  const id = listed.status === 200 ? (listed.json.Expense[0]?.id ?? null) : null;
   if (id !== null) {
     const base = `/api/expense/expenses/${encodeURIComponent(id)}`;
     urls.push(`${href}/${encodeURIComponent(id)}`, base, `${base}/line-item-approvals`, `${base}/signoffs`);
