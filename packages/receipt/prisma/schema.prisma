@@ -333,6 +333,7 @@ model ReceiptMailItem {
   /// @sensitivity:internal
   receivedAt     DateTime  @map("received_at")
   /// @sensitivity:pii
+  /// @financeMark
   senderAddress  String    @map("sender_address")
   // held | deferred | assigned | discarded | refused
   /// @sensitivity:internal

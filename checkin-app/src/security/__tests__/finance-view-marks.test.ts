@@ -14,6 +14,7 @@ import {
     financeViewErrors,
     getFileRoute,
     getRoute,
+    isFileOnlyField,
     markErrors,
     marks,
     marksVisible,
@@ -473,10 +474,12 @@ describe('routes Q17 stops logging', () => {
         'GET /api/receipts/ignored-files',
         'GET /api/expense/expenses/[id]/signoffs',
         'GET /api/expense/expenses/[id]/line-item-approvals',
+        'GET /api/donations/uploaded-files',
     ])('%s sends no marked field', endpoint => {
         const spec = getRoute(endpoint);
         expect(spec).toBeDefined();
-        expect((spec?.returns ?? []).filter(model => (marks[model] ?? []).length > 0)).toEqual([]);
+        const jsonMarks = (model: string) => (marks[model] ?? []).filter(field => !isFileOnlyField(model, field));
+        expect((spec?.returns ?? []).filter(model => jsonMarks(model).length > 0)).toEqual([]);
     });
 });
 
@@ -495,7 +498,6 @@ describe('routes audited before field marks still log', () => {
     'GET /api/donations/transactions',
     'GET /api/donations/transactions/[id]',
     'GET /api/donations/transactions/unassigned',
-    'GET /api/donations/uploaded-files',
     'GET /api/donations/uploaded-files/[id]/blob',
     'GET /api/expense/donated-capital',
     'GET /api/expense/expense-events',

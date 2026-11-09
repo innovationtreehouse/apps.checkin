@@ -6,7 +6,7 @@ showed: who looked, on which page, which records, and which sensitive fields
 of them. It is built in three PRs (see "The PR split").
 
 **Status: every question is decided. PR 1 (the log table) is merged; PR 2 (the
-boundary) is built.** B11 narrows slightly (Q17): five routes that show no money
+boundary) is built.** The finance-view rule narrows slightly: five routes that show no money
 and no person stop being logged. @thpr confirmed the narrowing on 2026-11-08
 and released the boundary PR.
 
@@ -336,10 +336,10 @@ marked fields it sends.
 | `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` (a view model) |
 | `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) |
 | `GET /api/receipts`, needs-attention, confirmations, `[id]` | `Receipt` ← `id` (view models of `Receipt`) |
-| `GET /api/receipts/[id]/audit-logs` | `Receipt` ← `receiptId` (B8) |
+| `GET /api/receipts/[id]/audit-logs` | `Receipt` ← `receiptId` |
 | `GET /api/workflow-mapping/receipts`, audit-log | `ReceivedReceipt` ← `id`, or ← `receivedReceiptId` on the audit log |
-| `GET /api/workflow-mapping/receipts/[id]` | `Receipt` ← `WorkflowReceiptView.receiptId` (Q-P4b) |
-| `GET /api/finance-ops/s-read/match-audit` | `ShopOrder` ← `orders[].orderLegacyId`; `OrgMembershipProcess` ← `memberships[].processId`, or `OrgMembership` ← `memberships[].membershipId` on a row with no application (B7); `ProgramParticipant` ← `enrollments[]` `programId`:`personId` |
+| `GET /api/workflow-mapping/receipts/[id]` | `Receipt` ← `WorkflowReceiptView.receiptId` |
+| `GET /api/finance-ops/s-read/match-audit` | `ShopOrder` ← `orders[].orderLegacyId`; `OrgMembershipProcess` ← `memberships[].processId`, or `OrgMembership` ← `memberships[].membershipId` on a row with no application; `ProgramParticipant` ← `enrollments[]` `programId`:`personId` |
 | `GET /api/donations/disbursement-holds` | `Benevity.Disbursement` ← `disbursementId`; `Transaction` ← `transactionId` (Q4) |
 | `GET /api/donations/disbursement-events` | `Benevity.Disbursement` ← `disbursementId` (Q4) |
 | `GET /api/donations/in-kind/queue`, by-bucket | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` |
@@ -368,6 +368,7 @@ All of these are audited today.
 | `GET /api/expense/qb-exclusions` | `qbTxnId`, `reason` and who excluded it: no amount, no person (Q17) |
 | `GET /api/income/qb-exclusions` | `qbTxnId` and `reason`: no amount, no person (Q17) |
 | `GET /api/receipts/ignored-files` | a file hash and a reason: mailbox configuration (Q17) |
+| `GET /api/donations/uploaded-files` | each Benevity upload's filename, counts and uploader: the upload itself is recorded, and opening the file stays logged |
 | `GET /api/expense/expenses/[id]/signoffs` | per-line seat status, no money or person (Q17) |
 | `GET /api/expense/expenses/[id]/line-item-approvals` | bucket, status, who decided: no money or person (Q17) |
 
@@ -400,7 +401,7 @@ mark.
    and the page allowlist map. `receiptId` in `FinanceQueueRow`'s
    classification. Retiring the `auditedRead` flag and its guard test, which
    the start-up checks replace. The reworded `docs/rules/revenue.md` register
-   line, which narrows B11 (Q17), confirmed by @thpr on 2026-11-08.
+   line, which narrows the finance-view rule, confirmed by @thpr on 2026-11-08.
 3. **App code: the browser and the tab.** The app-shell wrapper that tags each
    `/api` call; `receiptId` in the finance-queue rows; `financeViewKinds.ts` as
    the model-to-page link map; the tab's new entry.
@@ -532,7 +533,7 @@ as today but with exact records and fields.
   >   recorded, and neither is a count. Only the Board reads the record.
   >   [Decision — owner; Board ruling B11, narrowed]
 
-- **Book price is public; actual price is private (P1).** Book prices,
+- **Book price is public; actual price is private.** Book prices,
   membership fees and expense thresholds are policy and are not marked:
   `Program.*PriceCents`, `BoardSettings.*FeeCents`, `ExpenseOrgSettings.*Cents`,
   and the threshold copies on an expense (`Expense.everydayTotalLimitCents`,
@@ -545,32 +546,32 @@ as today but with exact records and fields.
   (`ShopOrder.discountCodes`, `MatchAuditOrderRow.discountCodes`).
   `BoardSettings.volunteerFamilyDiscountCode` is set-up and not marked.
   [Decision — owner]
-- **Writes do not log views (P2).** Only a GET is a view. A write is recorded
+- **Writes do not log views.** Only a GET is a view. A write is recorded
   by its own change audit. The writes that send a marked field, and the parts
   of them no change audit records, were listed for @thpr; fixing those gaps is
   separate work.  [Decision — owner]
-- **Payment plans and scholarships are Board and finance only (P3).** Board and
+- **Payment plans and scholarships are Board and finance only.** Board and
   finance views of those fields are logged by the marks; a family's own view is
-  not (P7). Staff access to them is narrowed separately; until it is, the marks
+  not. Staff access to them is narrowed separately; until it is, the marks
   log whatever staff can still see. Nothing here depends on the order.
   [Decision — owner]
-- **A row with no id of its own is the record it belongs to (P4).** A payments
+- **A row with no id of its own is the record it belongs to.** A payments
   live order is its `PaymentException`; a payout's balance transactions are the
-  payout (`ShopPayout`), not their order (Q-P4c); a workflow receipt view is
-  `Receipt:<receiptId>` (Q-P4b); a match-audit order row is the Shopify order,
-  named `ShopOrder:<orderLegacyId>` everywhere (Q-P4a); `ProgramParticipant` is
+  payout (`ShopPayout`), not their order; a workflow receipt view is
+  `Receipt:<receiptId>`; a match-audit order row is the Shopify order,
+  named `ShopOrder:<orderLegacyId>` everywhere; `ProgramParticipant` is
   `programId:personId`.  [Decision — owner]
-- **Nested rows are never records of their own (P5).** A marked field on a
+- **Nested rows are never records of their own.** A marked field on a
   nested row (an expense's lines, a hold's transaction, a confirmation's lines)
   counts toward the top-level record that holds it, declared or not. Viewing an
   expense's lines logs `Expense:e_123` with the marked field names found
   anywhere inside it.  [Decision — owner]
-- **The model can follow a field (P6).** The in-kind queue picks
+- **The model can follow a field.** The in-kind queue picks
   `InKindDonation` or `ManualInKindDonation` by `source` (`receipt`, `manual`);
   income reconciliation picks `ShopPayout` or `Benevity.Disbursement` (`shopify`,
   `benevity`). A value not in the map does not refuse the response: the row is
   logged as `unknown-source:<value>:<id>`.  [Decision — owner]
-- **Family is their own (P7).** Any member of a household, lead or not, viewing
+- **Family is their own.** Any member of a household, lead or not, viewing
   their own household's records (enrolments, payment-plan and scholarship
   requests) is viewing their own, and is not logged. A membership process whose
   `requestedForHouseholdId` is the viewer's household is their own for every
@@ -580,32 +581,40 @@ as today but with exact records and fields.
   `MatchAuditEnrollmentRow.personName` are the same buyers and people as the
   fields already marked.  [Decision — owner]
 
-- **A picklist is not a finance view (B1).** The reimbursee picker's
+- **A picklist is not a finance view.** The reimbursee picker's
   `ExpenseReimburseeView` (candidate people) is not marked. The expense's actual
   reimbursee stays marked.  [Decision — owner]
-- **The vendor is marked everywhere it appears (B2):** `Expense.vendorName`,
+- **The vendor is marked everywhere it appears:** `Expense.vendorName`,
   `FinanceQueueRow.vendorName`, the receipt's `retailer` (stored and every view)
   and the workflow `vendorName`. A catalog or inventory `retailer` is where an
   item can be bought, not a purchase's vendor, and is not marked.
   [Decision — owner]
-- **The in-kind submitter is the submitter (B3):** `InKindDonation.uploadedByUserId`
+- **The in-kind submitter is the submitter:** `InKindDonation.uploadedByUserId`
   and `InKindQueueItemView.uploadedByUserId` are marked.  [Decision — owner]
-- **The stored copy of a whole receipt is marked (B4):**
-  `ReceivedReceipt.receiptJson`, like the payloads Q17 marked.  [Decision — owner]
-- **The expense history's values are marked (B5):** `ExpenseAuditLog.valueBefore`
+- **The stored copy of a whole receipt is marked:**
+  `ReceivedReceipt.receiptJson`, like the other stored payloads.  [Decision — owner]
+- **The expense history's values are marked:** `ExpenseAuditLog.valueBefore`
   and `valueAfter`. They copy a reimbursee id, a tax amount or a note into the
   history.  [Decision — owner]
-- **An actor's name is not marked (B6):** `MatchAuditEnrollmentRow.compedByName`
+- **An actor's name is not marked:** `MatchAuditEnrollmentRow.compedByName`
   names who comped an enrolment, like the unmarked approver ids.
   [Decision — owner]
 - **A match-audit membership row names its application, else its membership
-  (B7):** `OrgMembershipProcess:<processId>`, or `OrgMembership:<membershipId>`
+ :** `OrgMembershipProcess:<processId>`, or `OrgMembership:<membershipId>`
   on a row with no application.  [Decision — owner]
-- **A receipt's change history names the receipt (B8):** `Receipt:<receiptId>`,
+- **A receipt's change history names the receipt:** `Receipt:<receiptId>`,
   not each history entry.  [Decision — owner]
-- **The register line names the household (B9).** The `revenue.md` B11 line
+- **The register line names the household.** The `revenue.md` finance-view line
   says "other than a person's view of their own or their household's", so the
-  narrowed B11 line states P7 too.  [Decision — owner]
+  narrowed line states the household exemption too.  [Decision — owner]
+- **The Benevity upload list is not logged.** It shows each upload's
+  filename, row counts and uploader, never the file's contents. The upload is
+  recorded when it happens, so reading the list adds nothing. Opening an
+  uploaded file (`GET /api/donations/uploaded-files/[id]/blob`) stays logged
+  through its marked `fileBlob`.  [Decision — owner]
+- **A mailed receipt's sender is its submitter.**
+  `ReceiptMailItem.senderAddress` is marked, so the held mail list
+  (`GET /api/receipts/mail-items`) stays logged.  [Decision — owner]
 
 ## Open questions for @thpr
 

@@ -353,7 +353,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   shows neither, such as a list of QuickBooks transactions excluded from
   matching, is not recorded. A person looking at their own receipts is not
   recorded, and neither is a count. Only the Board reads the record.
-  [Decision — owner; Board ruling B11, narrowed]
+  [Decision — owner]
 
 - A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
 

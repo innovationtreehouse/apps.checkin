@@ -217,7 +217,7 @@ export const marks = {
     ReceiptFinanceReview: ['taxCents'],
     ReceiptLineItem: ['unitPriceCents', 'totalPriceCents'],
     ReceiptAuditLog: ['valueBefore', 'valueAfter'],
-    ReceiptMailItem: ['fileBlob'],
+    ReceiptMailItem: ['senderAddress', 'fileBlob'],
 } as const;
 
 export type Models = keyof typeof classifications;
