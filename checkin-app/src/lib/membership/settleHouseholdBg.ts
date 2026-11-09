@@ -1,7 +1,7 @@
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import type { DbClient, TxClient } from "@/lib/db-client";
-import { systemActor } from "@/lib/auditActor";
+import { personActor, systemActor } from "@/lib/auditActor";
 import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
@@ -16,8 +16,10 @@ import {
     notifyClearanceOutcome,
     notifyPaymentOpenOnExistingCheck,
     notifyReviewers,
+    ReviewError,
     type ClearanceOutcome,
 } from "@/lib/membership/review";
+import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Moves a household's open application to match its people's check standing
@@ -216,6 +218,80 @@ async function recordedBlock(tx: DbClient, processId: number): Promise<{ reviewI
 /** Whether a household application is BLOCKED by a person's check review, which only that review's outcome lifts. */
 export async function blockedByCheckReview(db: DbClient, processId: number): Promise<boolean> {
     return (await recordedBlock(db, processId)) !== null;
+}
+
+/**
+ * The Board's release of a household from a departed person's rejection (§3.4): the
+ * application blocked by check reviews whose people have all left the household
+ * resumes as a lifted block would. The reviews and their rejections stay on their
+ * people, and settle never re-blocks this household for someone no longer in it.
+ * Refused without a reason, while anyone in the household holds a blocked review, for
+ * a denied household, and for an actor in the released household or in a departed
+ * person's current one.
+ */
+export async function releaseDepartedRejection(processId: number, actorId: number, rawReason: string): Promise<{ status: OrgMembershipProcessStatus; steps: SettleStep[] }> {
+    const reason = rawReason.trim();
+    if (!reason) throw new ReviewError("invalid_input", "A reason is required.");
+    const app = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { kind: true, status: true, orgMembership: { select: { householdId: true } } } });
+    if (!app || app.kind === "PERSON_BG" || !app.orgMembership) throw new ReviewError("not_found", "Application not found.");
+    const householdId = app.orgMembership.householdId;
+    const departed = app.status === "BLOCKED" ? await departedRejections(prisma, processId, householdId) : null;
+    if (!departed) throw notReleasable();
+
+    const subjects: GrantSubject[] = [{ householdId }, ...departed.people.map((p) => ({ personId: p.id, householdId: p.householdId }))];
+    for (const subject of subjects) {
+        if (await refuseSelfGrant(prisma, actorId, subject, { table: "OrgMembership", attempted: { override: "release", processId } })) {
+            throw new ReviewError("same_household_applicant", "You cannot release your own household, or the household of the person it was blocked for — someone outside both must.");
+        }
+    }
+
+    const status = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        if (await lockAndFindDeniedHousehold(tx, [householdId]) !== null) {
+            throw new ReviewError("wrong_phase", "This household has been denied membership, so its application cannot be released.");
+        }
+        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { kind: true, status: true, paidAt: true, bgConsentAt: true, contractSignedAt: true } });
+        const now = fresh?.status === "BLOCKED" ? await departedRejections(tx, processId, householdId) : null;
+        if (!fresh || !now) throw notReleasable();
+        const to = resumeStatus(now.from, fresh);
+        const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
+        if (!count) throw notReleasable();
+        await tx.auditLog.create({
+            data: {
+                ...personActor(actorId),
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: processId,
+                secondaryAffectedEntity: householdId,
+                oldData: { status: "BLOCKED" },
+                newData: { status: to, action: "released from a departed person's rejection", reason, releasedReviewIds: now.reviewIds, departedPersonIds: now.people.map((p) => p.id) },
+            },
+        });
+        return to;
+    });
+    return { status, steps: await settleHouseholdBg(householdId) };
+}
+
+const notReleasable = () =>
+    new ReviewError("wrong_phase", "Only an application blocked by the check review of someone who has left the household can be released.");
+
+/**
+ * The still-blocked reviews recorded against this BLOCKED application, with their
+ * people, when every one of those people has left the household and nobody in it holds
+ * a blocked review; otherwise null.
+ */
+async function departedRejections(db: DbClient, processId: number, householdId: number) {
+    const block = await recordedBlock(db, processId);
+    if (!block) return null;
+    const blocking = await db.orgMembershipProcess.findMany({
+        where: { id: { in: block.reviewIds }, status: "BLOCKED" },
+        select: { id: true, subjectPerson: { select: { id: true, householdId: true } } },
+    });
+    const people = blocking.flatMap((r) => (r.subjectPerson ? [r.subjectPerson] : []));
+    if (!blocking.length || people.length < blocking.length || people.some((p) => p.householdId === householdId)) return null;
+    const present = await db.orgMembershipProcess.count({ where: { kind: "PERSON_BG", status: "BLOCKED", subjectPerson: { householdId } } });
+    if (present) return null;
+    return { from: block.from, reviewIds: blocking.map((r) => r.id), people: [...new Map(people.map((p) => [p.id, p])).values()] };
 }
 
 /**

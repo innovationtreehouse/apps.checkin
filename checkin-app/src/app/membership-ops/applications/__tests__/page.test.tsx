@@ -261,6 +261,49 @@ describe("AdminMembershipPage", () => {
         );
     });
 
+    it("releases a blocked household whose rejected person has left, with a reason", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fetchMock = mockFetchJson({
+            "/api/membership-ops/applications": { processes: rows },
+            "/api/membership-ops/applications/review-override": { ok: true },
+        });
+        renderPage();
+        await screen.findByText("Blocked Family");
+
+        fireEvent.click(screen.getByRole("button", { name: "Release" }));
+        const dialog = await screen.findByRole("dialog", { name: "Release this household from a departed person's rejection?" });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: " divorced, moved out " } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership-ops/applications/review-override",
+                expect.objectContaining({ body: JSON.stringify({ processId: 3, action: "release", reason: "divorced, moved out" }) }),
+            ),
+        );
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Released — the application moves on." })));
+    });
+
+    it("offers no release while someone in the blocked household is under a rejected check review", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const rejected = { ...reviewRow, id: 6, status: "BLOCKED", requestedForHouseholdId: 3, subjectPerson: { id: 31, name: "Sam Blocked", householdId: 3 } };
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [...rows, rejected] } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.getAllByRole("button", { name: "Reset for re-review" }).length).toBeGreaterThan(0);
+        expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
+    });
+
+    it("disables release for the actor's own household", async () => {
+        setSession({ id: 99, householdId: 3, isBoardMember: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.getByRole("button", { name: "Release" })).toBeDisabled();
+    });
+
     it("clicking a legend badge narrows the list to that status; clicking again restores it", async () => {
         mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
         const { rerender } = renderPage();

@@ -143,7 +143,12 @@ function ApplicationsBoard() {
     }
   };
 
-  const resetReview = async (processId: number, reason: string, wrongPerson: boolean) => {
+  const resetReview = (processId: number, reason: string, wrongPerson: boolean) =>
+    overrideReview(processId, { action: "reset", reason, wrongPerson }, "Sent back for re-review.", "Reset failed.");
+  const releaseApplication = (processId: number, reason: string) =>
+    overrideReview(processId, { action: "release", reason }, "Released — the application moves on.", "Release failed.");
+
+  const overrideReview = async (processId: number, body: Record<string, unknown>, done: string, failed: string) => {
     setBusyId(processId);
     setMessageId(processId);
     setMessage("");
@@ -151,11 +156,11 @@ function ApplicationsBoard() {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson }),
+        body: JSON.stringify({ processId, ...body }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Sent back for re-review." });
+        notifications.show({ message: done });
         // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
         await reload();
         notifyNavRefresh();
@@ -163,7 +168,7 @@ function ApplicationsBoard() {
         notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
         reload();
       } else {
-        setMessage(data.error || "Reset failed.");
+        setMessage(data.error || failed);
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -231,6 +236,38 @@ function ApplicationsBoard() {
         }
         modals.close(modalId);
         resetReview(r.id, reason.trim(), wrongPerson);
+      },
+    });
+  };
+
+  // A blocked household application with nobody in its household under a blocked check
+  // review: whoever's rejection blocked it has left. The server re-checks.
+  const releasable = (r: ProcessRow) =>
+    r.kind !== "PERSON_BG" && r.status === "BLOCKED" && !!r.orgMembership &&
+    !rows.some((p) => p.kind === "PERSON_BG" && p.status === "BLOCKED" && p.subjectPerson?.householdId === r.orgMembership?.householdId);
+
+  const confirmRelease = (r: ProcessRow) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Release this household from a departed person's rejection?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            The person whose check was rejected has left <strong>{processLabel(r)}</strong>. Releasing lets this
+            application move on. Their rejection stays on them and still blocks any household they are in.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Release", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to release a household.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        releaseApplication(r.id, reason.trim());
       },
     });
   };
@@ -536,11 +573,21 @@ function ApplicationsBoard() {
                         may also change their answer to approve, which does the same and counts as the first.
                         An application blocked by a person&apos;s check review moves on when that review is reset.
                       </Text>
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
-                        Reset for re-review
-                      </Button>
+                      <Group gap="xs">
+                        <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
+                          Reset for re-review
+                        </Button>
+                        {releasable(r) && (
+                          <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmRelease(r)}>
+                            Release
+                          </Button>
+                        )}
+                      </Group>
+                      {releasable(r) && (
+                        <Text size="xs" c="dimmed" mt="sm">Nobody in this household is under a rejected check review now, so the Board can release it.</Text>
+                      )}
                       {ownHousehold(r) && (
-                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t reset your own household&apos;s review — someone outside your household must.</Text>
+                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t reset or release your own household&apos;s application — someone outside your household must.</Text>
                       )}
                     </>
                   ) : (
