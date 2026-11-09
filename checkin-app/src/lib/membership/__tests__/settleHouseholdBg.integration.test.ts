@@ -7,7 +7,8 @@
  */
 import type { OrgMembershipProcessStatus } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
-import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { releaseDepartedRejection, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
 
@@ -72,7 +73,7 @@ async function wipe() {
     const processIds = processes.map((p) => p.id);
     const memberships = await prisma.orgMembership.findMany({ where: { householdId: { in: ids } }, select: { id: true } });
     await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { in: processIds } } });
-    await prisma.auditLog.deleteMany({ where: { OR: [{ tableName: 'OrgMembershipProcess', affectedEntityId: { in: processIds } }, { tableName: 'OrgMembership', affectedEntityId: { in: memberships.map((m) => m.id) } }] } });
+    await prisma.auditLog.deleteMany({ where: { OR: [{ tableName: 'OrgMembershipProcess', affectedEntityId: { in: processIds } }, { tableName: 'OrgMembership', affectedEntityId: { in: memberships.map((m) => m.id) } }, { tableName: SELF_GRANT_REFUSAL_TABLE, actorId: { in: personIds } }] } });
     await prisma.paymentException.deleteMany({ where: { processId: { in: processIds } } });
     await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: processIds } } });
     await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
@@ -340,5 +341,113 @@ describe('settleHouseholdBg — blocking and resuming', () => {
         const waiting = await application(g.orgMembershipId, 'PENDING_PAYMENT');
         expect(await settleHouseholdBg(g.householdId)).toEqual(['denied']);
         expect((await row(waiting)).bgClearedAt).toBeNull();
+    });
+});
+
+describe('releaseDepartedRejection', () => {
+    /** A household blocked by its other adult's rejection, who has since moved to another household; and a board actor from a third one. */
+    async function departed() {
+        const f = await family();
+        const reviewId = await checkReview(f.otherId, 'BLOCKED');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked']);
+        const elsewhere = await prisma.household.create({ data: { name: `${TAG} elsewhere ${seq++}` } });
+        await prisma.person.update({ where: { id: f.otherId }, data: { householdId: elsewhere.id } });
+        const board = await family();
+        return { ...f, reviewId, id, elsewhereId: elsewhere.id, actorId: board.leadId };
+    }
+
+    it('returns the application to its resume step with an audit row, and leaves the rejection on the person', async () => {
+        const d = await departed();
+        expect(await releaseDepartedRejection(d.id, d.actorId, '  divorced, moved out  ')).toEqual({ status: 'PENDING_PAYMENT', steps: ['cleared'] });
+        const p = await row(d.id);
+        expect(p.status).toBe('PENDING_PAYMENT');
+        expect(p.bgClearedAt).not.toBeNull();
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: d.id, actorId: d.actorId } });
+        expect(audit.oldData).toMatchObject({ status: 'BLOCKED' });
+        expect(audit.newData).toMatchObject({ status: 'PENDING_PAYMENT', action: "released from a departed person's rejection", reason: 'divorced, moved out', releasedReviewIds: [d.reviewId], departedPersonIds: [d.otherId] });
+        expect((await row(d.reviewId)).status).toBe('BLOCKED');
+    });
+
+    it('returns an application blocked before review to the step it was blocked from', async () => {
+        const f = await family();
+        await checkReview(f.otherId, 'BLOCKED');
+        const id = await application(f.orgMembershipId, 'INTAKE');
+        await settleHouseholdBg(f.householdId);
+        const elsewhere = await prisma.household.create({ data: { name: `${TAG} elsewhere ${seq++}` } });
+        await prisma.person.update({ where: { id: f.otherId }, data: { householdId: elsewhere.id } });
+        const board = await family();
+        expect((await releaseDepartedRejection(id, board.leadId, 'moved out')).status).toBe('INTAKE');
+    });
+
+    it('is not undone by a later settle, and blocks again when the person rejoins', async () => {
+        const d = await departed();
+        await releaseDepartedRejection(d.id, d.actorId, 'moved out');
+        await prisma.orgMembershipProcess.update({ where: { id: d.id }, data: { bgClearedAt: null } });
+        expect(await settleHouseholdBg(d.householdId)).toEqual(['cleared']);
+        expect((await row(d.id)).status).toBe('PENDING_PAYMENT');
+
+        await prisma.person.update({ where: { id: d.otherId }, data: { householdId: d.householdId } });
+        expect(await settleHouseholdBg(d.householdId)).toEqual(['blocked']);
+        expect((await row(d.id)).status).toBe('BLOCKED');
+    });
+
+    it('still blocks the household the person is in now', async () => {
+        const d = await departed();
+        const newMembership = await prisma.orgMembership.create({ data: { householdId: d.elsewhereId, status: 'NONE' } });
+        const theirs = await application(newMembership.id, 'PENDING_PAYMENT');
+        await releaseDepartedRejection(d.id, d.actorId, 'moved out');
+        expect(await settleHouseholdBg(d.elsewhereId)).toEqual(['blocked']);
+        expect((await row(theirs)).status).toBe('BLOCKED');
+    });
+
+    it('is refused while the rejected person is still in the household', async () => {
+        const f = await family();
+        await checkReview(f.otherId, 'BLOCKED');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        await settleHouseholdBg(f.householdId);
+        const board = await family();
+        await expect(releaseDepartedRejection(id, board.leadId, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(id)).status).toBe('BLOCKED');
+    });
+
+    it('is refused while another adult still in the household is rejected', async () => {
+        const d = await departed();
+        await checkReview(d.leadId, 'BLOCKED');
+        expect(await settleHouseholdBg(d.householdId)).toEqual([]);
+        await expect(releaseDepartedRejection(d.id, d.actorId, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(d.id)).status).toBe('BLOCKED');
+    });
+
+    it('is refused without a reason', async () => {
+        const d = await departed();
+        await expect(releaseDepartedRejection(d.id, d.actorId, '   ')).rejects.toMatchObject({ code: 'invalid_input' });
+    });
+
+    it("is refused for the actor's own household and for the departed person's current household, with a refusal row", async () => {
+        const d = await departed();
+        await expect(releaseDepartedRejection(d.id, d.leadId, 'moved out')).rejects.toMatchObject({ code: 'same_household_applicant' });
+        const sameNewHousehold = await prisma.person.create({ data: { name: 'New partner', email: `partner-${seq++}-${TAG}@example.com`, householdId: d.elsewhereId } });
+        await expect(releaseDepartedRejection(d.id, sameNewHousehold.id, 'moved out')).rejects.toMatchObject({ code: 'same_household_applicant' });
+        await expect(releaseDepartedRejection(d.id, d.otherId, 'moved out')).rejects.toMatchObject({ code: 'same_household_applicant' });
+        expect(await prisma.auditLog.count({ where: { tableName: SELF_GRANT_REFUSAL_TABLE, actorId: { in: [d.leadId, sameNewHousehold.id, d.otherId] } } })).toBe(3);
+        expect((await row(d.id)).status).toBe('BLOCKED');
+    });
+
+    it('is refused for a denied household', async () => {
+        const d = await departed();
+        await prisma.orgMembership.update({ where: { id: d.orgMembershipId }, data: { status: 'DENIED' } });
+        await expect(releaseDepartedRejection(d.id, d.actorId, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(d.id)).status).toBe('BLOCKED');
+    });
+
+    it('is refused for an application blocked by a household attestation, and one not blocked', async () => {
+        const f = await family();
+        const legacy = await application(f.orgMembershipId, 'BLOCKED');
+        const board = await family();
+        await expect(releaseDepartedRejection(legacy, board.leadId, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
+        const g = await family();
+        const open = await application(g.orgMembershipId, 'PENDING_PAYMENT');
+        await expect(releaseDepartedRejection(open, board.leadId, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
     });
 });
