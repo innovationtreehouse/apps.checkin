@@ -230,27 +230,48 @@ describe("the receiving page for one receipt", () => {
       fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: term } });
     }
 
-    it("leaves propose off the line row and offers it only once a search has answered", async () => {
+    it("leaves propose off the line row and offers it before a search answers and after", async () => {
       wrap();
       expect(screen.queryByRole("button", { name: "Propose" })).not.toBeInTheDocument();
       search("wood glue", []);
-      expect(screen.queryByRole("button", { name: "Propose new item" })).not.toBeInTheDocument();
-      expect(await screen.findByRole("button", { name: "Propose new item" })).toBeInTheDocument();
-      expect(screen.getByText("No matching catalog items")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
+      expect(await screen.findByText("No matching catalog items")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
+    });
+
+    it("proposes with no search typed, leaving the name to the manager", () => {
+      wrap();
+      mockApi.mockResolvedValue(null);
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
+      expect(screen.getByPlaceholderText(SEARCH)).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Propose new item" }));
+      const proposedName = screen.getByPlaceholderText("Proposed name");
+      expect(proposedName).toHaveValue("");
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      fireEvent.change(proposedName, { target: { value: "Hide glue" } });
+      expect(proposedName).toHaveValue("Hide glue");
+    });
+
+    it("offers propose for a search shorter than the minimum", () => {
+      wrap();
+      search("w", []);
+      expect(screen.getByText(/Type at least/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
     });
 
     it("offers propose below near-miss results", async () => {
       wrap();
       search("power", [hub]);
-      const button = await screen.findByRole("button", { name: "Propose new item" });
-      expect(screen.getByRole("radio", { name: /Power Hub/ }).compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      const radio = await screen.findByRole("radio", { name: /Power Hub/ });
+      const button = screen.getByRole("button", { name: "Propose new item" });
+      expect(radio.compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     });
 
-    it("doesn't offer propose when the search failed", async () => {
+    it("still offers propose when the search failed", async () => {
       wrap();
       search("wood glue", new HttpError("Catalog is down", 500));
       expect(await screen.findByText("Couldn't search the catalog: Catalog is down")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Propose new item" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
     });
 
     it("pre-fills the proposed name from the search and keeps the search when cancelled", async () => {
