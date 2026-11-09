@@ -33,7 +33,7 @@ function fakeMailbox() {
   const downloads: string[] = [];
   const reader: MailboxReader = {
     address: "receipts@example.org",
-    listRecent: async () => [...messages.keys()],
+    listRecent: async (days) => [...messages.values()].filter((m) => Number(m.internalDate) > Date.now() - days * DAY_MS).map((m) => m.id),
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
     getAttachment: async (_messageId, attachmentId) => {
       downloads.push(attachmentId);
@@ -321,6 +321,72 @@ describeDb("mail intake flood limits", () => {
       return getMessage(id);
     };
     expect(await readMailbox()).toMatchObject({ messages: 1, receipts: 1, unread: 1 });
+    expect(agingAlerts).toEqual([]);
+  });
+});
+
+/** Records the ids each run fetches. */
+function trackFetches(): string[] {
+  const fetched: string[] = [];
+  const { getMessage } = mail.reader;
+  mail.reader.getMessage = async (id) => {
+    fetched.push(id);
+    return getMessage(id);
+  };
+  return fetched;
+}
+
+describeDb("mail intake re-reads", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not fetch a message whose files were all read or held", async () => {
+    send("member");
+    send("stranger", { from: ["stranger@example.org"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 1 });
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ messages: 0, receipts: 0, held: 0, skipped: 2 });
+    expect(fetched).toEqual([]);
+  });
+
+  it("fetches a message again while it is partly read", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    for (let i = 0; i < MAIL_CAP - 1; i++) send(`m${i}`);
+    send("two", { parts: [attachment("a", pdf("a")), attachment("b", pdf("b"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: MAIL_CAP, deferred: 1 });
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(fetched).toEqual(["two"]);
+    fetched.length = 0;
+    await readMailbox();
+    expect(fetched).toEqual([]);
+  });
+
+  it("marks a message at risk before reading it, so a run dying part way through leaves it to fetch again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1", { parts: [attachment("a", pdf("a")), attachment("b", pdf("b"))] });
+    const { getAttachment } = mail.reader;
+    let markedDuringRead = false;
+    mail.reader.getAttachment = async (messageId, attachmentId) => {
+      if (attachmentId !== "b") return getAttachment(messageId, attachmentId);
+      markedDuringRead = (await db.receiptMailAtRisk.count({ where: { gmailMessageId: "m1" } })) === 1;
+      throw new Error("Gmail request failed: 500");
+    };
+    expect(await readMailbox()).toMatchObject({ receipts: 1, failed: 1 });
+    expect(markedDuringRead).toBe(true);
+
+    mail.reader.getAttachment = getAttachment;
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(fetched).toEqual(["m1"]);
+  });
+
+  it("reads mail 10 days old after the runs were down", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1");
+    vi.setSystemTime(Date.now() + 10 * DAY_MS);
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
     expect(agingAlerts).toEqual([]);
   });
 });
@@ -618,7 +684,7 @@ describeDb("mail intake listing failure", () => {
   });
 
   it("still sends the stored ageing alert and the replies owed", async () => {
-    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "earlier", receivedAt: new Date(Date.now() - 3 * DAY_MS) } });
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "earlier", receivedAt: new Date(Date.now() - MAIL_WINDOW_DAYS * DAY_MS) } });
     send("m1");
     await readMailbox();
     const sent: string[] = [];
@@ -763,7 +829,9 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(deferred).toMatchObject({ gmailMessageId: "m2", senderAddress: "alice@example.org", receiptId: null });
     expect(Buffer.from(deferred.fileBlob ?? []).toString()).toBe(pdf("m2"));
 
+    const fetched = trackFetches();
     expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
+    expect(fetched).toEqual(["m2"]);
 
     withLimits({ mailUploadsPerPersonPerDay: 30 });
     mail.messages.clear();
