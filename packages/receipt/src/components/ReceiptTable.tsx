@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
-import { isDiscardedDuplicate, latestOutcome, receiptStateLabel, type ReceiptListRow } from "./api";
+import { latestOutcome, receiptStateLabel, type ReceiptListRow } from "./api";
 import { formatCents } from "@checkin/money";
 import { REJECTED_AS_COPY } from "../lib/describeReceipt";
 import { SUBMITTER_ACTION_STATES } from "../nav";
@@ -55,9 +55,6 @@ export default function ReceiptTable({
                   <>{REJECTED_AS_COPY}<Anchor component={Link} href={detailHref(r.copyOfId)}>{r.copyOfLabel}</Anchor></>
                 ) : (
                   receiptStateLabel(r)
-                )}
-                {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (
-                  <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>
                 )}
                 {flagMine && waitsOnUploader(r) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>

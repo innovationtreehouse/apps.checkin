@@ -138,13 +138,13 @@ model ReceiptDetail {
   /// @sensitivity:internal
   duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
   /// @sensitivity:internal
-  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at")
+  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at") @ignore
   /// Another submitter's receipt id: pii keeps it off the submitter's own view.
   /// @sensitivity:pii
-  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id")
+  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id") @ignore
   /// Status of another submitter's receipt: pii keeps it off the submitter's own view.
   /// @sensitivity:pii
-  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected")
+  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected") @ignore
   /// @sensitivity:personal
   validationNotes            String?   @map("validation_notes")
   /// @sensitivity:internal

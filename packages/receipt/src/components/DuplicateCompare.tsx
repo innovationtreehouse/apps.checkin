@@ -86,7 +86,7 @@ const same = (a: string | null | undefined, b: string | null | undefined) => a !
 /** An order or receipt number as the duplicate check compares it. */
 const numberKey = (n: string | null | undefined) => (n ?? "").replace(/\s+/g, "").toLowerCase().replace(/^#/, "");
 
-/** Why `other` is tied to the viewed receipt, in the check's own tiers (design §3.1). */
+/** Why `other` is tied to the viewed receipt, in the check's own tiers. */
 function matchedOn(viewed: CompareReceipt, other: CompareReceipt): string[] {
   const tiers: string[] = [];
   if (same(viewed.fileHash, other.fileHash)) tiers.push("Same file");

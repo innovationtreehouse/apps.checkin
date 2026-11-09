@@ -265,6 +265,40 @@ Things the app takes as true because they are handled outside it.
   from the same mailed message again makes no second receipt.
   [Decision — deliberate limit]
 
+- A receipt is checked for copies against every other receipt in the org that
+  could still be, or already was, paid: open, finalized and rejected. A
+  discarded receipt raises no duplicate flag, because only its uploader or mail
+  intake discards one. A match on a rejected receipt is shown as rejected, with
+  finance's reason, and so is a match whose expense finance rejected.
+  [Decision — owner]
+
+- Order and receipt numbers match ignoring case, spaces and a leading `#`, as
+  retailer names do. Totals match only to the exact cent.
+  [Decision — owner]
+
+- Finance decides a group of matching receipts once, and the decision is kept
+  for each pair of receipts, so nobody is asked about the same pair twice. A
+  copy that arrives later has no decision yet, so it is held against every
+  member it matches.
+  [Decision — owner]
+
+- Nobody decides a group of matching receipts in which they are conflicted on
+  any member.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Saying two matching receipts are different purchases needs no note and no
+  second sign-off, even when one of them was rejected.
+  [Decision — deliberate limit]
+
+- When every other receipt in a group is the uploader's own, the uploader is
+  shown which one and may withdraw the new copy. An uploader is never shown
+  another person's receipt.
+  [Decision — owner]
+
+- Copies are caught at the receipt, and an expense is not checked again for
+  duplicates when it is sent to QuickBooks.
+  [Decision — deliberate limit]
+
 - An automatic reading of a receipt is kept whole or not at all. When a reading
   fails, is refused, has no lines, or has any value out of bounds, nothing from
   it is saved, and the receipt waits for a person to retry or discard it. A

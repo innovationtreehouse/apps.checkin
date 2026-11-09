@@ -5,7 +5,7 @@ import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 // Three receipts for one purchase, A uploaded first, then B, then C. Each test drives finance's
-// decisions through the service and asserts the group behaviour of 2516_RECEIPT_DUPLICATES.md.
+// decisions through the service and asserts the group behaviour.
 
 let ports: ReturnType<typeof recordingPorts>;
 
