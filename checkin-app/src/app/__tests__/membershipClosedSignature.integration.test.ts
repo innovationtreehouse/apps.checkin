@@ -71,7 +71,7 @@ async function wipe() {
     const households = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
     const ids = households.map((h) => h.id);
     await prisma.orgMembershipProcess.deleteMany({
-        where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { subjectPerson: { email: { contains: TAG } } }] },
+        where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }, { subjectPerson: { email: { contains: TAG } } }] },
     });
     await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
     await prisma.person.deleteMany({ where: { email: { contains: TAG } } });

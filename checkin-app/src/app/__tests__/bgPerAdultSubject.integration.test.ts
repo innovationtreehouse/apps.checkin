@@ -2,20 +2,21 @@
  * @jest-environment node
  */
 /**
- * Per-adult background-check subjects. Clearing a household check stamps only the
- * adults it names, so an adult who was never checked does not read as cleared and
- * stays visible to the machinery meant to catch them. Every case here needs a
- * TWO-lead household; a single-lead one cannot show the difference.
+ * Per-adult background-check subjects. A check review a household's consent opened
+ * names one lead at its first decision, and clearing it stamps only that person, so
+ * an adult who was never checked does not read as cleared and stays visible to the
+ * machinery meant to catch them. Every case here needs a TWO-lead household; a
+ * single-lead one cannot show the difference.
  */
 
 import { POST as ATTEST } from '@/app/api/membership/reviews/route';
 import { POST as OVERRIDE } from '@/app/api/membership-ops/applications/review-override/route';
 import { GET as COMPLIANCE } from '@/app/api/membership-audit/compliance/route';
-import { eligibleReviewProcessIds, boardResetReview } from '@/lib/membership/review';
+import { eligibleReviewProcessIds } from '@/lib/membership/review';
 import { bgFreshThreshold, personBgVerdict } from '@/lib/membership/personBgCheck';
 import { householdBgIsFresh } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
-import { sendEmail } from '@/lib/email';
+import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -38,8 +39,12 @@ function get(url: string) {
 
 describe('Per-adult background-check subjects', () => {
     let rev1: number, rev2: number, board: number;
+    let restorePolicy: () => Promise<void> = async () => {};
 
-    /** A household with TWO adult leads awaiting background-check review. */
+    /**
+     * A household with TWO adult leads at payment with consent recorded (`appId`), and
+     * the check review its consent opened (`processId`), naming nobody yet.
+     */
     async function twoLeadHousehold(label: string) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
         const mkLead = async (name: string) => {
@@ -50,8 +55,10 @@ describe('Per-adult background-check subjects', () => {
         const alex = await mkLead('Alex');
         const sam = await mkLead('Sam');
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
-        const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' } });
-        return { householdId: hh.id, orgMembershipId: m.id, processId: proc.id, alex, sam };
+        const now = new Date();
+        const app = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: now, bgConsentAt: now } });
+        const review = await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: hh.id, status: 'PENDING_BG_REVIEW', bgConsentAt: now } });
+        return { householdId: hh.id, orgMembershipId: m.id, appId: app.id, processId: review.id, alex, sam };
     }
 
     const bgDate = (id: number) => prisma.person.findUnique({ where: { id }, select: { lastBackgroundCheck: true } }).then((p) => p?.lastBackgroundCheck ?? null);
@@ -63,9 +70,10 @@ describe('Per-adult background-check subjects', () => {
             // PersonMerge.toId is RESTRICT — the archive outranks its survivor, so it
             // has to go before the Person rows below.
             await prisma.personMerge.deleteMany({ where: { to: { householdId: { in: ids } } } });
-            await prisma.backgroundCheckAttestation.deleteMany({ where: { process: { orgMembership: { householdId: { in: ids } } } } });
+            const processes = { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] };
+            await prisma.backgroundCheckAttestation.deleteMany({ where: { process: processes } });
             await prisma.programVolunteer.deleteMany({ where: { person: { householdId: { in: ids } } } });
-            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+            await prisma.orgMembershipProcess.deleteMany({ where: processes });
             await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -75,6 +83,7 @@ describe('Per-adult background-check subjects', () => {
 
     beforeAll(async () => {
         await wipe();
+        restorePolicy = await setBgRecheckPolicy();
         const mk = async (slug: string, role: object) =>
             prisma.person.create({ data: { email: `${slug}-${TAG}@example.com`, name: slug, household: { create: { name: `${slug} HH ${TAG}` } }, ...role } });
         rev1 = (await mk('sub-rev1', { isBackgroundCheckReviewer: true })).id;
@@ -84,6 +93,7 @@ describe('Per-adult background-check subjects', () => {
 
     afterAll(async () => {
         await wipe();
+        await restorePolicy();
         await prisma.$disconnect();
     });
 
@@ -95,7 +105,7 @@ describe('Per-adult background-check subjects', () => {
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
         as(rev2, { isBackgroundCheckReviewer: true });
         const res = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        expect((await res.json()).outcome.status).toBe('PENDING_PAYMENT');
+        expect((await res.json()).outcome.status).toBe('ACTIVE');
 
         expect(await bgDate(hh.alex)).not.toBeNull();
         // This is the assertion that would have caught the report.
@@ -109,7 +119,7 @@ describe('Per-adult background-check subjects', () => {
         as(rev2, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
 
-        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.appId } });
         expect(proc?.bgClearedAt).not.toBeNull();
         expect(proc?.status).toBe('PENDING_PAYMENT');
         // householdBgIsFresh is "ANY lead fresh", which rule 1 requires — per-adult stamping must
@@ -143,14 +153,14 @@ describe('Per-adult background-check subjects', () => {
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: hh.processId } })).toBe(0);
     });
 
-    // ── The first approval settles who the review is about ───────────────────
+    // ── The first decision settles who the review is about ───────────────────
     it('the second reviewer cannot switch the review to a different adult', async () => {
         const hh = await twoLeadHousehold('SubjectSettled');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
 
-        // Naming Sam instead would leave Alex and Sam both at one approval and the
-        // review waiting on a third reviewer. Disagreement goes through REJECT.
+        // A review is about one person; a reviewer who thinks it is the wrong one asks
+        // the Board for the wrong-person reset.
         as(rev2, { isBackgroundCheckReviewer: true });
         const wrong = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.sam] }) as never);
         expect(wrong.status).toBe(400);
@@ -158,12 +168,12 @@ describe('Per-adult background-check subjects', () => {
 
         // Confirming the settled subject clears it on the second approval.
         const right = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        expect((await right.json()).outcome.status).toBe('PENDING_PAYMENT');
+        expect((await right.json()).outcome.status).toBe('ACTIVE');
         expect(await bgDate(hh.alex)).not.toBeNull();
         expect(await bgDate(hh.sam)).toBeNull();
     });
 
-    it('the second approval refuses a subject who is no longer a live household lead', async () => {
+    it('a named person who stops being a lead still clears as a person, and no longer clears the household', async () => {
         const hh = await twoLeadHousehold('SubjectLeft');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
@@ -171,33 +181,33 @@ describe('Per-adult background-check subjects', () => {
         await prisma.person.update({ where: { id: hh.alex }, data: { isHouseholdLead: false } });
 
         as(rev2, { isBackgroundCheckReviewer: true });
-        const res = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        expect(res.status).toBe(400);
-        expect((await res.json()).code).toBe('invalid_subject');
-        expect(await bgDate(hh.alex)).toBeNull();
-        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
-        expect(proc?.bgClearedAt).toBeNull();
+        const res = await ATTEST(req({ processId: hh.processId, result: 'APPROVE' }) as never);
+        expect(res.status).toBe(200);
+        expect(await bgDate(hh.alex)).not.toBeNull();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: hh.appId } }))?.bgClearedAt).toBeNull();
     });
 
-    it('a reviewer who disagrees with the settled subject rejects instead', async () => {
+    it('a rejection after the first approval records the named person', async () => {
         const hh = await twoLeadHousehold('SubjectDispute');
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
 
         as(rev2, { isBackgroundCheckReviewer: true });
-        const res = await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Report names Sam, not Alex' }) as never);
+        const res = await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Concerning record' }) as never);
         expect((await res.json()).outcome.status).toBe('BLOCKED');
+        const rejection = await prisma.backgroundCheckAttestation.findFirstOrThrow({ where: { processId: hh.processId, result: 'REJECT' } });
+        expect(rejection.subjectPersonId).toBe(hh.alex);
         expect(await bgDate(hh.alex)).toBeNull();
         expect(await bgDate(hh.sam)).toBeNull();
     });
 
     // ── Naming is mandatory ──────────────────────────────────────────────────
-    it('approving without naming anyone is a 400, and writes nothing', async () => {
+    it('a first decision naming nobody is a 400, approve or reject, and writes nothing', async () => {
         const hh = await twoLeadHousehold('NoSubject');
         as(rev1, { isBackgroundCheckReviewer: true });
 
-        for (const body of [{}, { subjectPersonIds: [] }, { subjectPersonIds: 'nope' }]) {
-            const res = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', ...body }) as never);
+        for (const body of [{ result: 'APPROVE' }, { result: 'APPROVE', subjectPersonIds: [] }, { result: 'APPROVE', subjectPersonIds: 'nope' }, { result: 'REJECT', note: 'concerning' }]) {
+            const res = await ATTEST(req({ processId: hh.processId, ...body }) as never);
             expect(res.status).toBe(400);
             expect((await res.json()).code).toBe('invalid_subject');
         }
@@ -212,14 +222,15 @@ describe('Per-adult background-check subjects', () => {
         expect((await res.json()).code).toBe('invalid_subject');
     });
 
-    it('a rejection stays whole-process and names nobody', async () => {
-        const hh = await twoLeadHousehold('RejectWhole');
+    it('a first rejection names its person', async () => {
+        const hh = await twoLeadHousehold('RejectNamed');
         as(rev1, { isBackgroundCheckReviewer: true });
-        const res = await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Concerning record' }) as never);
+        const res = await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Concerning record', subjectPersonIds: [hh.sam] }) as never);
         expect((await res.json()).outcome.status).toBe('BLOCKED');
         const rows = await prisma.backgroundCheckAttestation.findMany({ where: { processId: hh.processId } });
         expect(rows).toHaveLength(1);
-        expect(rows[0].subjectPersonId).toBeNull();
+        expect(rows[0].subjectPersonId).toBe(hh.sam);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } }))?.subjectPersonId).toBe(hh.sam);
     });
 
     // ── One attestation per reviewer settles their part ──────────────────────
@@ -235,64 +246,25 @@ describe('Per-adult background-check subjects', () => {
         expect((await dup.json()).code).toBe('already_attested');
     });
 
-    // ── An approval that names nobody ────────────────────────────────────────
-    it('an approval naming nobody counts toward nobody, and reports the count it counted', async () => {
+    // ── Approvals recorded on the household application are history ─────────
+    it("approvals on the household application count for nothing; the check review needs two of its own", async () => {
         const hh = await twoLeadHousehold('Legacy');
-        // An approval whose nullable subject column is empty.
-        await prisma.backgroundCheckAttestation.create({ data: { processId: hh.processId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: null } });
+        await prisma.backgroundCheckAttestation.create({ data: { processId: hh.appId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: hh.alex } });
+        await prisma.backgroundCheckAttestation.create({ data: { processId: hh.appId, reviewerId: board, result: 'APPROVE', subjectPersonId: hh.alex } });
 
         as(rev2, { isBackgroundCheckReviewer: true });
         const res = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        expect(res.status).toBe(200);
-
-        // GUARD. Alex holds one approval, not two — the subject-less row vouches for no
-        // one, so nothing clears and nobody is stamped. Nothing records whose report rev1
-        // read; counting it would date Alex's clearance on rev2's reading alone.
-        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
-        expect(proc?.bgClearedAt).toBeNull();
-        expect(await bgDate(hh.alex)).toBeNull();
-        expect(await bgDate(hh.sam)).toBeNull();
-
-        // attest() reports the count that decided `clears`, so it cannot answer
-        // `approvals: 2` while nothing cleared and tell the reviewer the review is done.
         expect((await res.json()).outcome.approvals).toBe(1);
-    });
-
-    it('a review holding an approval that named nobody exits by board reset, then clears on two real readings', async () => {
-        const hh = await twoLeadHousehold('LegacyReset');
-        await prisma.backgroundCheckAttestation.create({ data: { processId: hh.processId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: null } });
-        as(rev2, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        (sendEmail as jest.Mock).mockClear();
-
-        // Both reviewers have spent their one attestation, so neither queue offers it —
-        // but the board sees it on /api/membership-ops/applications and `reset` reaches a
-        // review still in progress, not only a BLOCKED one. GUARD on that escape hatch:
-        // it is why the unnamed approval can be refused rather than counted.
-        expect(await eligibleReviewProcessIds(rev1)).not.toContain(hh.processId);
-        expect(await eligibleReviewProcessIds(rev2)).not.toContain(hh.processId);
-        await boardResetReview(hh.processId, board);
-        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: hh.processId } })).toBe(0);
-
-        as(rev1, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        as(rev2, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-
-        // Two people read Alex's report, and only Alex is stamped.
-        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } });
-        expect(proc?.bgClearedAt).not.toBeNull();
-        expect(proc?.status).toBe('PENDING_PAYMENT');
-        expect(await bgDate(hh.alex)).not.toBeNull();
-        expect(await bgDate(hh.sam)).toBeNull();
-        expect((sendEmail as jest.Mock).mock.calls.some((c: unknown[]) => String(c[1]).includes('you can now pay your membership fee'))).toBe(true);
+        expect(await bgDate(hh.alex)).toBeNull();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: hh.appId } }))?.bgClearedAt).toBeNull();
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: hh.appId } })).toBe(2);
     });
 
     // ── A blocked review: no board clearance (Board ruling B5/B25) ────────────
     it('the board cannot clear a blocked review: the override approve is gone (400, nothing stamped)', async () => {
         const hh = await twoLeadHousehold('NoForce');
         as(rev1, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look' }) as never);
+        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look', subjectPersonIds: [hh.alex] }) as never);
 
         as(board, { isBoardMember: true });
         const res = await OVERRIDE(req({ processId: hh.processId, action: 'approve', subjectPersonIds: [hh.alex] }) as never);
@@ -303,32 +275,30 @@ describe('Per-adult background-check subjects', () => {
         expect(await bgDate(hh.alex)).toBeNull();
     });
 
-    it('the rejector changing to approve names one adult, and only that adult is stamped once a second reviewer agrees', async () => {
+    it('the rejector changing to approve keeps the named adult, and only that adult is stamped once two new reviewers agree', async () => {
         const hh = await twoLeadHousehold('SwitchNamed');
-        // A current application: consent recorded, so the review it returns to is listed.
-        await prisma.orgMembershipProcess.update({ where: { id: hh.processId }, data: { status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
         as(rev1, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look' }) as never);
-        const unnamed = await ATTEST(req({ processId: hh.processId, result: 'APPROVE' }) as never);
-        expect(unnamed.status).toBe(400);
-        const switched = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
-        expect((await switched.json()).outcome).toEqual({ status: 'PENDING_PAYMENT', approvals: 1 });
+        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look', subjectPersonIds: [hh.alex] }) as never);
+        const other = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.sam] }) as never);
+        expect(other.status).toBe(400);
+        const switched = await ATTEST(req({ processId: hh.processId, result: 'APPROVE' }) as never);
+        expect((await switched.json()).outcome).toEqual({ status: 'PENDING_BG_REVIEW', approvals: 1 });
 
         as(rev2, { isBackgroundCheckReviewer: true });
-        const second = await ATTEST(req({ processId: hh.processId, result: 'APPROVE', subjectPersonIds: [hh.alex] }) as never);
+        const second = await ATTEST(req({ processId: hh.processId, result: 'APPROVE' }) as never);
         expect(second.status).toBe(200);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: hh.processId } }))?.bgClearedAt).not.toBeNull();
         expect(await bgDate(hh.alex)).not.toBeNull();
         expect(await bgDate(hh.sam)).toBeNull();
     });
 
-    it('a reset needs no subjects — it deletes the attestations and re-opens review', async () => {
+    it('a reset needs a reason and no subjects — it deletes the attestations and re-opens review', async () => {
         const hh = await twoLeadHousehold('ForceReset');
         as(rev1, { isBackgroundCheckReviewer: true });
-        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look' }) as never);
+        await ATTEST(req({ processId: hh.processId, result: 'REJECT', note: 'Needs a second look', subjectPersonIds: [hh.alex] }) as never);
 
         as(board, { isBoardMember: true });
-        const res = await OVERRIDE(req({ processId: hh.processId, action: 'reset' }) as never);
+        const res = await OVERRIDE(req({ processId: hh.processId, action: 'reset', reason: 'second look' }) as never);
         expect(res.status).toBe(200);
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: hh.processId } })).toBe(0);
     });
@@ -342,16 +312,16 @@ describe('Per-adult background-check subjects', () => {
         async function blanketStamped(label: string, opts: { consentBy?: 'lead' | 'board'; namedAttestation?: boolean } = {}) {
             const hh = await twoLeadHousehold(label);
             await prisma.person.updateMany({ where: { id: { in: [hh.alex, hh.sam] } }, data: { lastBackgroundCheck: CLEARED_AT } });
-            await prisma.orgMembershipProcess.update({ where: { id: hh.processId }, data: { bgClearedAt: CLEARED_AT, status: 'PENDING_PAYMENT' } });
+            await prisma.orgMembershipProcess.update({ where: { id: hh.appId }, data: { bgClearedAt: CLEARED_AT, status: 'PENDING_PAYMENT' } });
             if (opts.namedAttestation) {
-                await prisma.backgroundCheckAttestation.create({ data: { processId: hh.processId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: hh.alex } });
+                await prisma.backgroundCheckAttestation.create({ data: { processId: hh.appId, reviewerId: rev1, result: 'APPROVE', subjectPersonId: hh.alex } });
             }
             if (opts.consentBy) {
                 await prisma.auditLog.create({
-                    data: { actorId: opts.consentBy === 'lead' ? hh.alex : board, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: hh.processId, newData: { bgConsentAt: true } },
+                    data: { actorId: opts.consentBy === 'lead' ? hh.alex : board, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: hh.appId, newData: { bgConsentAt: true } },
                 });
             }
-            return hh;
+            return { ...hh, processId: hh.appId };
         }
 
         it('lists a blanket-stamped household and labels the likely subject', async () => {
@@ -381,11 +351,11 @@ describe('Per-adult background-check subjects', () => {
             const single = await twoLeadHousehold('SingleLead');
             await prisma.person.update({ where: { id: single.sam }, data: { isHouseholdLead: false } });
             await prisma.person.update({ where: { id: single.alex }, data: { lastBackgroundCheck: CLEARED_AT } });
-            await prisma.orgMembershipProcess.update({ where: { id: single.processId }, data: { bgClearedAt: CLEARED_AT } });
+            await prisma.orgMembershipProcess.update({ where: { id: single.appId }, data: { bgClearedAt: CLEARED_AT } });
 
             // Fresh-check shortcut: bgClearedAt set, no Person ever stamped.
             const shortcut = await twoLeadHousehold('Shortcut');
-            await prisma.orgMembershipProcess.update({ where: { id: shortcut.processId }, data: { bgClearedAt: CLEARED_AT } });
+            await prisma.orgMembershipProcess.update({ where: { id: shortcut.appId }, data: { bgClearedAt: CLEARED_AT } });
 
             // Cleared under per-adult rules: both named, both stamped — correct data.
             const named = await blanketStamped('PerAdult', { namedAttestation: true });
@@ -393,8 +363,8 @@ describe('Per-adult background-check subjects', () => {
             as(board, { isBoardMember: true });
             const data = await (await COMPLIANCE(get('http://localhost:4000/api/membership-audit/compliance') as never)).json();
             const ids = data.blanketStamped.map((r: { processId: number }) => r.processId);
-            expect(ids).not.toContain(single.processId);
-            expect(ids).not.toContain(shortcut.processId);
+            expect(ids).not.toContain(single.appId);
+            expect(ids).not.toContain(shortcut.appId);
             expect(ids).not.toContain(named.processId);
         });
 

@@ -81,3 +81,41 @@ export async function differentPurchases<T = unknown>(finance: Session, receiptI
     const shownIds = group.json.members.filter((m) => m.state !== "discarded").map((m) => m.id);
     return api<T>(finance, `/api/receipts/${receiptId}/different-purchases`, { method: "POST", body: JSON.stringify({ shownIds }) });
 }
+
+/** A check review as the reviewer queue returns it. */
+export type QueuedReview = {
+    id: number;
+    subjectPerson: { id: number } | null;
+    requestedForHousehold: { intakeNotes?: string | null; householdMembers: { id: number }[] } | null;
+};
+
+/**
+ * The check review a household's consent opened, found in `reviewer`'s queue by one of
+ * the household's leads. Undefined when the reviewer's queue does not list it.
+ */
+export async function queuedReviewFor(reviewer: Session, leadId: number): Promise<QueuedReview | undefined> {
+    const queue = await api<{ queue: QueuedReview[] }>(reviewer, "/api/membership/reviews");
+    if (queue.status !== 200) throw new Error(`review queue: ${queue.status}`);
+    return queue.json.queue.find((q) => q.subjectPerson?.id === leadId || q.requestedForHousehold?.householdMembers.some((m) => m.id === leadId));
+}
+
+/**
+ * Sets the background-check validity window (the fresh seed leaves it unset, which
+ * counts every check as expired, so no review clears a household). Returns a restore
+ * of the previous value.
+ */
+export async function setBgRecheckMonths(board: Session, months: number): Promise<() => Promise<void>> {
+    const before = await api<{ settings: { BoardSettings: { bgRecheckMonths: number } } }>(board, "/api/settings/membership");
+    if (before.status !== 200) throw new Error(`read membership settings: ${before.status}`);
+    const put = (value: number) => api(board, "/api/settings/membership", { method: "PUT", body: JSON.stringify({ perYearVariantClient: true, bgRecheckMonths: value }) });
+    const saved = await put(months);
+    if (saved.status !== 200) throw new Error(`set re-check interval: ${saved.status}`);
+    const previous = before.json.settings.BoardSettings.bgRecheckMonths;
+    return async () => { await put(previous); };
+}
+
+/** SQL deleting the check reviews requested for the household of the person with email $1, and their decisions. */
+export const DELETE_REQUESTED_REVIEWS = [
+    `DELETE FROM "BackgroundCheckAttestation" WHERE "processId" IN (SELECT id FROM "OrgMembershipProcess" WHERE "requestedForHouseholdId" = (SELECT "householdId" FROM "Person" WHERE email = $1))`,
+    `DELETE FROM "OrgMembershipProcess" WHERE "requestedForHouseholdId" = (SELECT "householdId" FROM "Person" WHERE email = $1)`,
+];

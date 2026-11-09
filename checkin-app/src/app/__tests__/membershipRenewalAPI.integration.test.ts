@@ -36,8 +36,9 @@ describe('Membership renewal', () => {
         const hhs = await prisma.household.findMany({ where: { OR: [{ name: { contains: TAG } }, { householdMembers: { some: { email: { contains: TAG } } } }] }, select: { id: true } });
         const ids = hhs.map((h) => h.id);
         if (ids.length) {
-            await prisma.backgroundCheckAttestation.deleteMany({ where: { process: { orgMembership: { householdId: { in: ids } } } } });
-            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+            const processes = { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] };
+            await prisma.backgroundCheckAttestation.deleteMany({ where: { process: processes } });
+            await prisma.orgMembershipProcess.deleteMany({ where: processes });
             await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -184,8 +185,13 @@ describe('Membership renewal', () => {
         await markContractSigned(proc.id);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_PAYMENT');
 
-        await attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
-        const final = await attest(rev2, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
-        expect(final.status).toBe('PENDING_PAYMENT');
+        // The consent opened a check review for the household; the review clears the lead and the renewal.
+        const review = await prisma.orgMembershipProcess.findFirstOrThrow({ where: { kind: 'PERSON_BG', requestedForHouseholdId: m.householdId } });
+        await attest(rev1, review.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
+        const final = await attest(rev2, review.id, { result: 'APPROVE' });
+        expect(final.status).toBe('ACTIVE');
+        const renewal = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } });
+        expect(renewal?.status).toBe('PENDING_PAYMENT');
+        expect(renewal?.bgClearedAt).not.toBeNull();
     });
 });

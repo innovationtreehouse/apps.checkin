@@ -14,6 +14,9 @@ import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTrigger
 import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
+
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
  * signing the Zoho contract and consenting to a background check on Averity.
@@ -100,8 +103,7 @@ export async function getExternalStatus(process: {
  * The conditional updateMany (status guard) is the atomic gate: two concurrent
  * callers (Zoho webhook + board "mark bg consent") both reach here, but only the
  * one whose updateMany flips PENDING_EXTERNAL_ACTION sees count === 1 — so the
- * audit row and reviewer ping fire exactly once, and a later status is never
- * regressed. Mirrors review.ts `attest`.
+ * audit row is written exactly once, and a later status is never regressed. Mirrors review.ts `attest`.
  */
 export async function advanceExternalIfComplete(processId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -145,12 +147,8 @@ export async function advanceExternalIfComplete(processId: number) {
         });
         return tx.orgMembershipProcess.findUnique({ where: { id: processId } });
     });
-    if (!advanced) return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
-
-    // No valid prior check ⇒ a human review is still needed. Ping the reviewers;
-    // the review proceeds in parallel with payment (log-only until email is configured).
-    if (!advanced.bgClearedAt) await notifyReviewers();
-    return advanced;
+    // Reviewers are pinged when the household's check review opens, not here.
+    return advanced ?? prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }
 
 /**
@@ -221,7 +219,9 @@ export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, 
 /**
  * Records that the applicant submitted background-check consent, then maybe advance.
  * Only an open household application takes it, unless `kind` names the PERSON_BG
- * submit path, where consent is implicit in the external check.
+ * submit path, where consent is implicit in the external check. A household's
+ * consent names nobody: settling the household opens a check review with no person
+ * for it, and the first reviewer names whose report it is.
  */
 export async function markBgConsent(processId: number, actorId: number, kind: "household" | "PERSON_BG" = "household") {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -241,6 +241,10 @@ export async function markBgConsent(processId: number, actorId: number, kind: "h
             data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { bgConsentAt: true } },
         });
     });
+    if (kind === "household" && process.orgMembershipId) {
+        const membership = await prisma.orgMembership.findUnique({ where: { id: process.orgMembershipId }, select: { householdId: true } });
+        if (membership) await (await settleModule()).settleHouseholdBg(membership.householdId);
+    }
     return advanceExternalIfComplete(processId);
 }
 

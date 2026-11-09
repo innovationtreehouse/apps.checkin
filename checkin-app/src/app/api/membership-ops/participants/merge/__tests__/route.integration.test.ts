@@ -34,7 +34,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
 }));
 import { runMatchAudit } from "@/lib/finance/matchAudit";
 import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
-import { attestedUnclearedProcessIds, canReviewBackgroundChecks } from "@/lib/membership/review";
+import { canReviewBackgroundChecks } from "@/lib/membership/review";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 
 // Base fixture participants differ on name+email by design (realistic collision
@@ -2067,7 +2067,6 @@ describe("Merge Participants API", () => {
             const process = await makeApplication(status, { contractSignedAt: new Date(), ...extra });
             const reviewerId = await makeReviewer();
             await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "APPROVE", subjectPersonId: pKeepId } });
-            expect(await attestedUnclearedProcessIds(reviewerId)).toContain(process.id);
 
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
@@ -2075,16 +2074,14 @@ describe("Merge Participants API", () => {
             expect(after.bgClearedAt).not.toBeNull();
             expect(after.status).toBe(cleared);
             expect(await prisma.backgroundCheckAttestation.count({ where: { processId: process.id, reviewerId } })).toBe(1);
-            expect(await attestedUnclearedProcessIds(reviewerId)).not.toContain(process.id);
             const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: process.id, newData: { path: ["via"], equals: "merge" } } });
-            expect(log?.newData).toMatchObject({ clearedPersonIds: [], reason: "still-valid background check carried in by participant merge" });
+            expect(log?.newData).toMatchObject({ reason: "still-valid background check carried in by participant merge" });
         });
 
         it("stamps a PENDING_PAYMENT row that has an approval only, keeping the approval and its volunteer mark", async () => {
             const process = await makeApplication("PENDING_PAYMENT", { contractSignedAt: new Date(), bgConsentAt: new Date() });
             const reviewerId = await makeReviewer();
             await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "APPROVE", subjectPersonId: pKeepId, isMarkedVolunteerFamily: true } });
-            expect(await attestedUnclearedProcessIds(reviewerId)).toContain(process.id);
 
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
@@ -2092,7 +2089,6 @@ describe("Merge Participants API", () => {
             expect(after.bgClearedAt).not.toBeNull();
             expect(after.status).toBe("PENDING_PAYMENT");
             expect(await prisma.backgroundCheckAttestation.count({ where: { processId: process.id, reviewerId } })).toBe(1);
-            expect(await attestedUnclearedProcessIds(reviewerId)).not.toContain(process.id);
             expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: membershipId } })).isVolunteerFamily).toBe(true);
         });
 

@@ -1,19 +1,21 @@
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import type { TxClient } from "@/lib/db-client";
+import type { DbClient, TxClient } from "@/lib/db-client";
 import { systemActor } from "@/lib/auditActor";
+import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
-import { householdCheckStandings, householdQualifies, jsonField, liveBgThreshold } from "@/lib/membership/checkStanding";
+import { householdCheckStandings, householdQualifies, jsonField, liveBgThreshold, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
-import { fromWhere, openProcess, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { SETTLE_BLOCKABLE_STATUSES, fromWhere, openProcess, personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
 import {
     applyVolunteerFamilyStatus,
     blockedResetStatus,
     notifyClearanceOutcome,
     notifyPaymentOpenOnExistingCheck,
+    notifyReviewers,
     type ClearanceOutcome,
 } from "@/lib/membership/review";
 
@@ -22,11 +24,17 @@ import {
  * (docs/in-design/person-based-bg-review.md §3.2):
  *
  * - someone in the household has a BLOCKED check review → the application is
- *   BLOCKED, its audit row naming the review;
+ *   BLOCKED, its audit row naming the review and the step it was blocked from;
  * - every review that blocked it is no longer BLOCKED (reset or changed to approve)
- *   and nobody in the household holds one → it resumes at `blockedResetStatus`;
+ *   and nobody in the household holds one → it resumes at the step it was blocked
+ *   from (`resumeStatus`);
  * - the household qualifies and the application is waiting on its check → its
- *   check is stamped cleared and it converges on payment.
+ *   check is stamped cleared and it converges on payment;
+ * - a lead is cleared and only a review naming nobody holds the household → that
+ *   review is closed as unneeded and the application clears;
+ * - otherwise, consent is recorded, no lead is cleared or under review, nobody is
+ *   disputed and no review is open for the household → a check review with no person
+ *   is opened for it (`openRequestedReview`).
  *
  * A sent-back review keeps its person DISPUTED, which holds the clearance but does
  * not block: blocking on it would undo the resume a reset exists to give. A denied
@@ -49,6 +57,7 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
 
     const result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold));
 
+    if (result.steps.includes("opened")) await notifyReviewers();
     if (result.paidReject) await notifyBoardPaidReject(app.id);
     if (result.advanceExternal) await advanceExternalIfComplete(app.id);
     if (result.clearance) {
@@ -57,15 +66,40 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
     return result.steps;
 }
 
-export type SettleStep = "denied" | "blocked" | "resumed" | "cleared";
+/**
+ * Settles every household whose open application has consent and is waiting on its
+ * check, so one with no check review open gets one. Each household is settled on its
+ * own; a failure is logged and the rest carry on.
+ */
+export async function settleApplicationsAwaitingCheck(): Promise<{ households: number; opened: number; failed: number }> {
+    const apps = await prisma.orgMembershipProcess.findMany({
+        where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgConsentAt: { not: null }, bgClearedAt: null, ...openProcess.where },
+        select: { orgMembership: { select: { householdId: true } } },
+    });
+    const households = [...new Set(apps.flatMap((a) => (a.orgMembership ? [a.orgMembership.householdId] : [])))];
+    let opened = 0;
+    let failed = 0;
+    for (const householdId of households) {
+        try {
+            if ((await settleHouseholdBg(householdId)).includes("opened")) opened++;
+        } catch (error) {
+            failed++;
+            await logBackendError(error, "household background-check settle sweep", { householdId });
+        }
+    }
+    return { households: households.length, opened, failed };
+}
+
+export type SettleStep = "denied" | "blocked" | "resumed" | "cleared" | "opened";
 
 type Settled = { steps: SettleStep[]; paidReject?: boolean; advanceExternal?: boolean; clearance?: ClearanceOutcome };
 
 const ACTOR = systemActor("system:membership-bg-settle");
 const BLOCK_REASON = "check review rejected";
 
-/** The from-states of the declared → BLOCKED edges. */
-const BLOCKABLE: readonly ProcessStatus[] = ["PENDING_BG_REVIEW", "PENDING_PAYMENT", "PENDING_BG_CLEARANCE"];
+const BLOCKABLE: readonly ProcessStatus[] = SETTLE_BLOCKABLE_STATUSES;
+/** Steps before the review and payment track: a lifted block returns to them as they were. */
+const RETURNS_AS_WAS: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENEWAL", "PENDING_EXTERNAL_ACTION"];
 /** Waiting steps where only a stamp is owed; the step's own event moves the status on. */
 const STAMPS: readonly ProcessStatus[] = ["PENDING_EXTERNAL_ACTION", "PENDING_PAYMENT"];
 /** Held steps that nothing but a clearance moves: they converge on payment here. */
@@ -77,7 +111,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     if (await lockAndFindDeniedHousehold(tx, [householdId]) !== null) return { steps: ["denied"] };
     const process = await tx.orgMembershipProcess.findUnique({
         where: { id: processId },
-        select: { id: true, kind: true, status: true, orgMembershipId: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, shopifyOrderId: true },
+        select: { id: true, kind: true, status: true, orgMembershipId: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, shopifyOrderId: true },
     });
     if (!process?.orgMembershipId) return { steps: [] };
     const orgMembershipId = process.orgMembershipId;
@@ -89,12 +123,13 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     let cleared = !!process.bgClearedAt;
 
     if (status === "BLOCKED") {
-        const recorded = await recordedBlockers(tx, processId);
-        if (recorded === null) return { steps };
+        const block = await recordedBlock(tx, processId);
+        if (block === null) return { steps };
+        const recorded = block.reviewIds;
         const unrecorded = blockingNow.filter((id) => !recorded.includes(id));
         if (unrecorded.length) await audit(tx, processId, householdId, { status }, { action: BLOCK_REASON, blockingReviewIds: unrecorded });
         if (unrecorded.length || await tx.orgMembershipProcess.count({ where: { id: { in: recorded }, status: "BLOCKED" } })) return { steps };
-        const to = blockedResetStatus(process);
+        const to = resumeStatus(block.from, process);
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
         if (!count) return { steps };
         await audit(tx, processId, householdId, { status }, { status: to, action: "check review no longer rejected", blockingReviewIds: recorded });
@@ -112,13 +147,25 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         return { steps: ["blocked"], paidReject: !!process.paidAt };
     }
 
-    if (cleared || !householdQualifies(standings)) return { steps };
+    if (cleared) return { steps };
+    if (!householdQualifies(standings)) {
+        const leadCleared = standings.members.some((m) => m.isHouseholdLead && m.standing === "CLEARED");
+        const disputed = standings.members.some((m) => m.standing === "DISPUTED");
+        if (leadCleared && !disputed) {
+            // Only a review naming nobody holds it, and a cleared lead has made that review unneeded.
+            if (!(await closeUnneededRequestedReviews(tx, householdId, processId))) return { steps };
+        } else {
+            // A new review helps only a household with no cleared lead and no lead already under review; it cannot lift a dispute.
+            if (disputed || leadCleared || standings.members.some((m) => m.isHouseholdLead && m.standing === "PENDING")) return { steps };
+            return (await openRequestedReview(tx, { ...process, status }, householdId)) ? { steps: [...steps, "opened"] } : { steps };
+        }
+    }
     const now = new Date();
 
     if (STAMPS.includes(status)) {
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, bgClearedAt: null, ...fromWhere(status) }, data: { bgClearedAt: now } });
         if (!count) return { steps };
-        // ponytail: reviewer volunteer marks live on household attestations, which this never reads; the designation allowlist still applies.
+        // Reviewers' Volunteer Family ticks are written when they are made; only the designation allowlist is applied here.
         await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
         await audit(tx, processId, householdId, { status }, { bgCleared: true, reason: "household qualifies on its people's checks" });
         return { steps: [...steps, "cleared"], advanceExternal: status === "PENDING_EXTERNAL_ACTION" };
@@ -146,10 +193,10 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
 
 /**
  * The check reviews recorded as blocking this application since it last entered
- * BLOCKED, or null when it was blocked by something other than this function (a
- * household attestation), which this never moves.
+ * BLOCKED and the step it was blocked from, or null when it was blocked by something
+ * other than this function (a household attestation), which this never moves.
  */
-async function recordedBlockers(tx: TxClient, processId: number): Promise<number[] | null> {
+async function recordedBlock(tx: DbClient, processId: number): Promise<{ reviewIds: number[]; from: Prisma.JsonValue | undefined } | null> {
     const rows = await tx.auditLog.findMany({
         where: { tableName: "OrgMembershipProcess", affectedEntityId: processId },
         orderBy: { id: "desc" },
@@ -160,10 +207,85 @@ async function recordedBlockers(tx: TxClient, processId: number): Promise<number
         const recorded = jsonField(row.newData, "blockingReviewIds");
         if (Array.isArray(recorded)) ids.push(...recorded.filter((v): v is number => typeof v === "number"));
         if (jsonField(row.newData, "status") === "BLOCKED" && jsonField(row.oldData, "status") !== "BLOCKED") {
-            return jsonField(row.newData, "reason") === BLOCK_REASON ? ids : null;
+            return jsonField(row.newData, "reason") === BLOCK_REASON ? { reviewIds: ids, from: jsonField(row.oldData, "status") } : null;
         }
     }
     return null;
+}
+
+/** Whether a household application is BLOCKED by a person's check review, which only that review's outcome lifts. */
+export async function blockedByCheckReview(db: DbClient, processId: number): Promise<boolean> {
+    return (await recordedBlock(db, processId)) !== null;
+}
+
+/**
+ * Where a lifted block returns the application: a step before review and payment as
+ * it was; a review or payment step by `blockedResetStatus`, which sends it back to
+ * the external step when consent or the agreement is missing.
+ */
+function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0]): OrgMembershipProcessStatus {
+    const step = RETURNS_AS_WAS.find((s) => s === from);
+    return step ?? blockedResetStatus(process);
+}
+
+/**
+ * Closes the open reviews requested for the household that still name nobody, once a
+ * lead has cleared without them. Returns false, closing nothing, when one of them
+ * carries a rejection a wrong-person reset left on it: that needs a decision first.
+ */
+async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, applicationId: number): Promise<boolean> {
+    const unnamed = await tx.orgMembershipProcess.findMany({
+        where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
+        select: { id: true },
+        orderBy: { id: "asc" },
+    });
+    for (const { id } of unnamed) {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${id} FOR UPDATE`;
+        if (await reviewHoldsRejection(tx, id)) return false;
+    }
+    for (const { id } of unnamed) {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id, subjectPersonId: null, ...fromWhere("PENDING_BG_REVIEW") },
+            data: { status: "ARCHIVED", archivedFromStatus: "PENDING_BG_REVIEW", stageEnteredAt: new Date() },
+        });
+        if (!count) return false;
+        await audit(tx, id, householdId, { status: "PENDING_BG_REVIEW" }, { status: "ARCHIVED", action: "closed: a lead cleared without it", applicationId });
+    }
+    return true;
+}
+
+/**
+ * Opens a check review with no person for the household, when the application has
+ * consent, is waiting on its check and no open review requested for the household
+ * names nobody or someone still in it. Runs under the application's lock, so two
+ * settles never open two. The first reviewer names the person.
+ */
+async function openRequestedReview(tx: TxClient, app: { id: number; status: OrgMembershipProcessStatus; bgConsentAt: Date | null }, householdId: number): Promise<boolean> {
+    if (!app.bgConsentAt || app.status === "BLOCKED") return false;
+    const open = await tx.orgMembershipProcess.count({
+        where: {
+            kind: "PERSON_BG",
+            requestedForHouseholdId: householdId,
+            ...personBgOpen.where,
+            OR: [{ subjectPersonId: null }, { subjectPerson: { householdId } }],
+        },
+    });
+    if (open) return false;
+    const now = new Date();
+    const review = await tx.orgMembershipProcess.create({
+        data: { kind: "PERSON_BG", status: "PENDING_BG_REVIEW", requestedForHouseholdId: householdId, bgConsentAt: now, stageEnteredAt: now },
+    });
+    await tx.auditLog.create({
+        data: {
+            ...ACTOR,
+            action: "CREATE",
+            tableName: "OrgMembershipProcess",
+            affectedEntityId: review.id,
+            secondaryAffectedEntity: householdId,
+            newData: { kind: "PERSON_BG", status: "PENDING_BG_REVIEW", requestedForHouseholdId: householdId, subjectPersonId: null, bgConsentAt: true, requestedByApplicationId: app.id },
+        },
+    });
+    return true;
 }
 
 function audit(tx: TxClient, processId: number, householdId: number, oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) {

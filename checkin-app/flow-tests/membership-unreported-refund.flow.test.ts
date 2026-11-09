@@ -13,12 +13,9 @@
  */
 
 import { Pool } from "pg";
-import { loginAs, api } from "./helpers";
+import { loginAs, api, queuedReviewFor, setBgRecheckMonths, DELETE_REQUESTED_REVIEWS } from "./helpers";
 
 type State = { process: { id: number; status: string } | null; membershipStatus: string | null };
-type ReviewQueue = {
-    queue: { id: number; orgMembership: { household: { householdMembers: { id: number }[] } | null } | null }[];
-};
 
 const APPLICANT_EMAIL = "parent.family@example.com";
 
@@ -27,6 +24,7 @@ const HOUSEHOLD_PROCESSES = `SELECT p.id FROM "OrgMembershipProcess" p
     JOIN "Person" per ON per."householdId" = m."householdId" WHERE per.email = $1`;
 
 async function resetApplicantHousehold(pool: Pool): Promise<void> {
+    for (const sql of DELETE_REQUESTED_REVIEWS) await pool.query(sql, [APPLICANT_EMAIL]);
     await pool.query(`DELETE FROM "PaymentException" WHERE "processId" IN (${HOUSEHOLD_PROCESSES})`, [APPLICANT_EMAIL]);
     await pool.query(`DELETE FROM "BackgroundCheckAttestation" WHERE "processId" IN (${HOUSEHOLD_PROCESSES})`, [APPLICANT_EMAIL]);
     await pool.query(`DELETE FROM "OrgMembershipProcess" WHERE id IN (${HOUSEHOLD_PROCESSES})`, [APPLICANT_EMAIL]);
@@ -42,7 +40,12 @@ async function resetApplicantHousehold(pool: Pool): Promise<void> {
 
 describe("flow: refund Shopify has not reported", () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    let restoreRecheck: () => Promise<void> = async () => {};
+    beforeAll(async () => {
+        restoreRecheck = await setBgRecheckMonths(await loginAs("boardmember@example.com"), 29);
+    });
     afterAll(async () => {
+        await restoreRecheck();
         await resetApplicantHousehold(pool);
         await pool.end();
     });
@@ -71,10 +74,9 @@ describe("flow: refund Shopify has not reported", () => {
             expect(res.status).toBe(200);
         }
 
-        const queue = await api<ReviewQueue>(board, "/api/membership/reviews");
-        const leadIds = (queue.json.queue.find((q) => q.id === processId)?.orgMembership?.household?.householdMembers ?? []).map((p) => p.id);
-        expect(leadIds.length).toBeGreaterThan(0);
-        const review = { processId, result: "APPROVE", subjectPersonIds: [leadIds[0]] };
+        const queued = await queuedReviewFor(board, applicant.personaId);
+        expect(queued).toBeDefined();
+        const review = { processId: queued!.id, result: "APPROVE", subjectPersonIds: [applicant.personaId] };
         expect((await api(board, "/api/membership/reviews", { method: "POST", body: JSON.stringify(review) })).status).toBe(200);
         expect((await api(reviewer2, "/api/membership/reviews", { method: "POST", body: JSON.stringify(review) })).status).toBe(200);
 

@@ -34,13 +34,13 @@ async function makeReviewer(label: string): Promise<number> {
     return r.id;
 }
 
-/** An applicant household with two leads, awaiting BG review. */
+/** An applicant household with two leads, and the check review its consent opened, naming nobody yet. */
 async function makePendingProcess(): Promise<{ processId: number; leadA: number; leadB: number }> {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG}` } });
     const leadA = (await prisma.person.create({ data: { name: `Lead A ${TAG}`, householdId: hh.id, isHouseholdLead: true } })).id;
     const leadB = (await prisma.person.create({ data: { name: `Lead B ${TAG}`, householdId: hh.id, isHouseholdLead: true } })).id;
-    const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
-    const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' } });
+    await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+    const proc = await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: hh.id, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() } });
     return { processId: proc.id, leadA, leadB };
 }
 
@@ -53,8 +53,10 @@ async function wipe() {
     const people = await prisma.person.findMany({ where: { OR: [{ householdId: { in: ids } }, { email: { contains: TAG } }] }, select: { id: true } });
     await prisma.auditLog.deleteMany({ where: { actorId: { in: people.map((p) => p.id) } } });
     if (ids.length) {
-        await prisma.backgroundCheckAttestation.deleteMany({ where: { process: { orgMembership: { householdId: { in: ids } } } } });
-        await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+        const processes = { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] };
+        await prisma.backgroundCheckAttestation.deleteMany({ where: { process: processes } });
+        await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: { in: (await prisma.orgMembershipProcess.findMany({ where: processes, select: { id: true } })).map((p) => p.id) } } });
+        await prisma.orgMembershipProcess.deleteMany({ where: processes });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -86,7 +88,7 @@ describe('undoOwnApproval()', () => {
         await prisma.$disconnect();
     });
 
-    it('withdraws the approval, drops the subject it named, and audits the old row', async () => {
+    it('withdraws the approval, keeps the person it named, and audits the old row', async () => {
         const { processId, leadA, leadB } = await makePendingProcess();
         await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadA], note: 'read Lead A' });
         const before = await prisma.backgroundCheckAttestation.findFirstOrThrow({ where: { processId, reviewerId: revA } });
@@ -97,6 +99,7 @@ describe('undoOwnApproval()', () => {
         const proc = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
         expect(proc.status).toBe('PENDING_BG_REVIEW');
         expect(proc.bgClearedAt).toBeNull();
+        expect(proc.subjectPersonId).toBe(leadA);
 
         const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: 'BackgroundCheckAttestation', affectedEntityId: before.id, action: 'DELETE' } });
         expect(audit.actorId).toBe(revA);
@@ -104,8 +107,9 @@ describe('undoOwnApproval()', () => {
         expect(auditJson(audit.oldData)).toMatchObject({ processId, reviewerId: revA, subjectPersonId: leadA, result: 'APPROVE', note: 'read Lead A' });
         expect(auditJson(audit.newData)).toEqual({ reason: 'read the wrong report', action: 'reviewer undo' });
 
-        // The naming went with it: a new first approval may name the other lead.
-        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadB] });
+        // Only the Board's wrong-person reset clears the person: the next approval may not name another lead.
+        expect(await codeOf(attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadB] }))).toBe('invalid_subject');
+        await attest(revB, processId, { result: 'APPROVE' });
     });
 
     it('refuses when the caller has no attestation on the process', async () => {
@@ -116,8 +120,8 @@ describe('undoOwnApproval()', () => {
     });
 
     it('refuses to undo a REJECT', async () => {
-        const { processId } = await makePendingProcess();
-        await attest(revA, processId, { result: 'REJECT', note: 'concerning' });
+        const { processId, leadA } = await makePendingProcess();
+        await attest(revA, processId, { result: 'REJECT', note: 'concerning', subjectPersonIds: [leadA] });
         await expect(undoOwnApproval(revA, processId, 'changed my mind')).rejects.toThrow('A rejection cannot be undone');
         expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } })).status).toBe('BLOCKED');
     });
@@ -125,7 +129,7 @@ describe('undoOwnApproval()', () => {
     it('refuses once the second approval has cleared the check', async () => {
         const { processId, leadA } = await makePendingProcess();
         await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadA] });
-        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadA] });
+        await attest(revB, processId, { result: 'APPROVE' });
         await expect(undoOwnApproval(revA, processId, 'too late')).rejects.toThrow('already cleared');
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(2);
     });
@@ -144,7 +148,7 @@ describe('undoOwnApproval()', () => {
 
         const [undo, second] = await Promise.all([
             codeOf(undoOwnApproval(revA, processId, 'race')),
-            codeOf(attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadA] })),
+            codeOf(attest(revB, processId, { result: 'APPROVE' })),
         ]);
         expect(second).toBe('ok');
 

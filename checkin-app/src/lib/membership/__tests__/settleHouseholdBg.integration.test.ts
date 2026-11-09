@@ -34,8 +34,12 @@ async function family(opts: { leadCheck?: Date | null; otherCheck?: Date | null;
     return { householdId: household.id, leadId: lead.id, otherId: other.id, orgMembershipId: membership.id };
 }
 
+/** Steps before the agreement is signed; every later step has its signature, as the external advance requires. */
+const UNSIGNED_STEPS: readonly OrgMembershipProcessStatus[] = ['INTAKE', 'PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION'];
+
 async function application(orgMembershipId: number, status: OrgMembershipProcessStatus, extra: { paidAt?: Date; kind?: 'INITIAL' | 'RENEWAL' } = {}) {
-    const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId, kind: extra.kind ?? 'INITIAL', status, bgConsentAt: new Date(), paidAt: extra.paidAt ?? null } });
+    const contractSignedAt = UNSIGNED_STEPS.includes(status) ? null : new Date();
+    const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId, kind: extra.kind ?? 'INITIAL', status, contractSignedAt, bgConsentAt: new Date(), paidAt: extra.paidAt ?? null } });
     return p.id;
 }
 
@@ -136,7 +140,7 @@ describe('settleHouseholdBg — clearing', () => {
     it('does not clear on an expired lead check, nor on a cleared non-lead alone', async () => {
         const f = await family({ leadCheck: EXPIRED, otherCheck: FRESH });
         const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
-        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['opened']);
         expect((await row(id)).bgClearedAt).toBeNull();
     });
 
@@ -169,11 +173,58 @@ describe('settleHouseholdBg — clearing', () => {
         expect((await row(id)).bgClearedAt).not.toBeNull();
     });
 
-    it('holds the clearance while a review requested for the household names nobody yet', async () => {
-        const f = await family();
-        await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: f.householdId, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() } });
+    const unnamedReview = (householdId: number) =>
+        prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: householdId, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() } });
+
+    it('holds the clearance while a review requested for the household names nobody yet and no lead is cleared', async () => {
+        const f = await family({ leadCheck: null });
+        await unnamedReview(f.householdId);
         const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
         expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect((await row(id)).bgClearedAt).toBeNull();
+    });
+
+    it('closes the unnamed review once a lead has cleared without it, and clears the application', async () => {
+        const f = await family();
+        const review = await unnamedReview(f.householdId);
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['cleared']);
+        expect((await row(id)).bgClearedAt).not.toBeNull();
+        expect((await row(review.id)).status).toBe('ARCHIVED');
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: review.id }, orderBy: { id: 'desc' } });
+        expect(audit.newData).toMatchObject({ status: 'ARCHIVED', action: 'closed: a lead cleared without it', applicationId: id });
+    });
+
+    it('keeps an unnamed review that still carries a rejection, and the application waits for its decision', async () => {
+        const f = await family();
+        const review = await unnamedReview(f.householdId);
+        await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: review.id, oldData: { status: 'BLOCKED', subjectPersonId: f.otherId }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } } });
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect((await row(id)).bgClearedAt).toBeNull();
+        expect((await row(review.id)).status).toBe('PENDING_BG_REVIEW');
+    });
+
+    it("opens no review while a lead's own review is under way", async () => {
+        const f = await family({ leadCheck: null });
+        await checkReview(f.leadId, 'PENDING_BG_REVIEW');
+        await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect(await prisma.orgMembershipProcess.count({ where: { requestedForHouseholdId: f.householdId } })).toBe(0);
+    });
+
+    it('opens no review while someone is disputed, and opens one once the dispute settles with no lead cleared', async () => {
+        const f = await family({ leadCheck: null });
+        const reviewId = await checkReview(f.otherId, 'BLOCKED', 'board reset');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect(await prisma.orgMembershipProcess.count({ where: { requestedForHouseholdId: f.householdId } })).toBe(0);
+
+        await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { status: 'ACTIVE', bgClearedAt: new Date() } });
+        await prisma.person.update({ where: { id: f.otherId }, data: { lastBackgroundCheck: new Date() } });
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['opened']);
+        const [opened] = await prisma.orgMembershipProcess.findMany({ where: { requestedForHouseholdId: f.householdId } });
+        expect(opened).toMatchObject({ kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', subjectPersonId: null });
         expect((await row(id)).bgClearedAt).toBeNull();
     });
 

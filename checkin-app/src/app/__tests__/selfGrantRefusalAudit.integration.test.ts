@@ -25,20 +25,24 @@ async function wipe() {
     if (!ids.length) return;
     const people = await prisma.person.findMany({ where: { householdId: { in: ids } }, select: { id: true } });
     await prisma.auditLog.deleteMany({ where: { actorId: { in: people.map((p) => p.id) } } });
-    await prisma.backgroundCheckAttestation.deleteMany({ where: { process: { orgMembership: { householdId: { in: ids } } } } });
-    await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+    const processes = { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] };
+    await prisma.backgroundCheckAttestation.deleteMany({ where: { process: processes } });
+    await prisma.orgMembershipProcess.deleteMany({ where: processes });
     await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
     await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
     await prisma.household.deleteMany({ where: { id: { in: ids } } });
 }
 
-/** A household whose lead is also a reviewer, with a process at `status`. */
-async function makeOwnHouseholdReview(status: 'PENDING_BG_REVIEW' | 'BLOCKED') {
+/** A household whose lead is also a reviewer, and the check review its consent opened, at `status`, naming `named` or nobody. */
+async function makeOwnHouseholdReview(status: 'PENDING_BG_REVIEW' | 'BLOCKED', named = false) {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG}` } });
     const lead = await prisma.person.create({ data: { name: `Lead ${TAG}`, householdId: hh.id, isHouseholdLead: true, isBackgroundCheckReviewer: true } });
-    const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
-    const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status } });
-    return { processId: proc.id, leadId: lead.id, householdId: hh.id };
+    const other = await prisma.person.create({ data: { name: `Other lead ${TAG}`, householdId: hh.id, isHouseholdLead: true } });
+    await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+    const proc = await prisma.orgMembershipProcess.create({
+        data: { kind: 'PERSON_BG', requestedForHouseholdId: hh.id, subjectPersonId: named ? other.id : null, status, bgConsentAt: new Date() },
+    });
+    return { processId: proc.id, leadId: lead.id, otherId: other.id, householdId: hh.id };
 }
 
 /** Subjects of the actor's refusals for this attempt: an earlier suite's row can carry an actor id that minting has since reissued. */
@@ -57,12 +61,14 @@ describe('self-grant refusal audit rows', () => {
     });
 
     it('keeps the row when clearance refuses inside its transaction', async () => {
-        const { processId, leadId, householdId } = await makeOwnHouseholdReview('PENDING_BG_REVIEW');
+        const { processId, leadId, otherId } = await makeOwnHouseholdReview('PENDING_BG_REVIEW', true);
 
         await expect(reviewTransaction((tx) => clearBackgroundCheck(tx, processId, leadId, awaitingBgReview))).rejects.toBeInstanceOf(SelfGrantRefusedError);
 
-        expect(await refusalSubjects(leadId, 'clearedPersonIds', [])).toEqual([householdId]);
+        const refused = await prisma.auditLog.findMany({ where: { actorId: leadId, tableName: SELF_GRANT_REFUSAL_TABLE } });
+        expect(refused.map((r) => r.affectedEntityId)).toEqual([otherId]);
         expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } })).bgClearedAt).toBeNull();
+        expect((await prisma.person.findUniqueOrThrow({ where: { id: otherId } })).lastBackgroundCheck).toBeNull();
     });
 
     it('records a refused attestation on the reviewer\'s own household', async () => {
@@ -77,7 +83,7 @@ describe('self-grant refusal audit rows', () => {
     it('records a refused board reset on the actor\'s own household', async () => {
         const { processId, leadId, householdId } = await makeOwnHouseholdReview('BLOCKED');
 
-        await expect(boardResetReview(processId, leadId)).rejects.toMatchObject({ code: 'same_household_applicant' });
+        await expect(boardResetReview(processId, leadId, { reason: 'x' })).rejects.toMatchObject({ code: 'same_household_applicant' });
 
         expect(await refusalSubjects(leadId, 'override', 'reset')).toEqual([householdId]);
     });

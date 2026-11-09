@@ -30,20 +30,42 @@ export type CheckReviewFacts = {
 type AuditFacts = { oldData: Prisma.JsonValue | null; newData: Prisma.JsonValue | null };
 
 /**
- * Whether a review's audit rows, oldest first, send it back for its current person.
- * Only a rejection sent back counts: a Board reset of a BLOCKED review, or the
- * rejector's change to approve, which no later undo or reset takes back. A row
- * that clears the review's person (`newData.subjectPersonId: null`) is a plain
- * start-over and begins a fresh history for whoever is named next.
+ * A review's rejection history read from its audit rows, oldest first. Only a
+ * rejection sent back counts: a Board reset of a BLOCKED review, or the rejector's
+ * change to approve, which no later undo or reset takes back. A row that clears the
+ * review's person (`newData.subjectPersonId: null`) begins a fresh history for whoever
+ * is named next, but each person cleared off it keeps their earlier rejection: naming
+ * them again, however many resets later, brings it back.
+ *
+ * - `sentBack`: the review is sent back for its current person.
+ * - `heldRejection`: a person cleared off the review left a rejection on it that
+ *   naming them again would bring back.
  */
-export function sentBackForSubject(rows: readonly AuditFacts[]): boolean {
+export function rejectionHistory(rows: readonly AuditFacts[]): { sentBack: boolean; heldRejection: boolean } {
     let sentBack = false;
+    let current: Prisma.JsonValue | undefined;
+    const cleared = new Map<Prisma.JsonValue | undefined, boolean>();
     for (const { oldData, newData } of rows) {
         const action = jsonField(newData, "action");
-        if (jsonField(newData, "subjectPersonId") === null) sentBack = false;
-        else if (action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED")) sentBack = true;
+        const sendsBack = action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED");
+        const subject = jsonField(newData, "subjectPersonId");
+        if (subject === null) {
+            const person = jsonField(oldData, "subjectPersonId");
+            cleared.set(person, (cleared.get(person) ?? false) || sentBack || sendsBack);
+            sentBack = false;
+            current = undefined;
+        } else if (action === "subject named") {
+            sentBack = cleared.get(subject) ?? false;
+            current = subject;
+        } else if (sendsBack) sentBack = true;
     }
-    return sentBack;
+    const heldRejection = [...cleared].some(([person, held]) => held && person !== current);
+    return { sentBack, heldRejection };
+}
+
+/** Whether a review's audit rows send it back for its current person (see rejectionHistory). */
+export function sentBackForSubject(rows: readonly AuditFacts[]): boolean {
+    return rejectionHistory(rows).sentBack;
 }
 
 export function jsonField(json: Prisma.JsonValue | null, key: string): Prisma.JsonValue | undefined {
@@ -119,4 +141,25 @@ export async function householdCheckStandings(db: DbClient, householdId: number,
         where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
     });
     return { members, awaitingNaming: unnamed > 0 };
+}
+
+/** Whether anyone in the household holds a DISPUTED check standing; the window does not matter for a dispute. */
+export async function householdHasDisputedCheck(db: DbClient, householdId: number): Promise<boolean> {
+    const { members } = await householdCheckStandings(db, householdId, null);
+    return members.some((m) => m.standing === "DISPUTED");
+}
+
+/**
+ * Whether a check review still carries a rejection: sent back for its current person,
+ * or left by a person a wrong-person reset cleared off it. Closing such a review would
+ * erase that rejection.
+ */
+export async function reviewHoldsRejection(db: DbClient, processId: number): Promise<boolean> {
+    const rows = await db.auditLog.findMany({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId },
+        orderBy: { id: "asc" },
+        select: { oldData: true, newData: true },
+    });
+    const { sentBack, heldRejection } = rejectionHistory(rows);
+    return sentBack || heldRejection;
 }

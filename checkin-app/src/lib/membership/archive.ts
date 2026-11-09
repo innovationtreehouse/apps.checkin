@@ -1,12 +1,16 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { ReviewError, applicantHousehold } from "@/lib/membership/review";
+import { ReviewError, applicantHousehold, reviewHouseholds } from "@/lib/membership/review";
+import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 // Code says "archive"; the board sees "Close application" / "Reopen". "Archive" is
 // reserved for archiving a household.
@@ -44,6 +48,10 @@ export async function archiveApplication(processId: number, actorId: number) {
     await assertNoConflict(process, actorId, "close");
     const refusal = closeRefusal(process);
     if (refusal) throw new ReviewError("wrong_phase", refusal);
+    // A check review that still carries a rejection would lose it on closing.
+    if (process.kind === "PERSON_BG" && await reviewHoldsRejection(prisma, processId)) {
+        throw new ReviewError("wrong_phase", "This check review still carries a rejection, so it cannot be closed. It needs a decision from two new reviewers.");
+    }
 
     await prisma.$transaction(async (tx) => {
         // CAS on the status just read, still unpaid: a payment or reject landing in
@@ -136,7 +144,9 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
             ...openProcess.where,
             ...((HOUSEHOLD_KINDS as readonly string[]).includes(process.kind)
                 ? { orgMembershipId: process.orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] } }
-                : { subjectPersonId: process.subjectPersonId, kind: process.kind }),
+                : process.subjectPersonId === null && process.requestedForHouseholdId !== null
+                    ? { subjectPersonId: null, requestedForHouseholdId: process.requestedForHouseholdId, kind: process.kind }
+                    : { subjectPersonId: process.subjectPersonId, kind: process.kind }),
         },
         select: { id: true },
     });
@@ -149,7 +159,8 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
  * (`archivedFromStatus`, captured by the close write). Refuses with the reason when
  * the household is DENIED or already has another open application, then picks up a
  * signature made while closed and re-runs the external advance so a gate met while
- * closed doesn't strand the application.
+ * closed doesn't strand the application. The households it touches are then settled
+ * on their people's check standing, which may block it or open its check review.
  */
 export async function unarchiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -195,6 +206,8 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         throw e;
     }
     await pickUpMissedSignature(process);
+    const { settleHouseholdBg } = await settleModule();
+    for (const id of await reviewHouseholds(prisma, process)) await settleHouseholdBg(id);
     const advanced = await advanceExternalIfComplete(processId);
     return { status: advanced?.status ?? target };
 }

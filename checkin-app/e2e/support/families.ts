@@ -85,10 +85,22 @@ export async function applicationAtPayment(email: string): Promise<number> {
   return processId;
 }
 
-/** A reviewer's decision, naming the family's lead when it is an approval. */
+type BoardRow = { id: number; kind: string; requestedForHouseholdId: number | null; orgMembership: { householdId: number } | null };
+
+/** The open check review the family's consent opened for its application `processId`. */
+export async function checkReviewOf(processId: number): Promise<number> {
+  const { json } = await api<{ processes: BoardRow[] }>(await loginAs(BOARD), "/api/membership-ops/applications");
+  const householdId = json.processes.find((p) => p.id === processId)?.orgMembership?.householdId;
+  const found = json.processes.find((p) => p.kind === "PERSON_BG" && householdId !== undefined && p.requestedForHouseholdId === householdId);
+  if (!found) throw new Error(`no open check review for application ${processId}`);
+  return found.id;
+}
+
+/** A reviewer's decision on the family's check review, naming the family's lead. */
 export async function review(reviewerEmail: string, processId: number, familyEmail: string, result: "APPROVE" | "REJECT" = "APPROVE"): Promise<void> {
-  const body = result === "APPROVE" ? { subjectPersonIds: [(await persona(familyEmail)).id] } : { note: "The report needs a second look." };
-  const reviewed = await send(await loginAs(reviewerEmail), "POST", "/api/membership/reviews", { processId, result, ...body });
+  const reviewId = await checkReviewOf(processId);
+  const body = { subjectPersonIds: [(await persona(familyEmail)).id], ...(result === "REJECT" ? { note: "The report needs a second look." } : {}) };
+  const reviewed = await send(await loginAs(reviewerEmail), "POST", "/api/membership/reviews", { processId: reviewId, result, ...body });
   if (reviewed.status !== 200) throw new Error(`review ${result}: ${reviewed.status}`);
 }
 
