@@ -26,7 +26,8 @@
  *
  * ReceiptQueueCounts — how many of the org's receipts each review queue holds:
  * a count per state, finalized receipts not yet delivered, and those whose push
- * failed (`pushGivenUp`). Counts only, `internal`.
+ * failed (`pushGivenUp`). `actionableByState` is the per-state count a finance
+ * viewer can act on, filled for finance viewers only. Counts only, `internal`.
  *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
@@ -202,6 +203,7 @@ export const classifications = {
     byState: "internal",
     notPushed: "internal",
     pushGivenUp: "internal",
+    actionableByState: "internal",
   },
   ReceiptFlowStatus: {
     asOf: "public",
