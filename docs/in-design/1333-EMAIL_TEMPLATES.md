@@ -205,10 +205,11 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `membership.welcome` | `sendCongrats`, first membership | family | `actionLink` ("Visit your dashboard") |
 | `membership.renewed` | `sendCongrats`, renewal | family | `actionLink` ("Visit your dashboard") |
 
-### board — 6
+### board — 7
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` ("Open applications") |
+| `board.checkRejected` | `notifyBoardCheckRejected`, a check-review rejection that blocks no paid application | board | personName, householdName, reviewId, `actionLink` ("Open applications") |
 | `board.paymentException` | `notifyBoardPaymentException` | board | kind, **blurb**, exceptionId, `actionLink` ("Open payment problems") |
 | `board.pendingDigest` | pending-participants digest | board | approachingCount, overdueCount, approachingList, overdueList |
 | `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |

@@ -6,7 +6,8 @@ import { sendTemplated } from "@/lib/email-templates/send";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { logBackendError, logger } from "@/lib/logger";
 import { sendCongrats } from "@/lib/membership/payment";
-import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import { notifyBoardCheckRejected, notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import type { SettleStep } from "@/lib/membership/settleHouseholdBg";
 import { config } from "@/lib/config";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
@@ -263,7 +264,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) throw new ReviewError("not_reviewer", "You are not a background-check reviewer.");
 
     // FOR UPDATE on the review row serializes concurrent decisions on it.
-    type AttestOutcome = { status: OrgMembershipProcessStatus; approvals?: number; reopened?: true; clearance?: ClearanceOutcome; households: number[] };
+    type AttestOutcome = { status: OrgMembershipProcessStatus; approvals?: number; reopened?: true; rejected?: true; clearance?: ClearanceOutcome; households: number[] };
     const result = await reviewTransaction<AttestOutcome>(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
 
@@ -300,7 +301,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
             const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...awaitingBgReview.where }, data: { status: "BLOCKED", stageEnteredAt: new Date() } });
             if (!count) throw movedOn();
             await audit(tx, personActor(reviewerId), processId, { status: process.status }, { status: "BLOCKED", reason: "reviewer reject", subjectPersonId, ...(input.note ? { note: input.note } : {}) });
-            return { status: "BLOCKED" as const, households };
+            return { status: "BLOCKED" as const, rejected: true as const, households };
         }
 
         const approvals = process.attestations.filter((a) => a.result === "APPROVE").length + 1;
@@ -318,25 +319,30 @@ export async function attest(reviewerId: number, processId: number, input: Attes
     // Side effects outside the transaction (a slow/failed send must not roll it back).
     if (result.clearance) await notifyClearanceOutcome(result.clearance);
     if (result.reopened) await notifyReviewers();
-    await settleAfterReview(result.households, { reviewJustCleared: !!result.clearance });
+    const settled = await settleAfterReview(result.households, { reviewJustCleared: !!result.clearance });
+    // One Board email per rejection: settle sends the paid-application one, this covers every other case (PBR-2).
+    if (result.rejected && !settled.includes("paidReject")) await notifyBoardCheckRejected(processId);
 
     return result.approvals !== undefined ? { status: result.status, approvals: result.approvals } : { status: result.status };
 }
 
 /**
- * Runs settleHouseholdBg for each household a review outcome touched. The outcome
- * has committed, so a failure here is logged rather than reported as a failed
- * decision; the next settle (another decision, a reopen, the daily sweep) repeats it.
+ * Runs settleHouseholdBg for each household a review outcome touched, returning every
+ * step taken. The outcome has committed, so a failure here is logged rather than
+ * reported as a failed decision; the next settle (another decision, a reopen, the
+ * daily sweep) repeats it.
  */
-async function settleAfterReview(householdIds: readonly number[], opts: { reviewJustCleared?: boolean } = {}) {
+async function settleAfterReview(householdIds: readonly number[], opts: { reviewJustCleared?: boolean } = {}): Promise<SettleStep[]> {
+    const steps: SettleStep[] = [];
     for (const householdId of householdIds) {
         try {
-            await (await settleModule()).settleHouseholdBg(householdId, opts);
+            steps.push(...await (await settleModule()).settleHouseholdBg(householdId, opts));
         } catch (error) {
             logger.error("settle after review failed:", { householdId }, error);
             await logBackendError(error, "settle after review", { householdId });
         }
     }
+    return steps;
 }
 
 /** The one lead a first decision names, validated against the requested household's live leads. */
