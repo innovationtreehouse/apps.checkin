@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Button, Card, Center, Group, Loader, Select, Stack, Text, Title } from "@mantine/core";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useSeedForm } from "@/hooks/useSeedForm";
@@ -73,8 +72,6 @@ export default function LocalizationSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="localization" />
-
       {error && <LoadError what="the localization settings" message={error} onRetry={reload} />}
 
       {!data ? (

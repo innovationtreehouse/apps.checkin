@@ -7,7 +7,6 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { errorMessage, HttpError, invalidateLoads, showError, showSuccess } from "@checkin/component-ui";
 import { api } from "@/lib/api";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
@@ -129,8 +128,6 @@ export default function OutreachSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="outreach" />
-
       {loading ? (
         <Center py="xl"><Loader /></Center>
       ) : (

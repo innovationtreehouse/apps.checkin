@@ -282,6 +282,8 @@ export function tabBadgeFor(href: string, counts: TodoCounts | null): NavBadge |
   const gray = (n: number, label: string): NavBadge | null =>
     n > 0 ? { count: n, color: 'gray', label } : null;
   switch (href) {
+    case '/settings/membership':
+      return settingsMisconfigBadge(counts);
     // Membership Ops. Gray, informational: every in-flight application the
     // Applications page lists (status != ACTIVE). Distinct from the /membership-ops
     // section badge, which is green board-actionable (BLOCKED) only.
