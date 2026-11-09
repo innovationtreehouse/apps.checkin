@@ -239,8 +239,7 @@ Things the app takes as true because they are handled outside it.
   archive of it, which names the surviving record. The merged-away person drops
   out of every live list, count and roster. A record of what happened still names
   them, from the archive, because hiding a since-merged identity there would
-  falsify the history rather than protect anyone. An older merged record that
-  something still refers to stays as a hidden row until that is cleared.  [Decision — owner ruling 2026-10-31; *Principle: decisions are reversible*]
+  falsify the history rather than protect anyone.  [Decision — owner ruling 2026-10-31; *Principle: decisions are reversible*]
 
 - A merge moves email, sign-in identity and verification together as one unit,
   never split across the two records.  [Decision]

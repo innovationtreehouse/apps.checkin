@@ -24,7 +24,7 @@ forgettable, no compiler error on omission, leaks silently — and would mint a
 second convention alongside `LIVE_PERSON`, doubling the surface a drift guard has
 to cover.
 
-`TOMBSTONE_REMOVAL.md`'s out-of-scope section calls this out explicitly: "a
+The #1456 design's out-of-scope section called this out explicitly: "a
 second exclusion dimension … would mint a second forgettable convention and a
 second drift guard."
 
@@ -175,14 +175,14 @@ Two independent disqualifiers:
 
 Add the column, add a drift guard like the retired `LIVE_PERSON` one, ship the
 per-query filter plus a test that greps for missing ones. This is exactly what
-`LIVE_PERSON` has, and `TOMBSTONE_REMOVAL.md` is a 200-line argument that it does
+`LIVE_PERSON` had, and the #1456 design was a 200-line argument that it does
 not work: the guard missed three shipped bugs before its widening found 13 more.
 
 ### Option E: separate table — move the row out (rejected)
 
 Move the archived Household row to an `ArchivedHousehold` table, so
 `prisma.household.*` and every join to it structurally cannot return it. This is
-the pattern `TOMBSTONE_REMOVAL` uses for Person.
+the pattern #1456 uses for Person.
 
 It gives the strongest guarantee, and it is the reason RLS (below) is the
 *second*-strongest rather than the first — RLS keeps the row in the table and
@@ -652,7 +652,7 @@ produces a row the `SELECT` policy would otherwise reject.
 
 No new page. The action sits on the existing household detail view.
 
-## Interaction with #1456 (TOMBSTONE_REMOVAL)
+## Interaction with #1456 (tombstone removal)
 
 No dependency in either direction. #1228 does not need #1456 to land first, and
 #1456 does not need this. If tombstones go away first, `LIVE_PERSON` is deleted
@@ -661,7 +661,7 @@ and because it is enforced in the database rather than by convention, it needs
 no drift guard to survive on its own.
 
 There is a broader point worth recording: RLS is the mechanism `LIVE_PERSON`
-itself should arguably have used. `TOMBSTONE_REMOVAL` removes tombstones because
+itself should arguably have used. #1456 removes tombstones because
 the *convention* is unmaintainable, not because exclusion is wrong. If this
 household work validates RLS-based exclusion in the codebase, a future option for
 Person is an RLS policy on `mergedIntoId IS NULL` instead of row deletion — out

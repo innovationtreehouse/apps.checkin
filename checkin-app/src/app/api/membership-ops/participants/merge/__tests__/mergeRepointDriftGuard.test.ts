@@ -115,7 +115,6 @@ const DISPOSITIONS: Record<string, string> = {
     'ToolStatus.personId': 'pre-refused (RESTRICT) — two certification levels for one human is a decision an operator makes, not a merge.',
 
     // ── deliberately left ─────────────────────────────────────────────────────
-    'Person.mergedIntoId': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and no Person row sets it: a merged-away record is archived in PersonMerge and deleted. The column awaits its drop.',
     'Session.userId': 'deliberately-left (CASCADE) — deleted, not moved: a session is an auth artifact, and there is no reason for the survivor to inherit the merged-away login.',
 };
 
