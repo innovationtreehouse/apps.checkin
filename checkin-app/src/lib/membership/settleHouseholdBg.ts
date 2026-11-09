@@ -6,7 +6,7 @@ import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
-import { householdCheckStandings, householdQualifies, jsonField, liveBgThreshold } from "@/lib/membership/checkStanding";
+import { householdCheckStandings, householdQualifies, jsonField, liveBgThreshold, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { SETTLE_BLOCKABLE_STATUSES, fromWhere, openProcess, personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
@@ -30,9 +30,11 @@ import {
  *   from (`resumeStatus`);
  * - the household qualifies and the application is waiting on its check → its
  *   check is stamped cleared and it converges on payment;
- * - otherwise, consent is recorded, no lead is cleared, nobody is disputed and no
- *   review is open for the household → a check review with no person is opened for it
- *   (`openRequestedReview`).
+ * - a lead is cleared and only a review naming nobody holds the household → that
+ *   review is closed as unneeded and the application clears;
+ * - otherwise, consent is recorded, no lead is cleared or under review, nobody is
+ *   disputed and no review is open for the household → a check review with no person
+ *   is opened for it (`openRequestedReview`).
  *
  * A sent-back review keeps its person DISPUTED, which holds the clearance but does
  * not block: blocking on it would undo the resume a reset exists to give. A denied
@@ -147,9 +149,16 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
 
     if (cleared) return { steps };
     if (!householdQualifies(standings)) {
-        // A new review helps only a household lacking a cleared lead; it cannot lift a dispute.
-        if (standings.members.some((m) => m.standing === "DISPUTED" || (m.isHouseholdLead && m.standing === "CLEARED"))) return { steps };
-        return (await openRequestedReview(tx, { ...process, status }, householdId)) ? { steps: [...steps, "opened"] } : { steps };
+        const leadCleared = standings.members.some((m) => m.isHouseholdLead && m.standing === "CLEARED");
+        const disputed = standings.members.some((m) => m.standing === "DISPUTED");
+        if (leadCleared && !disputed) {
+            // Only a review naming nobody holds it, and a cleared lead has made that review unneeded.
+            if (!(await closeUnneededRequestedReviews(tx, householdId, processId))) return { steps };
+        } else {
+            // A new review helps only a household with no cleared lead and no lead already under review; it cannot lift a dispute.
+            if (disputed || leadCleared || standings.members.some((m) => m.isHouseholdLead && m.standing === "PENDING")) return { steps };
+            return (await openRequestedReview(tx, { ...process, status }, householdId)) ? { steps: [...steps, "opened"] } : { steps };
+        }
     }
     const now = new Date();
 
@@ -217,6 +226,32 @@ export async function blockedByCheckReview(db: DbClient, processId: number): Pro
 function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0]): OrgMembershipProcessStatus {
     const step = RETURNS_AS_WAS.find((s) => s === from);
     return step ?? blockedResetStatus(process);
+}
+
+/**
+ * Closes the open reviews requested for the household that still name nobody, once a
+ * lead has cleared without them. Returns false, closing nothing, when one of them
+ * carries a rejection a wrong-person reset left on it: that needs a decision first.
+ */
+async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, applicationId: number): Promise<boolean> {
+    const unnamed = await tx.orgMembershipProcess.findMany({
+        where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
+        select: { id: true },
+        orderBy: { id: "asc" },
+    });
+    for (const { id } of unnamed) {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${id} FOR UPDATE`;
+        if (await reviewHoldsRejection(tx, id)) return false;
+    }
+    for (const { id } of unnamed) {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id, subjectPersonId: null, ...fromWhere("PENDING_BG_REVIEW") },
+            data: { status: "ARCHIVED", archivedFromStatus: "PENDING_BG_REVIEW", stageEnteredAt: new Date() },
+        });
+        if (!count) return false;
+        await audit(tx, id, householdId, { status: "PENDING_BG_REVIEW" }, { status: "ARCHIVED", action: "closed: a lead cleared without it", applicationId });
+    }
+    return true;
 }
 
 /**

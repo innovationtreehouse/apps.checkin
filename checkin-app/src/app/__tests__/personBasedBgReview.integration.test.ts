@@ -213,6 +213,40 @@ describe('the first decision names the person', () => {
     });
 });
 
+describe("a lead's own review and the household's consent", () => {
+    it("opens no unnamed review while the lead's own review is under way, and clears when that review does", async () => {
+        const f = await family();
+        const own = await ownReview(f.leadId);
+        await attest(revC, own, { result: 'APPROVE' });
+        await markBgConsent(f.appId, f.leadId);
+        expect(await requested(f.householdId)).toHaveLength(0);
+        expect((await row(f.appId)).status).toBe('PENDING_PAYMENT');
+
+        await attest(revA, own, { result: 'APPROVE' });
+        expect((await row(own)).status).toBe('ACTIVE');
+        expect((await row(f.appId)).bgClearedAt).not.toBeNull();
+    });
+
+    it("closes an unnamed review once the lead's own review clears the household", async () => {
+        const f = await family();
+        const reviewId = await consent(f);
+        const own = await ownReview(f.leadId);
+        await attest(revC, own, { result: 'APPROVE' });
+        await attest(revA, own, { result: 'APPROVE' });
+        expect((await row(reviewId)).status).toBe('ARCHIVED');
+        expect((await row(f.appId)).bgClearedAt).not.toBeNull();
+    });
+
+    it('refuses closing an unnamed review that still carries a rejection a wrong-person reset left', async () => {
+        const f = await family();
+        const reviewId = await consent(f);
+        await attest(revA, reviewId, { result: 'REJECT', note: 'concerning', subjectPersonIds: [f.leadId] });
+        await boardResetReview(reviewId, board, { reason: 'the other parent', wrongPerson: true });
+        await expect(archiveApplication(reviewId, board)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(reviewId)).status).toBe('PENDING_BG_REVIEW');
+    });
+});
+
 describe('ruling D: the Volunteer Family tick', () => {
     it('writes Volunteer Family on the requested household at once, on a rejection too, audited, never stored on the review', async () => {
         const f = await family();

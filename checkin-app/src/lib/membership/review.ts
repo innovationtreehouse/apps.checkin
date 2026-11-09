@@ -18,7 +18,7 @@ import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/life
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed, raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
-import { householdHasDisputedCheck, sentBackForSubject } from "@/lib/membership/checkStanding";
+import { householdHasDisputedCheck, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
@@ -371,7 +371,7 @@ async function nameSubject(tx: TxClient, reviewerId: number, processId: number, 
         select: { id: true, status: true, _count: { select: { attestations: true } } },
     });
     for (const other of own) {
-        if (other.status === "BLOCKED" || other._count.attestations > 0 || await isSentBack(tx, other.id)) {
+        if (other.status === "BLOCKED" || other._count.attestations > 0 || await reviewHoldsRejection(tx, other.id)) {
             throw new ReviewError("invalid_subject", `This person already has a background-check review of their own (#${other.id}). Review them there.`);
         }
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${other.id} FOR UPDATE`;
@@ -385,16 +385,6 @@ async function nameSubject(tx: TxClient, reviewerId: number, processId: number, 
     const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, subjectPersonId: null }, data: { subjectPersonId } });
     if (!count) throw movedOn();
     await audit(tx, personActor(reviewerId), processId, { subjectPersonId: null }, { action: "subject named", subjectPersonId });
-}
-
-/** Whether a review's rejection was sent back for its current person (checkStanding). */
-export async function isSentBack(db: DbClient, processId: number): Promise<boolean> {
-    const rows = await db.auditLog.findMany({
-        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId },
-        orderBy: { id: "asc" },
-        select: { oldData: true, newData: true },
-    });
-    return sentBackForSubject(rows);
 }
 
 /**

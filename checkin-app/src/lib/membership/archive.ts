@@ -1,7 +1,8 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { ReviewError, applicantHousehold, isSentBack, reviewHouseholds } from "@/lib/membership/review";
+import { ReviewError, applicantHousehold, reviewHouseholds } from "@/lib/membership/review";
+import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
@@ -47,9 +48,9 @@ export async function archiveApplication(processId: number, actorId: number) {
     await assertNoConflict(process, actorId, "close");
     const refusal = closeRefusal(process);
     if (refusal) throw new ReviewError("wrong_phase", refusal);
-    // A check review whose rejection was sent back still disputes its person; closing it would erase that.
-    if (process.kind === "PERSON_BG" && await isSentBack(prisma, processId)) {
-        throw new ReviewError("wrong_phase", "This check review's rejection was sent back, so it still disputes its person and cannot be closed. It needs two new approvals.");
+    // A check review that still carries a rejection would lose it on closing.
+    if (process.kind === "PERSON_BG" && await reviewHoldsRejection(prisma, processId)) {
+        throw new ReviewError("wrong_phase", "This check review still carries a rejection, so it cannot be closed. It needs a decision from two new reviewers.");
     }
 
     await prisma.$transaction(async (tx) => {
