@@ -95,20 +95,14 @@ describe("membership-ops/participants/merge page", () => {
     }
 
     it("names the date for the kept record's direction, without blocking", async () => {
-      await openPreview({ aAsKeeper: { date: "2026-03-05T00:00:00.000Z", makesHouseholdValid: false }, bAsKeeper: null });
+      await openPreview({ aAsKeeper: { date: "2026-03-05T00:00:00.000Z" }, bAsKeeper: null });
       const notice = screen.getByRole("alert");
       expect(notice).toHaveTextContent("3/5/2026");
-      expect(notice).not.toHaveTextContent("may advance");
       expect(screen.getByRole("button", { name: /Confirm Merge/ })).toBeEnabled();
     });
 
-    it("adds the application outcome when the household's check becomes valid", async () => {
-      await openPreview({ aAsKeeper: { date: "2026-03-05T00:00:00.000Z", makesHouseholdValid: true }, bAsKeeper: null });
-      expect(screen.getByRole("alert")).toHaveTextContent("an application waiting on the check may advance, and a paid one may activate the household");
-    });
-
     it("shows nothing when the kept record's date stands", async () => {
-      await openPreview({ aAsKeeper: null, bAsKeeper: { date: "2026-03-05T00:00:00.000Z", makesHouseholdValid: true } });
+      await openPreview({ aAsKeeper: null, bAsKeeper: { date: "2026-03-05T00:00:00.000Z" } });
       expect(screen.queryByText("Background-check date will change")).not.toBeInTheDocument();
     });
   });

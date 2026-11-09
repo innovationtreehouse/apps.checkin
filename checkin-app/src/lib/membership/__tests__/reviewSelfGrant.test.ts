@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
-import { attest, clearBackgroundCheck, SelfGrantRefusedError } from "@/lib/membership/review";
+import { attest, clearBackgroundCheck, ReviewError, SelfGrantRefusedError } from "@/lib/membership/review";
 import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
 
 jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleHouseholdBg: jest.fn(async () => []), blockedByCheckReview: jest.fn(async () => false) }));
@@ -55,17 +55,22 @@ beforeEach(() => {
 });
 
 describe("clearBackgroundCheck self-grant guard", () => {
-    it.each([
-        ["a household member's PERSON_BG", { subjectPersonId: 2, householdId: 10 }],
-        ["the actor's own household", { subjectPersonId: null, householdId: 10 }],
-    ])("refuses %s, stamps nothing, and carries the refusal out of the transaction", async (_label, process) => {
-        const tx = fakeTx(process);
+    it("refuses a household member's PERSON_BG, stamps nothing, and carries the refusal out of the transaction", async () => {
+        const tx = fakeTx({ subjectPersonId: 2, householdId: 10 });
         const err = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(SelfGrantRefusedError);
         expect((err as SelfGrantRefusedError).refusal).toMatchObject({ actorId: 1, newData: { reason: "own_household" } });
         expect(tx.person.update).not.toHaveBeenCalled();
         expect(tx.person.updateMany).not.toHaveBeenCalled();
         expect(tx.auditLog.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
+    });
+
+    it("refuses a household application: only a check review clears", async () => {
+        const tx = fakeTx({ subjectPersonId: null, householdId: 20 });
+        const err = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ReviewError);
+        expect((err as ReviewError).code).toBe("wrong_phase");
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
     it("refuses an actor whose household can't be resolved", async () => {

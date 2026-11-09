@@ -45,9 +45,10 @@ import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGu
  * (§3.4): its review id stays in the audit rows this function reads back.
  *
  * `reviewJustCleared` picks the payment-open email: a review completed, or a check
- * the household already held was recognised.
+ * the household already held was recognised. `trigger` names what prompted the
+ * settle (a person merge, say) on every audit row it writes.
  */
-export async function settleHouseholdBg(householdId: number, opts: { reviewJustCleared?: boolean } = {}): Promise<SettleStep[]> {
+export async function settleHouseholdBg(householdId: number, opts: { reviewJustCleared?: boolean; trigger?: SettleTrigger } = {}): Promise<SettleStep[]> {
     const app = await prisma.orgMembershipProcess.findFirst({
         where: { orgMembership: { householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
         orderBy: { id: "desc" },
@@ -57,7 +58,7 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
     if (CONVERGES.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
     const threshold = await liveBgThreshold();
 
-    const result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold));
+    const result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger));
 
     if (result.steps.includes("opened")) await notifyReviewers();
     if (result.steps.includes("paidReject")) await notifyBoardPaidReject(app.id);
@@ -95,6 +96,9 @@ export async function settleApplicationsAwaitingCheck(): Promise<{ households: n
 /** "paidReject": the application blocked had been paid, and the Board is told so. */
 export type SettleStep = "denied" | "blocked" | "paidReject" | "resumed" | "cleared" | "opened";
 
+/** What prompted a settle, recorded on its audit rows so a reader can see why the household moved. */
+export type SettleTrigger = { kind: "merge"; personMergeId: number };
+
 type Settled = { steps: SettleStep[]; advanceExternal?: boolean; clearance?: ClearanceOutcome };
 
 const ACTOR = systemActor("system:membership-bg-settle");
@@ -108,7 +112,8 @@ const STAMPS: readonly ProcessStatus[] = ["PENDING_EXTERNAL_ACTION", "PENDING_PA
 /** Held steps that nothing but a clearance moves: they converge on payment here. */
 const CONVERGES: readonly ProcessStatus[] = ["PENDING_BG_REVIEW", "PENDING_BG_CLEARANCE"];
 
-async function settleInTx(tx: TxClient, processId: number, householdId: number, threshold: Date | null): Promise<Settled> {
+async function settleInTx(tx: TxClient, processId: number, householdId: number, threshold: Date | null, trigger?: SettleTrigger): Promise<Settled> {
+    const record = (oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) => audit(tx, processId, householdId, oldData, withTrigger(newData, trigger));
     // Process, then household: the order clearBackgroundCheck locks in.
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
     if (await lockAndFindDeniedHousehold(tx, [householdId]) !== null) return { steps: ["denied"] };
@@ -130,12 +135,12 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         if (block === null) return { steps };
         const recorded = block.reviewIds;
         const unrecorded = blockingNow.filter((id) => !recorded.includes(id));
-        if (unrecorded.length) await audit(tx, processId, householdId, { status }, { action: BLOCK_REASON, blockingReviewIds: unrecorded });
+        if (unrecorded.length) await record({ status }, { action: BLOCK_REASON, blockingReviewIds: unrecorded });
         if (unrecorded.length || await tx.orgMembershipProcess.count({ where: { id: { in: recorded }, status: "BLOCKED" } })) return { steps };
         const to = resumeStatus(block.from, process);
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
         if (!count) return { steps };
-        await audit(tx, processId, householdId, { status }, { status: to, action: "check review no longer rejected", blockingReviewIds: recorded });
+        await record({ status }, { status: to, action: "check review no longer rejected", blockingReviewIds: recorded });
         status = to;
         cleared = false;
         steps.push("resumed");
@@ -146,7 +151,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
             data: { status: "BLOCKED", stageEnteredAt: new Date(), isPaymentPlanRequested: false },
         });
         if (!count) return { steps };
-        await audit(tx, processId, householdId, { status }, { status: "BLOCKED", reason: BLOCK_REASON, blockingReviewIds: blockingNow });
+        await record({ status }, { status: "BLOCKED", reason: BLOCK_REASON, blockingReviewIds: blockingNow });
         return { steps: process.paidAt ? ["blocked", "paidReject"] : ["blocked"] };
     }
 
@@ -156,11 +161,11 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         const disputed = standings.members.some((m) => m.standing === "DISPUTED");
         if (leadCleared && !disputed) {
             // Only a review naming nobody holds it, and a cleared lead has made that review unneeded.
-            if (!(await closeUnneededRequestedReviews(tx, householdId, processId))) return { steps };
+            if (!(await closeUnneededRequestedReviews(tx, householdId, processId, trigger))) return { steps };
         } else {
             // A new review helps only a household with no cleared lead and no lead already under review; it cannot lift a dispute.
             if (disputed || leadCleared || standings.members.some((m) => m.isHouseholdLead && m.standing === "PENDING")) return { steps };
-            return (await openRequestedReview(tx, { ...process, status }, householdId)) ? { steps: [...steps, "opened"] } : { steps };
+            return (await openRequestedReview(tx, { ...process, status }, householdId, trigger)) ? { steps: [...steps, "opened"] } : { steps };
         }
     }
     const now = new Date();
@@ -170,7 +175,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         if (!count) return { steps };
         // Reviewers' Volunteer Family ticks are written when they are made; only the designation allowlist is applied here.
         await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
-        await audit(tx, processId, householdId, { status }, { bgCleared: true, reason: "household qualifies on its people's checks" });
+        await record({ status }, { bgCleared: true, reason: "household qualifies on its people's checks" });
         return { steps: [...steps, "cleared"], advanceExternal: status === "PENDING_EXTERNAL_ACTION" };
     }
     if (!CONVERGES.includes(status)) return { steps };
@@ -187,7 +192,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         await setHouseholdStatus(tx, orgMembershipId, { from: ["NONE", "REVOKED", "ACTIVE"], to: "ACTIVE", actor: ACTOR, reason: "background check settled on a paid application" });
     }
     await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
-    await audit(tx, processId, householdId, { status }, { status: to, bgCleared: true, reason: "household qualifies on its people's checks", ...(refunded ? { refundedOrder: true } : {}) });
+    await record({ status }, { status: to, bgCleared: true, reason: "household qualifies on its people's checks", ...(refunded ? { refundedOrder: true } : {}) });
     const clearance: ClearanceOutcome = refunded
         ? { status: to, activated: false, householdId: null, isInitial: false, refunded: { processId, shopifyOrderId: process.shopifyOrderId! } }
         : { status: to, activated: paid, householdId, isInitial: process.kind === "INITIAL" };
@@ -310,7 +315,7 @@ function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<ty
  * lead has cleared without them. Returns false, closing nothing, when one of them
  * carries a rejection a wrong-person reset left on it: that needs a decision first.
  */
-async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, applicationId: number): Promise<boolean> {
+async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, applicationId: number, trigger?: SettleTrigger): Promise<boolean> {
     const unnamed = await tx.orgMembershipProcess.findMany({
         where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
         select: { id: true },
@@ -326,7 +331,7 @@ async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, 
             data: { status: "ARCHIVED", archivedFromStatus: "PENDING_BG_REVIEW", stageEnteredAt: new Date() },
         });
         if (!count) return false;
-        await audit(tx, id, householdId, { status: "PENDING_BG_REVIEW" }, { status: "ARCHIVED", action: "closed: a lead cleared without it", applicationId });
+        await audit(tx, id, householdId, { status: "PENDING_BG_REVIEW" }, withTrigger({ status: "ARCHIVED", action: "closed: a lead cleared without it", applicationId }, trigger));
     }
     return true;
 }
@@ -337,7 +342,7 @@ async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, 
  * names nobody or someone still in it. Runs under the application's lock, so two
  * settles never open two. The first reviewer names the person.
  */
-async function openRequestedReview(tx: TxClient, app: { id: number; status: OrgMembershipProcessStatus; bgConsentAt: Date | null }, householdId: number): Promise<boolean> {
+async function openRequestedReview(tx: TxClient, app: { id: number; status: OrgMembershipProcessStatus; bgConsentAt: Date | null }, householdId: number, trigger?: SettleTrigger): Promise<boolean> {
     if (!app.bgConsentAt || app.status === "BLOCKED") return false;
     const open = await tx.orgMembershipProcess.count({
         where: {
@@ -359,10 +364,14 @@ async function openRequestedReview(tx: TxClient, app: { id: number; status: OrgM
             tableName: "OrgMembershipProcess",
             affectedEntityId: review.id,
             secondaryAffectedEntity: householdId,
-            newData: { kind: "PERSON_BG", status: "PENDING_BG_REVIEW", requestedForHouseholdId: householdId, subjectPersonId: null, bgConsentAt: true, requestedByApplicationId: app.id },
+            newData: withTrigger({ kind: "PERSON_BG", status: "PENDING_BG_REVIEW", requestedForHouseholdId: householdId, subjectPersonId: null, bgConsentAt: true, requestedByApplicationId: app.id }, trigger),
         },
     });
     return true;
+}
+
+function withTrigger(newData: Prisma.InputJsonObject, trigger: SettleTrigger | undefined): Prisma.InputJsonObject {
+    return trigger ? { ...newData, trigger } : newData;
 }
 
 function audit(tx: TxClient, processId: number, householdId: number, oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) {

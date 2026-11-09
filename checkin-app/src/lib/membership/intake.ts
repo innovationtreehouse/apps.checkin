@@ -7,11 +7,11 @@ import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete, getOwnBackgroundCheck } from "@/lib/membership/external";
-import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
+import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
+import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
@@ -564,21 +564,10 @@ export async function submitIntake(userId: number) {
         );
     }
 
-    // If a household guardian already holds a still-valid background check (same
-    // rule as renewals), auto-clear the BG requirement now — the applicant won't
-    // need to consent to or wait on a new check, just sign + pay.
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    const bgFresh = await householdBgIsFresh(household.id, boundary, settings?.bgRecheckMonths);
-
     await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: process.id, ...fromWhere("INTAKE") },
-            data: {
-                status: "PENDING_EXTERNAL_ACTION",
-                stageEnteredAt: new Date(),
-                ...(bgFresh ? { bgClearedAt: new Date() } : {}),
-            },
+            data: { status: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date() },
         });
         if (count !== 1) throw new IntakeError("no_process", "No application is awaiting your information.");
 
@@ -589,17 +578,21 @@ export async function submitIntake(userId: number) {
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: process.id,
                 oldData: { status: "INTAKE" },
-                newData: { status: "PENDING_EXTERNAL_ACTION", ...(bgFresh ? { bgClearedAt: true } : {}) },
+                newData: { status: "PENDING_EXTERNAL_ACTION" },
             },
         });
-
-        // Fresh-check shortcut ⇒ clearBackgroundCheck never runs this cycle, so match
-        // the volunteer-designation allowlist here or it would never be applied.
-        if (bgFresh) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, household.id, false);
     });
 
+    // A household that already qualifies on its people's checks is stamped cleared here,
+    // so the applicant only signs and pays; one with a disputed adult is blocked.
+    try {
+        await settleHouseholdBg(household.id);
+    } catch (error) {
+        await logBackendError(error, "household background-check settle after intake", { householdId: household.id, processId: process.id });
+    }
+
     // The external actions (contract sign, BG consent) can already be satisfied the
-    // moment we land at PENDING_EXTERNAL_ACTION: bgFresh stamps bgClearedAt above,
+    // moment we land at PENDING_EXTERNAL_ACTION: settle stamps bgClearedAt above,
     // and the board can pre-mark contractSignedAt/bgConsentAt on the INTAKE row via
     // the ops API. advanceExternalIfComplete doesn't fire on those marks
     // (status isn't PENDING_EXTERNAL_ACTION yet), so without this the process would

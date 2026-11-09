@@ -28,7 +28,6 @@ interface ParticipantMergeView {
 
 interface BgNotice {
   date: string;
-  makesHouseholdValid: boolean;
 }
 
 // Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
@@ -492,7 +491,6 @@ export default function MergeParticipants() {
               <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong> will
               end up with the background-check date {formatDateOnly(bgNotice.date)}, carried over
               from <strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong>.
-              {bgNotice.makesHouseholdValid && " This makes the household's background check valid: an application waiting on the check may advance, and a paid one may activate the household."}
             </Alert>
           )}
 

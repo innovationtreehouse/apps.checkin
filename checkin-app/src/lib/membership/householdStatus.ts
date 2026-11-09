@@ -39,8 +39,8 @@ const ROUTE = "membership-ops/households/route.ts";
 
 export const TRANSITIONS: readonly Transition<TState>[] = [
     { from: "∅", to: "NONE", event: "ensureHouseholdMembership", actor: "applicant/board/system", guardSite: "householdStatus.ts insert by householdId skipping duplicates (create only, never sets status)" },
-    { from: "NONE", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
-    { from: "REVOKED", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
+    { from: "NONE", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / settleHouseholdBg.ts settleInTx:setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
+    { from: "REVOKED", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / settleHouseholdBg.ts settleInTx:setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
     { from: "ACTIVE", to: "REVOKED", event: "revoke", actor: "board", guardSite: `${ROUTE} setHouseholdStatus from [ACTIVE] + COI` },
     { from: "NONE", to: "DENIED", event: "deny", actor: "board", guardSite: `${ROUTE} setHouseholdStatus + COI + no board member, probed under the BOARD role lock` },
     { from: "ACTIVE", to: "DENIED", event: "deny", actor: "board", guardSite: `${ROUTE} setHouseholdStatus + COI + no board member, probed under the BOARD role lock` },

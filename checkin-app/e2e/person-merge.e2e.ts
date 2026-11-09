@@ -74,7 +74,7 @@ async function requestMerge(page: Page, keptEmail: string, mergedEmail: string):
   await page.getByRole("button", { name: "Proceed to Preview" }).click();
 
   const notice = page.locator(".mantine-Alert-root").filter({ hasText: "Background-check date will change" });
-  await expect(notice).toContainText("This makes the household's background check valid");
+  await expect(notice).toBeVisible();
   const answered = page.waitForResponse((res) => new URL(res.url()).pathname === "/api/membership-ops/participants/merge");
   await page.getByRole("button", { name: "Confirm Merge & Delete" }).click();
   await answered;

@@ -98,6 +98,19 @@ describe("membership-audit/compliance page", () => {
     expect(screen.getByText(/from Jo Chen \(duplicate\)/)).toBeInTheDocument();
     expect(screen.getByText("Unverified provenance")).toBeInTheDocument();
   });
+
+  it("lists people with a disputed check, and the list alone is not the empty state", async () => {
+    mockFetchJson({
+      "/api/membership-audit/compliance": {
+        peopleWithDisputedCheck: [{ personId: 30, name: "Pat Lee", householdId: 5, programId: null, programName: null, reason: "BG_DISPUTED" }],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText("Background check disputed")).toBeInTheDocument();
+    expect(screen.getByText("Pat Lee")).toBeInTheDocument();
+    expect(screen.queryByText(/Everyone is in compliance/)).not.toBeInTheDocument();
+  });
 });
 
 describe("the Cleared since filter while the list reloads", () => {

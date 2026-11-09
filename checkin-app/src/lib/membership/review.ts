@@ -16,10 +16,10 @@ import { personActor, type AuditActor } from "@/lib/auditActor";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
-import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
-import { isOrderReversed, raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
+import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
-import { householdHasDisputedCheck, reviewHoldsRejection } from "@/lib/membership/checkStanding";
+import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
@@ -508,14 +508,9 @@ export async function undoOwnApproval(reviewerId: number, processId: number, rea
 }
 
 /**
- * The background check is satisfied: a check review's second approval (stamps its
- * person's lastBackgroundCheck and resolves the review), or a merge carrying a check
- * forward onto a household application (stamps bgClearedAt, then converges):
- *   - already paid -> ACTIVE (payment finished first)
- *   - paid on a refunded order -> held at PENDING_BG_CLEARANCE; the outcome
- *     carries `refunded` so the caller raises it to the board
- *   - not yet paid -> PENDING_PAYMENT (applicant still needs to pay)
- * A DENIED household converges nowhere: nothing is written, and the outcome
+ * A check review's second approval: stamps its person's lastBackgroundCheck and
+ * resolves the review. settleHouseholdBg moves the households after commit. A subject
+ * in a DENIED household converges nowhere: nothing is written, and the outcome
  * carries `denied` so the caller raises it to the board after commit.
  * Must run inside a tx holding a FOR UPDATE lock on the process row; `expected` is the
  * state the caller expects the process to still be in, re-checked here.
@@ -525,69 +520,28 @@ export async function clearBackgroundCheck(
     processId: number,
     actorId: number,
     expected: { where: Prisma.OrgMembershipProcessWhereInput },
-    opts: { provenance?: ClearanceProvenance } = {},
 ): Promise<ClearanceOutcome> {
     const process = await tx.orgMembershipProcess.findFirst({
         where: { id: processId, ...expected.where },
         include: { attestations: true },
     });
     if (!process) throw movedOn();
+    if (process.kind !== "PERSON_BG") throw new ReviewError("wrong_phase", "Only a check review clears a background check.");
+    if (!process.subjectPersonId) throw new ReviewError("wrong_phase", "This background check names nobody, so it cannot clear.");
     const now = new Date();
-
-    // A check review stamps only its person; settleHouseholdBg moves the households after commit.
-    if (process.kind === "PERSON_BG") {
-        if (!process.subjectPersonId) throw new ReviewError("wrong_phase", "This background check names nobody, so it cannot clear.");
-        const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
-        await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
-        // A subject in a DENIED household converges nowhere, as on the household path below.
-        if (subject.householdId !== null) {
-            const [subjectMembership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${subject.householdId} FOR UPDATE`;
-            if (subjectMembership?.status === "DENIED") {
-                return deniedClearance(tx, process.status, subject.householdId, processId);
-            }
+    const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
+    await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
+    if (subject.householdId !== null) {
+        const [subjectMembership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${subject.householdId} FOR UPDATE`;
+        if (subjectMembership?.status === "DENIED") {
+            return deniedClearance(tx, process.status, subject.householdId, processId);
         }
-        await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
-        const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
-        if (!count) throw movedOn();
-        await audit(tx, personActor(actorId), processId, { status: process.status }, { status: "ACTIVE", bgCleared: true, subjectPersonId: process.subjectPersonId });
-        return { status: "ACTIVE", activated: false, householdId: null, isInitial: false };
     }
-
-    // Household INITIAL/RENEWAL path: orgMembershipId is always set here. Lock the
-    // household row so a concurrent deny either lands first (and is seen) or waits.
-    const orgMembershipId = process.orgMembershipId!;
-    await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
-    const membership = await tx.orgMembership.findUnique({ where: { id: orgMembershipId }, select: { householdId: true, status: true } });
-    if (!membership) throw new ReviewError("not_found", "Membership not found.");
-    const householdId = membership.householdId;
-    if (membership.status === "DENIED") {
-        return deniedClearance(tx, process.status, householdId, processId);
-    }
-    const paid = !!process.paidAt;
-    const refunded = paid && !!process.shopifyOrderId && (await isOrderReversed(tx, process.shopifyOrderId));
-    const status = refunded ? "PENDING_BG_CLEARANCE" : paid ? "ACTIVE" : "PENDING_PAYMENT";
-
-    // A household clearance (the merge carry-forward) stamps nobody: the carried
-    // date is already on the person. Nobody in the household may hold a disputed check.
-    if (await householdHasDisputedCheck(tx, householdId)) {
-        throw new ReviewError("wrong_phase", "Someone in this household has a disputed background check, so the application cannot clear.");
-    }
-    await throwIfOwnHousehold(tx, actorId, { householdId }, { bgClearedAt: now.toISOString() });
-    await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
-
-    const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status, stageEnteredAt: now } });
+    await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
+    const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
     if (!count) throw movedOn();
-    if (status === "ACTIVE") {
-        await setHouseholdStatus(tx, orgMembershipId, { from: ["NONE", "REVOKED", "ACTIVE"], to: "ACTIVE", actor: personActor(actorId), reason: "background check cleared on a paid application" });
-    }
-
-    // provenance is set when something other than a two-reviewer attestation
-    // produced this clearance; without it the row is indistinguishable from one.
-    await audit(tx, personActor(actorId), processId, { status: process.status }, { status, bgCleared: true, ...(refunded ? { refundedOrder: true } : {}), ...(opts.provenance ?? {}) });
-    if (refunded) {
-        return { status, activated: false, householdId: null, isInitial: false, refunded: { processId, shopifyOrderId: process.shopifyOrderId! } };
-    }
-    return { status, activated: paid, householdId, isInitial: process.kind === "INITIAL" };
+    await audit(tx, personActor(actorId), processId, { status: process.status }, { status: "ACTIVE", bgCleared: true, subjectPersonId: process.subjectPersonId });
+    return { status: "ACTIVE", activated: false, householdId: null, isInitial: false };
 }
 
 /** A clearance reaching a DENIED household. The board item commits with the clearance's transaction, because no sweep finds it later. */
@@ -618,9 +572,6 @@ export type ClearanceOutcome = {
     /** Set when the paid order was refunded: held unactivated, and the board is owed an item. */
     refunded?: { processId: number; shopifyOrderId: string };
 };
-
-/** Why a clearance happened, when it was not two reviewers attesting. */
-export type ClearanceProvenance = { via: string; sourcePersonId: number; reason: string };
 
 /**
  * Runs a step whose failure must not change what the clearance reports: it has

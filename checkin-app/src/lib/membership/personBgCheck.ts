@@ -28,8 +28,8 @@ import { calculateAge } from "@/lib/time";
  * └──────────────────────────────────────────────────────────────────────────────────────┘
  *
  * Per-person background-check verdict for the board compliance dashboard
- * (Phase 1 — warn-only, read-only). Generalizes householdBgIsFresh from
- * "any household lead is fresh" to "this specific person is fresh".
+ * (Phase 1 — warn-only, read-only): whether this specific person's own check
+ * is fresh.
  *
  *   NEEDED      — ≥18 (as of the boundary) and NOT background-checked recently.
  *   FRESH       — check still valid at the boundary; already covered.
@@ -42,7 +42,7 @@ export type PersonBgVerdict = "NEEDED" | "FRESH" | "MINOR" | "DOB_MISSING";
 
 /**
  * Freshness cutoff: boundary minus recheckMonths. Mirrors monthsBefore() in
- * renewal.ts (UTC month math) so per-person freshness matches householdBgIsFresh.
+ * renewal.ts (UTC month math) so per-person freshness matches the household's check standing.
  */
 export function bgFreshThreshold(boundary: Date, recheckMonths: number): Date {
     const d = new Date(boundary);
