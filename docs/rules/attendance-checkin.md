@@ -116,8 +116,7 @@ person in front of it.
 - Only the kiosk starts or ends a visit while it is happening, and only the kiosk
   closes the building. The website offers no check-in, check-out, force checkout
   or close, to anyone; people badge at the door. The nightly auto-close is the
-  backstop, a close no person makes. This replaces the owner's ruling of
-  2026-10-11 that a keyholder can close the building from the web.  [Decision — Board ruling B7/B14]
+  backstop, a close no person makes.  [Decision — Board ruling B7/B14]
 
 - A close is one event: a keyholder closed the building at a moment, at the
   kiosk, online or offline. The keyholder decides, from what the kiosk shows. The
