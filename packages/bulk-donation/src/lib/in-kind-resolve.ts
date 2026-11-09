@@ -4,7 +4,7 @@
 // Set-account names a held line's account by hand, which the next book uses over every rule.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { LINE_ACCOUNT_TYPES, accountTypeRefusal, appKeyOf, liveRoleAccountIds, readCloseDate } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, accountTypeRefusal, appKeyOf, roleAccountIds, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { readDonationSettings } from "../services/settingsService";
@@ -122,7 +122,7 @@ async function readMatch(run: Run, gift: GiftToBook, input: Extract<InKindQbReso
     const [je] = await run.client.journalEntriesByIds([input.journalEntryId]);
     if (!je) throw new ServiceError(422, `QuickBooks has no JournalEntry ${input.journalEntryId}`);
     if (dollarsToCents(je.TotalAmt) !== gift.totalCents) throw new ServiceError(422, `JournalEntry ${je.Id} is not for the gift's value`);
-    const roleAccounts = liveRoleAccountIds(run.accounts);
+    const roleAccounts = roleAccountIds(run.accounts);
     const fits = (l: NonNullable<typeof je.Line>[number]) => {
       const detail = l.JournalEntryLineDetail;
       const account = detail?.AccountRef?.value;

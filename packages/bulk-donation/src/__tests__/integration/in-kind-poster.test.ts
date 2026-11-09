@@ -987,25 +987,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
-  it("books donated equipment to the account a retired fixed-assets role still holds", async () => {
-    accounts = { ...ACCOUNTS, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" };
-    await switchOn();
-    const id = await acceptedGift();
-    const [, lathe] = await lineIds(id);
-    assets = [lathe];
-
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
-    expect(qbo.posts[0].body.Line.map((l) => l.JournalEntryLineDetail.AccountRef.value)).toEqual(["400", "600", "150"]);
-  });
-
-  it("matches a hand journal entry debiting an account a retired role still holds", async () => {
-    accounts = { ...ACCOUNTS, FIXED_ASSETS: "150" };
-    const id = await unbookedGift();
-    qbo.journals.push(handJournal("82", [["Credit", "400", 33], ["Debit", "600", 11], ["Debit", "150", 22]]));
-    await expect(resolve(id, { action: "match", journalEntryId: "82" })).resolves.toMatchObject({ qbState: "MATCHED" });
-  });
-
-  it("holds a line whose account a live books-map role books to, without trying the write", async () => {
+  it("holds a line whose account a books-map role books to, without trying the write", async () => {
     accounts = { ...ACCOUNTS, SHOPIFY_FEES: "610" };
     await switchOn();
     unruled.add(LATHE_GTIN);

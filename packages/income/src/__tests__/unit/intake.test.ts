@@ -26,6 +26,8 @@ describe("parseExpected", () => {
     [{ txnDate: "28/06/2026" }, /YYYY-MM-DD/],
     [{ netCents: 0 }, /positive/],
     [{ bankRole: "NOPE" }, /books-map role/],
+    [{ bankRole: "BENEVITY_FEES" }, /books-map role/],
+    [{ lines: [{ role: "SHOPIFY_BANK", budgetOwnerId: null, amountCents: 900 }] }, /retired books-map role/],
     [{ lines: [] }, /at least one line/],
     [{ netCents: 901 }, /sum to 900/],
     [{ lines: [{ accountId: "60", budgetOwnerId: 0, amountCents: 900 }] }, /budgetOwnerId/],

@@ -21,19 +21,13 @@ export const LINE_ACCOUNT_TYPES = {
 /** The types each books-map role accepts. */
 export const BOOKS_MAP_ROLE_ACCOUNT_TYPES: Record<BooksMapRole, readonly string[]> = {
   SHOPIFY_BANK: ["Bank"],
-  SHOPIFY_SALES: LINE_ACCOUNT_TYPES.storeSale,
   SHOPIFY_CHARGE_REMAINDER: [...INCOME, "Other Current Liability"],
   SHOPIFY_FEES: EXPENSE,
   SHOPIFY_ADJUSTMENTS: [...INCOME, "Other Current Liability"],
   SHOPIFY_CUSTOM_ITEMS: LINE_ACCOUNT_TYPES.customItem,
   BENEVITY_BANK: ["Bank"],
-  BENEVITY_DONATIONS: LINE_ACCOUNT_TYPES.givingGift,
-  BENEVITY_MATCHES: LINE_ACCOUNT_TYPES.givingGift,
-  BENEVITY_FEES: EXPENSE,
   EXPENSE_PAYMENT: ["Bank", "Credit Card"],
   INKIND_INCOME: INCOME,
-  INKIND_EXPENSE: LINE_ACCOUNT_TYPES.donatedGoods,
-  FIXED_ASSETS: LINE_ACCOUNT_TYPES.donatedCapital,
   INKIND_CLEARING: ["Bank", "Other Current Asset", "Other Current Liability"],
 };
 

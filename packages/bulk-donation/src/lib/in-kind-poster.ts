@@ -8,7 +8,7 @@ import {
   SWEEP_DAYS,
   appKeyOf,
   findOrCreateInKindJournal,
-  liveRoleAccountIds,
+  roleAccountIds,
   qbGate,
   qbKey,
   readCloseDate,
@@ -265,7 +265,7 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
   const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
   const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
   const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.qbAccounts()]);
-  const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb, liveRoleAccountIds(run.accounts));
+  const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb, roleAccountIds(run.accounts));
   if (typeof accounts === "string") return { state: QB_MATCH_STATE.NEEDS_ACCOUNT, note: accounts, entries: [] };
   const debits = lines.flatMap((l): InKindJournalLine[] => {
     const accountId = accounts.get(l.id);

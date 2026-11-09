@@ -122,10 +122,10 @@ describe("income posting binding", () => {
 });
 
 describe("Benevity posting readiness", () => {
-  it("names every live Benevity role the books map leaves unset; gifts and matches book to their rules' accounts, net of fees", async () => {
+  it("names every Benevity role the books map leaves unset; gifts and matches book to their rules' accounts, net of fees", async () => {
     const { benevityPostingMissing } = await import("../configure");
     process.env.QBO_REALM_ID = "123";
-    roleAccounts.mockResolvedValue({ BENEVITY_DONATIONS: "2", BENEVITY_FEES: "4" });
+    roleAccounts.mockResolvedValue({});
     await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity disbursements: bank account"]);
 
     delete process.env.QBO_REALM_ID;

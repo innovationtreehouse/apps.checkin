@@ -1922,7 +1922,6 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     const row = await rowFor("D1");
     const legacy = { ...disbursement(), lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_700 }] };
     await db.payoutReconciliation.update({ where: { id: row!.id }, data: { expected: legacy } });
-    roleAccounts = { ...ROLES, BENEVITY_DONATIONS: "60" };
 
     expect(await drain()).toMatchObject({ post: { posted: 0, held: 1 } });
     expect(qbo.posts).toHaveLength(0);

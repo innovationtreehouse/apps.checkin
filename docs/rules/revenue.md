@@ -90,6 +90,16 @@ Things the app takes as true because they are handled outside it.
   goods read it when they book and keep no copy of their own, so one edit reaches
   every area.  [Decision — *Principle: least privilege*]
 
+- The books map holds one account each only for what is one account by nature:
+  the bank accounts, card remainder, adjustments, online-store fees, custom
+  items, in-kind income, the in-kind clearing account and the expense payment
+  account.  [Decision — owner]
+
+- Each online-store sale, giving-platform gift and gift of goods books to the
+  account finance mapped for its item. A line with no mapping, or whose account
+  can't be used, waits for finance; nothing books it to a fallback account. A
+  catch-all exists only as a `*` rule finance writes.  [Decision — owner]
+
 - Every account the app books to must be of a QuickBooks type listed for its
   line or role. The books map, the giving-platform account rules, expense's
   QuickBooks accounts and account rules, the account finance sets on a held
@@ -282,6 +292,9 @@ Income checks each online-store payout against the deposits in the books.
 - A custom item, typed into an order with no store item behind it, needs no
   per-item decision: it books as general income to the books map's custom-items
   account. A payout with a custom item waits while that account is unset.  [Decision — owner]
+
+- Online-store fees are merchant-account fees on direct revenue. They book as an
+  expense on their own account, never as a reduction of income.  [Decision — owner]
 
 - Finance can decide on the app's program and membership items before their first
   sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]
