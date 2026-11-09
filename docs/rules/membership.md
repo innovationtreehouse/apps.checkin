@@ -198,7 +198,55 @@ Procedure below is built on them.
 - An application in background-check review is the reviewers' work, not the
   board's. Board queues count blocked applications only.  [Decision]
 
-- A single rejection blocks the application; approvals do not outweigh it.  [Decision]
+- A check review is about one person. A review opened by a household's consent
+  names nobody; whoever decides first, approving or rejecting, names the one
+  household lead whose report they read. A later decision may repeat that person
+  and never names another.  [Decision]
+
+- Naming a person who already has a check review of their own is refused when
+  that review has a decision on it, is blocked, or still carries a rejection; the
+  reviewer reviews them there. A review of theirs with no decisions is closed in
+  favour of the new one.  [Decision]
+
+- A reviewer who believes the named person is wrong asks the Board for a
+  wrong-person reset, which returns the review to no person. The person cleared
+  off it keeps any rejection it held, and naming them again brings it back.  [Decision]
+
+- A person's check is disputed while a review of theirs is blocked, or while its
+  rejection has been reset by the Board or changed to approve and the review has
+  not cleared since. Undoing the changed approval does not end the dispute. A
+  Board reset of a review that was never rejected disputes nobody.  [Decision]
+
+- A household qualifies on its background check when at least one lead holds a
+  valid clearance, nobody in the household is disputed, and no review requested
+  for it is waiting to be named.  [Decision — *Policy: Membership Policy, Art. VI §VI.1; Art. IX*]
+
+- A rejection of anyone in the household blocks its open application; approvals
+  do not outweigh it. A Board reset or the rejector's change to approve lifts the
+  block and the application resumes, but it cannot clear while that person is
+  disputed.  [Decision — *Policy: Membership Policy, Art. IX*]
+
+- The Board may release a household's application from the rejection of someone
+  who has since left the household, with a written reason. The release is refused
+  while anyone in the household holds a blocked review, for a denied household,
+  and for an actor in the released household, in the departed person's current
+  household, or who is that person. The application resumes where a reset of the
+  blocking review would have put it. The rejection stays on the person and blocks
+  any household they are in, this one included if they return.  [Decision]
+
+- Every check-review rejection sends the Board one email. A rejection that blocks
+  a paid application sends the paid-application email; any other names the
+  person, their household and the review. A retry, a later settle or the daily
+  sweep does not send it again; a rejection after a Board reset is a new decision
+  and does.  [Decision — *Principle: people decide about people*]
+
+- Once a lead is cleared, a review the household asked for that still names
+  nobody is closed and the application clears, unless that review still carries
+  a rejection. No review naming nobody is opened for a household while a lead is
+  cleared or under review, or while anyone in it is disputed.  [Decision]
+
+- A check review that still carries a rejection cannot be closed; it needs a
+  decision from two new reviewers.  [Decision]
 
 - A household has one open application at a time, joining or renewing. An
   active household only renews; a revoked one continues the renewal it already
@@ -212,16 +260,16 @@ Procedure below is built on them.
 - Nobody clears a blocked application on their own. After a rejection the check
   needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25, 2026-10-27]
 
-- A person merge that brings in a valid check clears an application that has
-  approvals only; the approvals stay on it as a record. A standing rejection stops
-  the merge, and so does a Board reset, which needs two new approvals whatever the
-  earlier check says. A rejection changed to approve and then undone no longer
-  stands, so a merge after that clears the application.  [Decision — owner ruling 2026-10-30]
+- A person merge is refused while either record is disputed and the merge would
+  carry in a newer check date or move a second check review onto that person.
+  Otherwise the newer date is carried and both households are settled on their
+  people's checks, whoever runs the merge, so a carried-in valid check can
+  complete an application waiting on it.  [Decision]
 
 - The reviewer who rejected may change their answer to approve. That starts the
   review over: every earlier decision on it, theirs and anyone else's, is
-  discarded, and their approval is the first of the two it needs. They name the
-  adult whose report they read, as any first approver does.  [Decision — Board ruling B5/B25, 2026-10-27]
+  discarded, and their approval is the first of the two it needs. The review
+  keeps its person, who stays disputed until it clears.  [Decision — Board ruling B5/B25, 2026-10-27]
 
 - A background-check date comes only from a clearance, or from a person merge
   carrying one forward. Nobody can change it in the app, earlier, later or by
@@ -238,20 +286,9 @@ Procedure below is built on them.
 - A clearance is dated when the second reviewer clears it, and the validity
   window runs from that date.  [Decision]
 
-- A household review covers one adult. Whoever approves first names the person
-  whose report they read, and a later reviewer confirms that same person. A
-  reviewer who believes the named person is wrong rejects, rather than naming
-  someone else.  [Decision]
-
-- An approval that named nobody counts toward nobody, including toward the adult a
-  later reviewer names. Nothing records whose report it read, so counting it would
-  date a clearance on one reviewer's reading and leave a row no worklist can tell
-  from a real one. A review carrying one is reset by the board and re-reviewed by
-  two.  [Decision — *Principle: fail closed*]
-
 - A reviewer may undo their own approval, with a written reason, while the review
   still waits on its second reviewer. The review returns to waiting for two
-  approvals, and the adult that approval named is no longer settled. Once the
+  approvals and keeps its person. Once the
   check has cleared, or the application is blocked or closed, the approval
   stands. A rejection is not undone; its reviewer may only change it to an
   approval, as above. A mistaken rejection goes to the Board's reset; see the
@@ -264,8 +301,9 @@ Procedure below is built on them.
 - The Participants directory is for sysadmins, the board and operations. A
   background-check reviewer works from the review queue.  [Decision — owner; *Principle: least privilege*]
 
-- Every background-check decision that refuses, blocks or denies, and every
-  payment certification, records a written reason — wider than the policy, which
+- Every background-check decision that refuses, blocks or denies, every Board
+  reset of a check review, and every payment certification, records a written
+  reason — wider than the policy, which
   requires documentation only for a disqualifying offence. An approval needs
   none.  [Decision — *Policy: Membership Policy, Art. IX*]
 
@@ -300,6 +338,10 @@ Procedure below is built on them.
   deciders are all in the subject's household cannot be decided until the board
   finds someone who is not.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A reviewer is barred from a check review about someone in their household and
+  from one their household requested. The Board's reset and release carry the
+  same bar.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 ### Activation
 
 - Nothing advances toward payment until the agreement is signed and the
@@ -308,6 +350,9 @@ Procedure below is built on them.
 
 - From there payment and review run in parallel, and membership activates on
   whichever finishes last. Neither alone activates.  [Decision]
+
+- A payment arriving while anyone in the household is disputed is recorded and
+  held; the membership does not activate.  [Decision — *Policy: Membership Policy, Art. IX*]
 
 - A board grant completes the payment step on an application already under way,
   joining or renewing. It stamps no other gate.  [Decision]
@@ -376,6 +421,10 @@ Procedure below is built on them.
 - The membership fee has two rates, standard and Volunteer Family. The designation changes
   what a household pays and nothing about its review.  [Decision]
 
+- A reviewer's Volunteer Family tick is written onto the household that requested
+  the review, at once, as its own audited change; the review never stores it. A
+  reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
+
 - A volunteer designation matches on canonical email, so address variants cannot
   change what a family owes.  [Decision]
 
@@ -422,7 +471,7 @@ Procedure below is built on them.
 ### Renewal
 
 - A renewal needs a new background check unless a lead's is still valid at the
-  boundary. Where the validity length is unset, every background check counts as
+  boundary and nobody in the household is disputed. Where the validity length is unset, every background check counts as
   expired, so no clearance counts as fresh, and the compliance view reports
   nothing stale.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*; *Principle: fail closed*]
 
@@ -480,6 +529,10 @@ Procedure below is built on them.
 - Nobody is removed for falling out of compliance. The view reports and sends
   nothing, so a violation waits until a person looks.  [Decision — deliberate limit; *Principle: people decide about people*]
 
+- The compliance view lists everyone whose check is disputed, whatever the
+  recheck window, and reports an active household with a disputed adult as stale
+  even when a lead's check is valid.  [Decision]
+
 ### Adding a contact
 
 - "Add contact", which creates a person from a name and email address alone, is
@@ -492,11 +545,6 @@ Procedure below is built on them.
   household's program-attached adults and for its signing adults. It is surfaced
   for follow-up and gates nothing — chasing it is a conversation, not a refusal
   at the door.  [Decision — deliberate limit; *Policy: Volunteer Policy, Art. IV*]
-
-- A signing adult whom the household's own review did not name is covered here
-  rather than by that review, because a clearance covers only the adult who took
-  the check. Otherwise the second parent on the application belongs to no track
-  at all.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*]
 
 - The obligation follows an active membership. Leads of households that only ever
   started an application, were denied or revoked, or were created by an import owe
@@ -528,9 +576,10 @@ Procedure below is built on them.
 
 - An adult who does sign in can record their own check through the
   applicant-facing consent attestation, so someone who has done their part can
-  say so and stop being chased. A household lead's attestation goes to the
-  household's application while one awaits it; otherwise anyone's goes to their
-  own open check. The audit names the person who attested, so their own record
+  say so and stop being chased. A household lead's attestation records consent
+  on the household's application while one awaits it, which opens a check review
+  for the household naming nobody; otherwise anyone's goes to their own open
+  check. The audit names the person who attested, so their own record
   stays distinguishable from the board's.  [Decision]
 
 ### Individual agreement for adult children

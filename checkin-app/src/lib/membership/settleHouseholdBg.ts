@@ -23,7 +23,7 @@ import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGu
 
 /**
  * Moves a household's open application to match its people's check standing
- * (docs/in-design/person-based-bg-review.md §3.2):
+ * (docs/rules/membership.md, Application and review):
  *
  * - someone in the household has a BLOCKED check review → the application is
  *   BLOCKED, its audit row naming the review and the step it was blocked from;
@@ -41,8 +41,8 @@ import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGu
  * A sent-back review keeps its person DISPUTED, which holds the clearance but does
  * not block: blocking on it would undo the resume a reset exists to give. A denied
  * household's application is never moved, and neither is one blocked by anything
- * but this function. The departed person's rejection keeps the application blocked
- * (§3.4): its review id stays in the audit rows this function reads back.
+ * but this function. The departed person's rejection keeps the application blocked:
+ * its review id stays in the audit rows this function reads back.
  *
  * `reviewJustCleared` picks the payment-open email: a review completed, or a check
  * the household already held was recognised. `trigger` names what prompted the
@@ -227,7 +227,7 @@ export async function blockedByCheckReview(db: DbClient, processId: number): Pro
 }
 
 /**
- * The Board's release of a household from a departed person's rejection (§3.4): the
+ * The Board's release of a household from a departed person's rejection: the
  * application blocked by check reviews whose people have all left the household
  * resumes as a lifted block would. The reviews and their rejections stay on their
  * people, and settle never re-blocks this household for someone no longer in it.

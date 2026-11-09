@@ -7,7 +7,7 @@ import { bgFreshThreshold, nextBoundary } from "@/lib/membership/renewal";
 /**
  * A person's background-check standing, derived from their own check reviews
  * (PERSON_BG rows naming them) and their `lastBackgroundCheck`
- * (docs/in-design/person-based-bg-review.md §3.1).
+ * (docs/rules/membership.md, Application and review).
  *
  * - DISPUTED: a review is BLOCKED, or its rejection was Board-reset or changed to
  *   approve and it has not cleared since. It beats CLEARED: an old clearance never
@@ -88,7 +88,7 @@ export function checkStanding(lastBackgroundCheck: Date | null, reviews: readonl
 }
 
 /**
- * The household qualifies on its background check (§3.1-3.2): at least one lead is
+ * The household qualifies on its background check: at least one lead is
  * CLEARED, nobody in it is DISPUTED, and no review requested for it is waiting for
  * its first reviewer to name a person. Every member is read, not only adults: a
  * minor is never checked, so never holds a review to dispute.
