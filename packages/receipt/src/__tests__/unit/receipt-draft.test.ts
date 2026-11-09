@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  calculatedCents,
   canAddLine,
-  differenceDollars,
+  draftBalance,
   draftMath,
   draftHeader,
   draftLines,
@@ -13,10 +12,10 @@ import {
   isDirty,
   parseCents,
   planSave,
-  roundingAllowed,
   type Draft,
   type ServerReceipt,
 } from "../../components/receiptDraft";
+import { validateLineItemMath } from "../../lib/receipt-flow";
 
 const line = (id: number, quantity: number, unitPriceCents: number) => ({
   id, lineNumber: id, description: `Item ${id}`, partNumber: null, manufacturer: null,
@@ -49,10 +48,10 @@ describe("parseCents", () => {
   });
 });
 
-describe("calculatedCents", () => {
-  it("is lines + shipping + tax − discount, as the server's math check sums it", () => {
-    const draft: Draft = { ...EMPTY_DRAFT, header: { discount: "1.00" } };
-    expect(calculatedCents(draftLines(receipt, draft), draftHeader(receipt, draft))).toBe(2000 + 500 + 150 - 100);
+describe("draftBalance", () => {
+  it("is line totals + shipping + tax − discount, as the server stores the lines", () => {
+    const draft: Draft = { ...EMPTY_DRAFT, header: { discount: "1.00", receiptTotal: "25.50" } };
+    expect(draftBalance(receipt, draft)).toMatchObject({ lineTotalsCents: [1000, 1000], subtotalCents: 2000, calculatedCents: 2550, differenceCents: 0 });
   });
 
   it("counts edits, removals and added lines", () => {
@@ -62,27 +61,68 @@ describe("calculatedCents", () => {
       removed: [2],
       added: [{ ...EMPTY_LINE, key: 1, description: "Glue", unitPrice: "2.50" }],
     };
-    expect(calculatedCents(draftLines(receipt, draft), draftHeader(receipt, draft))).toBe(1500 + 250 + 500 + 150);
+    expect(draftBalance(receipt, draft)).toMatchObject({ lineTotalsCents: [1500, 250], calculatedCents: 1500 + 250 + 500 + 150 });
   });
 
-  it("is null while an amount is unreadable", () => {
-    const draft: Draft = { ...EMPTY_DRAFT, lines: { 1: { unitPrice: "x" } } };
-    expect(calculatedCents(draftLines(receipt, draft), draftHeader(receipt, draft))).toBeNull();
+  it("is null where an amount is unreadable", () => {
+    expect(draftBalance(receipt, { ...EMPTY_DRAFT, lines: { 1: { unitPrice: "x" } } })).toMatchObject({
+      lineTotalsCents: [null, 1000], subtotalCents: null, calculatedCents: null, differenceCents: null, math: null,
+    });
+    expect(draftBalance(receipt, { ...EMPTY_DRAFT, lines: { 1: { total: "x" } } })).toMatchObject({ lineTotalsCents: [null, 1000], math: null });
+  });
+
+  // The receipt prints 3 × $3.33 with no line total, and a $10.00 total; the line is calculated as $9.99.
+  const calculated: ServerReceipt = {
+    ...receipt, receiptTotalCents: 1000, taxCents: 0, shippingCents: 0,
+    lineItems: [{ ...line(1, 3, 333), totalPriceCents: 999 }],
+  };
+
+  it("is a cent off while the line keeps its calculated $9.99", () => {
+    expect(draftBalance(calculated, EMPTY_DRAFT)).toMatchObject({ lineTotalsCents: [999], differenceCents: -1, math: { balanced: false } });
+  });
+
+  it("matches once a person types the line's $10.00", () => {
+    expect(draftBalance(calculated, { ...EMPTY_DRAFT, lines: { 1: { total: "10.00" } } })).toMatchObject({
+      lineTotalsCents: [1000], differenceCents: 0, math: { balanced: true },
+    });
+  });
+
+  it("names a line whose total no rounding explains, and keeps that total", () => {
+    const misread: ServerReceipt = { ...calculated, lineItems: [{ ...line(1, 3, 330), totalPriceCents: 1000 }] };
+    expect(draftBalance(misread, EMPTY_DRAFT)).toMatchObject({
+      lineTotalsCents: [1000],
+      differenceCents: 0,
+      math: { disagreeing: [0], balanced: false },
+      disagreements: ["Line 1: total $10.00 is not 3 × $3.30 ($9.90)"],
+    });
+  });
+
+  it("keeps a stored total that agrees with an edited unit price, and recalculates one that does not", () => {
+    const printed: ServerReceipt = { ...calculated, lineItems: [{ ...line(1, 3, 330), totalPriceCents: 1000 }] };
+    expect(draftBalance(printed, { ...EMPTY_DRAFT, lines: { 1: { unitPrice: "3.33" } } }).lineTotalsCents).toEqual([1000]);
+    expect(draftBalance(printed, { ...EMPTY_DRAFT, lines: { 1: { unitPrice: "4.00" } } }).lineTotalsCents).toEqual([1200]);
   });
 });
 
 describe("draftMath", () => {
-  it("balances exactly when the lines, shipping and tax add up to the total", () => {
-    expect(draftMath(receipt, EMPTY_DRAFT)).toEqual({ differenceCents: 0, allowedCents: 0, balanced: true });
+  it("balances when the line totals, shipping and tax add up to the total", () => {
+    expect(draftMath(receipt, EMPTY_DRAFT)).toEqual({ differenceCents: 0, disagreeing: [], balanced: true });
   });
 
-  it("is the calculated sum minus the draft's total", () => {
-    expect(draftMath(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "27.00" } })).toMatchObject({ differenceCents: -50, balanced: false });
+  it("is exact", () => {
+    expect(draftMath(receipt, { ...EMPTY_DRAFT, header: { receiptTotal: "26.51" } })).toMatchObject({ differenceCents: -1, balanced: false });
     expect(draftMath(receipt, { ...EMPTY_DRAFT, lines: { 2: { unitPrice: "10.25" } } })).toMatchObject({ differenceCents: 25, balanced: false });
   });
 
-  it("allows a cent of rounding for a line costing a fraction of a cent", () => {
-    expect(draftMath(receipt, { ...EMPTY_DRAFT, lines: { 2: { quantity: "1.0005" } } })).toEqual({ differenceCents: 0.5, allowedCents: 1, balanced: true });
+  it("agrees with the server's check on the same lines", () => {
+    // Line 2 corrected to 3 × $3.33 keeps its $10.00; corrected to 3 × $3.30 it becomes $9.90.
+    const kept: Draft = { ...EMPTY_DRAFT, lines: { 2: { quantity: "3", unitPrice: "3.33" } } };
+    const recalculated: Draft = { ...EMPTY_DRAFT, lines: { 2: { quantity: "3", unitPrice: "3.30" } } };
+    const lines = (unit: number, total: number) => [{ quantity: 2, unitPriceCents: 500, totalPriceCents: 1000 }, { quantity: 3, unitPriceCents: unit, totalPriceCents: total }];
+    expect(draftMath(receipt, kept)?.balanced).toBe(true);
+    expect(validateLineItemMath(lines(333, 1000), 500, 150, 0, 2650)).toBe(true);
+    expect(draftMath(receipt, recalculated)?.balanced).toBe(false);
+    expect(validateLineItemMath(lines(330, 990), 500, 150, 0, 2650)).toBe(false);
   });
 
   it("is null while an amount is unreadable", () => {
@@ -117,6 +157,15 @@ describe("planSave", () => {
     ]);
   });
 
+  it("sends a typed line total, and leaves a cleared one to the server", () => {
+    expect(planSave(receipt, { ...EMPTY_DRAFT, lines: { 2: { total: "10.01" } } })).toEqual([
+      { path: "/line-items/2", method: "PATCH", body: { totalPrice: 10.01 } },
+    ]);
+    expect(planSave(receipt, { ...EMPTY_DRAFT, lines: { 2: { total: " " } } })).toEqual([]);
+    const added = { ...EMPTY_LINE, key: 1, description: "Hinge", quantity: "3", unitPrice: "3.33", total: "10.00" };
+    expect(planSave(receipt, { ...EMPTY_DRAFT, added: [added] })[0].body).toMatchObject({ quantity: 3, unitPrice: 3.33, totalPrice: 10 });
+  });
+
   it("patches an edited line with its changed fields only", () => {
     const draft: Draft = { ...EMPTY_DRAFT, lines: { 2: { unitPrice: "9.99", partNumber: "  ", isDelayed: true } } };
     expect(planSave(receipt, draft)).toEqual([
@@ -146,22 +195,7 @@ describe("draftProblem", () => {
   it("refuses a blank description or a bad quantity", () => {
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { description: " " } } })).toMatch(/description/);
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { quantity: "0" } } })).toMatch(/quantity/);
-  });
-});
-
-describe("differenceDollars", () => {
-  it("shows the real difference, whole cents and fractions of a cent", () => {
-    expect(differenceDollars(-50)).toBe("-$0.50");
-    expect(differenceDollars(1234)).toBe("$12.34");
-    expect(differenceDollars(3.5)).toBe("$0.035");
-    expect(differenceDollars(-0.4)).toBe("-$0.004");
-  });
-});
-
-describe("roundingAllowed", () => {
-  it("names the rounding allowed, and says nothing when none was", () => {
-    expect(roundingAllowed(0)).toBe("");
-    expect(roundingAllowed(2)).toBe(" (rounding of up to $0.02 allowed)");
+    expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { total: "ten" } } })).toMatch(/line total/);
   });
 });
 

@@ -99,6 +99,24 @@ export function allocateCents(totalCents: number, weights: readonly number[]): n
   return shares.map((p) => Number(p.floor));
 }
 
+// Floating-point noise in quantity × unit price, not a real fraction of a cent.
+const NOISE = 1e-6;
+
+/**
+ * How far a line's total may sit from quantity × unit price and still be that line: under a cent
+ * per unit, and under a cent for a quantity below one. A store may round or truncate the unit
+ * price (3 × $3.33 for $10.00 is 3 × $3.333…; $4.99 may be $4.989) or the line total
+ * (0.37 × $4.99 is 184.63¢, printed $1.84 or $1.85).
+ */
+function lineRoundingAllowance(quantity: number): number {
+  return Math.max(1, Math.abs(quantity));
+}
+
+/** Whether a line's total is quantity × unit price, rounded or truncated; a difference of the full allowance does not agree. */
+export function lineRoundingAgrees(totalCents: number, quantity: number, unitPriceCents: number): boolean {
+  return Math.abs(totalCents - quantity * unitPriceCents) < lineRoundingAllowance(quantity) - NOISE;
+}
+
 /**
  * Canonical money display formatter. Input is INTEGER CENTS; output is a localized
  * currency string with thousands grouping and the currency's symbol, e.g.

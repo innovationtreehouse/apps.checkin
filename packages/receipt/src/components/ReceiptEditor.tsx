@@ -3,21 +3,19 @@ import { formatCents } from "@checkin/money";
 import { Button, Checkbox, Divider, Group, Paper, Stack, Table, Text, TextInput } from "@mantine/core";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
-  calculatedCents,
   canAddLine,
-  differenceDollars,
+  draftBalance,
   draftHeader,
   EMPTY_LINE,
-  headerMath,
-  lineCents,
   lineFromServer,
-  roundingAllowed,
+  toDollars,
+  totalTyped,
+  type Balance,
   type Draft,
   type DraftLine,
   type Header,
   type ServerReceipt,
 } from "./receiptDraft";
-import type { ReceiptMath } from "../lib/lineMath";
 
 interface Props {
   receipt: ServerReceipt;
@@ -27,27 +25,24 @@ interface Props {
   taxNote: boolean;
 }
 
-const lineTotal = (line: DraftLine) => {
-  const cents = lineCents(line);
-  return cents === null ? "—" : formatCents(Math.round(cents));
-};
+const shown = (cents: number | null) => (cents === null ? "—" : formatCents(cents));
 
-function balanceText(math: ReceiptMath | null): string {
-  if (!math) return "Difference: —";
-  if (math.differenceCents === 0) return "Matches the receipt total";
-  const difference = differenceDollars(math.differenceCents);
-  return math.balanced
-    ? `Matches within rounding: ${difference} off${roundingAllowed(math.allowedCents)}`
-    : `Difference: ${difference}${roundingAllowed(math.allowedCents)}`;
+function balanceText({ math, differenceCents, disagreements }: Balance): string {
+  if (!math || differenceCents === null) return "Difference: —";
+  if (math.balanced) return "Matches the receipt total";
+  if (disagreements.length > 0) return disagreements.join("; ");
+  return `Difference: ${formatCents(differenceCents)}`;
 }
 
 /** Every field of a receipt and its lines, editable, with the sum its total must equal. */
 export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Props) {
   const header = draftHeader(receipt, draft);
   const kept = receipt.lineItems.filter((l) => !draft.removed.includes(l.id));
-  const keptLines = kept.map((l) => ({ id: l.id, line: { ...lineFromServer(l), ...draft.lines[l.id] } }));
+  const keptLines = kept.map((l) => {
+    const line = { ...lineFromServer(l), ...draft.lines[l.id] };
+    return { id: l.id, line, typed: totalTyped(line, l) };
+  });
   const lineCount = kept.length + draft.added.length;
-  const allLines = [...keptLines.map((k) => k.line), ...draft.added];
 
   const setHeader = (field: keyof Header, value: string) => onChange({ ...draft, header: { ...draft.header, [field]: value } });
   const setLine = (id: number, patch: Partial<DraftLine>) =>
@@ -59,11 +54,10 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
   const addLine = () =>
     onChange({ ...draft, added: [...draft.added, { ...EMPTY_LINE, key: Math.max(0, ...draft.added.map((a) => a.key)) + 1 }] });
 
-  const subtotal = allLines.map(lineCents).reduce<number | null>((a, b) => (a === null || b === null ? null : a + b), 0);
-  const calculated = calculatedCents(allLines, header);
-  const math = headerMath(allLines, header);
+  const balance = draftBalance(receipt, draft);
 
-  const row = (key: string, line: DraftLine, set: (patch: Partial<DraftLine>) => void, remove: () => void, label: string) => (
+  // A typed total shows as typed; otherwise the field shows the total the server would store.
+  const row = (key: string, line: DraftLine, typed: boolean, total: number | null, set: (patch: Partial<DraftLine>) => void, remove: () => void, label: string) => (
     <Table.Tr key={key}>
       <Table.Td>
         <TextInput size="xs" aria-label={`${label} description`} value={line.description} onChange={(e) => set({ description: e.currentTarget.value })} />
@@ -80,8 +74,15 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
       <Table.Td>
         <TextInput size="xs" inputMode="decimal" leftSection="$" aria-label={`${label} unit price`} value={line.unitPrice} onChange={(e) => set({ unitPrice: e.currentTarget.value })} />
       </Table.Td>
-      <Table.Td ta="right">
-        <Text size="sm" ff="monospace">{lineTotal(line)}</Text>
+      <Table.Td>
+        <TextInput
+          size="xs"
+          inputMode="decimal"
+          leftSection="$"
+          aria-label={`${label} total`}
+          value={typed ? line.total : total === null ? "" : toDollars(total)}
+          onChange={(e) => set({ total: e.currentTarget.value })}
+        />
       </Table.Td>
       <Table.Td>
         <Checkbox size="xs" aria-label={`${label} backordered`} checked={line.isDelayed} onChange={(e) => set({ isDelayed: e.currentTarget.checked })} />
@@ -119,15 +120,15 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
                 <Table.Th w={130}>Manufacturer</Table.Th>
                 <Table.Th w={80}>Qty</Table.Th>
                 <Table.Th w={120}>Unit price</Table.Th>
-                <Table.Th w={100} ta="right">Total</Table.Th>
+                <Table.Th w={120}>Total</Table.Th>
                 <Table.Th w={100}>Backordered</Table.Th>
                 <Table.Th w={80} />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {keptLines.map(({ id, line }, i) => row(`line-${id}`, line, (p) => setLine(id, p), () => removeLine(id), `Line ${i + 1}`))}
+              {keptLines.map(({ id, line, typed }, i) => row(`line-${id}`, line, typed, balance.lineTotalsCents[i], (p) => setLine(id, p), () => removeLine(id), `Line ${i + 1}`))}
               {draft.added.map((a, i) =>
-                row(`added-${a.key}`, a, (p) => setAdded(a.key, p), () => removeAdded(a.key), `Line ${keptLines.length + i + 1}`),
+                row(`added-${a.key}`, a, totalTyped(a), balance.lineTotalsCents[keptLines.length + i], (p) => setAdded(a.key, p), () => removeAdded(a.key), `Line ${keptLines.length + i + 1}`),
               )}
             </Table.Tbody>
           </Table>
@@ -140,14 +141,14 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
         <Divider />
         <Stack gap={6} align="flex-end">
-          <Text size="sm">Lines subtotal: <Text span ff="monospace">{subtotal === null ? "—" : formatCents(Math.round(subtotal))}</Text></Text>
+          <Text size="sm">Lines subtotal: <Text span ff="monospace">{shown(balance.subtotalCents)}</Text></Text>
           {amount("+ Shipping", "shipping")}
           {amount("+ Tax", "tax")}
           {amount("− Discount", "discount")}
-          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{calculated === null ? "—" : formatCents(Math.round(calculated))}</Text></Text>
+          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{shown(balance.calculatedCents)}</Text></Text>
           {amount("Receipt total", "receiptTotal")}
-          <Text size="sm" fw={600} c={math?.balanced ? "green" : "red"}>
-            {balanceText(math)}
+          <Text size="sm" fw={600} c={balance.math?.balanced ? "green" : "red"}>
+            {balanceText(balance)}
           </Text>
           {taxNote && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
         </Stack>

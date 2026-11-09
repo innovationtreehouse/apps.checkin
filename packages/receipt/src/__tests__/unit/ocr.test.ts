@@ -241,6 +241,12 @@ describe("pure helpers", () => {
     const d = mapRawToOcrData({ retailer: "A", receiptDate: "2026-05-01", lineItems: [{ description: "x" }] });
     expect(d).toMatchObject({ currency: "USD", shipping: 0, tax: 0, discount: 0, receiptTotal: null });
     expect(d.lineItems[0]).toMatchObject({ quantity: 1, unitPrice: 0, isDelayed: false });
+    expect(d.lineItems[0].totalPrice).toBeUndefined();
+  });
+
+  it("mapRawToOcrData keeps a line's printed total", () => {
+    const d = mapRawToOcrData({ retailer: "A", receiptDate: "2026-05-01", lineItems: [{ description: "Hinge", quantity: 3, unitPrice: 3.33, totalPrice: 10 }] });
+    expect(d.lineItems[0]).toMatchObject({ quantity: 3, unitPrice: 3.33, totalPrice: 10 });
   });
 
   it("fixtureOcr answers deterministically without a network", async () => {

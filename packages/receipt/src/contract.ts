@@ -154,6 +154,7 @@ export const OcrLineItemSchema = z.object({
   manufacturer: z.string().max(100).optional(),
   quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: ocrMoney,
+  totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
 });
 

@@ -109,6 +109,7 @@ export const AddLineItemSchema = z.object({
   manufacturer: z.string().max(100).nullable().optional(),
   quantity: quantity.optional(),
   unitPrice: nonNegative.optional(),
+  totalPrice: nonNegative.optional(),
   isDelayed: z.boolean().optional(),
 });
 
@@ -131,6 +132,7 @@ export const EditLineItemSchema = z
     manufacturer: z.string().max(100).nullable().optional(),
     quantity: quantity.optional(),
     unitPrice: nonNegative.optional(),
+    totalPrice: nonNegative.optional(),
     isDelayed: z.boolean().optional(),
   })
   .strict();

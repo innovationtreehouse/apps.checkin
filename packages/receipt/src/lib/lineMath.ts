@@ -1,51 +1,48 @@
 /**
  * The check that a receipt's lines add up to its total. A plain module, so the server's intake
- * flow and the receipt editor apply the same rule.
+ * flow and the receipt editor apply the same rule. The receipt's printed figures are the record:
+ * a printed line total may be its quantity × unit price rounded, and is never changed.
  */
+import { formatCents, lineRoundingAgrees } from "@checkin/money";
+
 export interface MathLine {
   quantity: number;
   unitPriceCents: number;
 }
 
-export interface ReceiptMath {
-  /** Lines + shipping + tax − discount, minus the receipt total, in cents. */
-  differenceCents: number;
-  /** The rounding allowed, in cents: one per line whose cost is a fraction of a cent. */
-  allowedCents: number;
-  /** Whether the difference is within the rounding allowed; exact when no line has a fraction of a cent. */
-  balanced: boolean;
-}
-
-// Floating-point noise in quantity × unit price, not a real fraction of a cent.
-const NOISE = 1e-6;
-
-export function receiptMath(lines: MathLine[], shippingCents: number, taxCents: number, discountCents: number, receiptTotalCents: number): ReceiptMath {
-  let lineSum = 0;
-  let fractional = 0;
-  for (const line of lines) {
-    const cost = line.quantity * line.unitPriceCents;
-    const whole = Math.round(cost);
-    if (Math.abs(cost - whole) < NOISE) {
-      lineSum += whole;
-    } else {
-      lineSum += cost;
-      fractional += 1;
-    }
-  }
-  const differenceCents = lineSum + shippingCents + taxCents - discountCents - receiptTotalCents;
-  return { differenceCents, allowedCents: fractional, balanced: Math.abs(differenceCents) <= fractional + NOISE };
-}
-
 export interface StoredLine extends MathLine {
+  /** As printed, or quantity × unit price rounded where the receipt prints none. */
   totalPriceCents: number;
 }
 
+export interface ReceiptMath {
+  /** Line totals + shipping + tax − discount, minus the receipt total, in cents. */
+  differenceCents: number;
+  /** Positions of lines whose total no rounding of quantity × unit price explains. */
+  disagreeing: number[];
+  /** Whether every line agrees and the lines add up to the receipt total exactly. */
+  balanced: boolean;
+}
+
+export function receiptMath(lines: StoredLine[], shippingCents: number, taxCents: number, discountCents: number, receiptTotalCents: number): ReceiptMath {
+  const disagreeing = lines.flatMap((l, i) => (lineRoundingAgrees(l.totalPriceCents, l.quantity, l.unitPriceCents) ? [] : [i]));
+  const lineSum = lines.reduce((sum, l) => sum + l.totalPriceCents, 0);
+  const differenceCents = lineSum + shippingCents + taxCents - discountCents - receiptTotalCents;
+  return { differenceCents, disagreeing, balanced: disagreeing.length === 0 && differenceCents === 0 };
+}
+
+/** Why a line's total does not add up, e.g. "Line 2: total $10.00 is not 3 × $3.30 ($9.90)". */
+export function disagreementText(line: StoredLine, position: number): string {
+  const cost = formatCents(Math.round(line.quantity * line.unitPriceCents));
+  return `Line ${position + 1}: total ${formatCents(line.totalPriceCents)} is not ${line.quantity} × ${formatCents(line.unitPriceCents)} (${cost})`;
+}
+
 /**
- * A line's total after an edit. The stored total, which may be the receipt's printed figure, stands
- * unless the quantity or unit price changes; then it is that quantity × unit price, the cost the
- * math check counts.
+ * A line's total after an edit. The stored total, which may be the printed one, stands while it
+ * still agrees with the line's quantity × unit price; otherwise it is that cost rounded to the cent.
  */
 export function lineTotalAfterEdit(before: StoredLine, after: MathLine): number {
   if (after.quantity === before.quantity && after.unitPriceCents === before.unitPriceCents) return before.totalPriceCents;
+  if (lineRoundingAgrees(before.totalPriceCents, after.quantity, after.unitPriceCents)) return before.totalPriceCents;
   return Math.round(after.quantity * after.unitPriceCents);
 }
