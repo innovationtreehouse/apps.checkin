@@ -88,9 +88,13 @@ export function viewReachesOthers(tokens: readonly Token[]): boolean {
     });
 }
 
+// Bag keys that annotate another key's rows, so an audited read does not count them as rows viewed.
+const AUDIT_ANNOTATION_KEYS: ReadonlySet<string> = new Set(['ExpenseWaitingOn']);
+
 function topLevelRows(bag: ModelBag): Record<string, unknown>[] {
     const rows: Record<string, unknown>[] = [];
-    for (const value of Object.values(bag)) {
+    for (const [key, value] of Object.entries(bag)) {
+        if (AUDIT_ANNOTATION_KEYS.has(key)) continue;
         for (const row of Array.isArray(value) ? value : [value]) {
             if (row !== null && typeof row === 'object') rows.push(row as Record<string, unknown>);
         }

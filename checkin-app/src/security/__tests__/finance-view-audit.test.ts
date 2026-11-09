@@ -31,11 +31,13 @@ const BOARD_ONLY = 'GET /api/__test__/audited-board-only';
 const UNAUDITED = 'GET /api/__test__/unaudited';
 const PAYOUTS = 'GET /api/__test__/audited-payouts';
 const FILE = 'GET /api/__test__/audited-file/[id]';
+const EXPENSES = 'GET /api/__test__/audited-expenses';
 
 defineRoute({ endpoint: ENDPOINT, authorize: 'authenticated', envelope: null, returns: ['Person'], orderedView: VIEW, auditedRead: true });
 defineRoute({ endpoint: BOARD_ONLY, authorize: 'authenticated', envelope: null, returns: ['Person'], orderedView: [['isBoardMember', ['everyones:pii', 'public']]], auditedRead: true });
 defineRoute({ endpoint: UNAUDITED, authorize: 'authenticated', envelope: null, returns: ['Person'], orderedView: VIEW });
 defineRoute({ endpoint: PAYOUTS, authorize: 'authenticated', envelope: null, returns: ['IncomePayoutView'], orderedView: [['isBoardMember', ['everyones:internal', 'public']]], auditedRead: true });
+defineRoute({ endpoint: EXPENSES, authorize: 'authenticated', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: [['isBoardMember', ['everyones:internal', 'public']]], auditedRead: true });
 defineFileRoute({ endpoint: FILE, authorize: 'authenticated', orderedView: VIEW, file: { model: 'Person', field: 'email' }, auditedRead: true });
 
 function session(id: number, isBoardMember = false): AuthResult {
@@ -97,6 +99,12 @@ describe('handler — auditedRead', () => {
         mockAuth.mockResolvedValue(session(1, true));
         await get(PAYOUTS, { IncomePayoutView: [{ payoutGid: 'gid://shopify/Payout/9', netCents: 100 }] });
         expect(mockRecord).toHaveBeenCalledWith(expect.objectContaining({ recordIds: ['gid://shopify/Payout/9'], rowCount: 1 }));
+    });
+
+    it('does not count an ExpenseWaitingOn label as a row viewed', async () => {
+        mockAuth.mockResolvedValue(session(1, true));
+        await get(EXPENSES, { Expense: [{ id: 7 }], ExpenseWaitingOn: [{ expenseId: 7, label: 'Awaiting Treasurer signature' }] });
+        expect(mockRecord).toHaveBeenCalledWith(expect.objectContaining({ recordIds: ['7'], rowCount: 1 }));
     });
 
     it("writes nothing for a view of the caller's own rows only", async () => {
