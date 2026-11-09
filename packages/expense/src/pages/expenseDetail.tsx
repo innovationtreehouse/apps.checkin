@@ -486,6 +486,10 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const statuses = (signoffs.data ?? []).map((s) => ({ ...s, actions: s.actions ?? [], awaiting: s.awaiting ?? [] }));
   const statusOf = new Map(statuses.map((s) => [s.lineItemId, s]));
 
+  function postAction(action: LineAction, approval: Approval, body: unknown) {
+    return send(`${base}/line-item-approvals/${approval.id}/${approvalRoute(action.act, approval)}`, "POST", body, `${actLabel(action)} done`);
+  }
+
   async function runAction() {
     if (!dialog) return;
     const { action, approval } = dialog;
@@ -495,23 +499,31 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       : action.act === "raise-exception" || action.act === "reject-exception" ? { notes: text }
       : route === "finance-assign" ? { ownerId: Number(bucket), final, note: final ? text : null }
       : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
-    if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
+    if (await postAction(action, approval, body)) {
       setDialog(null);
       await decided();
     }
+  }
+
+  async function approveNow(action: LineAction, approval: Approval) {
+    if (await postAction(action, approval, { reason: null })) await decided();
   }
 
   async function sign(lineItemId: number, seat: string) {
     if (await send(`${base}/line-items/${lineItemId}/signoffs`, "POST", { seat }, `Signed as ${SEAT_LABEL[seat] ?? seat}`)) await decided();
   }
 
-  /** A seat signs at once; every other act opens the dialog for its note or bucket. */
+  /** A seat sign and an approval without a reason act at once; every other act opens the dialog for its note or bucket. */
   function take(lineItemId: number, action: LineAction, approval: Approval | undefined) {
     if (action.act === "sign") {
       void sign(lineItemId, action.seat ?? "");
       return;
     }
     if (!approval) return;
+    if (action.act === "approve" && !action.noteRequired) {
+      void approveNow(action, approval);
+      return;
+    }
     setText(""); setBucket(null); setPermanent(false); setFinal(false);
     setDialog({ action, approval });
   }
@@ -521,7 +533,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog?.action.act === "assign-bucket" || dialog?.action.act === "resolve-bucket";
-  const takesNote = !needsBucket && dialog !== null && (dialog.action.act !== "approve" || dialog.action.noteRequired);
+  const takesNote = !needsBucket && dialog !== null;
   // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
   const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
   const canMapPart = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
