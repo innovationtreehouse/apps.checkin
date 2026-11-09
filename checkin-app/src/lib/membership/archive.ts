@@ -83,24 +83,29 @@ export async function lockOpenApplications(tx: TxClient, orgMembershipId: number
 }
 
 /**
- * Closes the open applications of a household the board is restoring from DENIED,
- * so the family starts over and nothing decided before or during the denial carries
- * across. Refuses, rolling back the restore, while one still has a payment recorded
- * or sits at a step a restore cannot close.
+ * Closes the open applications of a household the board is restoring from DENIED or
+ * archiving, so nothing decided before carries across. Refuses, rolling back the
+ * caller's transaction, while one still has a payment recorded or sits at a step
+ * this cannot close.
  */
-export async function closeForRestore(tx: TxClient, open: Awaited<ReturnType<typeof lockOpenApplications>>, actor: AuditActor) {
+export async function closeForRestore(
+    tx: TxClient,
+    open: Awaited<ReturnType<typeof lockOpenApplications>>,
+    actor: AuditActor,
+    action: "restore" | "archive" = "restore",
+) {
     if (open.some((p) => p.paidAt)) {
-        throw new ReviewError("wrong_phase", "This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then restore the household.");
+        throw new ReviewError("wrong_phase", `This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then ${action} the household.`);
     }
     if (open.some((p) => !(RESTORE_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
-        throw new ReviewError("wrong_phase", "This household has an application at a step a restore cannot close. Resolve that application first, then restore the household.");
+        throw new ReviewError("wrong_phase", `This household has an application at a step a ${action} cannot close. Resolve that application first, then ${action} the household.`);
     }
     for (const p of open) {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: p.id, ...fromWhere(p.status), paidAt: null },
             data: { status: "ARCHIVED", archivedFromStatus: p.status, stageEnteredAt: new Date(), isPaymentPlanRequested: false },
         });
-        if (count !== 1) throw new ReviewError("wrong_phase", "An application in this household changed while it was being restored. Reload and try again.");
+        if (count !== 1) throw new ReviewError("wrong_phase", "An application in this household changed while you were acting on it. Reload and try again.");
         await tx.auditLog.create({
             data: {
                 ...actor,
@@ -108,7 +113,7 @@ export async function closeForRestore(tx: TxClient, open: Awaited<ReturnType<typ
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: p.id,
                 oldData: { status: p.status },
-                newData: { status: "ARCHIVED", reason: "household restored" },
+                newData: { status: "ARCHIVED", reason: action === "restore" ? "household restored" : "household archived" },
             },
         });
     }

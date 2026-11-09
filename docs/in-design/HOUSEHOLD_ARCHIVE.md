@@ -620,7 +620,7 @@ The copy runs differently from a plain dump, for three reasons:
 
 ### Build order
 
-Five PRs, in this order. Each deploys safely on its own.
+The PRs, in this order. Each deploys safely on its own.
 
 1. **Expand.** The nullable column and the test DML role. No policy, no reader
    changes.
@@ -631,22 +631,26 @@ Five PRs, in this order. Each deploys safely on its own.
 3. **Readers.** The opt-in sites, null tolerance on the 24 includes, the explicit
    scan and people-search exclusion, and the audit of person queries with no
    household join.
-4. **Registry.** The archive route's registry entry, as its own boundary PR, based
+4. **Registry.** The Board-only entries for the archive and unarchive routes,
+   in their own PR (#3184).
+5. **Archive action.** The two route files on `handler()` and the screen, based
    on `main`.
-5. **Archive action.** The route and the screen, based on `main`.
+6. **Archived households refuse changes (HA-9).** The write paths keyed by a
+   household or person id that row security does not reach.
 
 ### Route for archival
 
-A new mutation on the existing household admin route
-(`/api/membership-ops/households/[id]`) — a PATCH setting `archivedAt`. Board
-only, and refused while the household has a current Treehouse membership or a
-current program enrollment (Decision #4). Unarchive is the same route nulling
-`archivedAt`. Both writes run through `withArchivedHouseholds`: Prisma's update
-reads the row, an archived row is invisible without the opt-in, and setting
-`archivedAt` produces a row the `SELECT` policy would otherwise reject.
+Two registered routes on `handler()`, with no body:
+`POST /api/membership-ops/households/[id]/archive` sets `archivedAt`, and
+`POST /api/membership-ops/households/[id]/unarchive` nulls it. Their registry
+entries admit the Board only, so a sysadmin who is not on the Board gets 403, and
+return the household with its public fields (id, name, `archivedAt`). The archive
+refuses on any of the conditions in HA-7, HA-8 and HA-10 (Decisions #4, #7 and
+#9). Both writes run through `withArchivedHouseholds`: Prisma's update reads the
+row, an archived row is invisible without the opt-in, and setting `archivedAt`
+produces a row the `SELECT` policy would otherwise reject.
 
-No new route file, no new page. The action sits on the existing household detail
-view.
+No new page. The action sits on the existing household detail view.
 
 ## Interaction with #1456 (TOMBSTONE_REMOVAL)
 
@@ -708,6 +712,27 @@ IDs are kept so earlier references still resolve. All are settled.
    never see the policy work. The archive's RLS tests therefore connect as a
    non-superuser, non-owner test role (see
    [Test role](#test-role-a-dml-like-connection-for-the-rls-suites)).
+
+7. **Open applications (HA-8).** Decided: archiving closes every open INITIAL or
+   RENEWAL application in the same transaction, unpaid BLOCKED ones included. A
+   closed BLOCKED application keeps `archivedFromStatus` BLOCKED and its audit row,
+   as a denied-household restore does. Per-person kinds (PERSON_BG,
+   PERSON_AGREEMENT, KEY_VOLUNTEER_AGREEMENT) are left alone. Archiving is refused
+   while an open application has a payment with no recorded refund; a fee that
+   bought a membership is settled. A denied household is never archived.
+   Unarchiving leaves the closed applications closed. Each archive and unarchive
+   writes an audit row on the household.
+
+8. **Changes to an archived household (HA-9).** Decided: every change to an
+   archived household is refused, including the writes keyed by a household or
+   person id that row security does not reach (adding a member, starting an
+   application, enrolling, assigning a volunteer or leader, a manual visit).
+   Build-order PR 6.
+
+9. **Roles (HA-10).** Decided: archiving is refused while any member holds a
+   role. That covers the app roles (sysadmin, Board, keyholder, background-check
+   reviewer, operations, inventory manager, finance) and a volunteer or lead
+   place on a program not yet finished. The Board removes them first.
 
 ## Test plan
 
@@ -779,8 +804,8 @@ race the other runs that share the cluster.
   archived household's relation and the caller tolerates it.
 - **Raw SQL:** a raw `SELECT` against `Household` as the test DML role honours the
   policy (proves coverage the client extension could never give).
-- **Archive action:** PATCH sets `archivedAt` through the opt-in, household disappears from the
-  standard list; PATCH nulling it (through the opt-in lookup) restores it.
+- **Archive action:** the archive POST sets `archivedAt` through the opt-in, household disappears from the
+  standard list; the unarchive POST nulls it (through the opt-in lookup) and restores it.
 - **Permission:** only the Board can archive or unarchive; a sysadmin who is not
   on the Board and a household lead both get 403.
 - **Refusal:** archiving a household with a current Treehouse membership, or with

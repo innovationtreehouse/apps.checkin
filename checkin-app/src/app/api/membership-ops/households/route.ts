@@ -18,6 +18,7 @@ import { lockBoardRoles } from "@/lib/roles";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
+import { withArchivedHouseholds } from "@/lib/household/archived";
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +48,8 @@ export const GET = withAuth(
             const q = url.searchParams.get('q') || '';
 
             if (id) {
-                const household = await prisma.household.findUnique({
+                // The Board looks up an archived household by id, to read or unarchive it.
+                const household = await withArchivedHouseholds((tx) => tx.household.findUnique({
                     where: { id: parseInt(id) },
                     include: {
                         householdMembers: {
@@ -73,7 +75,7 @@ export const GET = withAuth(
                             take: 1,
                         },
                     }
-                });
+                }));
                 if (!household) return NextResponse.json({ household: null });
                 const householdLeads = household.householdMembers.filter(p => p.isHouseholdLead).map(p => ({ personId: p.id }));
 
