@@ -85,9 +85,9 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 ## Light tier (default)
 
 1. `prisma generate` for checkin, if the worktree has no generated client yet.
-2. `tsc --noEmit` for checkin and each affected `*-function` workspace. This
-   does not type-check `packages/*` yet. CI does: run
-   `npm run typecheck -w <package>` for a package you changed.
+2. `tsc --noEmit` for checkin and each affected workspace with a `typecheck`
+   script, which covers the `packages/*` and `*-function` workspaces that CI
+   type-checks.
 3. eslint, with no warnings allowed, on the changed checkin files and the
    changed `packages/*` files. Package files use the root config, as CI's
    `lint:packages` does.
