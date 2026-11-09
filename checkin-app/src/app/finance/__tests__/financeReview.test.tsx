@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MantineProvider } from "@mantine/core";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { DEFAULT_THEME, MantineProvider, createTheme } from "@mantine/core";
 import FinanceReview from "@/components/finance/FinanceReview";
 
 let mockSearch = new URLSearchParams();
@@ -181,7 +181,7 @@ describe("the receipt tabs", () => {
   });
 
   it("counts FINANCE's own queues in green and the rest in gray, and only gray for the Board", () => {
-    const receipts = { byState: { financial_review: 3, validation_failed: 2 }, notPushed: 0, pushGivenUp: 0 };
+    const receipts = { byState: { financial_review: 3, validation_failed: 2 }, actionableByState: { financial_review: 3 }, notPushed: 0, pushGivenUp: 0 };
     counts(receipts, EMPTY_EXPENSES);
     const { unmount } = wrap();
     expect(tabButton(/^Finance review/)).toContainElement(screen.getByLabelText("3 to act on"));
@@ -191,6 +191,30 @@ describe("the receipt tabs", () => {
     wrap();
     expect(screen.getByLabelText("3 in this queue")).toBeInTheDocument();
     expect(screen.queryByLabelText(/to act on/)).not.toBeInTheDocument();
+  });
+
+  it("counts a FINANCE viewer's own receipts in gray, and lists them without saying the tab is empty", () => {
+    mockSearch = new URLSearchParams("queue=financial_review");
+    counts({ byState: { financial_review: 1 }, actionableByState: { financial_review: 0 }, notPushed: 0, pushGivenUp: 0 }, EMPTY_EXPENSES);
+    wrap();
+    expect(tabButton(/^Finance review/)).toContainElement(screen.getByLabelText("1 in this queue"));
+    expect(screen.queryByLabelText(/to act on/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing left here/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing waiting on you.")).not.toBeInTheDocument();
+  });
+
+  it("shows a selected tab's action pill in gray with green text, and an unselected one in green", () => {
+    mockSearch = new URLSearchParams("queue=financial_review");
+    counts({ byState: { financial_review: 3, flow_error: 1 }, actionableByState: { financial_review: 3, flow_error: 1 }, notPushed: 0, pushGivenUp: 0 }, EMPTY_EXPENSES);
+    // The brand color must exist in the theme for Mantine to resolve the pill's colors.
+    const theme = createTheme({ colors: { treehouseGreen: DEFAULT_THEME.colors.green } });
+    render(<MantineProvider theme={theme}><FinanceReview /></MantineProvider>);
+    const selected = within(tabButton(/^Finance review/)).getByLabelText("3 to act on").getAttribute("style");
+    const unselected = within(tabButton(/^Errors/)).getByLabelText("1 to act on").getAttribute("style");
+    expect(selected).toContain("--badge-bg: var(--mantine-color-gray-2)");
+    expect(selected).toContain("color: var(--mantine-color-treehouseGreen-9)");
+    expect(unselected).toContain("--badge-bg: var(--mantine-color-treehouseGreen-filled)");
+    expect(unselected).toContain("color: var(--mantine-color-black)");
   });
 
   it("reloads the counts when a write tells the nav to refetch", () => {

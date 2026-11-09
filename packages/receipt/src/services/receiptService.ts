@@ -1491,11 +1491,13 @@ export const receiptService = {
   },
 
   /**
-   * How many of the org's receipts each review queue holds, for the review screen's tabs. For a
-   * FINANCE viewer the queues that wait on FINANCE leave out receipts the viewer is conflicted on,
-   * matching the nav pill; every other count is org-wide.
+   * How many of the org's receipts each review queue holds, for the review screen's tabs. Duplicates
+   * count once per waiting group. For a FINANCE viewer, `actionableByState` holds the queues that
+   * wait on FINANCE without the receipts the viewer is conflicted on, matching the nav pill.
    */
-  async queueCounts(financeViewerId: number | null): Promise<{ byState: Record<string, number>; notPushed: number; pushGivenUp: number }> {
+  async queueCounts(
+    financeViewerId: number | null,
+  ): Promise<{ byState: Record<string, number>; actionableByState?: Record<string, number>; notPushed: number; pushGivenUp: number }> {
     await requireActor();
     const orgId = await getOrgId();
     const [groups, undelivered, finance] = await Promise.all([
@@ -1504,10 +1506,10 @@ export const receiptService = {
       financeViewerId === null ? null : receiptService.countAwaitingFinance(financeViewerId),
     ]);
     const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
-    if (finance) for (const state of FINANCE_ACTION_STATES) byState[state] = finance.byState[state] ?? 0;
-    else if (byState.duplicate_flagged) byState.duplicate_flagged = (await waitingGroups(orgId)).length;
+    if (byState.duplicate_flagged) byState.duplicate_flagged = (await waitingGroups(orgId)).length;
     return {
       byState,
+      ...(finance ? { actionableByState: finance.byState } : {}),
       notPushed: undelivered.length,
       pushGivenUp: undelivered.filter((r) => r.firstFailedAt).length,
     };
