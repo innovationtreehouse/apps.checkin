@@ -2,6 +2,7 @@ jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navM
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import AccountMappingPage, { nameOptions } from "@checkin/expense/pages/accountMapping";
+import { paged } from "@checkin/component-ui";
 import { resetRtl } from "@/test-helpers/rtl";
 
 beforeEach(() => resetRtl());
@@ -17,7 +18,7 @@ jest.mock("@checkin/expense/components/api", () => ({
     reload: () => {},
   }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
-  paged: (path: string, page: number) => `${path}?page=${page}`,
+  paged: jest.requireActual("@checkin/component-ui").paged,
   send: (...args: unknown[]) => mockSend(...args),
 }));
 jest.mock("@checkin/component-ui", () => ({ ...jest.requireActual("@checkin/component-ui"), CatalogPicker: () => null }));
@@ -47,7 +48,7 @@ beforeEach(() => {
   mockSend.mockClear();
   mockErrors = {};
   mockLoads = {
-    "/account-mapping?page=1": [],
+    [paged("/account-mapping", 1)]: [],
     "/qb-accounts": [
       { id: 1, name: "Supplies", qbAccount: "4000" },
       { id: 2, name: "Equipment", qbAccount: "1500" },
