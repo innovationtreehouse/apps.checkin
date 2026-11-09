@@ -12,7 +12,7 @@ import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
 import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
+import { draftBalance, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 import { useReceipts } from "../components/useReceipts";
 import { day, REJECTED_AS_COPY } from "../lib/describeReceipt";
@@ -345,11 +345,12 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
   const saveTotalsOff = () =>
     exclusive(async () => {
-      const math = draftMath(r, draft);
+      const { math, differenceCents, disagreements } = draftBalance(r, draft);
       if (dirty && !(await saveDraft())) return;
       if (math?.balanced) await resubmit(dirty);
+      else if (disagreements.length > 0) stillOff(`Saved. ${disagreements.join("; ")}; stays in Totals off.`);
       else {
-        const off = math ? `${differenceDollars(Math.abs(math.differenceCents))} off${roundingAllowed(math.allowedCents)}` : "off";
+        const off = math && differenceCents !== null ? `${formatCents(Math.abs(differenceCents))} off` : "off";
         stillOff(`Saved. Still ${off}; stays in Totals off.`);
       }
     });

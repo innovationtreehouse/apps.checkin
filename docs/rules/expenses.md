@@ -225,12 +225,18 @@ Things the app takes as true because they are handled outside it.
   and mail sent to another address that reaches the mailbox, still do.
   [Decision — owner]
 
-- A receipt's lines, plus shipping and tax, less discount, must equal its
-  total. The check is exact unless a line's cost (quantity × unit price) is a
-  fraction of a cent. Then the total may differ by up to one cent for each
-  such line. The receipt editor applies the same check, so it shows a
-  receipt as balanced exactly when the check passes.
-  [Decision]
+- A receipt's printed figures are correct and are the record. A printed unit
+  price or line total may be rounded or truncated, and is not an error: 3 ×
+  $3.33 on a $10.00 receipt is 3 × $3.333…, and $4.99 may be $4.989. OCR
+  reads each line's printed total, and the system never changes it. A line
+  with no printed total is quantity × unit price, rounded to the cent. A
+  line's total may differ from quantity × unit price by less than a cent per
+  unit, and by less than a cent below one unit; a line outside that doesn't
+  add up, and is named. Line totals, plus shipping and tax, less discount,
+  must equal the receipt total exactly. A receipt that doesn't add up goes to
+  its submitter or finance to fix, and a person may type a line's total. The
+  receipt editor applies the same check.
+  [Decision — owner]
 
 - Mail to the receipt mailbox counts as from a person only when Google's own
   check shows the sender's domain signed it (DKIM) and passed DMARC, and the

@@ -107,25 +107,48 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(resubmitted()).toBe(false);
   });
 
-  it("counts a fractional-cent line within its cent of rounding as balanced, and resubmits", async () => {
+  it("keeps a line's stored total when a corrected unit price still rounds to it", () => {
     wrap();
-    type("Line 2 quantity", "1.0005");
+    // Line 2 is stored as $10.00; 3 × $3.33 is $9.99, which rounds to it.
+    type("Line 2 quantity", "3");
+    type("Line 2 unit price", "3.33");
     type("Receipt total", "26.50");
-    expect(screen.getByText("Matches within rounding: $0.005 off (rounding of up to $0.01 allowed)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("10.00");
+    expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
   });
 
-  it("shows the real difference and the rounding allowed when a fractional-cent receipt is still off", async () => {
+  it("shows a calculated line total a cent off, and saves the total a person types", async () => {
+    // The receipt prints 3 @ $3.33 with no line total; the line is calculated as $9.99.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), line(12, "Hinges", 3, 333)] };
     wrap();
-    type("Line 2 quantity", "1.0005");
-    type("Receipt total", "26.47");
-    expect(screen.getByText("Difference: $0.035 (rounding of up to $0.01 allowed)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("9.99");
+    expect(screen.getByText("Difference: -$0.01")).toBeInTheDocument();
+    type("Line 2 total", "10.00");
+    expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() =>
-      expect(shown()).toContainEqual({ message: "Saved. Still $0.035 off (rounding of up to $0.01 allowed); stays in Totals off.", color: "yellow", autoClose: false }),
-    );
-    expect(resubmitted()).toBe(false);
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ totalPrice: 10 }) });
+  });
+
+  it("keeps a typed total that equals the stored one when the unit price changes, and saves it", async () => {
+    // Line 2 is stored as $10.00; the unit price is corrected and the printed $10.00 typed back in.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), { ...line(12, "Hinges", 3, 333), totalPriceCents: 1000 }] };
+    wrap();
+    type("Line 2 unit price", "3.30");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("9.90");
+    type("Line 2 total", "10.00");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("10.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 3.3, totalPrice: 10 }) }));
+  });
+
+  it("names a line whose printed total no rounding explains, and matches once its unit price is corrected", async () => {
+    // Read as 1 × $9.90 against a printed $10.00 line.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), { ...line(12, "Bolts", 1, 990), totalPriceCents: 1000 }] };
+    wrap();
+    expect(screen.getByText("Line 2: total $10.00 is not 1 × $9.90 ($9.90)")).toBeInTheDocument();
+    type("Line 2 unit price", "10.00");
+    expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
   });
 
   it("does not claim success or leave the page when the flow puts it back in Totals off", async () => {

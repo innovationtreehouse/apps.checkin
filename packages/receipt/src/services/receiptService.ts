@@ -294,12 +294,15 @@ function ocrDetail(data: OcrData) {
   };
 }
 
-const toLine = (li: { description: string; partNumber?: string | null; manufacturer?: string | null; quantity?: number; unitPrice?: number; isDelayed?: boolean }): NewLine => ({
+type LineInput = { description: string; partNumber?: string | null; manufacturer?: string | null; quantity?: number; unitPrice?: number; totalPrice?: number; isDelayed?: boolean };
+/** A line as read or typed; a printed or typed total is stored as given, otherwise quantity × unit price rounded. */
+const toLine = (li: LineInput): NewLine => ({
   description: li.description,
   partNumber: li.partNumber,
   manufacturer: li.manufacturer,
   quantity: li.quantity ?? 1,
   unitPriceCents: toCents(li.unitPrice),
+  totalPriceCents: li.totalPrice === undefined ? undefined : toCents(li.totalPrice),
   isDelayed: li.isDelayed,
 });
 
@@ -974,7 +977,7 @@ export const receiptService = {
       ];
 
       const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
-      const totalPriceCents = lineTotalAfterEdit(li, { quantity, unitPriceCents });
+      const totalPriceCents = edit.totalPrice === undefined ? lineTotalAfterEdit(li, { quantity, unitPriceCents }) : toCents(edit.totalPrice);
       if (totalPriceCents !== li.totalPriceCents) {
         edited.push({ field: "totalPrice", before: li.totalPriceCents / 100, after: totalPriceCents / 100 });
       }

@@ -32,6 +32,7 @@ const lineItemSchema = {
     manufacturer: { type: "string", description: "Manufacturer name if shown" },
     quantity: { type: "number", description: "Quantity, default 1" },
     unitPrice: { type: "number", description: "Price per unit" },
+    totalPrice: { type: "number", description: "The line's total as printed; omit if the receipt prints none" },
     isDelayed: { type: "boolean", description: "True if item is marked backordered or delayed" },
   },
   required: ["description", "quantity", "unitPrice", "isDelayed"],
@@ -85,6 +86,7 @@ export function mapRawToOcrData(raw: Record<string, unknown>): OcrData {
         manufacturer: li.manufacturer ? String(li.manufacturer) : undefined,
         quantity: Number(li.quantity ?? 1),
         unitPrice: Number(li.unitPrice ?? 0),
+        totalPrice: li.totalPrice == null ? undefined : Number(li.totalPrice),
         isDelayed: Boolean(li.isDelayed ?? false),
       };
     }),

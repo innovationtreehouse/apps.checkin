@@ -10,12 +10,12 @@ import { duplicateGroup } from "./duplicateGroup";
 import { liveIds } from "./livePeople";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
-import { receiptMath, type MathLine } from "./lineMath";
+import { disagreementText, receiptMath, type StoredLine } from "./lineMath";
 import { missingDetails, missingDetailsNote } from "./missingDetails";
 import { describeCorrection, editsSinceReading, READING_APPLIED, submitterCorrections } from "./submitterCorrections";
 
 export function validateLineItemMath(
-  lineItems: MathLine[],
+  lineItems: StoredLine[],
   shippingCents: number,
   taxCents: number,
   discountCents: number,
@@ -272,7 +272,9 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   const settings = await getOrgSettings(orgId);
   // A receipt with no lines can balance, but delivery requires at least one line.
   const noLines = lineItems.length === 0;
-  const valid = !noLines && validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  const math = receiptMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  const valid = !noLines && math.balanced;
+  const disagreeing = math.disagreeing.map((i) => disagreementText(lineItems[i], i));
   const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
@@ -305,8 +307,14 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         await transition(
           noLines
             ? { state: "validation_failed", validationNotes: "The receipt has no line items. Add at least one line." }
-            : { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
-          noLines ? "validation_failed (no line items)" : "validation_failed (line items total does not match receipt total)",
+            : disagreeing.length > 0
+              ? { state: "validation_failed", validationNotes: `A line's total does not add up. ${disagreeing.join("; ")}.` }
+              : { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
+          noLines
+            ? "validation_failed (no line items)"
+            : disagreeing.length > 0
+              ? `validation_failed (${disagreeing.join("; ")})`
+              : "validation_failed (line items total does not match receipt total)",
         );
         return;
       case "submitter_review":
