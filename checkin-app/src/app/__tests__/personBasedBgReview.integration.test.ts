@@ -3,7 +3,7 @@
  */
 /**
  * Person-based background-check review against a real database
- * (docs/in-design/person-based-bg-review.md §7 PR 4): a household's consent opens a
+ * (docs/rules/membership.md, Application and review): a household's consent opens a
  * check review with no person; its first decision, approve or reject, names the
  * person; every outcome settles the households it touches; the household
  * application is never reviewed itself.
@@ -191,7 +191,7 @@ describe('the first decision names the person', () => {
         expect(notifyBoardCheckRejected).not.toHaveBeenCalled();
     });
 
-    it("closes the named person's own empty review in favour of this one (PBR-11)", async () => {
+    it("closes the named person's own empty review in favour of this one", async () => {
         const f = await family();
         const reviewId = await consent(f);
         // The sweep opens the lead's own review after the household's.
@@ -475,7 +475,7 @@ describe('cutover: the daily settle opens a review for an application already wa
     });
 });
 
-describe('the Board hears of each rejection once (PBR-2)', () => {
+describe('the Board hears of each rejection once', () => {
     it('emails the Board when an adult in an ACTIVE household is rejected, and changes nothing on the membership', async () => {
         const f = await family('ACTIVE', { membership: 'ACTIVE', paid: true, consent: true });
         const reviewId = await ownReview(f.adultId);

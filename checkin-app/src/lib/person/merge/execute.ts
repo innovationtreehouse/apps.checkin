@@ -151,8 +151,8 @@ async function disputedCheckRefusal(db: DbClient, keep: KeepSubject, merge: Merg
 }
 
 /**
- * A BLOCKED household application names nobody, so it disputes every lead of its
- * household until check reviews name their person (person-based-bg-review.md §6).
+ * A household application BLOCKED by a household attestation names nobody, so it
+ * disputes every lead of its household.
  */
 async function blockedApplicationsByLead(db: DbClient, people: { id: number; householdId: number; isHouseholdLead: boolean }[]): Promise<Map<number, { id: number }[]>> {
     const leads = people.filter(p => p.isHouseholdLead);

@@ -26,7 +26,7 @@ export async function notifyBoardPaidReject(processId: number): Promise<void> {
 
 /**
  * Email board members that a check review was rejected where no paid application
- * was blocked (PBR-2): an ACTIVE household, one with no open application, or one
+ * was blocked: an ACTIVE household, one with no open application, or one
  * whose open application is unpaid. Nothing changes on the membership; the Board decides.
  * Never throws: it runs after the decision has committed.
  * A paid application blocked by the rejection gets `notifyBoardPaidReject` instead.

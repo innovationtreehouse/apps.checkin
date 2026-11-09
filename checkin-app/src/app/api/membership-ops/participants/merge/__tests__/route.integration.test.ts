@@ -1872,7 +1872,7 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // docs/in-design/person-based-bg-review.md §6: a merge that would change a
+    // docs/rules/membership.md: a merge that would change a
     // disputed person's check facts waits for the Board to settle the dispute.
     describe("a disputed background check", () => {
         const NEWER = new Date("2026-03-01T00:00:00Z");

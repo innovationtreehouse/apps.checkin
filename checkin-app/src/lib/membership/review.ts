@@ -320,7 +320,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
     if (result.clearance) await notifyClearanceOutcome(result.clearance);
     if (result.reopened) await notifyReviewers();
     const settled = await settleAfterReview(result.households, { reviewJustCleared: !!result.clearance });
-    // One Board email per rejection: settle sends the paid-application one, this covers every other case (PBR-2).
+    // One Board email per rejection: settle sends the paid-application one, this covers every other case.
     if (result.rejected && !settled.includes("paidReject")) await notifyBoardCheckRejected(processId);
 
     return result.approvals !== undefined ? { status: result.status, approvals: result.approvals } : { status: result.status };
@@ -368,7 +368,7 @@ function confirmedSubject(subject: number, subjectPersonIds: number[] | undefine
  * Fixes the review's person at its first decision. The person's row is locked so two
  * reviews can't name them at once. A review of their own that already has decisions,
  * is blocked or was sent back keeps them: the reviewer reviews them there. An empty
- * one is closed in favour of this review (PBR-11).
+ * one is closed in favour of this review.
  */
 async function nameSubject(tx: TxClient, reviewerId: number, processId: number, subjectPersonId: number) {
     await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${subjectPersonId} FOR UPDATE`;
@@ -665,7 +665,7 @@ export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: 
  *
  * The person the review names stays named, except on the wrong-person reset
  * (`wrongPerson`), which only a review requested by a household takes: it returns to
- * no person, and the next first decision names again (PBR-12).
+ * no person, and the next first decision names again.
  *
  * A household application blocked by a household attestation before cutover is still
  * reset here; one in review is not, because nothing reviews it now.

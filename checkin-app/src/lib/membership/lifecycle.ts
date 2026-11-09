@@ -418,7 +418,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE", kind: "PERSON_BG" },
     { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI", kind: "PERSON_BG" },
     { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI", kind: "PERSON_BG" },
-    // Naming a person whose own review is empty closes that review (PBR-11).
+    // Naming a person whose own review is empty closes that review.
     { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "attest names a person with an empty review", actor: "reviewer", guardSite: "review.ts nameSubject: process FOR UPDATE + holds no rejection", kind: "PERSON_BG" },
     { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "settleHouseholdBg closes an unneeded unnamed review", actor: "system", guardSite: "settleHouseholdBg.ts closeUnneededRequestedReviews: process FOR UPDATE + no held rejection", kind: "PERSON_BG" },
     // Household application: its people's check standing moves it (settleHouseholdBg).

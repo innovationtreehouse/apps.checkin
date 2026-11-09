@@ -3,7 +3,7 @@
  */
 /**
  * settleHouseholdBg against a real database: a household's open application moves
- * only on its people's check standing (docs/in-design/person-based-bg-review.md §3.2).
+ * only on its people's check standing (docs/rules/membership.md, Application and review).
  */
 import type { OrgMembershipProcessStatus } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
