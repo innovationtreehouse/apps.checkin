@@ -244,6 +244,7 @@ describe('receipt submitter admission', () => {
         'GET /api/receipts/reimbursee-options',
         'GET /api/receipts/needs-attention',
         'GET /api/receipts/[id]',
+        'PUT /api/receipts/[id]/rotation',
         'PATCH /api/receipts/[id]',
         'POST /api/receipts/[id]/line-items',
         'PATCH /api/receipts/[id]/line-items/[lineItemId]',

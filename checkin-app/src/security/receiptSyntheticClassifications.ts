@@ -139,6 +139,7 @@ export const classifications = {
     duplicateNotice: "internal",
     copyOfId: "pii",
     copyOfLabel: "pii",
+    rotation: "internal",
   },
   ReceiptLineView: {
     id: "internal",
