@@ -424,7 +424,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person accepting a gift of goods, with a receipt or without one, confirms the
   goods themselves exist and arrived, not only the receipt, and that is recorded.
-  Refusing or returning a gift needs no such confirmation.  [Decision — owner, 2026-11-01]
+  Refusing or returning a gift needs no such confirmation.  [Decision]
 
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
@@ -450,7 +450,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - A gift of goods that fails to book goes to finance at once and waits there,
   stuck, until finance books it or a person retries it from the Problems list.
   The app never retries it by itself, and it never holds back newer gifts.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - A gift of goods whose entry in the books is removed, voided or changed after it
   booked goes back to finance, which matches it again or skips it with a reason.
@@ -467,11 +467,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts
   as part of that household. This covers a gift recorded without a receipt and a
-  donor typed in on a receipt.  [Decision — owner, 2026-10-31; *Principle: fail closed*]
+  donor typed in on a receipt.  [Decision — *Principle: fail closed*]
 
 - Someone uploading a receipt may name themselves as the donor by choosing "I am
   the donor". The person who decides the gift is the independent check.
-  [Decision — owner, 2026-11-01]
+  [Decision]
 
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]

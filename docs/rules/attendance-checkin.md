@@ -117,7 +117,7 @@ person in front of it.
   closes the building. The website offers no check-in, check-out, force checkout
   or close, to anyone; people badge at the door. The nightly auto-close is the
   backstop, a close no person makes. This replaces the owner's ruling of
-  2026-10-11 that a keyholder can close the building from the web.  [Decision — Board ruling B7/B14, 2026-10-27]
+  2026-10-11 that a keyholder can close the building from the web.  [Decision — Board ruling B7/B14]
 
 - A close is one event: a keyholder closed the building at a moment, at the
   kiosk, online or offline. The keyholder decides, from what the kiosk shows. The
@@ -179,7 +179,7 @@ person in front of it.
   there. With no keyholder in the building the visit is marked *no keyholder*,
   and a keyholder checking in within ten minutes of that arrival clears the
   mark. The mark is read from the visit record, so correcting a keyholder's
-  visit re-decides it. The review panel records a parked scan as a closed visit.  [Decision — Board ruling B7/B14, 2026-10-27]
+  visit re-decides it. The review panel records a parked scan as a closed visit.  [Decision — Board ruling B7/B14]
 
 ### Supervision
 
@@ -252,7 +252,7 @@ person in front of it.
 
 - The nightly sweep records its close every night, even when it ends no visit,
   so a scan from before it that arrives late is always fenced by it. A retry of
-  the same night's run records no second close unless it finds someone inside.  [Decision — *Board ruling B7/B14, 2026-10-27*]
+  the same night's run records no second close unless it finds someone inside.  [Decision — *Board ruling B7/B14*]
 
 - Correcting a close's time is not closing. The keyholder who made a close, or
   the board, corrects its time by
@@ -342,7 +342,7 @@ hours at a time — is a normal operating mode here, not an incident.
   That clear changes only the kiosk's view and sends the server nothing; the
   server's 23:00 run stays the one close of record. The roster and each scan
   acknowledgement name the latest nightly close whose run has ended, so the kiosk
-  can tell a reply from before tonight's close from one after it.  [Decision — Board ruling B7/B14, 2026-10-27; owner ruling 2026-10-31]
+  can tell a reply from before tonight's close from one after it.  [Decision — Board ruling B7/B14]
 
 - A replay that lands behind later activity belongs to the visit the person was
   in at its own time — their latest arrival at or before it — and never touches a
@@ -400,7 +400,7 @@ hours at a time — is a normal operating mode here, not an incident.
   building's state and when the kiosk was last heard from, and what it lists is
   the visit record, not presence. A kiosk resting in a building it knows is
   empty sends nothing on purpose, so that is the expected reading then. The
-  kiosk's own screen shows what the kiosk holds regardless.  [Decision — Board ruling B7/B14, 2026-10-27; *Principle: fail closed*]
+  kiosk's own screen shows what the kiosk holds regardless.  [Decision — Board ruling B7/B14; *Principle: fail closed*]
 
 - The kiosk rests — sends the server nothing on its own — only while the
   building is known empty: its last real roster showed nobody inside, no badge
@@ -421,20 +421,20 @@ hours at a time — is a normal operating mode here, not an incident.
 - A visit that is still open is changed only by the kiosk or the nightly
   auto-close. A member, a
   household lead or the board corrects or removes a visit once it is closed, and is told to badge out at the kiosk or wait for the
-  11 PM close before then.  [Decision — Board ruling B7/B14, 2026-10-27]
+  11 PM close before then.  [Decision — Board ruling B7/B14]
 
 - A website insert or edit whose times overlap another visit of the same person
   is checked against it. Overlapping an open visit, which counts as running until
   now, is refused. Overlapping a closed visit applies, and is flagged on the
   corrections review naming the other visit, so the hours are not counted twice
   unseen. Times that only touch do not overlap. This covers members' and household
-  leads' corrections, the board's, and roster marks.  [Decision — Board ruling B7/B14, 2026-10-27]
+  leads' corrections, the board's, and roster marks.  [Decision — Board ruling B7/B14]
 
 - Which close ended a visit is the visit's own link to that close, and the visits
   screen's "closed out by a close" list reads it. The close log is the history of
   every change and is never edited, so the 11 PM run's log rows still list visits
   a later-arriving kiosk close pulled back; the pull-back's own row names the close
-  it replaced.  [Decision — Board ruling B7/B14, 2026-10-27]
+  it replaced.  [Decision — Board ruling B7/B14]
 
 - A member inserts their own past visit, with a departure, backdated as far as
   they need — there is no limit on how far, and the audit trail stands in for one.  [Decision]
@@ -518,7 +518,7 @@ hours at a time — is a normal operating mode here, not an incident.
 
 - A household lead records a visit for a household member the same way they
   record their own. Board and sysadmins record one for anyone. A recorded visit
-  is always closed: someone in the building now badges at the kiosk.  [Decision — Board ruling B7/B14, 2026-10-27]
+  is always closed: someone in the building now badges at the kiosk.  [Decision — Board ruling B7/B14]
 
 - Every completed visit counts toward facility hours, whatever recorded it — a
   badge at the kiosk, a visit staff entered for somebody else, a roster mark. Where
@@ -542,7 +542,7 @@ program. This is a record of who was at one session of one program.
 - A Present mark records attendance at the session, and is made only once the
   session has started, with a departure. If a kiosk visit covers the session the
   mark links to it; otherwise it creates a closed visit. A mark never opens a visit
-  or ends one.  [Decision — Board ruling B7/B14, 2026-10-27]
+  or ends one.  [Decision — Board ruling B7/B14]
 
 - Who attended is for the people running it — the program's leader, its core
   volunteers, the board and sysadmins. Anyone else is refused outright rather than

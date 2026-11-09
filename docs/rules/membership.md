@@ -258,7 +258,7 @@ Procedure below is built on them.
   reset nor the rejector's change to approve, below, reopens it then.  [Decision — *Principle: people decide about people*]
 
 - Nobody clears a blocked application on their own. After a rejection the check
-  needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25, 2026-10-27]
+  needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25]
 
 - A person merge is refused while either record is disputed and the merge would
   carry in a newer check date or move a second check review onto that person.
@@ -269,11 +269,11 @@ Procedure below is built on them.
 - The reviewer who rejected may change their answer to approve. That starts the
   review over: every earlier decision on it, theirs and anyone else's, is
   discarded, and their approval is the first of the two it needs. The review
-  keeps its person, who stays disputed until it clears.  [Decision — Board ruling B5/B25, 2026-10-27]
+  keeps its person, who stays disputed until it clears.  [Decision — Board ruling B5/B25]
 
 - A background-check date comes only from a clearance, or from a person merge
   carrying one forward. Nobody can change it in the app, earlier, later or by
-  removing it; a wrong date is corrected by hand in the database.  [Decision — Board ruling B5/B25, 2026-10-27]
+  removing it; a wrong date is corrected by hand in the database.  [Decision — Board ruling B5/B25]
 
 - The application's audit row and the merge archive are enough record of where a
   merged background-check date came from. No link to the original application is
@@ -314,7 +314,7 @@ Procedure below is built on them.
   refund is recorded. The one exception is a restore, below, which also closes a
   blocked application. Reopening refuses a denied household, or one with another
   open application. The word "archive" is reserved for archiving a household.  [Decision —
-  *Principle: decisions are reversible*; owner ruling 2026-11-07]
+  *Principle: decisions are reversible*]
 
 - A refund made in the online store is recorded by the board ("Record refund"),
   with a reason, by someone outside the household, on a paid application at any
@@ -322,7 +322,7 @@ Procedure below is built on them.
   including after a denial. The application keeps its step, unpaid, and the
   background check is untouched; a paid application waiting on its background
   check returns to awaiting payment. A blocked application stays blocked: a
-  refund never unblocks it or erases the rejection.  [Decision — owner ruling 2026-11-07]
+  refund never unblocks it or erases the rejection.  [Decision]
 
 - Pre-designating a household volunteer-only sets what it owes and nothing else
   — it does not skip review or open payment. The policy grants only the
@@ -395,7 +395,7 @@ Procedure below is built on them.
   signed. While one lead's signing request is open, another lead cannot start a
   second; the board resets signing, with a reason, which withdraws the open
   request. A signed agreement cannot be reset.  [Decision — superuser scope
-  unsettled, issue #1551]
+  unsettled]
 
 - Deny, restore, grant and revoke are each refused for the acting person's own
   household, and each applies only if the household is still in the status the
@@ -487,7 +487,7 @@ Procedure below is built on them.
 - Renewals start only from the board's own actions: its "open renewals" button
   opens them for every household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
-  ruling B6, 2026-10-27*]
+  ruling B6*]
 
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
