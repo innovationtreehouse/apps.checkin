@@ -150,7 +150,7 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
 
 ### 8. Admin UI — new Settings tab, board-gated
 
-- New top tab **"Email Templates"** in `SettingsTabs` (`src/components/admin/SettingsTabs.tsx`),
+- New top tab **"Email Templates"**: a `SETTINGS.links` entry (`src/lib/nav/sections/settings.ts`; the settings layout renders that list as its tabs),
   route `src/app/settings/templates/page.tsx`. The `settings` layout already admits
   board + sysadmin; the page self-gates `useRequireRole(["isSysadmin","isBoardMember"])`
   like its siblings.
@@ -346,7 +346,7 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
    `outreach.*` registry entries here; their default wording is a Board decision.
 6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer).
 7. Admin tab: `settings/templates` page + API route (list/get/save + validate + send-to-self),
-   add `"templates"` to `SettingsTabs`.
+   add the templates link to `SETTINGS.links`.
 8. **Follow-up release (contract): drop the moved `BoardSettings` columns + old
    `settings/email`/`settings/outreach` controls** — only after step 5 has fully deployed and
    the drain window has passed. Per `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`: during a rolling
