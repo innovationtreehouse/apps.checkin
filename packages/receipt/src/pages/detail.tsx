@@ -37,6 +37,7 @@ function Flagged({ on, children }: { on: boolean; children: React.ReactNode }) {
 
 interface Receipt extends ReceiptListRow {
   mimeType: string;
+  rotation: number;
   taxCents: number | null;
   shippingCents: number | null;
   discountCents: number | null;
@@ -426,7 +427,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
-          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
+          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} rotation={r.rotation} rotationPath={`/${encodeURIComponent(r.id)}/rotation`} />
         </Paper>
         <Stack miw={280}>
           <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>

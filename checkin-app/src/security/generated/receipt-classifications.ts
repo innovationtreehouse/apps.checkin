@@ -33,6 +33,7 @@ export const classifications = {
         pushedAt: 'internal',
         firstFailedAt: 'internal',
         lastError: 'personal',
+        rotation: 'internal',
     },
     ReceiptDetail: {
         id: 'internal',

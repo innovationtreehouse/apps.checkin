@@ -26,6 +26,7 @@ export interface CompareReceipt {
   uploadedAt: string;
   fileHash?: string;
   mimeType: string;
+  rotation?: number;
   retailer: string | null;
   receiptDate: string | null;
   receiptNumber?: string | null;
@@ -50,7 +51,7 @@ function FileView({ title, receipt }: { title: string; receipt: CompareReceipt }
         <Text fw={500} size="sm">{title}</Text>
         <Anchor href={fileHref(receipt)} download size="xs">Download</Anchor>
       </Group>
-      <ReceiptFile src={fileHref(receipt)} mimeType={receipt.mimeType} title={title} />
+      <ReceiptFile src={fileHref(receipt)} mimeType={receipt.mimeType} title={title} rotation={receipt.rotation} rotationPath={`/${encodeURIComponent(receipt.id)}/rotation`} />
     </Stack>
   );
 }

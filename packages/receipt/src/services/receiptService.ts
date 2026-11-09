@@ -33,6 +33,7 @@ import {
   EditLineItemSchema,
   EditReceiptSchema,
   InKindInputSchema,
+  RotationInputSchema,
   toCents,
   UploadInputSchema,
   type DonorInput,
@@ -1597,6 +1598,23 @@ export const receiptService = {
       if (acknowledged.count > 0) await audit(db, id, actor, { action: "rejection_acknowledged" });
     }
     return toSubmitterView(await load(id, "submitter", actor));
+  },
+
+  /**
+   * Turn the receipt's image for everyone who views it. A display setting: it leaves the receipt's
+   * details and state alone, so it is allowed in any state, even after delivery.
+   */
+  async setRotation(id: string, rawInput: unknown, access: Access): Promise<{ id: string; rotation: number }> {
+    const actor = await requireActor();
+    const { rotation } = parse(RotationInputSchema, rawInput);
+    const row = await load(id, access, actor);
+    if (row.rotation !== rotation) {
+      await db.$transaction(async (tx) => {
+        await tx.receipt.update({ where: { id }, data: { rotation } });
+        await audit(tx, id, actor, { action: "file_rotated", fieldChanged: "rotation", valueBefore: String(row.rotation), valueAfter: String(rotation) });
+      });
+    }
+    return { id, rotation };
   },
 
   /**

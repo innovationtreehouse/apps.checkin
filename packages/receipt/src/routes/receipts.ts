@@ -137,6 +137,11 @@ export const acknowledgeRejection: ReceiptRouteHandler = async ({ params }) => (
   ReceiptView: await receiptService.acknowledgeRejection(params.id),
 });
 
+/** Turn the receipt's image; anyone who may view the file may turn it. */
+export const rotation: ReceiptRouteHandler = async ({ req, params, access }) => ({
+  ReceiptView: await receiptService.setRotation(params.id, await readJson(req), access),
+});
+
 export const confirmation: ReceiptRouteHandler = async ({ req, params }) => {
   const body: unknown = await req.json().catch(() => ({}));
   const reason = typeof body === "object" && body !== null && "reason" in body && typeof body.reason === "string" ? body.reason : null;
