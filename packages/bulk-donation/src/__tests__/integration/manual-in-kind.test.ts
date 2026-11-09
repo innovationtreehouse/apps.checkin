@@ -11,6 +11,7 @@ import { configureBulkDonation } from "../../runtime";
 import { loadInKindInventory, recordInKindWithoutReceipt } from "../../inKind";
 import { manualInKindService, type ManualInKindInput } from "../../services/manualInKindService";
 import { TEST_ORG_ID } from "../helpers/factories";
+import { ServiceError } from "@checkin/component-kit";
 
 const DRILL = "0011111111116";
 const BITS = "0022222222223";
@@ -29,7 +30,7 @@ const input: ManualInKindInput = {
 };
 
 let applied: ResolvedInventoryDelta[];
-let applyFails: boolean;
+let applyFails: boolean | Error;
 
 beforeEach(async () => {
   await db.workflowEvent.deleteMany({});
@@ -42,7 +43,7 @@ beforeEach(async () => {
     catalog: { search: async () => [...CATALOG.values()], getItem: async (g) => CATALOG.get(g) ?? null },
     inventory: {
       apply: async (delta) => {
-        if (applyFails) throw new Error("inventory down");
+        if (applyFails) throw applyFails === true ? new Error("inventory down") : applyFails;
         applied.push(delta);
       },
       failureReason: async () => null,
@@ -118,6 +119,26 @@ describeDb("recordInKindWithoutReceipt", () => {
     expect(applied.map((d) => d.receiptId)).toEqual([`donation:${id}`]);
     expect((await db.manualInKindDonation.findUniqueOrThrow({ where: { id } })).inventoryLoadedAt).not.toBeNull();
     expect(await db.manualInKindDonation.count()).toBe(1);
+  });
+
+  it("logs a failed load's kind, and passes a refusal through to the caller", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    applyFails = true;
+    const { id } = await recordInKindWithoutReceipt(input);
+    expect(warned).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`donation ${id} .*failed \\(bug\\)`)), expect.anything());
+
+    applyFails = new ServiceError(409, "This source was already applied with a different inventory delta.");
+    await expect(loadInKindInventory(id)).rejects.toMatchObject({ status: 409 });
+    expect(warned).toHaveBeenLastCalledWith(expect.stringMatching(/failed \(data\)/), applyFails);
+  });
+
+  it.each([401, 403])("answers a callee's %i as a fault in our software, not the viewer's permission", async (status) => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { id } = await recordInKindWithoutReceipt(input);
+    applyFails = new ServiceError(status, "Forbidden");
+    const failed = await loadInKindInventory(id).catch((e: unknown) => e);
+    expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/fault in our software/), cause: applyFails });
+    expect((failed as Error).message).not.toMatch(/Forbidden|permission/);
   });
 
   it("records a gift with no suggested value", async () => {

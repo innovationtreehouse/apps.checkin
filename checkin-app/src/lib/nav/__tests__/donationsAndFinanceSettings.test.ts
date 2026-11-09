@@ -42,10 +42,10 @@ const tree = (u: NavUser, c: TodoCounts | null = released) =>
   visibleLinks(DONATIONS, u, c).map((l) => [l.name, (l.subLinks ?? []).map((s) => s.href)]);
 
 describe("Settings > Finance", () => {
-  it("shows Finance to FINANCE and Board, last, at /settings/finance", () => {
-    expect(hrefs(SETTINGS, finance)).toEqual(["/settings/finance"]);
-    expect(hrefs(SETTINGS, board).at(-1)).toBe("/settings/finance");
-    expect(visibleLinks(SETTINGS, finance, released)[0].name).toBe("Finance");
+  it("shows Expenses to FINANCE and Board, before Receipt reading, at /settings/finance", () => {
+    expect(hrefs(SETTINGS, finance)).toEqual(["/settings/finance", "/settings/receipt-reading"]);
+    expect(hrefs(SETTINGS, board).slice(-2)).toEqual(["/settings/finance", "/settings/receipt-reading"]);
+    expect(visibleLinks(SETTINGS, finance, released)[0].name).toBe("Expenses");
   });
 
   it("hides Finance from sysadmin and operations, who never reached expense settings", () => {
@@ -54,8 +54,15 @@ describe("Settings > Finance", () => {
   });
 
   it("hides Finance from FINANCE until expense is released", () => {
-    const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "expense"));
+    const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "expense" && k !== "receipt"));
     expect(sectionShown(SETTINGS, finance, unreleased)).toBe(false);
+  });
+
+  it("shows Receipt reading to sysadmin, FINANCE and Board once receipt is released, and admits only them", () => {
+    for (const u of [sysadmin, finance, board]) expect(hrefs(SETTINGS, u)).toContain("/settings/receipt-reading");
+    expect(hrefs(SETTINGS, operations)).not.toContain("/settings/receipt-reading");
+    expect(hrefs(SETTINGS, sysadmin, counts(LIBRARY_KEYS.filter((k) => k !== "receipt")))).not.toContain("/settings/receipt-reading");
+    expect(settingsRolesFor("/settings/receipt-reading")).toEqual(["isSysadmin", "isFinance", "isBoardMember"]);
   });
 
   it("sends FINANCE's sidebar entry straight to Finance", () => {

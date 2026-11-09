@@ -21,6 +21,20 @@ const text: TokenSpec = { kind: "text" };
 const link = (label?: string): TokenSpec => (label ? { kind: "link", label } : { kind: "link" });
 const SAMPLE_URL = "https://checkin.example.org/";
 
+const OPS_TOKENS = {
+    kind: text, cause: text, lanes: text, status: text, summary: text, firstSeen: text,
+    runsSeen: text, items: text, todo: text, actionLink: link("Open System Status"),
+};
+const OPS_SAMPLE = {
+    kind: "connection", cause: "QuickBooks", lanes: "expense, gift", status: "needs reconnecting",
+    summary: "The app's connection to QuickBooks is broken, for example an expired or revoked login, so expense, gift are paused.",
+    firstSeen: "Nov 7, 2026, 2:00 AM", runsSeen: "1", items: "12",
+    todo: "Finance repeats step 3 of the QuickBooks go-live runbook with the infra operator and reseeds the secret (docs/ops/quickbooks-go-live.md).",
+    actionLink: SAMPLE_URL,
+};
+const OPS_SUBJECT = "[{{kind}}] {{cause}}: {{lanes}} — {{status}}";
+const OPS_BODY = "{{summary}}\n\nLanes: {{lanes}}\nFirst seen: {{firstSeen}}\nRuns seen: {{runsSeen}}\nItems waiting: {{items}}\n\nWhat to do: {{todo}}\n\n{{actionLink}}";
+
 export const REGISTRY = {
     // ── checkin (attendance) ────────────────────────────────────────────────
     "checkin.receipt": {
@@ -161,28 +175,44 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
-    "board.inventoryEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Inventory: catalog events need attention",
-        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once; a provisional item that can't be applied alerts on each run.",
+    // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
+    // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
+    "ops.incidentOpened": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: OPS_SAMPLE,
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: OPS_BODY,
+    },
+    "ops.incidentReminder": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "still open after 3 days", runsSeen: "4" },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: `Still open. ${OPS_BODY}`,
+    },
+    "ops.incidentEscalated": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "open for 2 weeks", runsSeen: "15" },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: `This problem has been open for two weeks, and the alert address has been told. ${OPS_BODY}`,
+    },
+    "ops.incidentRecovered": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "recovered", summary: "expense, gift ran again without this failure, so the incident is closed.", todo: "Nothing, unless items are still waiting on System Status." },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: OPS_BODY,
     },
 
-    "board.expenseEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Expense: catalog events need attention",
-        defaultBody: "The expense catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending, and their budget buckets don't carry over to the real items. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
-    },
-
-    "board.receiptMappingEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Receipt mapping: catalog events need attention",
-        defaultBody: "The receipt mapping catch-up {{problem}}. Until they apply, lines on receipts in review can stay on items the catalog has already reviewed. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+    // ── Problems list (lib/problems.ts) ─────────────────────────────────────
+    // Ids, steps and dates only: no error text, amounts, donor or vendor names.
+    "ops.problemsDigest": {
+        allowedTokens: { count: text, items: text, actionLink: link("Open System Status") },
+        sampleCtx: {
+            count: "2",
+            items: "expense, QuickBooks posting: 7f3c, stuck since Nov 6, 2026, 2:00 AM\nScheduled job qbo-posting: last ran Nov 5, 2026, 2:00 AM",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Receipt flow: {{count}} problem(s) waiting on a person",
+        defaultBody: "These have been waiting more than a day. System Status lists each one with its error.\n\n{{items}}\n\n{{actionLink}}",
     },
 
     // ── finance ─────────────────────────────────────────────────────────────
@@ -267,13 +297,6 @@ export const REGISTRY = {
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
         defaultSubject: "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
         defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
-    },
-    "finance.inKindDrainStopped": {
-        // cause: the sender's sentence naming why the run stopped.
-        allowedTokens: { failures: text, remaining: text, cause: text, actionLink: link("Open the in-kind queue") },
-        sampleCtx: { failures: "3", remaining: "12", cause: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.", actionLink: SAMPLE_URL },
-        defaultSubject: "Gifts of goods: today's QuickBooks run stopped early",
-        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failed gifts, leaving {{remaining}} more for the next run. {{cause}} {{actionLink}}",
     },
 
     // ── receipt ─────────────────────────────────────────────────────────────

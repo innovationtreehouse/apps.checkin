@@ -8,8 +8,8 @@ import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconLink, IconPlus } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, clampPage, lastPage, useCanManage, useLoad } from "./api";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { api, lastPage, useCanManage, useLoad } from "./api";
+import { errorMessage, LoadError, showError, useSetUrlFilters, useUrlChoice, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";
@@ -20,17 +20,21 @@ import { SortIcon, THEAD_STYLE } from "./sortableTable";
 // response — the stripper drops non-model keys, design §7 — so it rides the
 // synthetic CatalogItemCount model).
 const PAGE_SIZE = 50;
+const SORT_COLS = ["name", "id", "category"] as const;
+type SortCol = (typeof SORT_COLS)[number];
+const SORT_DIRS = ["asc", "desc"] as const;
 const EMPTY_FORM = { name: "", categoryId: "", subcategoryId: "", usageBehavior: "" as UsageBehavior | "" };
 
 export default function GlobalInventoryClient() {
   const canEdit = useCanManage();
 
-  const [page, setPage] = useState(1);
-  const [showArchived, setShowArchived] = useState(false);
+  const [archived, setArchived] = useUrlFilter("archived");
+  const showArchived = archived === "1";
   const [search, setSearch] = useState("");
   const [debouncedSearch] = useDebouncedValue(search, 300);
-  const [sortBy, setSortBy] = useState<"id" | "name" | "category">("name");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortBy] = useUrlChoice("sortBy", SORT_COLS, "name");
+  const [sortDir] = useUrlChoice("sortDir", SORT_DIRS, "asc");
+  const setFilters = useSetUrlFilters();
 
   const [modalOpen, { open, close }] = useDisclosure(false);
   const [editItem, setEditItem] = useState<ItemRow | null>(null);
@@ -47,8 +51,8 @@ export default function GlobalInventoryClient() {
   if (showArchived) itemFilter.set("includeArchived", "true");
   const countLoad = useLoad<{ total: number }>(`/items/count?${itemFilter}`, { keepPrevious: true });
   const total = countLoad.data?.total ?? 0;
-  const shownPage = clampPage(page, total, PAGE_SIZE);
-  const itemParams = new URLSearchParams({ page: String(shownPage), limit: String(PAGE_SIZE), sortBy, sortDir, ...Object.fromEntries(itemFilter) });
+  const [page, setPage] = useUrlPage(countLoad.data ? lastPage(countLoad.data.total, PAGE_SIZE) : null);
+  const itemParams = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE), sortBy, sortDir, ...Object.fromEntries(itemFilter) });
   const itemsLoad = useLoad<ItemRow[]>(`/items?${itemParams}`, { keepPrevious: true });
   const items = itemsLoad.data;
   const itemsError = itemsLoad.error ?? countLoad.error;
@@ -57,10 +61,9 @@ export default function GlobalInventoryClient() {
   const subcategoriesLoad = useLoad<SubcategoryRow[]>(modalOpen && !editItem && form.categoryId ? `/subcategories?categoryId=${form.categoryId}` : null);
   const optionsError = categoriesLoad.error ?? subcategoriesLoad.error;
 
-  function toggleSort(col: "id" | "name" | "category") {
-    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortBy(col); setSortDir("asc"); }
-    setPage(1);
+  function toggleSort(col: SortCol) {
+    const dir = sortBy === col && sortDir === "asc" ? "desc" : "asc";
+    setFilters({ sortBy: col === "name" ? null : col, sortDir: dir === "asc" ? null : dir });
   }
 
   function openCreate() {
@@ -128,8 +131,8 @@ export default function GlobalInventoryClient() {
       </Group>
 
           <Group mb="md" justify="space-between" align="flex-end">
-            <TextInput aria-label="Search items" placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }} maw={400} />
-            <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => { setShowArchived(e.currentTarget.checked); setPage(1); }} />
+            <TextInput aria-label="Search items" placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }} maw={400} />
+            <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => setArchived(e.currentTarget.checked ? "1" : "")} />
           </Group>
 
           {itemsError && <LoadError what="items" message={itemsError} onRetry={() => { itemsLoad.reload(); countLoad.reload(); }} />}
@@ -175,7 +178,7 @@ export default function GlobalInventoryClient() {
           {!itemsError && totalPages > 1 && (
             <Group justify="space-between" mt="md">
               <Text size="sm" c="dimmed">{total} item{total === 1 ? "" : "s"}</Text>
-              <Pagination value={shownPage} onChange={setPage} total={totalPages} />
+              <Pagination value={page} onChange={setPage} total={totalPages} />
             </Group>
           )}
 

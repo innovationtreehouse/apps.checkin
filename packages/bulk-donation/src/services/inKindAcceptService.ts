@@ -9,8 +9,8 @@ import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
-import type { CapitalReviewLine } from "../contract";
-import { ServiceError } from "@checkin/component-kit";
+import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
+import { ServiceError, kindOf, toHttpError } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { allocateCents } from "@checkin/money";
 
@@ -36,11 +36,10 @@ const OUTCOME: Record<InKindDecisionInput["outcome"], InKindOutcome> = { accept:
 const BOOKED_STATES: readonly string[] = [QB_MATCH_STATE.MATCHED, QB_MATCH_STATE.CREATED];
 
 /**
- * What a gift waits on, most urgent first. `withdrawal` and `replay` are anomalies finance
- * settles; `capital` means a line waits on the expense library's capital review; `booking` means
+ * What a gift waits on, most urgent first. `replay` is an anomaly finance settles; `capital` means a line waits on the expense library's capital review; `booking` means
  * ready, waiting on the QuickBooks drain.
  */
-export type WaitingOn = "withdrawal" | "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "capital" | "booking";
+export type WaitingOn = "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "capital" | "booking";
 
 interface GiftLine {
   id: number;
@@ -65,8 +64,6 @@ interface Gift {
   donorRecordedAt: Date | null;
   donorLastName: string | null;
   donorReplacedAt: Date | null;
-  withdrawnAfterMoneyAt: Date | null;
-  withdrawalSettledAt: Date | null;
   replayConflictAt: Date | null;
   uploadedByUserId: number | null;
   recordedByUserId: number | null;
@@ -97,8 +94,6 @@ const RECEIPT_SELECT = {
   donorRecordedAt: true,
   donorLastName: true,
   donorReplacedAt: true,
-  withdrawnAfterMoneyAt: true,
-  withdrawalSettledAt: true,
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
@@ -146,8 +141,6 @@ function fromManual(m: ManualRow): Gift {
     moneyReceivedAt: m.recordedAt,
     donorRecordedAt: m.recordedAt,
     donorReplacedAt: null,
-    withdrawnAfterMoneyAt: null,
-    withdrawalSettledAt: null,
     replayConflictAt: null,
     uploadedByUserId: null,
   };
@@ -293,11 +286,9 @@ const bookedSide = (sides: { side: string; matchState: string }[], side: "revenu
 
 /** What the gift waits on, most urgent first; empty once both sides are booked, finance skipped it, or it will never book. */
 function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string; matchState: string }[], inCapitalReview: Set<string>, posting: Posting | undefined): WaitingOn[] {
-  if (g.withdrawalSettledAt) return [];
   const out: WaitingOn[] = [];
-  if (g.withdrawnAfterMoneyAt) out.push("withdrawal");
   if (g.replayConflictAt) out.push("replay");
-  if (g.decisionOutcome === "REFUSED" || g.decisionOutcome === "RETURNED" || g.withdrawnAfterMoneyAt) return out;
+  if (g.decisionOutcome === "REFUSED" || g.decisionOutcome === "RETURNED") return out;
   if (!g.donorRecordedAt) out.push("donor");
   if (g.source === "receipt" && g.uploadedByUserId === null) out.push("uploader");
   if (g.source === "receipt" && g.receiptTotalCents === null) out.push("value");
@@ -358,8 +349,6 @@ function queueRow(
     donationDate: g.donationDate,
     moneyReceivedAt: g.moneyReceivedAt,
     donorRecordedAt: g.donorRecordedAt,
-    withdrawnAfterMoneyAt: g.withdrawnAfterMoneyAt,
-    withdrawalSettledAt: g.withdrawalSettledAt,
     replayConflictAt: g.replayConflictAt,
     donorReplacedAt: g.donorReplacedAt,
     uploadedByUserId: g.uploadedByUserId,
@@ -416,7 +405,6 @@ async function assignableBucket(bucketId: number | undefined): Promise<number> {
 
 /** Why a gift cannot be decided yet, or null when it can. */
 function notDecidable(g: Gift): string | null {
-  if (g.withdrawnAfterMoneyAt) return "This gift was withdrawn; settle the withdrawal instead";
   if (g.replayConflictAt) return "This gift's receipt was resent with different values; settle that first";
   if (!g.donorRecordedAt) return "This gift has no donor yet";
   if (g.source === "receipt" && g.uploadedByUserId === null) return "This gift's uploader is not recorded yet";
@@ -553,12 +541,32 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
  * Sends an accepted gift's lines once its decision has committed: the expense library has its own
  * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
  * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
+ * A send the callee refuses would be refused again, so finance sees why instead of being told to resend.
+ * A bug, such as a 401 or 403 from the callee, is our wiring, never the accepting person's permission: a 500 that says so.
  */
 async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
+  const fault = (err: unknown) => {
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
+    const answer = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
+    answer.cause = err;
+    return answer;
+  };
+  // We built these lines, so lines our own schema rejects are our bug, not the callee's refusal.
+  const parsed = CapitalReviewLineSchema.array().safeParse(lines);
+  if (!parsed.success) throw fault(parsed.error);
   try {
-    await getInKindCapital().submit(orgId, lines);
-  } catch {
-    throw new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+    await getInKindCapital().submit(orgId, parsed.data);
+  } catch (err) {
+    const kind = kindOf(err);
+    const answered = toHttpError(err);
+    if (kind === "data") {
+      throw new ServiceError(answered?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${answered?.message ?? (err instanceof Error ? err.message : String(err))}`, answered?.code);
+    }
+    if (kind === "bug") throw fault(err);
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send failed`, err);
+    const failed = new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+    failed.cause = err;
+    throw failed;
   }
   const data = { capitalSubmittedAt: new Date() };
   if (source === "receipt") await db.inKindDonation.update({ where: { id }, data });
@@ -574,7 +582,7 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
   if (buckets?.length === 0) return [];
   const where = { orgId, decisionOutcome: "ACCEPTED", ...(buckets ? { budgetOwnerId: { in: buckets } } : {}) };
   const [receipts, manuals] = await Promise.all([
-    db.inKindDonation.findMany({ where: { ...where, withdrawnAfterMoneyAt: null }, select: RECEIPT_SELECT, orderBy: { id: "asc" } }),
+    db.inKindDonation.findMany({ where, select: RECEIPT_SELECT, orderBy: { id: "asc" } }),
     db.manualInKindDonation.findMany({ where, select: MANUAL_SELECT, orderBy: { id: "asc" } }),
   ]);
   return [...receipts.map(fromReceipt), ...manuals.map(fromManual)].map((g) => ({
@@ -660,8 +668,6 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     donorCompanyName: extras.donorCompanyName,
     donorRecordedAt: gift.donorRecordedAt,
     donorReplacedAt: gift.donorReplacedAt,
-    withdrawnAfterMoneyAt: gift.withdrawnAfterMoneyAt,
-    withdrawalSettledAt: gift.withdrawalSettledAt,
     replayConflictAt: gift.replayConflictAt,
     outcome: gift.decisionOutcome,
     decidedAt: gift.decidedAt,

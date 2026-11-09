@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
-import type { CompletedReceipt } from "@checkin/receipt-types";
+import { DonatedCapitalLineSchema, DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
-import { inventorySourceKey } from "../../contract";
+import { CapitalReviewLineSchema, InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -46,6 +46,10 @@ const configure = (extra: Partial<Parameters<typeof configureBulkDonation>[0]> =
     ...extra,
   });
 
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true, [Symbol.for("@checkin/component-kit/NotWiredError")]: true });
+
 beforeEach(() => {
   vi.clearAllMocks();
   configure();
@@ -55,8 +59,9 @@ afterEach(() => {
 });
 
 describe("X9 ingestInKind (callee)", () => {
-  it("rejects a receipt from another org at parse time", async () => {
-    await expect(ingestInKind(receipt("other-org"))).rejects.toBeInstanceOf(ZodError);
+  it("throws a plain error for a receipt from another org, a wiring bug", async () => {
+    await expect(ingestInKind(receipt("other-org"))).rejects.toThrow(/not this org/);
+    await expect(ingestInKind(receipt("other-org"))).rejects.not.toBeInstanceOf(ZodError);
   });
 
   it("rejects a purchase receipt", async () => {
@@ -84,13 +89,26 @@ describe("X9 ingestInKind (callee)", () => {
 describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
   const DONOR = { firstName: "Jane", lastName: "Doe", companyName: null };
 
-  it("rejects another org at parse time", async () => {
-    await expect(recordInKindDonor("other-org", RECEIPT_ID, DONOR, 0)).rejects.toBeInstanceOf(ZodError);
-    await expect(withdrawInKind("other-org", RECEIPT_ID, 0)).rejects.toBeInstanceOf(ZodError);
+  it("throws a plain error for another org, a wiring bug", async () => {
+    await expect(recordInKindDonor("other-org", RECEIPT_ID, DONOR, 0)).rejects.not.toBeInstanceOf(ZodError);
+    await expect(withdrawInKind("other-org", RECEIPT_ID, 0)).rejects.toThrow(/not this org/);
   });
 
   it("rejects a blank donor name", async () => {
     await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "" }, 0)).rejects.toBeInstanceOf(ZodError);
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, lastName: "   " }, 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("rejects a donor name over the shared limit", async () => {
+    await expect(recordInKindDonor(ORG, RECEIPT_ID, { ...DONOR, firstName: "x".repeat(DONOR_NAME_MAX + 1) }, 0)).rejects.toBeInstanceOf(ZodError);
+  });
+
+  it("checks the donor with the shared schema", () => {
+    expect(BulkDonorSchema).toBe(InKindDonorSchema);
+  });
+
+  it("checks capital-send lines with the shared schema", () => {
+    expect(CapitalReviewLineSchema).toBe(DonatedCapitalLineSchema);
   });
 
   it("rejects an empty receipt id", async () => {
@@ -112,11 +130,31 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
 
 describe("caller ports", () => {
   it("unbound ports are inert: empty reads, throwing writes", async () => {
-    expect(await searchCatalog("drill")).toEqual([]);
-    expect(await getCatalogItem("0000000000000")).toBeNull();
     expect(await getOwnerDirectory().list()).toEqual([]);
     await expect(getInventoryApply().apply({ receiptId: inventorySourceKey(1), orgId: ORG, retailer: null, lineItems: [] })).rejects.toBeInstanceOf(NotWiredError);
     expect(await getInventoryApply().failureReason(inventorySourceKey(1))).toBeNull();
+  });
+
+  it("an unbound catalog is a 503 saying none is connected, never \"no item\"", async () => {
+    const notConnected = { status: 503, message: "No catalog is connected" };
+    await expect(searchCatalog("drill")).rejects.toMatchObject(notConnected);
+    await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(notConnected);
+  });
+
+  it("an unbound catalog from another copy of the kit is still a 503 saying none is connected", async () => {
+    const unbound = async () => { throw foreignNotWired("catalog"); };
+    configure({ catalog: { search: unbound, getItem: unbound } });
+    const notConnected = { status: 503, message: "No catalog is connected" };
+    await expect(searchCatalog("drill")).rejects.toMatchObject(notConnected);
+    await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(notConnected);
+  });
+
+  it("a missing catalog database is a 503 naming who fixes it, never \"not connected\"", async () => {
+    const missing = async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); };
+    configure({ catalog: { search: missing, getItem: missing } });
+    const dbMissing = { status: 503, message: "The catalog database does not exist; the infra operator checks its settings" };
+    await expect(searchCatalog("drill")).rejects.toMatchObject(dbMissing);
+    await expect(getCatalogItem("0000000000000")).rejects.toMatchObject(dbMissing);
   });
 
   it("X10 parses what the bound catalog returns", async () => {
@@ -174,5 +212,9 @@ describe("no-receipt in-kind entry: input bounds (rejected before any catalog or
 
   it("requires at least one line", async () => {
     await expect(recordInKindWithoutReceipt({ ...input, lines: [] })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("with no catalog bound, says so rather than call the item not found", async () => {
+    await expect(recordInKindWithoutReceipt(input)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
   });
 });

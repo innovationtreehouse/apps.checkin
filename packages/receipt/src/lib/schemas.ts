@@ -1,6 +1,7 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { CURRENCY_CODE, DEFAULT_CURRENCY, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { dollarsToCents } from "@checkin/money";
+import { CURRENCY_CODE, DEFAULT_CURRENCY, InKindDonorSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
 
 export { CURRENCY_CODE };
@@ -24,6 +25,10 @@ const dollarString = z.string().refine(
   },
   { message: "must be a number from 0 to 21,474,836.47" },
 );
+/** A dollar input from these shapes in cents; a string that does not start with a number counts as 0. */
+export const toCents = (dollars: number | string | undefined): number =>
+  dollarsToCents(typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0));
+
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
 /** A calendar date as the date picker sends it. */
@@ -56,13 +61,7 @@ export const ManualDetailsSchema = z.object({
 /** "I am the donor", or the donor's name. */
 export const DonorInputSchema = z.union([
   z.object({ self: z.literal(true) }).strict(),
-  z
-    .object({
-      firstName: z.string().trim().min(1).max(100),
-      lastName: z.string().trim().min(1).max(100),
-      companyName: z.string().trim().max(200).nullable().optional(),
-    })
-    .strict(),
+  InKindDonorSchema.extend({ companyName: InKindDonorSchema.shape.companyName.optional() }).strict(),
 ]);
 export type DonorInput = z.infer<typeof DonorInputSchema>;
 
@@ -144,6 +143,8 @@ export const OrgSettingsSchema = z
     receiptAgeLimitDays: z.number().int().positive().optional(),
   })
   .strict();
+
+export const OcrSwitchSchema = z.object({ ocrEnabled: z.boolean() }).strict();
 
 export const ImportLineItemSchema = z.object({
   lineNumber: z.number().int().positive(),

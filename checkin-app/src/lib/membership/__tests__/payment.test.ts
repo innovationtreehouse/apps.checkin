@@ -16,6 +16,8 @@ import { activate, activateByProcessId, certifyPaymentPlan } from '@/lib/members
 import { logBackendError } from '@/lib/logger';
 import { openPersonBgForNewMember } from '@/lib/membership/personBgTriggers';
 import { openPersonAgreementForNewMember } from '@/lib/membership/personAgreementTriggers';
+import { householdHasDisputedCheck } from '@/lib/membership/checkStanding';
+import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 
 jest.mock('@/lib/prisma', () => {
     const mock = {
@@ -38,6 +40,8 @@ jest.mock('@/lib/membership/personAgreementTriggers', () => ({ openPersonAgreeme
 jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/emailRecipients', () => ({ emailHouseholdLeads: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
+jest.mock('@/lib/membership/checkStanding', () => ({ householdHasDisputedCheck: jest.fn().mockResolvedValue(false) }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     setHouseholdStatus: jest.fn().mockResolvedValue(true),
     raiseDeniedHouseholdActivity: jest.fn().mockResolvedValue(undefined),
@@ -68,6 +72,27 @@ beforeEach(() => {
     prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
     setHouseholdStatus.mockResolvedValue(true);
     hasHouseholdConflict.mockResolvedValue(false);
+    jest.mocked(householdHasDisputedCheck).mockResolvedValue(false);
+});
+
+it('holds a cleared payment unactivated, unstamped, when someone in the household is disputed, then settles the household', async () => {
+    prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+    });
+    jest.mocked(householdHasDisputedCheck).mockResolvedValue(true);
+
+    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-disputed', { appliesToYear: 2026 });
+
+    expect(outcome).toBe('held');
+    expect(householdHasDisputedCheck).toHaveBeenCalledWith(prisma, household.householdId);
+    expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING_BG_CLEARANCE', bgClearedAt: null }) }),
+    );
+    expect(setHouseholdStatus).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ newData: expect.objectContaining({ status: 'PENDING_BG_CLEARANCE', bgCleared: false, reason: expect.stringContaining('disputed') }) }),
+    }));
+    expect(settleHouseholdBg).toHaveBeenCalledWith(household.householdId);
 });
 
 it('does NOT activate a PENDING_PAYMENT process when the order has no membership item', async () => {

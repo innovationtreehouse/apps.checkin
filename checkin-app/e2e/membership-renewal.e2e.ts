@@ -7,7 +7,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { api, loginAs } from "../flow-tests/helpers";
-import { applicationAtPayment, asViewer, REVIEWER, review, settledFamily } from "./support/families";
+import { applicationAtPayment, asViewer, REVIEWER, review, settledFamily, signAgreement } from "./support/families";
 import { persona } from "./support/kiosk";
 import { inDays } from "./support/programs";
 import { BOARD, send } from "./support/seedState";
@@ -114,9 +114,7 @@ test.describe("membership renewal in the browser", () => {
       await page.getByRole("button", { name: "Renew now" }).click();
 
       await expect(heading(page, "Sign & start your background check")).toBeVisible();
-      await page.getByRole("button", { name: "Sign your membership agreement →" }).click();
-      await page.getByRole("button", { name: "Complete signing (DEV)" }).click();
-      await expect(page.getByText(/^Signed/)).toBeVisible();
+      await signAgreement(page);
       const [averity] = await Promise.all([page.waitForEvent("popup"), page.getByRole("link", { name: "Consent on Averity →" }).click()]);
       await averity.close();
       await page.getByLabel("I submitted my consent on Averity").check();

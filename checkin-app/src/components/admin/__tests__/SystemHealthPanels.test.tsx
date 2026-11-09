@@ -1,7 +1,7 @@
 import { act, screen, fireEvent } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
-import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox } from "../SystemHealthPanels";
+import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
 
@@ -211,5 +211,89 @@ describe("KioskHeartbeatBox", () => {
     renderHeartbeat([{ metric: "kiosk_clock_skew", value: 90 }]);
     expect(await screen.findByText(/90s ahead of the server/)).toBeInTheDocument();
     expect(screen.getByText(/No kiosk request since this task started/)).toBeInTheDocument();
+  });
+});
+
+describe("OpenProblemsBox", () => {
+  const incident = (over: Record<string, unknown>) => ({
+    key: "quickbooks:connection", status: "open", kind: "connection", cause: "quickbooks",
+    lanes: ["expenses", "gifts"], firstSeenAt: "2026-11-01T12:00:00.000Z", runsSeen: 3, itemsAffected: 7, ...over,
+  });
+
+  it("lists each incident with its kind, cause, lanes and counts, and badges only the open ones", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        incidents: [incident({}), incident({ key: "ocr:system", status: "watching", kind: "system", cause: "ocr", lanes: ["receipts"], runsSeen: 1, itemsAffected: 2 })],
+      },
+    });
+    renderWithProviders(<OpenProblemsBox />);
+
+    expect(await screen.findByText("quickbooks")).toBeInTheDocument();
+    expect(screen.getByText("expenses, gifts")).toBeInTheDocument();
+    expect(screen.getByText(/3 runs, 7 items/)).toBeInTheDocument();
+    expect(screen.getByText("● Open")).toBeInTheDocument();
+    expect(screen.getByText("ocr")).toBeInTheDocument();
+    expect(screen.getByText("● Watching")).toBeInTheDocument();
+    expect(screen.getByTitle("1 open problem(s)")).toBeInTheDocument();
+  });
+
+  it("says so when nothing is open", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("No open problems.")).toBeInTheDocument();
+  });
+
+  it("says so when the panel cannot load", async () => {
+    mockFetchJson({});
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
+  });
+
+  it("shows the failed state, not Checking forever, when the answer has no incidents", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { checks: [] } });
+    renderWithProviders(<OpenProblemsBox />);
+    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
+  });
+});
+
+describe("ProblemsBox", () => {
+  it("lists each stuck item with its library, step, a link to its page and its time, then each job not on time", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems: {
+          items: [
+            { library: "expense", id: "e1", step: "QuickBooks posting", href: "/expense/expenses/e1", failedAt: "2026-11-01T12:00:00.000Z" },
+            { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
+          ],
+          unread: ["gifts"],
+          notices: ["Receipt reading failed 3 times in the last day"],
+        },
+        cronJobs: [
+          { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
+          { job: "qbo-posting", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true },
+        ],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    expect((await screen.findByText("e1")).closest("a")).toHaveAttribute("href", "/expense/expenses/e1");
+    expect(screen.getByText("7").closest("a")).toBeNull();
+    expect(screen.getByText("qbo-posting")).toBeInTheDocument();
+    expect(screen.queryByText("nightly")).not.toBeInTheDocument();
+    expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
+    expect(screen.getByText("Receipt reading failed 3 times in the last day")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  it("says so when nothing is stuck", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Nothing is stuck.")).toBeInTheDocument();
+  });
+
+  it("shows the failed state when the answer has no problems", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Unable to load the Problems list.")).toBeInTheDocument();
   });
 });

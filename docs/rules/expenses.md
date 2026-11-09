@@ -78,7 +78,7 @@ Things the app takes as true because they are handled outside it.
   [Decision — owner]
 
 - Only finance approves and rejects receipts, imports old ones, and changes
-  receipt settings.
+  receipt settings, apart from the switch for automatic reading.
   [Decision — *Principle: least privilege*]
 
 - Only finance and the Board see every expense. A program's leader and
@@ -216,6 +216,15 @@ Things the app takes as true because they are handled outside it.
   twice.
   [Decision — owner]
 
+- A mailed message with nothing to read as a receipt — no file, no amount in
+  its text, only small inline images — gets one email saying no receipt file
+  or receipt text was found: attach the receipt as a file, or upload it in the
+  app. It goes to the same senders a refusal notice reaches, never to finance.
+  A reply to one of the receipt mailbox's own notices, and a copy on which the
+  receipt mailbox is only in Cc, get no such email. A forward to the mailbox,
+  and mail sent to another address that reaches the mailbox, still do.
+  [Decision — owner]
+
 - A receipt's lines, plus shipping and tax, less discount, must equal its
   total. The check is exact unless a line's cost (quantity × unit price) is a
   fraction of a cent. Then the total may differ by up to one cent for each
@@ -252,9 +261,8 @@ Things the app takes as true because they are handled outside it.
   [Decision — deliberate limit]
 
 - A receipt's file hash is deliberately not unique, so two receipts may hold the
-  same file: the second is stored and flagged for finance. A unique hash would
-  refuse it before a person could look. Reading the same file from the same
-  mailed message again makes no second receipt.
+  same file: the second is stored and flagged for finance. Reading the same file
+  from the same mailed message again makes no second receipt.
   [Decision — deliberate limit]
 
 - A receipt is checked for copies against every other receipt in the org that
@@ -298,11 +306,28 @@ Things the app takes as true because they are handled outside it.
   fills those in before any other check runs.
   [Decision]
 
-- A reading that fails because the reading service is down, refuses the app's
-  key, or is not set up does not count against the person's daily reading
-  allowance. The app never reads the receipt again by itself, because each
-  reading costs money: the submitter presses "Read it again".
-  [Decision — owner]
+- Every reading counts against the person's daily reading allowance, whether
+  it succeeds or fails. The app never reads the receipt again by itself,
+  because each reading costs money: the submitter presses "Read it again".
+  [Decision — owner, 2026-11-08]
+
+- Finance or the Board may reset one person's daily reading allowance when that
+  person has a good reason, so they need not wait for the next day. The reset
+  gives a full allowance from that moment, needs a reason, and is recorded in
+  the audit log.
+  [Decision — owner, 2026-11-08]
+
+- Three or more failed readings within a day put one line on the Problems
+  list, "Receipt reading failed N times in the last day", with no error text or
+  names, and that line sends the daily problems email to the alert address.
+  [Decision — owner, 2026-11-08]
+
+- Sysadmins, finance and the Board may turn automatic reading of receipts off
+  and on, so reading can stop at once when a known problem needs a deploy.
+  While it is off, no receipt is read and submitters are not offered "Read it
+  again". The switch is apart from the other receipt settings, which stay
+  finance's.
+  [Decision — owner, 2026-11-08]
 
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
   needs no spending sign-off. It is a donation, not an expense record.
@@ -536,7 +561,7 @@ Things the app takes as true because they are handled outside it.
   submitter or the person reimbursed. This is the one exception to every signer
   being a different person. The expense still reaches the books, needing no new
   signature. A signature that has to be given again is judged anew against the
-  surviving person. The risk is accepted because merges are very rare.
+  surviving person.
   [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*; owner accepted 2026-11-01]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
@@ -644,8 +669,10 @@ the parts specific to expenses.
 - Each expense line reaches the books on one account, with its share of tax,
   shipping and discount. Nothing splits a line across accounts or categories. A
   line the mappings do not resolve to exactly one account waits for finance to
-  set it.
-  [Decision]
+  set it. A line whose account couldn't be looked up because the catalog was
+  unavailable is not a mapping hold: the expense waits and is retried with each
+  posting run, using no try, and finance sees that it waits for the catalog.
+  [Decision — owner]
 
 - An account rule names its part by the part's GTIN-13, or `*` for any part. A
   new or changed part must be one of these; a rule stored with any other value

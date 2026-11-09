@@ -129,6 +129,12 @@ How the pieces are built is described in
   The factor must match only when merging into existing stock.
   `[Decision — owner]`
 
+- A receipt's or donation's stock change, or a catalog decision, that fails
+  to apply stays failed with its error and the time it first failed. Nothing
+  retries it automatically: a person retries it from the Problems list on
+  System Status. The error shows only on the item's own inventory page.
+  `[Decision — owner]`
+
 ### Receiving
 
 - Receiving is the only way a receipt's goods reach stock, and only after every
@@ -142,13 +148,21 @@ How the pieces are built is described in
   changes a receipt whose goods are already in stock.
   `[Decision — deliberate limit]`
 
+- When a receipt arrives while the catalog is unavailable, its lines are not
+  matched and the receipt shows "Matching pending" while it waits for review.
+  An inventory manager runs matching from the receipt, or maps the lines by
+  hand; matching never re-runs by itself. Matching fills only lines nobody has
+  decided, and a receipt whose every line is then decided is sent to apply, as
+  on arrival.
+  `[Decision — owner]`
+
 - A receipt's lines can be edited only while it waits for review. Once it is
-  sent to apply, its lines can't be edited, even when the apply fails. A
-  failure that may be temporary is retried automatically once a day, up to
-  five times. After the fifth try, or as soon as a part is refused outright,
-  the receipt waits in Apply failed for a person, who either retries it with
-  the same lines or corrects it by hand outside receiving and closes it as
-  handled by hand. A close-out names, for each part not applied, whether it
+  sent to apply, its lines can't be edited, even when the apply fails. A failed
+  apply is never retried automatically: the receipt waits in Apply failed, and
+  on the Problems list, for a person, who either retries it with the same lines
+  or corrects it by hand outside receiving and closes it as handled by hand. A
+  receipt whose part was taken but not confirmed stays applying, on the
+  Problems list, until a person retries it. A close-out names, for each part not applied, whether it
   was done by hand or isn't needed, and carries a note; a blank note is
   refused. A closed receipt can't be reopened. `[Decision — owner]`
 

@@ -32,15 +32,18 @@ jest.mock("@/lib/emergencyContacts/service", () => ({
     getPrimaryValidContact: jest.fn().mockResolvedValue(null),
 }));
 jest.mock("@/lib/prisma", () => {
+    const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
     const tx = {
+        household,
         person: { update: jest.fn(), updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
         auditLog: { create: jest.fn() },
         account: { deleteMany: jest.fn() },
+        $executeRaw: jest.fn(),
     };
     return {
         __esModule: true,
         default: {
-            household: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+            household,
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
             person: { findUnique: jest.fn() },
             auditLog: { create: jest.fn() },

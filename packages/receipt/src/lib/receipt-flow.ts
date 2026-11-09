@@ -3,7 +3,7 @@ import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/rec
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
-import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
+import { audit, CLEARED, ReceiptStateConflictError, receiptRepo, recordFailure, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrgId, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
@@ -130,12 +130,10 @@ function submitterConfirmation(row: ReceiptRow) {
 
 /**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
- * null with an audit row, for the catch-up step or the manual button to resend. A refusal (the
- * receipt's own check or mapping's 4xx) is `push_refused`; any other failure is `push_failed`
- * with its kind in `valueBefore`. A receipt whose
- * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
- * any older call still in flight) before the money side reaches it. A receipt that is not
- * finalized is refused before anything is sent or written.
+ * null, a `push_failed` audit row with its kind in `valueBefore`, and the receipt stuck until a
+ * person retries it. A receipt whose donor sync is still pending is held back, so donations has
+ * the final in-kind state (and refuses any older call still in flight) before the money side
+ * reaches it. A receipt that is not finalized is refused before anything is sent or written.
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
@@ -207,26 +205,23 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     if (!answer.success) throw new Error(`workflow-mapping answer unreadable: ${answer.error.message}`);
     const result = answer.data;
     await db.$transaction(async (tx) => {
-      await tx.receipt.update({ where: { id: receiptId }, data: { pushedAt: new Date() } });
+      await tx.receipt.update({ where: { id: receiptId }, data: { pushedAt: new Date(), ...CLEARED } });
       await audit(tx, receiptId, actor, { action: "pushed", valueAfter: result.created ? "created" : "replayed" });
     });
     return true;
   } catch (err) {
+    console.error(`[receipt] push failed for receipt ${receiptId}:`, err);
     const kind = kindOf(err);
     const valueAfter = err instanceof Error ? err.message : String(err);
-    await audit(
-      db,
-      receiptId,
-      actor,
-      kind === "data" ? { action: "push_refused", valueAfter } : { action: "push_failed", valueBefore: kind, valueAfter },
-    ).catch(() => undefined);
+    await audit(db, receiptId, actor, { action: "push_failed", valueBefore: kind, valueAfter }).catch(() => undefined);
+    await recordFailure(db, receiptId, err).catch(() => undefined);
     return false;
   }
 }
 
 async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<void> {
   await db.$transaction(async (tx) => {
-    await receiptRepo.update(row.id, { detail: { state: "receipt_finalized", validationNotes: null } }, row.state, tx);
+    await receiptRepo.update(row.id, { core: CLEARED, detail: { state: "receipt_finalized", validationNotes: null } }, row.state, tx);
     await audit(tx, row.id, actor, {
       action: "finalized",
       fieldChanged: "state",
@@ -250,7 +245,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
 
   const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
     try {
-      await receiptRepo.update(receiptId, { detail }, row.state);
+      await receiptRepo.update(receiptId, { core: CLEARED, detail }, row.state);
     } catch (err) {
       if (err instanceof ReceiptStateConflictError) return;
       throw err;
@@ -349,6 +344,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
       valueBefore: row.state,
       valueAfter: err instanceof Error ? err.message : String(err),
     });
+    await recordFailure(db, receiptId, err);
     throw err;
   }
 }

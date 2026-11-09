@@ -1,4 +1,4 @@
-import { kindOf } from "@checkin/component-kit";
+import { catalogSettingsMessage, isNotWired, kindOf, ServiceError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
@@ -73,7 +73,7 @@ export async function lookupCatalogInfo(
       })),
     ),
   ]).catch((err: unknown) => {
-    if (kindOf(err) === "settings") return null;
+    if (isNotWired(err)) return null;
     throw err;
   });
   if (!reads) return { gtin13ByItemId: new Map(), info, catalogNotConnected: true };
@@ -284,6 +284,7 @@ async function commitQbProcessing(
     await tx.expenseEvent.create({
       data: { orgId, expenseId },
     });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
 
     await advanceWorkflowInTx(tx, {
       expenseId,
@@ -302,8 +303,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   let expense = await db.expense.findFirst({ where: { id: expenseId } });
   if (!expense) return;
 
-  // Recover expenses that previously errored: transition qb_error → qb_pending
-  // so the machine path for QB_COMPLETE remains consistent.
+  // A retry of a qb_error expense goes back to qb_pending, so the machine path for QB_COMPLETE holds.
   if (expense.state === "qb_error") {
     await advanceWorkflow({
       db,
@@ -352,6 +352,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
     const current = await db.expense.findFirst({ where: { id: expenseId } });
     if (!current || (current.state !== "qb_pending" && current.state !== "qb_on_hold")) throw err;
 
+    const error = err instanceof Error ? err.message : String(err);
     await advanceWorkflow({
       db,
       expenseId,
@@ -359,27 +360,22 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       event: { type: "QB_ERROR" },
       actor: SYSTEM_ACTOR,
       action: "qb_processing_failed",
-      auditNotes: err instanceof Error ? err.message : String(err),
+      auditNotes: error,
     }).catch(unlessRaceLost);
+    // Stuck in qb_error until a person retries it; the first failure's time is kept.
+    await db.expense.updateMany({ where: { id: expenseId, state: "qb_error" }, data: { qbLastError: error } });
+    await db.expense.updateMany({ where: { id: expenseId, state: "qb_error", qbFirstFailedAt: null }, data: { qbFirstFailedAt: new Date() } });
   }
 }
 
-async function processExpenseForQb(
-  orgId: string,
-  expenseId: string,
-  expense: Expense,
-): Promise<void> {
+async function processExpenseForQb(orgId: string, expenseId: string, expense: Expense): Promise<void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
   if (lineItems.length === 0) return;
 
   const rules = await db.accountMapping.findMany({ where: { orgId } });
 
-  const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(
-    lineItems,
-    rules,
-    expense.vendorName ?? "",
-  );
+  const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
 
   if (conflicts.length > 0) {
     await saveCatalogSnapshots(snapshots);
@@ -395,6 +391,7 @@ async function processExpenseForQb(
         action: "qb_holds_created",
       });
     }
+    await db.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
     return;
   }
 
@@ -430,13 +427,13 @@ async function processExpenseForQb(
 }
 
 // ── Stranded recovery (catch-up sweep) ────────────────────────────────────────
-// Re-runs expenses left in qb_pending or qb_error without an outbox row (a crash between the
-// state advance and QB processing, or an outage). The host's daily reconcile cron step calls it;
-// checkAndProcessExpense is idempotent. Capped; returns counts only.
+// Re-runs expenses left in qb_pending without an outbox row (a crash between the state advance and
+// QB processing). A qb_error expense waits for a person's retry. The host's daily cron step calls
+// it; checkAndProcessExpense is idempotent. Capped; returns counts only.
 
 export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: number; failed: number }> {
   const candidates = await db.expense.findMany({
-    where: { state: { in: ["qb_pending", "qb_error"] } },
+    where: { state: "qb_pending" },
     select: { id: true, orgId: true },
     orderBy: { submittedAt: "asc" },
   });
@@ -464,12 +461,18 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 // ── Finance retry of a failed QuickBooks post ─────────────────────────────────
 
+/** A missing or unreachable catalog as the 503 finance reads; the lookup already answers an unbound catalog as matching nothing. */
+function refuseMissingCatalog(err: unknown): never {
+  const message = catalogSettingsMessage(err) ?? (kindOf(err) === "system" ? "The catalog is unavailable; try again" : null);
+  throw message ? new ServiceError(503, message) : err;
+}
+
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
- * mappings (so a fixed mapping takes effect), resets the attempt count and records who asked, all
- * under the row lock so an in-flight post never reads half-rewritten accounts; then posts once. A
- * post that books leaves NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that
- * state), and checks off any open QB_POST_HELD flag; one that fails counts as attempt one again.
+ * mappings (so a fixed mapping takes effect) and records who asked, all under the row lock so an
+ * in-flight post never reads half-rewritten accounts; then posts once. A post that books leaves
+ * NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that state) and the failure,
+ * and checks off any open QB_POST_HELD flag; one that fails keeps its first failure time.
  * Returns the post's outcome; "unbound" when QuickBooks is not connected, and false when a line no
  * longer resolves to one account. Either refusal before the re-arm leaves the expense as it is.
  */
@@ -481,14 +484,14 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
     const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
     const rules = await tx.accountMapping.findMany({ where: { orgId } });
-    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "").catch(refuseMissingCatalog);
     await saveCatalogSnapshots(snapshots, tx);
     if (conflicts.length > 0) return false;
 
     for (const r of resolved) {
       await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: null } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED" } });
     await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
     return true;
   });

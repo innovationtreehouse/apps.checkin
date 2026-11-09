@@ -17,7 +17,6 @@ const matchedRowsSchema = z.array(
       donationType: z.string().nullable(),
       donationAccount: z.string(),
       matchAccount: z.string(),
-      feesAccount: z.string(),
     })
     .passthrough(),
 );

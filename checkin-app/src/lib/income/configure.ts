@@ -25,10 +25,10 @@
  *   finance saves an item's account so a wrong account type is refused.
  * - classes: the active QuickBooks Classes, bound only where QBO_REALM_ID is
  *   set. Unbound or unreachable, no item can be assigned to a bucket.
- * - alerts: a drain that stops at a cap emails finance (the board when no one
- *   holds FINANCE), so the payouts it left waiting reach a person. A bucket
- *   that becomes unusable emails finance once, so the payouts it holds reach a
- *   person. An orphan sweep that cannot read every new deposit emails finance.
+ * - alerts: each goes to the alert address (emailAlert). A drain that stops at
+ *   a cap alerts, so the payouts it left waiting reach a person. A bucket that
+ *   becomes unusable alerts once, so the payouts it holds reach a person. An
+ *   orphan sweep that cannot read every new deposit alerts.
  */
 import {
   BANK_ROLE,
@@ -61,7 +61,8 @@ import {
 import { buildQuickBooks, getQuickBooks } from "@/lib/quickbooks/client";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
-import { LIVE_BOOKS_MAP_ROLES } from "@checkin/quickbooks";
+import { BOOKS_MAP_ROLES } from "@checkin/quickbooks";
+import { reportTo } from "@/lib/finishRun";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -95,29 +96,29 @@ const payoutMirror: PayoutMirror = {
 
 const alerts: IncomeAlerts = {
   async postCapReached({ cap, created, remaining }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.incomePostCap", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.incomePostCap", {
       created: String(created),
       limit: cap === "count" ? "number of deposits" : "dollar total",
       remaining: String(remaining),
       actionLink: `${config.baseUrl()}/income/reconciliation`,
-    }, "Income cap alert failed:");
+    });
   },
   async bucketUnusable({ budgetOwnerId, bucketName, issue, itemCount }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.incomeBucketUnusable", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.incomeBucketUnusable", {
       bucketName: bucketName ?? `#${budgetOwnerId}`,
       issue,
       itemCount: String(itemCount),
       actionLink: `${config.baseUrl()}/income/items`,
-    }, "Income bucket alert failed:");
+    });
   },
   async sweepIncomplete({ since }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.incomeSweepIncomplete", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.incomeSweepIncomplete", {
       since: since.toISOString().slice(0, 10),
       actionLink: `${config.baseUrl()}/income/reconciliation`,
-    }, "Income sweep alert failed:");
+    });
   },
 };
 
@@ -156,10 +157,10 @@ export async function incomePostingMissing(): Promise<string[]> {
   ];
 }
 
-/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every live Benevity role must be picked. */
+/** What booking Benevity deposits lacks, in plain words; empty when income can book them. Every Benevity role must be picked. */
 export async function benevityPostingMissing(): Promise<string[]> {
   const accounts = await roleAccounts();
-  const unpicked = LIVE_BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
+  const unpicked = BOOKS_MAP_ROLES.filter((r) => r.startsWith("BENEVITY_") && !accounts[r]);
   return [
     ...(process.env.QBO_REALM_ID ? [] : ["QuickBooks company (QBO_REALM_ID)"]),
     ...(unpicked.length ? [`no account picked for: ${unpicked.map((r) => BOOKS_MAP_ROLE_LABELS[r]).join(", ")}`] : []),
@@ -175,6 +176,7 @@ function posting(): IncomePosting | undefined {
 
 export function configureRuntime(): void {
   configureIncome({
+    onFailure: reportTo("income"),
     auth: { getPrincipal },
     org: getOrg,
     mirror: mirrorConfigured() ? payoutMirror : undefined,

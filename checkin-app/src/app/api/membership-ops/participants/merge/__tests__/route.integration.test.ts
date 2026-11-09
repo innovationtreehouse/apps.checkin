@@ -34,7 +34,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
 }));
 import { runMatchAudit } from "@/lib/finance/matchAudit";
 import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
-import { attestedUnclearedProcessIds, canReviewBackgroundChecks } from "@/lib/membership/review";
+import { canReviewBackgroundChecks } from "@/lib/membership/review";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 
 // Base fixture participants differ on name+email by design (realistic collision
@@ -1846,18 +1846,17 @@ describe("Merge Participants API", () => {
             expect(await prisma.backgroundCheckAttestation.count({ where: { processId: keeperProc.id } })).toBe(1);
         });
 
-        it("never archives a BLOCKED row in favour of an open review", async () => {
+        it("refuses to meet a BLOCKED row with an open review, archiving neither", async () => {
             const keeperProc = await openPersonBg(pKeepId, { bgConsentAt: new Date() });
             const tombstoneProc = await openPersonBg(pMergeId, { status: "BLOCKED" });
             createdProcessIds.push(keeperProc.id, tombstoneProc.id);
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
-            expect(res.status).toBe(200);
+            expect(res.status).toBe(409);
 
-            const open = await openForKeeper();
-            // The rejection survives; the pending review is the one archived.
-            expect(open.map(p => p.id)).toEqual([tombstoneProc.id]);
-            expect((await prisma.orgMembershipProcess.findUnique({ where: { id: keeperProc.id } }))?.status).toBe("ARCHIVED");
+            await expectNotMerged(pMergeId);
+            const statuses = await prisma.orgMembershipProcess.findMany({ where: { id: { in: [keeperProc.id, tombstoneProc.id] } }, select: { status: true }, orderBy: { id: "asc" } });
+            expect(statuses.map(p => p.status)).toEqual(["PENDING_BG_REVIEW", "BLOCKED"]);
         });
 
         it("leaves a single open PERSON_BG alone (nothing to resolve)", async () => {
@@ -1869,6 +1868,87 @@ describe("Merge Participants API", () => {
 
             const open = await openForKeeper();
             expect(open.map(p => ({ id: p.id, status: p.status }))).toEqual([{ id: tombstoneProc.id, status: "PENDING_BG_REVIEW" }]);
+        });
+    });
+
+    // docs/in-design/person-based-bg-review.md §6: a merge that would change a
+    // disputed person's check facts waits for the Board to settle the dispute.
+    describe("a disputed background check", () => {
+        const NEWER = new Date("2026-03-01T00:00:00Z");
+        const OLDER = new Date("2025-03-01T00:00:00Z");
+
+        async function personBg(personId: number, status: "PENDING_BG_REVIEW" | "BLOCKED") {
+            const process = await prisma.orgMembershipProcess.create({
+                data: { kind: "PERSON_BG", subjectPersonId: personId, status, bgConsentAt: new Date() },
+            });
+            createdProcessIds.push(process.id);
+            return process;
+        }
+
+        async function refused(keepId: number, mergeId: number, reviewId: number) {
+            const res = await POST(mergeReq(keepId, mergeId));
+            expect(res.status).toBe(409);
+            expect((await res.json()).error).toContain(`#${reviewId}`);
+            await expectNotMerged(mergeId);
+        }
+
+        it("refuses a person disputed by their own review when a newer date would be carried onto them", async () => {
+            const review = await personBg(pKeepId, "BLOCKED");
+            await prisma.person.update({ where: { id: pKeepId }, data: { lastBackgroundCheck: OLDER } });
+            await prisma.person.update({ where: { id: pMergeId }, data: { lastBackgroundCheck: NEWER } });
+
+            await refused(pKeepId, pMergeId, review.id);
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } })).lastBackgroundCheck).toEqual(OLDER);
+        });
+
+        it("allows it when the incoming date is older and no review moves onto them", async () => {
+            const review = await personBg(pKeepId, "BLOCKED");
+            await prisma.person.update({ where: { id: pKeepId }, data: { lastBackgroundCheck: NEWER } });
+            await prisma.person.update({ where: { id: pMergeId }, data: { lastBackgroundCheck: OLDER } });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            await expectMergedAway(pMergeId, pKeepId);
+            expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: review.id } })).status).toBe("BLOCKED");
+        });
+
+        it("refuses a second review moved onto a disputed person", async () => {
+            const review = await personBg(pKeepId, "BLOCKED");
+            await personBg(pMergeId, "PENDING_BG_REVIEW");
+
+            await refused(pKeepId, pMergeId, review.id);
+        });
+
+        describe("by a BLOCKED household application, which names nobody", () => {
+            let applicationId: number;
+
+            beforeEach(async () => {
+                const membership = await prisma.orgMembership.create({ data: { householdId, status: "NONE" } });
+                const application = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: membership.id, kind: "INITIAL", status: "BLOCKED" } });
+                createdProcessIds.push(application.id);
+                applicationId = application.id;
+                await prisma.person.update({ where: { id: pMergeId }, data: { lastBackgroundCheck: NEWER } });
+            });
+
+            it("refuses a lead of the household", async () => {
+                await prisma.person.update({ where: { id: pKeepId }, data: { isHouseholdLead: true } });
+
+                await refused(pKeepId, pMergeId, applicationId);
+            });
+
+            it("leaves a member who is not a lead undisputed", async () => {
+                expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+            });
+        });
+
+        it("allows a merge that changes the check facts of people nobody disputes", async () => {
+            await personBg(pKeepId, "PENDING_BG_REVIEW");
+            await personBg(pMergeId, "PENDING_BG_REVIEW");
+            await prisma.person.update({ where: { id: pMergeId }, data: { lastBackgroundCheck: NEWER } });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: pKeepId } })).lastBackgroundCheck).toEqual(NEWER);
         });
     });
 
@@ -1987,7 +2067,6 @@ describe("Merge Participants API", () => {
             const process = await makeApplication(status, { contractSignedAt: new Date(), ...extra });
             const reviewerId = await makeReviewer();
             await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "APPROVE", subjectPersonId: pKeepId } });
-            expect(await attestedUnclearedProcessIds(reviewerId)).toContain(process.id);
 
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
@@ -1995,16 +2074,14 @@ describe("Merge Participants API", () => {
             expect(after.bgClearedAt).not.toBeNull();
             expect(after.status).toBe(cleared);
             expect(await prisma.backgroundCheckAttestation.count({ where: { processId: process.id, reviewerId } })).toBe(1);
-            expect(await attestedUnclearedProcessIds(reviewerId)).not.toContain(process.id);
             const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: process.id, newData: { path: ["via"], equals: "merge" } } });
-            expect(log?.newData).toMatchObject({ clearedPersonIds: [], reason: "still-valid background check carried in by participant merge" });
+            expect(log?.newData).toMatchObject({ reason: "still-valid background check carried in by participant merge" });
         });
 
         it("stamps a PENDING_PAYMENT row that has an approval only, keeping the approval and its volunteer mark", async () => {
             const process = await makeApplication("PENDING_PAYMENT", { contractSignedAt: new Date(), bgConsentAt: new Date() });
             const reviewerId = await makeReviewer();
             await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "APPROVE", subjectPersonId: pKeepId, isMarkedVolunteerFamily: true } });
-            expect(await attestedUnclearedProcessIds(reviewerId)).toContain(process.id);
 
             expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
 
@@ -2012,12 +2089,11 @@ describe("Merge Participants API", () => {
             expect(after.bgClearedAt).not.toBeNull();
             expect(after.status).toBe("PENDING_PAYMENT");
             expect(await prisma.backgroundCheckAttestation.count({ where: { processId: process.id, reviewerId } })).toBe(1);
-            expect(await attestedUnclearedProcessIds(reviewerId)).not.toContain(process.id);
             expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: membershipId } })).isVolunteerFamily).toBe(true);
         });
 
-        // Status alone would keep a BLOCKED row out; the other three reach the attestation guard itself.
-        it.each(["BLOCKED", "PENDING_PAYMENT", "PENDING_BG_REVIEW", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row with a standing rejection", async (status) => {
+        // A BLOCKED row refuses the merge itself ("a disputed background check").
+        it.each(["PENDING_PAYMENT", "PENDING_BG_REVIEW", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row with a standing rejection", async (status) => {
             const process = await makeApplication(status, { contractSignedAt: new Date(), bgConsentAt: new Date() });
             const reviewerId = await makeReviewer();
             await prisma.backgroundCheckAttestation.create({ data: { processId: process.id, reviewerId, result: "REJECT" } });

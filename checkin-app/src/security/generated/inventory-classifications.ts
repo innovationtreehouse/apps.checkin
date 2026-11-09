@@ -64,6 +64,8 @@ export const classifications = {
         rejectionReason: 'internal',
         resolvedToGtin13: 'public',
         conversionFactor: 'public',
+        reconcileFirstFailedAt: 'public',
+        reconcileLastError: 'internal',
     },
     InventoryMergeConflict: {
         id: 'public',
@@ -98,6 +100,7 @@ export const classifications = {
         receivedAt: 'public',
         status: 'public',
         failureReason: 'internal',
+        firstFailedAt: 'public',
     },
     ProvisionalItemLog: {
         id: 'public',
@@ -120,6 +123,7 @@ export const classifications = {
         status: 'public',
         failureReason: 'internal',
         receivedAt: 'public',
+        firstFailedAt: 'public',
     },
     LocationLog: {
         id: 'public',

@@ -17,7 +17,7 @@
  * expense library's account rules. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
-import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting, InKindStopKind } from "@checkin/bulk-donation";
+import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/components/host";
 import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -26,6 +26,7 @@ import { householdMembersOf, householdsSharingSurname } from "@/lib/bulkDonation
 import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import { reportTo } from "@/lib/finishRun";
 
 /** What handing Benevity deposits to income lacks, in plain words; empty when it binds. Income's books map holds the bank. */
 export function donationPostingMissing(): string[] {
@@ -42,11 +43,13 @@ const incomeDeposits: IncomeDeposits = {
     return (await import("@checkin/income")).depositStatus(orgId, "benevity", disbursementIds);
   },
   async handOverFailing(failures) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.donationDepositHandOver", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    const sent = await emailAlert("finance.donationDepositHandOver", {
       batches: failures.map((f) => `${f.disbursementId}: ${f.reason}`).join("; "),
       actionLink: `${config.baseUrl()}/donations/events`,
-    }, "Donation hand-over alert failed:");
+    });
+    // Throwing leaves the failures unraised, so the next run alerts again.
+    if (!sent) throw new Error("Donation hand-over alert was not sent");
   },
 };
 
@@ -61,13 +64,6 @@ export async function inKindPostingMissing(): Promise<string[]> {
   ];
 }
 
-/** What the in-kind stop alert tells finance, by the stop's kind. */
-const DRAIN_STOP_CAUSES: Record<InKindStopKind, string> = {
-  system: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.",
-  connection: "QuickBooks refused the app's connection. Reconnect QuickBooks; until then no gift books.",
-  bug: "The gifts failed on their own while QuickBooks was answering. Each failure counts against its gift, and a gift that keeps failing comes to you.",
-};
-
 /** Loaded on first use; the books map is read per run. */
 function inKindQbPosting(): InKindQbPosting | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
@@ -75,20 +71,11 @@ function inKindQbPosting(): InKindQbPosting | undefined {
     client: quickBooks,
     booksMap,
     async sweepIncomplete({ since }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert("finance.inKindSweepIncomplete", {
+      const { emailAlert } = await import("@/lib/emailRecipients");
+      await emailAlert("finance.inKindSweepIncomplete", {
         since: since.toISOString().slice(0, 10),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
-      }, "In-kind sweep alert failed:");
-    },
-    async drainStopped({ failures, remaining, cause }) {
-      const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-      await notifyFinanceAlert("finance.inKindDrainStopped", {
-        failures: String(failures),
-        remaining: String(remaining),
-        cause: DRAIN_STOP_CAUSES[cause],
-        actionLink: `${config.baseUrl()}/donations/in-kind`,
-      }, "In-kind drain alert failed:");
+      });
     },
   };
 }
@@ -131,6 +118,7 @@ const partAccounts: InKindAccounts = {
 
 export function configureRuntime(): void {
   configureBulkDonation({
+    onFailure: reportTo("bulk-donation"),
     auth: { getPrincipal },
     org: getOrg,
     owners: budgetOwners,

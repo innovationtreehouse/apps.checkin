@@ -1,11 +1,16 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
 import ReceiveQueuePage from "@checkin/local-inventory/pages/receiveQueue";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 const PROVISIONAL = "0200000000011";
 const provisionals = [{ provisionalGtin13: PROVISIONAL, name: "Widget" }];
 let gtin13 = PROVISIONAL;
+let emptyPage = false;
 const orgItem = () => ({
   id: 1, gtin13, existingQuantity: 2, desiredQuantity: 0,
   locationId: null, backstockLocationId: null, location: null, backstockLocation: null,
@@ -20,7 +25,7 @@ jest.mock("@checkin/local-inventory/components/api", () => ({
   useCanManage: () => false,
   useLoad: (path: string) => ({
     data: path.startsWith("/org-items/count") ? { total: 1 }
-      : path.startsWith("/org-items") ? { OrgItem: [orgItem()], InventoryProvisionalItem: provisionals }
+      : path.startsWith("/org-items") ? { OrgItem: emptyPage ? [] : [orgItem()], InventoryProvisionalItem: provisionals }
       : path.startsWith("/receive-queue") ? { ReceiveQueue: [queueLine()], InventoryProvisionalItem: provisionals }
       : [],
     error: null,
@@ -48,6 +53,7 @@ const catalogAnswers = (status: number) =>
 afterEach(() => {
   jest.restoreAllMocks();
   gtin13 = PROVISIONAL;
+  emptyPage = false;
 });
 
 describe.each([
@@ -125,5 +131,29 @@ describe("the catalog names banner across pages", () => {
     view.rerender(page());
     await waitFor(() => expect(screen.queryByText(BANNER)).not.toBeInTheDocument());
     expect(screen.getByText(`Part ${LOADS}`)).toBeInTheDocument();
+  });
+
+  it("drops the banner on a page with no rows", async () => {
+    gtin13 = FAILS;
+    const view = render(page());
+    expect(await screen.findByText(BANNER)).toBeInTheDocument();
+    emptyPage = true;
+    view.rerender(page());
+    await waitFor(() => expect(screen.queryByText(BANNER)).not.toBeInTheDocument());
+  });
+
+  it("keeps an earlier name, with no banner, when its refetch fails", async () => {
+    gtin13 = LOADS;
+    const view = render(page());
+    expect(await screen.findByText(`Part ${LOADS}`)).toBeInTheDocument();
+    gtin13 = FAILS;
+    view.rerender(page());
+    expect(await screen.findByText(BANNER)).toBeInTheDocument();
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "down" }), { status: 500 }));
+    gtin13 = LOADS;
+    view.rerender(page());
+    await waitFor(() => expect(screen.queryByText(BANNER)).not.toBeInTheDocument());
+    expect(screen.getByText(`Part ${LOADS}`)).toBeInTheDocument();
+    expect(screen.queryByText("Name unavailable")).not.toBeInTheDocument();
   });
 });

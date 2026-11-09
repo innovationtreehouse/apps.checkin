@@ -6,7 +6,7 @@ import { formatCents } from '@checkin/money';
 import type { ProgramDetail } from './useProgramEnrollment';
 
 /** The program's dates, enrollment state, eligibility, the household's enrollments and prices. */
-export default function ProgramDetailsCard({ program, ageRange, enrolledCount, isFull, myEnrolled, viewerIsYouth, isClosed, onPayNow }: {
+export default function ProgramDetailsCard({ program, ageRange, enrolledCount, isFull, myEnrolled, viewerIsYouth, isClosed, hasEnded, onPayNow }: {
   program: ProgramDetail;
   ageRange: string | null;
   enrolledCount: number;
@@ -14,6 +14,7 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
   myEnrolled: { name: string; unpaid: boolean }[];
   viewerIsYouth: boolean;
   isClosed: boolean;
+  hasEnded: boolean;
   onPayNow: () => void;
 }) {
   return (
@@ -52,8 +53,9 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             {myEnrolled.map((m, i) => (
               <Text key={i} size="sm" c={m.unpaid ? 'yellow' : 'green'} ml="sm">
                 {m.name} — {m.unpaid ? 'Enrolled, not paid yet' : 'Enrolled'}
-                {m.unpaid && program.enrollmentStatus !== 'CLOSED' && (
-                  <>{' '}<Anchor component="button" size="sm" onClick={onPayNow}>Pay now</Anchor></>
+                {m.unpaid && (hasEnded
+                  ? <>. This program has ended; ask the board about payment.</>
+                  : <>{' '}<Anchor component="button" size="sm" onClick={onPayNow}>Pay now</Anchor></>
                 )}
               </Text>
             ))}

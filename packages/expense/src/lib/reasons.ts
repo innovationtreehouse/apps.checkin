@@ -20,6 +20,7 @@ export type ReasonCode =
   | "QB_UNBOOKED"
   | "QB_VENDOR_MISSING"
   | "QB_NO_CLASS"
+  | "QB_PROCESSING_FAILED"
   | ReviewKind
   | "BOARD_APPROVAL"
   | "SIGNER_HELD";
@@ -49,7 +50,6 @@ export interface ReasonFacts {
     taxCents: number;
     receiptTotalCents: number;
     qbMatchState: string;
-    qbPostAttempts: number;
   };
   receiptReview: StoredReceiptReview | null;
   /** The tax finance approved on the expense, or null when it approved none. */
@@ -60,7 +60,7 @@ export interface ReasonFacts {
   boardApprovalNeeded: boolean;
   /** A seat no one without a conflict can fill. */
   signerHeld: boolean;
-  /** The error of the post that used up the retries. */
+  /** Why the expense last went to NEEDS_FINANCE: its failed post's error, or why it cannot post. */
   lastPostError: string | null;
   /**
    * An outboxed expense the drain stops because a line's bucket has no QuickBooks Class: that
@@ -106,12 +106,13 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
   }
 
   if (!e.backfill && e.state !== "rejected") {
-    if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "qb", { count: e.qbPostAttempts, detail: f.lastPostError }));
+    if (e.qbMatchState === "NEEDS_FINANCE") out.push(reason("QB_POST_FAILED", "qb", { detail: f.lastPostError }));
     if (e.qbMatchState === "UNBOOKED") out.push(reason("QB_UNBOOKED", "qb"));
     if (e.qbMatchState === "AMBIGUOUS") {
       out.push(f.reimburseeVendorLinked === false ? reason("QB_VENDOR_MISSING", "qb") : reason("QB_AWAITING_MATCH", "qb"));
     }
     if (f.missingClass) out.push(reason("QB_NO_CLASS", "qb", { detail: f.missingClass.bucketName }));
+    if (e.state === "qb_error") out.push(reason("QB_PROCESSING_FAILED", "qb"));
   }
   for (const r of f.openReviews) out.push(reason(r.kind, "qb", { detail: r.kind === "QB_DUPLICATE_TO_VOID" ? null : r.detail }));
 

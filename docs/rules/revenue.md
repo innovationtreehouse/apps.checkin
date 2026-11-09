@@ -59,8 +59,8 @@ Things the app takes as true because they are handled outside it.
   conflict-of-interest rule on that vote, and the requirement that program money
   flows through the Treehouse.
 
-- The giving platform sends each batch of gifts whole. A gift that turns up
-  after its batch is finished is rare, and finance books it by hand.
+- The giving platform sends each batch of gifts whole. Finance books by hand
+  a gift that turns up after its batch is finished.
 
 - Gifts of goods received before the app started recording them stay in
   the books only.
@@ -74,7 +74,10 @@ Things the app takes as true because they are handled outside it.
 - Apart from the payment-plan read below, Finance Ops belongs to the board alone,
   and the board approves payment plans.  [Unsettled — which superuser]
 
-- Only the board and finance read membership and program payment plans.  [Decision — owner]
+- Only the board and finance read a scholarship or payment-plan request, for a
+  membership or a program: that one was asked for, which kind, its seat hold, and
+  whether it was approved or refused. No other staff role sees one by default. A
+  household's leads read their own household's requests.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
 
 - The store is the source of truth for what was paid. The app records no
   payment fact of its own.  [Decision]
@@ -86,6 +89,16 @@ Things the app takes as true because they are handled outside it.
   Only finance edits it, and each edit is recorded. Expenses, income and gifts of
   goods read it when they book and keep no copy of their own, so one edit reaches
   every area.  [Decision — *Principle: least privilege*]
+
+- The books map holds one account each only for what is one account by nature:
+  the bank accounts, card remainder, adjustments, online-store fees, custom
+  items, in-kind income, the in-kind clearing account and the expense payment
+  account.  [Decision — owner]
+
+- Each online-store sale, giving-platform gift and gift of goods books to the
+  account finance mapped for its item. A line with no mapping, or whose account
+  can't be used, waits for finance; nothing books it to a fallback account. A
+  catch-all exists only as a `*` rule finance writes.  [Decision — owner]
 
 - Every account the app books to must be of a QuickBooks type listed for its
   line or role. The books map, the giving-platform account rules, expense's
@@ -280,6 +293,9 @@ Income checks each online-store payout against the deposits in the books.
   per-item decision: it books as general income to the books map's custom-items
   account. A payout with a custom item waits while that account is unset.  [Decision — owner]
 
+- Online-store fees are merchant-account fees on direct revenue. They book as an
+  expense on their own account, never as a reduction of income.  [Decision — owner]
+
 - Finance can decide on the app's program and membership items before their first
   sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]
 
@@ -405,7 +421,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person accepting a gift of goods, with a receipt or without one, confirms the
   goods themselves exist and arrived, not only the receipt, and that is recorded.
-  Refusing or returning a gift needs no such confirmation.  [Decision — owner decision AR-13, 2026-11-01]
+  Refusing or returning a gift needs no such confirmation.  [Decision — owner, 2026-11-01]
 
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
@@ -428,19 +444,14 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   board. Each change is recorded. Gifts of goods have no daily or dollar limit.
   [Decision — owner]
 
-- A gift of goods that keeps failing to book stops retrying and goes to finance,
-  so it can't hold back newer gifts. When a run stops because several gifts in a
-  row failed, finance is alerted.  [Decision]
+- A gift of goods that fails to book goes to finance at once and waits there,
+  stuck, until finance books it or a person retries it from the Problems list.
+  The app never retries it by itself, and it never holds back newer gifts.
+  [Decision — owner, 2026-11-08]
 
 - A gift of goods whose entry in the books is removed, voided or changed after it
   booked goes back to finance, which matches it again or skips it with a reason.
-  The app never books or matches it again on its own. A withdrawn gift is not
-  checked, because finance reverses its entry by hand.  [Decision]
-
-- A gift of goods withdrawn after its money arrived is raised for finance, booked
-  or not. Finance reverses it by hand only if it booked; the app changes nothing
-  in the books. When finance settles a withdrawal, the donor's details are cleared
-  and the gift and its money stay.  [Decision — owner]
+  The app never books or matches it again on its own.  [Decision]
 
 - The app sends no donor letter for a gift of goods before it is accepted. A letter
   for a gift of goods describes the goods and states no value; a letter for a gift

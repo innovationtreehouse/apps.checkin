@@ -13,7 +13,6 @@ const rule = (over: Partial<AccountMap> = {}): AccountMap => ({
   donationType: "standard",
   donationAccount: "",
   matchAccount: "",
-  feesAccount: "",
   donationAccountId: "60",
   matchAccountId: "61",
   createdAt: new Date(0),

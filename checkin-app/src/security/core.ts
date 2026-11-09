@@ -8,8 +8,8 @@
  *                             Granted to authenticated-session views, NOT to
  *                             anonymous/kiosk views. A member view holds BOTH
  *                             'member' and 'public'; anon holds only 'public'.
- *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal}; the grant
- *                             applies on rows where the caller holds <scope>
+ *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal, hardship}; the
+ *                             grant applies on rows where the caller holds <scope>
  *
  * Sensitive-tier SEMANTICS (which fields go where):
  *   'pii'      — contact-identity band (email, phone, googleId). Routinely
@@ -22,6 +22,11 @@
  *                own program participants).
  *   'internal' — org/system bookkeeping (role flags, process state, audit
  *                fields). Board/sysadmin, plus narrow self-scoped grants.
+ *   'hardship' — whether a person or household asked for, holds, was granted
+ *                or was refused help with a fee (a payment plan, a scholarship,
+ *                a comp). Board and finance views only, plus the family's own
+ *                rows; never a sysadmin or another staff role by default
+ *                (docs/rules/revenue.md, Ownership).
  *   scope = 'everyones'     — broad grant; held on every row by default, but a
  *                             row-scoped model missing its scope key fails
  *                             closed and does NOT hold it (see scopesHeld)
@@ -34,7 +39,7 @@
  *   - field.tier === 'secret'        → never
  *   - field.tier === 'public'        → iff view includes 'public'
  *   - field.tier === 'member'        → iff view includes 'member'
- *   - otherwise (pii/personal/internal):
+ *   - otherwise (pii/personal/internal/hardship):
  *       iff view includes 'everyones:<tier>',
  *       OR view includes '<scope>:<tier>' for some <scope> the caller holds
  *       on this row.
@@ -71,6 +76,7 @@ import * as receiptSynthetic from './receiptSyntheticClassifications';
 import * as programSynthetic from './programSyntheticClassifications';
 import * as budgetOwnerSynthetic from './budgetOwnerSyntheticClassifications';
 import * as keyVolunteerSynthetic from './keyVolunteerSyntheticClassifications';
+import * as problemsSynthetic from './problemsSyntheticClassifications';
 import * as shopifyReadGenerated from './generated/shopify-read-classifications';
 import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
@@ -103,6 +109,7 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
     { source: 'budget-owner-synthetic', classifications: budgetOwnerSynthetic.classifications, relations: budgetOwnerSynthetic.relations },
     { source: 'key-volunteer-synthetic', classifications: keyVolunteerSynthetic.classifications, relations: keyVolunteerSynthetic.relations },
+    { source: 'problems-synthetic', classifications: problemsSynthetic.classifications, relations: problemsSynthetic.relations },
     { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations },
     { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations },
 ] as const;
@@ -125,7 +132,7 @@ export const relations = mergeSources('relations') as MergeSources<typeof CLASSI
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 
-export type SensitiveTier = 'pii' | 'personal' | 'internal';
+export type SensitiveTier = 'pii' | 'personal' | 'internal' | 'hardship';
 export type Tier = 'public' | 'member' | SensitiveTier | 'secret';
 
 const SCOPES = [
@@ -181,7 +188,7 @@ export const ROLES = [
 export type Role = (typeof ROLES)[number];
 
 const SCOPE_NAMES: ReadonlySet<string> = new Set(SCOPES);
-const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal']);
+const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal', 'hardship']);
 
 export function parseToken(
     t: string,

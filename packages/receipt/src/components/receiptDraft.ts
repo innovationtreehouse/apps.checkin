@@ -2,7 +2,7 @@
  * Unsaved edits to a receipt on its detail page, and the writes that save them. Amounts are kept
  * as the dollar strings a person typed; the routes take dollars as numbers.
  */
-import { centsToDecimalString, formatCents } from "@checkin/money";
+import { centsToDecimalString, dollarsToCents, formatCents } from "@checkin/money";
 import { receiptMath, type MathLine, type ReceiptMath } from "../lib/lineMath";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 
@@ -76,7 +76,7 @@ export const toDollars = (cents: number | null | undefined) => centsToDecimalStr
 export function parseCents(value: string): number | null {
   const v = value.trim().replace(/^\$/, "");
   if (!/^(\d+\.?\d*|\.\d+)$/.test(v)) return null;
-  return Math.round(parseFloat(v) * 100);
+  return dollarsToCents(v);
 }
 
 /** A typed quantity; null unless it is a positive number. */

@@ -11,6 +11,7 @@
  *     at the PENDING_PAYMENT transition — and only by the race winner.
  */
 import { backgroundCheckProvider } from '@/lib/membership/background-check/manual-adapter';
+import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, getOwnBackgroundCheck, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
 
 jest.mock('@/lib/prisma', () => ({
@@ -30,6 +31,8 @@ jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
     applyVolunteerFamilyStatus: jest.fn().mockResolvedValue(undefined),
 }));
+
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
 
 jest.mock('@/lib/config', () => {
     const actual = jest.requireActual('@/lib/config');
@@ -149,6 +152,15 @@ describe('markBgConsent', () => {
         const where = prisma.orgMembershipProcess.updateMany.mock.calls[0][0].where;
         expect(where).toMatchObject({ id: 20, bgConsentAt: null, kind: { in: ['PERSON_BG'] } });
         expect(where.status.in).not.toContain('ARCHIVED');
+        expect(settleHouseholdBg).not.toHaveBeenCalled();
+    });
+
+    it("settles the household after a household's consent, which opens its check review", async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: 20, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', orgMembershipId: 42, bgConsentAt: null });
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 7 });
+        await markBgConsent(20, 5);
+        expect(settleHouseholdBg).toHaveBeenCalledWith(7);
     });
 });
 
@@ -332,7 +344,7 @@ describe('advanceExternalIfComplete', () => {
         prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 7 });
     });
 
-    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition and pings reviewers', async () => {
+    it('winner: applies the volunteer allowlist at the PENDING_PAYMENT transition; the check review pings reviewers, not this', async () => {
         const advanced = { ...readyProcess, status: 'PENDING_PAYMENT' };
         prisma.orgMembershipProcess.findUnique
             .mockResolvedValueOnce(readyProcess) // pre-tx eligibility read
@@ -344,7 +356,7 @@ describe('advanceExternalIfComplete', () => {
         // Allowlist matched now — the membership fee is read at PENDING_PAYMENT, before clearance.
         expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
-        expect(notifyReviewers).toHaveBeenCalledTimes(1); // check not yet cleared → review still needed
+        expect(notifyReviewers).not.toHaveBeenCalled();
         expect(result).toEqual(advanced);
     });
 

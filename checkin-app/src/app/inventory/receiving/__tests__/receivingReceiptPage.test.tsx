@@ -8,11 +8,13 @@ const mockShow = jest.fn();
 const mockApi = jest.fn();
 
 jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: true } } }) }));
+let mockIsManager = true;
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: mockIsManager } } }) }));
 
 const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
-  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null,
+  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null,
+  applyFirstFailedAt: null as string | null,
 };
 const baseDetail = {
   ReceivedReceipt: receipt,
@@ -25,7 +27,7 @@ const baseDetail = {
     ],
   },
   ReceivedReceiptLineStatus: [
-    { id: 11, receiptLineItemId: 1, recognitionStatus: "unrecognized", assignedGtin13: null, provisionalItemGtin13: null, conversionFactor: 1 },
+    { id: 11, receiptLineItemId: 1, recognitionStatus: "unrecognized", assignedGtin13: null as string | null, provisionalItemGtin13: null, conversionFactor: 1 },
     { id: 12, receiptLineItemId: 2, recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, conversionFactor: 1 },
   ],
 };
@@ -50,6 +52,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   detail = baseDetail;
+  mockIsManager = true;
 });
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
@@ -227,27 +230,48 @@ describe("the receiving page for one receipt", () => {
       fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: term } });
     }
 
-    it("leaves propose off the line row and offers it only once a search has answered", async () => {
+    it("leaves propose off the line row and offers it before a search answers and after", async () => {
       wrap();
       expect(screen.queryByRole("button", { name: "Propose" })).not.toBeInTheDocument();
       search("wood glue", []);
-      expect(screen.queryByRole("button", { name: "Propose new item" })).not.toBeInTheDocument();
-      expect(await screen.findByRole("button", { name: "Propose new item" })).toBeInTheDocument();
-      expect(screen.getByText("No matching catalog items")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
+      expect(await screen.findByText("No matching catalog items")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
+    });
+
+    it("proposes with no search typed, leaving the name to the manager", () => {
+      wrap();
+      mockApi.mockResolvedValue(null);
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
+      expect(screen.getByPlaceholderText(SEARCH)).toHaveValue("");
+      fireEvent.click(screen.getByRole("button", { name: "Propose new item" }));
+      const proposedName = screen.getByPlaceholderText("Proposed name");
+      expect(proposedName).toHaveValue("");
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      fireEvent.change(proposedName, { target: { value: "Hide glue" } });
+      expect(proposedName).toHaveValue("Hide glue");
+    });
+
+    it("offers propose for a search shorter than the minimum", () => {
+      wrap();
+      search("w", []);
+      expect(screen.getByText(/Type at least/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
     });
 
     it("offers propose below near-miss results", async () => {
       wrap();
       search("power", [hub]);
-      const button = await screen.findByRole("button", { name: "Propose new item" });
-      expect(screen.getByRole("radio", { name: /Power Hub/ }).compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      const radio = await screen.findByRole("radio", { name: /Power Hub/ });
+      const button = screen.getByRole("button", { name: "Propose new item" });
+      expect(radio.compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     });
 
-    it("doesn't offer propose when the search failed", async () => {
+    it("still offers propose when the search failed", async () => {
       wrap();
       search("wood glue", new HttpError("Catalog is down", 500));
       expect(await screen.findByText("Couldn't search the catalog: Catalog is down")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Propose new item" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Propose new item" })).toBeInTheDocument();
     });
 
     it("pre-fills the proposed name from the search and keeps the search when cancelled", async () => {
@@ -311,6 +335,77 @@ describe("the receiving page for one receipt", () => {
     expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry apply" })).not.toBeInTheDocument();
     expect(screen.getByText("Applying — the system retries this automatically.")).toBeInTheDocument();
+  });
+
+  it("offers Retry apply for a receipt left applying with a recorded failure, and no automatic retry", async () => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, state: "applying", applyFirstFailedAt: "2026-11-08T10:00:00Z" } };
+    mockApi.mockResolvedValueOnce({ id: 7, state: "applying" }).mockResolvedValueOnce({ id: 7, state: "resolved" });
+    wrap();
+    expect(screen.queryByText("Applying — the system retries this automatically.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry apply" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/apply", expect.anything()));
+    expect(mockApi).toHaveBeenCalledWith("/receipts/7/retry-apply", expect.anything());
+  });
+
+  it("shows Matching pending, and how to resolve it, while matching couldn't run", () => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } };
+    wrap();
+    expect(screen.getByText("Matching pending")).toBeInTheDocument();
+    expect(screen.getByText("Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand.")).toBeInTheDocument();
+  });
+
+  describe("Run matching now", () => {
+    const pending = () => ({ ...baseDetail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } });
+    /** The receipt as the reload after the run reads it. */
+    function afterRun(after: typeof baseDetail) {
+      mockApi.mockImplementation(async (path: string) => (path === "/receipts/7" ? after : { id: 7, state: after.ReceivedReceipt.state }));
+    }
+
+    it("is offered to inventory managers beside Matching pending", () => {
+      detail = pending();
+      wrap();
+      expect(screen.getByRole("button", { name: "Run matching now" })).toBeInTheDocument();
+    });
+
+    it("is not offered to anyone else", () => {
+      mockIsManager = false;
+      detail = pending();
+      wrap();
+      expect(screen.queryByRole("button", { name: "Run matching now" })).not.toBeInTheDocument();
+    });
+
+    it("is not offered once matching ran", () => {
+      wrap();
+      expect(screen.queryByRole("button", { name: "Run matching now" })).not.toBeInTheDocument();
+    });
+
+    it("runs matching for this receipt and says how many lines it matched", async () => {
+      detail = pending();
+      afterRun({
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [
+          { ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus: "recognized", assignedGtin13: "0000000000017" },
+          baseDetail.ReceivedReceiptLineStatus[1],
+        ],
+      });
+      wrap();
+      fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "1 line matched", color: "green" }));
+      expect(mockApi).toHaveBeenCalledWith("/receipts/7/run-matching", { method: "POST" });
+    });
+
+    it("says the catalog is still unavailable when matching couldn't run again", async () => {
+      detail = pending();
+      afterRun(pending());
+      wrap();
+      fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" }));
+    });
+  });
+
+  it("shows no Matching pending once matching ran", () => {
+    wrap();
+    expect(screen.queryByText("Matching pending")).not.toBeInTheDocument();
   });
 
   it("pushes the receipt straight after a manual proceed", async () => {

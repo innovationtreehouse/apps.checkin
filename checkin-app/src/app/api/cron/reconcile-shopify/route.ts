@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
+import { laneReached, stepCrashed } from "@/lib/finishRun";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@checkin/income";
@@ -9,15 +10,19 @@ import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
+import { readMailbox, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
 
-/** Runs one step so its failure stays its own: logged, and reported as `{ status: "error" }`. */
-async function isolated<T>(name: string, failureName: string, step: () => Promise<T>): Promise<T | { status: "error" }> {
+/**
+ * Runs one step so its failure stays its own: logged, reported to the run under the library lanes
+ * the step runs, and returned as `{ status: "error" }`.
+ */
+async function isolated<T>(name: string, failureName: string, step: () => Promise<T>, lanes: string[] = []): Promise<T | { status: "error" }> {
     let outcome: T | { status: "error" };
     try {
         outcome = await step();
     } catch (err) {
         logger.error(`[reconcile] ${failureName} failed:`, err);
+        stepCrashed("reconcile-shopify", name, err, lanes);
         outcome = { status: "error" };
     }
     logger.info(`[reconcile] ${name} ${JSON.stringify(outcome)}`);
@@ -75,20 +80,14 @@ function rowsFailed(outcome: object): number {
  * pending provisionals the catalog has since resolved. Each step is isolated; counts only. A
  * provisional that could not be merged counts toward the top-level `failed`.
  *
- * Then re-pushes workflow-mapping receipts left `applying` with no live push (sweepStuckApplying).
- * Isolated the same way; counts only.
+ * Then pushes workflow-mapping receipts a crash left `applying` with no live push and no recorded
+ * failure (sweepStuckApplying). Isolated the same way; counts only.
  *
  * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
  * `ocr_failed`. Isolated the same way; the response carries its count only.
  *
  * Then moves receipts whose intake checks never ran out of `uploaded` into finance's
  * `flow_error` queue (sweepStuckUploaded). Isolated the same way; counts only.
- *
- * Then re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
- * same way; counts only.
- *
- * Then it re-sends in-kind donor changes the receipt library has not yet delivered to
- * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  *
  * Then it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
  * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
@@ -99,31 +98,32 @@ function rowsFailed(outcome: object): number {
  *
  * The Shopify reconcile and the sale sweep run isolated too. The top-level `failed`, which the cron
  * run records, counts every step or expense part that crashed, every row a step reports as failed
- * (reconcile orders, receipt sweeps, re-pushes, donor re-sends, outcome emails), provisionals not
- * reconciled, Apply give-ups, and a mailbox that could not be read.
+ * (reconcile orders, receipt sweeps, outcome emails), provisionals not reconciled, a
+ * workflow-mapping catch-up that could not read the catalog's events, and a mailbox that could not
+ * be read.
  */
 export const GET = withCron(async () => {
     const result = await isolated("shopify", "Shopify reconcile", runReconcile);
     const saleSweep = await isolated("sale sweep", "program sale sweep", runSaleSweep);
     const income = await isolated("income", "income reconciliation", async () => runIncomeReconcile((await getOrg()).id));
-    const expense = await isolated("expense", "expense catch-up", runExpenseCatchUp);
+    const expense = await isolated("expense", "expense catch-up", runExpenseCatchUp, ["expense intake", "expense intake-replay"]);
     const programStock = await isolated("program stock", "program stock heal", healProgramStock);
     const inventoryEvents = await isolated("inventory events", "inventory event catch-up", catchUpInventoryEvents);
     const workflowEvents = await isolated("workflow-mapping events", "workflow-mapping event catch-up", catchUpWorkflowEvents);
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
     const receiptStuck = await isolated("receipt stuck uploads", "receipt stuck-upload sweep", sweepStuckUploaded);
-    const receiptPush = await isolated("receipt push", "receipt re-push", repushUnpushed);
-    const donorSync = await isolated("donor sync", "receipt donor re-send", resendDonorSync);
     const receiptMail = await isolated("receipt mail", "receipt mail intake", readMailbox);
     const receiptOutcomes = await isolated("receipt outcome emails", "receipt outcome emails", sweepOutcomeNotices);
-    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes];
+    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes];
     const expenseParts = "intake" in expense ? [expense.intake, expense.catalogEvents] : [];
     const failed = [...steps, ...expenseParts].filter(crashed).length
-        + [result, receipt, receiptStuck, receiptPush, donorSync, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
+        + [result, receipt, receiptStuck, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
         + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
-        + ("gaveUp" in receivingApply ? receivingApply.gaveUp : 0)
+        + ("unreadable" in workflowEvents && workflowEvents.unreadable ? 1 : 0)
         + (receiptMail.status === "listing_failed" ? 1 : 0);
+    // Expense's replay re-runs the receipts live intake could not take, so it reaches both intake lanes.
+    if ("intake" in expense && !crashed(expense.intake)) laneReached("expense intake", "expense intake-replay");
     const reconciled = "configured" in result ? result : { reconcile: result };
-    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptPush, donorSync, receiptMail, receiptOutcomes });
+    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes });
 });

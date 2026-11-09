@@ -174,9 +174,10 @@ export function isKindedError(err: unknown): err is KindedError {
 }
 
 /**
- * The kind of any error. A library's 4xx is data, except 401 (our wiring lost the caller: bug)
- * and 429 (a passing overload: system). A database connection error takes the kind pg-kit's
- * `dbFailureKind` gives it. Anything unrecognised is a bug, which keeps today's retry-then-hold.
+ * The kind of any error. A library's 4xx is data, except 401 and 403 (our wiring or the system
+ * actor's permissions are wrong: bug) and 429 (a passing overload: system). A database
+ * connection error takes the kind pg-kit's `dbFailureKind` gives it. Anything unrecognised is a
+ * bug, which keeps today's retry-then-hold.
  */
 export function kindOf(err: unknown): FailureKind {
   if (isKindedError(err)) return err.kind;
@@ -186,17 +187,33 @@ export function kindOf(err: unknown): FailureKind {
 }
 
 function statusKind(status: number): FailureKind {
-  if (status === 401) return "bug";
+  if (status === 401 || status === 403) return "bug";
   if (status === 429 || status >= 500) return "system";
   return "data";
 }
 
+const NOT_WIRED = Symbol.for("@checkin/component-kit/NotWiredError");
+
 /** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
 export class NotWiredError extends KindedError {
+  readonly [NOT_WIRED] = true;
+
   constructor(port: string) {
     super("settings", `${port} is not wired`);
     this.name = "NotWiredError";
   }
+}
+
+/** An unbound port: the only failure that means "not connected". Any other `settings` failure is itself. */
+export function isNotWired(err: unknown): err is NotWiredError {
+  return isKindedError(err) && NOT_WIRED in err;
+}
+
+/** The 503 wording a person reads when the catalog needs fixing: unbound, or its database missing. Null for any other failure. */
+export function catalogSettingsMessage(err: unknown): string | null {
+  if (isNotWired(err)) return "No catalog is connected";
+  if (kindOf(err) === "settings") return "The catalog database does not exist; the infra operator checks its settings";
+  return null;
 }
 
 /** The acting person id. A 401 on anything but an integer: Prisma drops an undefined `where` key. */
@@ -206,9 +223,51 @@ export function callerId(principal: { id?: unknown } | null | undefined): number
   return id;
 }
 
+/** One kinded failure in a library's lane, as its "on failure" port receives it. Ids and codes only, never error text. */
+export interface FailureReport {
+  lane: string;
+  kind: FailureKind;
+  status?: number;
+  faultCodes?: readonly string[];
+  requestId?: string;
+  /** What failed, by id: "receipt 12", never submitted text. */
+  detail?: string;
+}
+
+/**
+ * One item a library's step left stuck, as its "stuck items" port answers. `href` is the item's own
+ * page, null when it has none; `failedAt` is the first failure where the library records one, else
+ * the item's last change. No error text: the item's page shows it under its own access rules.
+ */
+export interface StuckItem {
+  id: string;
+  step: string;
+  href: string | null;
+  failedAt: Date;
+}
+
+/**
+ * A library's "on failure" port. Unbound, a failure is only logged. The lane hands the report off
+ * and goes on without waiting: a port that returns a promise finishes on its own, and its rejection
+ * is logged.
+ */
+export type OnFailure = (report: FailureReport) => void | Promise<void>;
+
+function failureReport(lane: string, err: unknown, detail: string | undefined): FailureReport {
+  const report: FailureReport = { lane, kind: kindOf(err) };
+  if (err instanceof Error) {
+    if ("status" in err && typeof err.status === "number") report.status = err.status;
+    if ("codes" in err && Array.isArray(err.codes) && err.codes.length > 0) report.faultCodes = err.codes.map(String);
+    if ("requestId" in err && typeof err.requestId === "string") report.requestId = err.requestId;
+  }
+  if (detail !== undefined) report.detail = detail;
+  return report;
+}
+
 interface RuntimeShape<Principal> {
   org?: () => Promise<{ id: string }>;
   auth?: { getPrincipal(): Promise<Principal | null> };
+  onFailure?: OnFailure;
 }
 
 /**
@@ -256,6 +315,22 @@ export function defineRuntime<Config extends RuntimeShape<Principal>, Principal 
     },
     /** The current request's org id, the scope of every row. */
     getOrgId,
+    /**
+     * Sorts a lane's failure: logs one `failure_kinded` line, hands the report to the bound
+     * "on failure" port without waiting on it, and returns the kind. Never throws, so it is safe
+     * inside a catch or a transaction.
+     */
+    failed(lane: string, err: unknown, detail?: string): FailureKind {
+      const report = failureReport(lane, err, detail);
+      console.warn(JSON.stringify({ level: "warn", event: "failure_kinded", library: name, ...report, ts: new Date().toISOString() }));
+      const portThrew = (portErr: unknown) => console.error(`[${name}] on-failure port threw:`, portErr);
+      try {
+        void Promise.resolve(store[key]?.onFailure?.(report)).catch(portThrew);
+      } catch (portErr) {
+        portThrew(portErr);
+      }
+      return report.kind;
+    },
     /** Callee guard: a crossing payload must carry the injected org. */
     async assertOrg(orgId: string): Promise<void> {
       if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
@@ -318,6 +393,8 @@ export interface OrgEventSweepResult {
   newlyFailed: number;
   unprocessed: number;
   unreadable: boolean;
+  /** No event source is bound: a settings problem the run records, not a catalog outage to alert on. */
+  notConnected: boolean;
   /** An event newly failed, an unreadable catalog, or a capped run that processed nothing. */
   needsAlert: boolean;
 }
@@ -351,6 +428,7 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
 
   let unprocessed = 0;
   let unreadable = false;
+  let notConnected = false;
   let budget = sweep.limit - firstRetries.length;
   let newlyFailed = 0;
   try {
@@ -375,7 +453,8 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
       after = ids[ids.length - 1];
     }
   } catch (err) {
-    unreadable = true;
+    if (isNotWired(err)) notConnected = true;
+    else unreadable = true;
     sweep.onUnreadable(err);
   }
 
@@ -384,5 +463,5 @@ export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEve
   unprocessed += sweep.failed.length - firstRetries.length - laterRetries.length;
 
   const needsAlert = newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0);
-  return { counts, newlyFailed, unprocessed, unreadable, needsAlert };
+  return { counts, newlyFailed, unprocessed, unreadable, notConnected, needsAlert };
 }

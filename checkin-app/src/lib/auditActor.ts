@@ -30,6 +30,7 @@ export const SYSTEM_ACTORS = [
     "system:membership-renewal-advance",
     "system:membership-external-advance",
     "system:person-bg-open",
+    "system:membership-bg-settle",
     "system:person-agreement-open",
     "system:bootstrap-sysadmin",
     "system:dev-seed",

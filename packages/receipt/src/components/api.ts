@@ -64,8 +64,7 @@ export interface ReceiptListRow {
   reimbursement?: { paidOn: string | null; statusUnavailable?: boolean } | null;
   complete?: boolean;
   reimburseePersonId?: number | null;
-  /** On a finalized receipt not yet delivered to receiving: catch-up has stopped retrying it. */
-  pushGivenUp?: boolean;
+  /** On a stuck receipt: when its step first failed, and, on its own page for finance, the latest error. */
   lastPushFailedAt?: string | null;
   lastPushFailure?: string | null;
   duplicateFlaggedAt?: string | null;

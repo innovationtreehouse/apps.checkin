@@ -64,7 +64,7 @@ export const CompletedReceiptSubmitterConfirmationSchema = z.object({
 });
 
 export const CompletedReceiptSchema = z.object({
-  receiptId: z.string(),
+  receiptId: z.string().min(1),
   orgId: z.string(),
   submitterId: z.number().int(),
   vendorName: z.string().nullable(),

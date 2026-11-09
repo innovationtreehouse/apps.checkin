@@ -8,7 +8,7 @@ import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, ORG } from "../helpers/seed";
-import { catchUpCatalogEvents, consumeCatalogEvent } from "../../services/catalogEventConsumer";
+import { catchUpCatalogEvents, consumeCatalogEvent, retryCatalogEvent } from "../../services/catalogEventConsumer";
 import { receiveCompletedReceipt } from "../../services/intakeService";
 
 type Ev = { eventType: string; provisionalGtin13: string; realGtin13?: string; rejectionReason?: string };
@@ -85,7 +85,7 @@ const malformed = (id: number) => ({ ...envelope(approved, id), payload: JSON.st
 const CLEAN = { processed: 0, duplicate: 0, failed: 0, unprocessed: 0, unreadable: false };
 
 describeDb("S5 consumer — catch-up sweep", () => {
-  it("replays a failed event and reads past the cursor from the catalog", async () => {
+  it("leaves a failed event for a retry and reads past the cursor from the catalog", async () => {
     const first = envelope(approved, 10);
     await db.expenseReceivedOrgEvent.create({
       data: { id: 10, orgId: ORG, eventType: first.eventType, payload: first.payload, receivedAt: new Date(), status: "failed", failureReason: "x" },
@@ -94,10 +94,10 @@ describeDb("S5 consumer — catch-up sweep", () => {
     let askedAfter = -1;
     bindPorts({ catalogEvents: { eventsSince: async (_orgId, after) => { askedAfter = askedAfter < 0 ? after : askedAfter; return [later].filter((e) => e.id > after); } } });
 
-    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 2 });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 1 });
 
     expect(askedAfter).toBe(0);
-    expect(await db.expenseReceivedOrgEvent.count({ where: { status: "processed" } })).toBe(2);
+    expect(await db.expenseReceivedOrgEvent.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true } })).toEqual([{ id: 10, status: "failed" }, { id: 11, status: "processed" }]);
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {
@@ -129,21 +129,20 @@ describeDb("S5 consumer — catch-up sweep", () => {
     expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 5 });
   });
 
-  it("a capped run drains over later runs without alerting", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    bindPorts({ catalogEvents: paged([1, 2, 3].map((id) => envelope(itemRef, id))), alerts: { orgEventsStuck } });
+  it("a capped run drains over later runs", async () => {
+    bindPorts({ catalogEvents: paged([1, 2, 3].map((id) => envelope(itemRef, id))) });
 
     expect(await catchUpCatalogEvents(2)).toEqual({ ...CLEAN, processed: 2, unprocessed: 1 });
     expect(await catchUpCatalogEvents(2)).toEqual({ ...CLEAN, processed: 1 });
-    expect(orgEventsStuck).not.toHaveBeenCalled();
   });
 
-  it("failures that keep failing leave room in the cap for new events", async () => {
+  it("the sweep never retries a failed event", async () => {
     const bad = [1, 2, 3, 4].map(malformed);
     for (const ev of bad) await consumeCatalogEvent(ev);
     bindPorts({ catalogEvents: paged([...bad, envelope(itemRef, 5)]) });
 
-    expect(await catchUpCatalogEvents(4)).toEqual({ ...CLEAN, processed: 1, failed: 3, unprocessed: 1 });
+    expect(await catchUpCatalogEvents(4)).toEqual({ ...CLEAN, processed: 1 });
+    expect(await db.expenseReceivedOrgEvent.count({ where: { status: "failed" } })).toBe(4);
   });
 
   it("a failed overlap does not overwrite a processed ledger row", async () => {
@@ -162,50 +161,49 @@ describeDb("S5 consumer — catch-up sweep", () => {
   });
 });
 
-describeDb("S5 consumer — catch-up alerts", () => {
-  it("alerts on each run while the catalog can't be read, and still retries failures", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
+describeDb("S5 consumer — a failed event", () => {
+  it("records that no catalog is connected when the event source is unbound", async () => {
+    bindPorts({});
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, notConnected: true });
+  });
+
+  it("an unreadable catalog leaves a failed event as it is", async () => {
     await consumeCatalogEvent(malformed(1));
-    bindPorts({ catalogEvents: { eventsSince: async () => { throw new Error("catalog down"); } }, alerts: { orgEventsStuck } });
+    bindPorts({ catalogEvents: { eventsSince: async () => { throw new Error("catalog down"); } } });
 
-    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, failed: 1, unreadable: true });
-    await catchUpCatalogEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, unreadable: true });
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed" });
   });
 
-  it("alerts when an event first fails in the sweep, not on later retries", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    bindPorts({ catalogEvents: paged([malformed(1)]), alerts: { orgEventsStuck } });
-
-    await catchUpCatalogEvents();
-    await catchUpCatalogEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
+  it("is stuck with its error and first failure time", async () => {
+    await consumeCatalogEvent(malformed(1));
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed", failureReason: expect.any(String), firstFailedAt: expect.any(Date) });
   });
 
-  it("alerts when an event first fails in the call-out, not when the sweep retries it", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    const bad = malformed(1);
-    bindPorts({ catalogEvents: paged([bad]), alerts: { orgEventsStuck } });
+  it("a retry that fails again keeps the first failure time", async () => {
+    await consumeCatalogEvent(malformed(1));
+    const { firstFailedAt } = await db.expenseReceivedOrgEvent.findFirstOrThrow({ where: { id: 1 } });
 
-    await consumeCatalogEvent(bad);
-    await catchUpCatalogEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    await expect(retryCatalogEvent(1)).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
+
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed", firstFailedAt });
   });
 
-  it("alerts on each run while a capped run processes nothing", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    bindPorts({ catalogEvents: paged([envelope(itemRef, 1)]), alerts: { orgEventsStuck } });
+  it("a retry applies a failed event once its cause is fixed, and clears the failure", async () => {
+    await track(approved.provisionalGtin13);
+    const ev = envelope(approved, 1);
+    await db.expenseReceivedOrgEvent.create({ data: { id: 1, orgId: ORG, eventType: ev.eventType, payload: ev.payload, receivedAt: new Date(), status: "failed", failureReason: "boom", firstFailedAt: new Date() } });
 
-    await catchUpCatalogEvents(0);
-    await catchUpCatalogEvents(0);
-    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+    await retryCatalogEvent(1);
+
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "processed", failureReason: null, firstFailedAt: null });
+    expect(await provisional(approved.provisionalGtin13)).toMatchObject({ status: "approved" });
   });
 
-  it("finishes the run when the alert itself throws", async () => {
-    bindPorts({ catalogEvents: paged([malformed(1)]), alerts: { orgEventsStuck: async () => { throw new Error("mail down"); } } });
-    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, failed: 1 });
+  it("a retry of an event that is not failed answers 404", async () => {
+    await consumeCatalogEvent(envelope(itemRef, 1));
+    await expect(retryCatalogEvent(1)).rejects.toMatchObject({ status: 404 });
+    await expect(retryCatalogEvent(99)).rejects.toMatchObject({ status: 404 });
   });
 
   it("finishes the sweep when one event can't be recorded", async () => {

@@ -17,12 +17,12 @@ import { dollarsToCents } from "@checkin/money";
 import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg } from "@/lib/components/host";
-import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
 import { budgetOwners, householdIds, householdOf, householdsOf, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 import { getQuickBooks } from "@/lib/quickbooks/client";
 import { outboundCall } from "@/security/outbound";
+import { reportTo } from "@/lib/finishRun";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -102,9 +102,9 @@ export const signoff: SignoffDirectory = {
     return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ personId: id, name }));
   },
 
-  async addNonMemberAdult(name) {
+  async addNonMemberAdult(name, actorId) {
     const { addNonMemberAdult } = await import("@/lib/person/ownHousehold");
-    return (await addNonMemberAdult(await db(), name)).id;
+    return (await addNonMemberAdult(await db(), name, actorId)).id;
   },
 };
 
@@ -198,23 +198,23 @@ let refusedAlerted: string | null = null;
 async function alertRefusedAccount(accountId: string, accountType: string | undefined): Promise<void> {
   if (refusedAlerted === accountId) return;
   refusedAlerted = accountId;
-  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert("finance.expensePaymentAccount", {
+  await emailAlert("finance.expensePaymentAccount", {
     accountId,
     accountKind: accountType ? `a ${accountType} account` : "not in QuickBooks",
     actionLink: `${config.baseUrl()}/books-map`,
-  }, "Expense payment-account alert failed:");
+  });
 }
 
 /** The daily orphan sweep read a full page, so an entry the app created may sit in QuickBooks unchecked. */
 async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
-  const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+  const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await notifyFinanceAlert("finance.expenseSweepIncomplete", {
+  await emailAlert("finance.expenseSweepIncomplete", {
     since: since.toISOString().slice(0, 10),
     actionLink: `${config.baseUrl()}/expense/expenses`,
-  }, "Expense sweep alert failed:");
+  });
 }
 
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };
@@ -256,12 +256,12 @@ const outcomeMail: OutcomeMail = {
 
 export function configureRuntime(): void {
   configureExpense({
+    onFailure: reportTo("expense"),
     org: getOrg,
     budgetOwners,
     signoff,
     catalog: catalogReader,
     catalogEvents: { eventsSince: catalogEventsSince },
-    alerts: orgEventAlerts("board.expenseEventsStuck", "Expense catalog event alert failed:"),
     people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId, vendorIdFor: reimburseeVendorId }, vendors: qbVendors, posting, accounts: quickBooksAccounts },
     outbound: outboundCall,

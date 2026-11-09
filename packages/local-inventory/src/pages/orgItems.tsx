@@ -10,7 +10,7 @@ import { formatGtinDisplay } from "../lib/gtin";
 import {
   api, CatalogNamesUnavailable, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
 } from "../components/api";
-import { CatalogPicker, LoadError } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, useSetUrlFilters, useUrlChoice, useUrlPage } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {
@@ -43,8 +43,10 @@ interface ItemForm extends EditableValues {
 }
 
 /** The columns the org-items route can order by. */
-type SortCol = "gtin13" | "location" | "backstock";
-type SortDir = "asc" | "desc";
+const SORT_COLS = ["gtin13", "location", "backstock"] as const;
+type SortCol = (typeof SORT_COLS)[number];
+const SORT_DIRS = ["asc", "desc"] as const;
+type SortDir = (typeof SORT_DIRS)[number];
 const TH_SORT_STYLE = { cursor: "pointer", userSelect: "none" } as const;
 
 function SortHeader({ col, label, sortBy, sortDir, onSort }: {
@@ -65,15 +67,16 @@ function SortHeader({ col, label, sortBy, sortDir, onSort }: {
 
 function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const canManage = useCanManage();
-  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<SortCol>("gtin13");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortBy] = useUrlChoice("sortBy", SORT_COLS, "gtin13");
+  const [sortDir] = useUrlChoice("sortDir", SORT_DIRS, "asc");
+  const setFilters = useSetUrlFilters();
   const [q] = useDebouncedValue(search.trim(), 300);
   const filter = new URLSearchParams({ ...(q ? { q } : {}), ...(unlocated ? { unlocated: "true" } : {}) });
   const order = new URLSearchParams({ sortBy, sortDir });
-  const rows = useLoad<OrgItemsBag>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
   const count = useLoad<{ total: number }>(`/org-items/count?${filter}`, { keepPrevious: true });
+  const [page, setPage] = useUrlPage(count.data ? lastPage(count.data.total) : null);
+  const rows = useLoad<OrgItemsBag>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
   const locations = useLoad<LocationRef[]>("/locations");
   const items = rows.data?.OrgItem ?? null;
   const catalogNames = useCatalogNames((items ?? []).map((r) => r.gtin13));
@@ -88,9 +91,8 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const reload = () => { rows.reload(); count.reload(); };
 
   function toggleSort(col: SortCol) {
-    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortBy(col); setSortDir("asc"); }
-    setPage(1);
+    const dir = sortBy === col && sortDir === "asc" ? "desc" : "asc";
+    setFilters({ sortBy: col === "gtin13" ? null : col, sortDir: dir === "asc" ? null : dir });
   }
   const sortProps = { sortBy, sortDir, onSort: toggleSort };
 
@@ -184,7 +186,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         <TextInput
           placeholder="Search by part number or location…"
           value={search}
-          onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }}
+          onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }}
           maw={400}
           style={{ flex: 1 }}
         />

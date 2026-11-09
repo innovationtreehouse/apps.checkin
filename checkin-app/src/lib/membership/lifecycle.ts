@@ -149,45 +149,21 @@ export const openProcess = defineStateSet<Where>()({
 });
 
 // ── awaiting BG review ────────────────────────────────────────────────
-// The review queue's "awaiting a background check" rule, from one source. Not a
-// single defineStateSet: it's an OR of two sub-rules, both requiring
-// bgClearedAt=null. The two status arrays below are that one source; `has` and
-// `where` both derive from them, and lifecycle.test asserts them equal on a
-// status × flags matrix.
-const BG_REVIEW_STATES = ["PENDING_BG_REVIEW", "RENEWAL_PENDING_BG"] as const;
-const PARALLEL_BG_STATES = ["PENDING_PAYMENT", "PENDING_BG_CLEARANCE"] as const;
 
-type AwaitingBgRow = { status: ProcessStatus; bgConsentAt: boolean; bgClearedAt: boolean };
+type AwaitingBgRow = { kind: ProcessKind; status: ProcessStatus; bgConsentAt: boolean; bgClearedAt: boolean };
 
 /**
- * A process is awaiting background-check review when it hasn't cleared and is past
- * consent: the (legacy/renewal) review states unconditionally, or the INITIAL
- * parallel states once consent is recorded. `.has` for client + in-tx predicate,
- * `.where` for the reviewer-queue queries.
+ * A check review the reviewer queue lists: a PERSON_BG at PENDING_BG_REVIEW with
+ * consent recorded and not yet cleared. A household application is never reviewed
+ * itself; it waits on its people's check reviews (settleHouseholdBg).
  *
- * NOTE — the ONE hand-authored StateSet: `has` and `where` are written SEPARATELY
- * here (this is an OR of two sub-rules, so it does NOT go through `defineStateSet`,
- * which mechanically derives one from the other). Their equivalence is therefore
- * NOT structurally guaranteed — it rests ENTIRELY on the parity test in
- * lifecycle.test.ts, which asserts `has` ≡ `where` across the FULL
- * status × {bgConsentAt, bgClearedAt} matrix. That matrix must stay exhaustive; do
- * not re-shape this into `defineStateSet` unless the OR is proven exactly equivalent.
+ * Hand-authored because `kind` is not a status or flag: `has` and `where` are kept
+ * equal by the matrix test in lifecycle.test.ts.
  */
 export const awaitingBgReview: StateSet<AwaitingBgRow, Where> = {
-    statuses: [...BG_REVIEW_STATES, ...PARALLEL_BG_STATES],
-    has: (row) => {
-        if (row.bgClearedAt) return false;
-        if ((BG_REVIEW_STATES as readonly string[]).includes(row.status)) return true;
-        if ((PARALLEL_BG_STATES as readonly string[]).includes(row.status) && row.bgConsentAt) return true;
-        return false;
-    },
-    where: {
-        bgClearedAt: null,
-        OR: [
-            { status: { in: [...BG_REVIEW_STATES] } },
-            { status: { in: [...PARALLEL_BG_STATES] }, bgConsentAt: { not: null } },
-        ],
-    },
+    statuses: ["PENDING_BG_REVIEW"],
+    has: (row) => row.kind === "PERSON_BG" && row.status === "PENDING_BG_REVIEW" && row.bgConsentAt && !row.bgClearedAt,
+    where: { kind: "PERSON_BG", status: { in: ["PENDING_BG_REVIEW"] }, bgConsentAt: { not: null }, bgClearedAt: null },
 };
 
 // ── membership fee settled, background check outstanding ────────────────
@@ -362,8 +338,8 @@ export const ARCHIVABLE_STATUSES = [
 export const CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "RENEWAL_PENDING_BG"] as const satisfies readonly ProcessStatus[];
 
 /**
- * What a board restore of a DENIED household closes, unpaid only: the family starts
- * over, so a BLOCKED application closes too (its rejection stays in the audit row).
+ * What a board restore of a DENIED household, or a household archive, closes, unpaid
+ * only: a BLOCKED application closes too (its rejection stays in the audit row).
  */
 export const RESTORE_CLOSABLE_STATUSES = [...CLOSABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
 
@@ -399,6 +375,20 @@ export function refundLandsIn(status: ProcessStatus): ProcessStatus | null {
 export const LEGACY_REOPEN_STATUSES = ["PENDING_BG_CLEARANCE", "BLOCKED"] as const satisfies readonly ProcessStatus[];
 
 /**
+ * The steps a household application leaves for BLOCKED when someone in the household
+ * has a rejected check review, and returns to when that review is no longer BLOCKED.
+ * The review and payment steps resume by `blockedResetStatus` instead.
+ */
+export const SETTLE_BLOCKABLE_STATUSES = [
+    "INTAKE",
+    "PENDING_RENEWAL",
+    "PENDING_EXTERNAL_ACTION",
+    "PENDING_BG_REVIEW",
+    "PENDING_PAYMENT",
+    "PENDING_BG_CLEARANCE",
+] as const satisfies readonly ProcessStatus[];
+
+/**
  * The machine edges, each carrying the enforcement site
  * it feeds. Not a runtime executor — powers isLegalTransition + reachability in
  * tests/doc-artifacts. Flag-only stamps (contractSignedAt/bgConsentAt) are not
@@ -409,6 +399,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "∅", to: "INTAKE", event: "startIntake", actor: "applicant", guardSite: "intake.ts startIntake: OrgMembership FOR UPDATE (refuses DENIED/ACTIVE/BLOCKED/open renewal) + membership_one_inflight_initial + P2002", kind: "INITIAL" },
     { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "board", guardSite: "renewal.ts createRenewalProcess: OrgMembership FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
     { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers.ts openPersonBg: Person FOR UPDATE", kind: "PERSON_BG" },
+    { from: "∅", to: "PENDING_BG_REVIEW", event: "household consent (no subject)", actor: "applicant/board/system", guardSite: "settleHouseholdBg.ts openRequestedReview: application FOR UPDATE", kind: "PERSON_BG" },
     { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers.ts openPersonAgreement: Person FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
     // External step
     { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
@@ -421,26 +412,28 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantMembership", actor: "board", guardSite: "grant.ts grantMembership → certifyPaymentPlan (COI) → activate" },
-    // Clearance convergence
-    { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: OrgMembership FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
-    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
-    { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE)" },
-    // A refunded order holds a cleared, paid application for the board instead of activating it.
-    { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid on a refunded order)", legacy: true },
-    // Reject → BLOCKED
-    { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
-    { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE (parallel review)" },
-    { from: "PENDING_BG_CLEARANCE", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
-    // Board reset and the rejector changing to approve:
-    // both send a blocked review back for two approvals; nothing clears it from BLOCKED.
-    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (unpaid)" },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (paid)" },
-    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
-    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (unpaid)" },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (paid)" },
-    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
+    // Check review (PERSON_BG): two approvals clear it, a rejection blocks it, a Board
+    // reset or the rejector's change to approve sends a blocked one back.
+    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE)", kind: "PERSON_BG" },
+    { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE", kind: "PERSON_BG" },
+    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI", kind: "PERSON_BG" },
+    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI", kind: "PERSON_BG" },
+    // Naming a person whose own review is empty closes that review (PBR-11).
+    { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "attest names a person with an empty review", actor: "reviewer", guardSite: "review.ts nameSubject: process FOR UPDATE + holds no rejection", kind: "PERSON_BG" },
+    { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "settleHouseholdBg closes an unneeded unnamed review", actor: "system", guardSite: "settleHouseholdBg.ts closeUnneededRequestedReviews: process FOR UPDATE + no held rejection", kind: "PERSON_BG" },
+    // Household application: its people's check standing moves it (settleHouseholdBg).
+    { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (unpaid legacy row)", legacy: true },
+    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid legacy row)", legacy: true },
+    { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE (paid on a refunded order)", legacy: true },
+    { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock" },
+    ...SETTLE_BLOCKABLE_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => [
+        { from, to: "BLOCKED", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE, a person in the household has a BLOCKED check review" },
+        { from: "BLOCKED", to: from, event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts resumeStatus: process FOR UPDATE, every recorded blocking review no longer BLOCKED" },
+    ]),
+    // A household row blocked by a household attestation before cutover: Board reset only.
+    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, no consent or unsigned)", legacy: true },
     // Refund recorded by the board: money undone, background check untouched. Every
     // other step only loses paidAt (flag-only, no status edge).
     ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {
@@ -461,7 +454,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
         }),
     ),
     // A board restore closes the denied household's unpaid applications, BLOCKED included.
-    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the restore transaction" },
+    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the household restore or archive transaction" },
     // Reopen — back to the step the close captured. ARCHIVED rests but is not sealed.
     ...ARCHIVABLE_STATUSES.map(
         (to): Transition<TState, string, ProcessKind> => ({

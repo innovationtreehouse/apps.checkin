@@ -5,7 +5,7 @@
  * provisional parts, whose names are.
  */
 import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
-import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
+import { catalogSettingsMessage, httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
@@ -92,6 +92,12 @@ export const get: InventoryRouteHandler = async ({ params }) => {
   return { OrgItem: item, InventoryProvisionalItem: await provisionalNames(item.orgId, [item.gtin13]) };
 };
 
+/** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
+function refuseCatalogSettings(err: unknown): void {
+  const message = catalogSettingsMessage(err);
+  if (message) throw httpError(503, message);
+}
+
 /**
  * Why a new write may not name this part, or null for an active catalog item or a pending
  * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
@@ -103,6 +109,7 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
   if (provisional) return `${id} was rejected by the catalog`;
   const active = await catalogHasActiveItem(gtin13).catch((err: unknown) => {
+    refuseCatalogSettings(err);
     console.error("[local-inventory] catalog check failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");
   });

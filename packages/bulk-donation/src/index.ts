@@ -56,3 +56,5 @@ export { disbursementMachine, STATES } from "./workflows/disbursement.machine";
 export { sendDisbursementEvent, type AuditContext } from "./workflows/disbursement.actor";
 export { WorkflowTransitionError } from "@checkin/workflows";
 export * as routes from "./routes";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

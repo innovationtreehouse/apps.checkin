@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "@checkin/pg-test-harness": "*",
+    "@checkin/receipt-contract-fixtures": "*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "dotenv": "^17.0.0",

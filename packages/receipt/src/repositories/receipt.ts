@@ -12,13 +12,16 @@ export class ReceiptStateConflictError extends Error {
   }
 }
 
-/** A receipt and its details, flattened, without the file. */
-type FileColumns = "fileBlob" | "fileKey" | "fileSize";
-export type ReceiptRow = Omit<Receipt, FileColumns | "donorSyncSeq"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
+/** A receipt and its details, flattened, without the file or its failure record (read on its own, for its own page). */
+type OmittedColumns = "fileBlob" | "fileKey" | "fileSize" | "donorSyncSeq" | "firstFailedAt" | "lastError";
+export type ReceiptRow = Omit<Receipt, OmittedColumns> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
 
-const listShape = { omit: { fileBlob: true, fileKey: true, fileSize: true, donorSyncSeq: true }, include: { details: true } } as const;
+const listShape = {
+  omit: { fileBlob: true, fileKey: true, fileSize: true, donorSyncSeq: true, firstFailedAt: true, lastError: true },
+  include: { details: true },
+} as const;
 
-function flatten(r: Omit<Receipt, FileColumns | "donorSyncSeq"> & { details: ReceiptDetail | null }): ReceiptRow {
+function flatten(r: Omit<Receipt, OmittedColumns> & { details: ReceiptDetail | null }): ReceiptRow {
   const { details, ...core } = r;
   if (!details) throw new Error(`receipt ${r.id} has no details row`);
   const { id: _id, orgId: _orgId, ...rest } = details;
@@ -29,6 +32,15 @@ export interface ReceiptUpdate {
   core?: Prisma.ReceiptUncheckedUpdateInput;
   detail?: Prisma.ReceiptDetailUncheckedUpdateInput;
 }
+
+/** Marks the receipt stuck: keeps its first failure's time, and records this failure's error. */
+export async function recordFailure(client: Tx, receiptId: string, err: unknown): Promise<void> {
+  const lastError = err instanceof Error ? err.message : String(err);
+  await client.$executeRaw`UPDATE "receipts" SET "first_failed_at" = COALESCE("first_failed_at", NOW()), "last_error" = ${lastError} WHERE "id" = ${receiptId}`;
+}
+
+/** A step that succeeds leaves the receipt no longer stuck. */
+export const CLEARED = { firstFailedAt: null, lastError: null } as const;
 
 export const receiptRepo = {
   /** Org-scoped. Like every read here, it answers with the live people, not the stored ids. */

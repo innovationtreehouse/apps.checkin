@@ -44,3 +44,5 @@ export { expenseStateCounts, EXPENSE_STATES, type ExpenseStateCount } from "./se
 export * from "./services/sweeps";
 
 export * as routes from "./routes";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

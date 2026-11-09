@@ -5,6 +5,9 @@ import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { financeQueueActionable, financeQueueCounts, financeQueueRows } from "../../services/financeQueueService";
 import { raiseFlag } from "../../services/flagService";
+import { expenseReasons } from "../../services/reasonService";
+import { writeAudit } from "../../lib/audit";
+import { SYSTEM_ACTOR } from "../../lib/system-actor";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -36,8 +39,14 @@ describeDb("finance queue — expenses tab", () => {
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02" });
+    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
+  });
+
+  it("carries no stored reason on an expense's row", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    const row = (await financeQueueRows(FINANCE, "expenses")).find((r) => r.expenseId === id);
+    expect(row).not.toHaveProperty("failureReason");
   });
 
   it("shows a failed intake's currency as a code: trimmed and upper-cased, or the default when it is not one", async () => {
@@ -67,9 +76,9 @@ describeDb("finance queue — expenses tab", () => {
 });
 
 describeDb("finance queue — QuickBooks tab", () => {
-  it("reads exhausted posts and AMBIGUOUS from the match state, and the three reviews from their rows", async () => {
+  it("reads failed posts and AMBIGUOUS from the match state, and the three reviews from their rows", async () => {
     const failed = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id: failed }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    await db.expense.update({ where: { id: failed }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "timeout" } });
     const ambiguous = await seedExpense({ state: "qb_complete" });
     await db.expense.update({ where: { id: ambiguous }, data: { qbMatchState: "AMBIGUOUS" } });
     const drift = await seedExpense({ state: "qb_complete" });
@@ -79,7 +88,7 @@ describeDb("finance queue — QuickBooks tab", () => {
 
     const rows = await financeQueueRows(FINANCE, "quickbooks");
     const text = (id: string) => rows.find((r) => r.expenseId === id)?.reasons[0].text;
-    expect(text(failed)).toBe("Posting failed 5 times");
+    expect(text(failed)).toBe("Not posted");
     expect(text(ambiguous)).toBe("Several QuickBooks entries match; pick one");
     expect(text(drift)).toBe("Changed in QuickBooks after posting: amount, account");
     expect(text(dup)).toBe("Duplicate entry in QuickBooks needs voiding");
@@ -101,6 +110,24 @@ describeDb("finance queue — QuickBooks tab", () => {
     const rows = await financeQueueRows(FINANCE, "quickbooks");
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_NO_CLASS", "A line has no budget bucket, so it has no QuickBooks class"]]]);
   });
+
+  it("names a failed post's error on the expense and leaves it out of the queue", async () => {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "the books map has no payment account" } });
+    await writeAudit(db, SYSTEM_ACTOR, { expenseId: id, action: "qb_needs_finance", notes: "the books map has no payment account" });
+
+    expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_POST_FAILED")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
+    const rows = await financeQueueRows(FINANCE, "quickbooks");
+    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_POST_FAILED", "Not posted"]]]);
+  });
+
+  it("shows a qb_error expense as waiting for Retry, with nothing for finance to act on", async () => {
+    const id = await seedExpense({ state: "qb_error" });
+    const rows = await financeQueueRows(FINANCE, "quickbooks");
+    expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => [x.code, x.text])])).toEqual([[id, [["QB_PROCESSING_FAILED", "Could not be prepared for QuickBooks; it waits for Retry on the Problems list"]]]]);
+    expect((await financeQueueCounts(FINANCE)).quickbooks).toMatchObject({ actionable: 0, total: 1 });
+  });
+
 });
 
 describeDb("finance queue — account holds tab", () => {

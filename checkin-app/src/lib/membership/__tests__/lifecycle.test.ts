@@ -38,6 +38,7 @@ import {
     LEGACY_REOPEN_STATUSES,
     openProcess,
     INITIAL_STATES,
+    type ProcessKind,
     type ProcessStatus,
 } from '@/lib/membership/lifecycle';
 import { assertEnumParity, reachability } from '@/lib/lifecycle';
@@ -46,57 +47,41 @@ import { assertEnumParity, reachability } from '@/lib/lifecycle';
 
 /**
  * Interpret awaitingBgReview.where against a row — the server-side semantics — so
- * we can assert it agrees with the client-side `has` for EVERY combination. If the
- * two ever drift (the whole point of the StateSet), this fails.
+ * we can assert it agrees with the client-side `has` for EVERY combination.
  */
-function whereMatches(row: { status: ProcessStatus; bgConsentAt: boolean; bgClearedAt: boolean }): boolean {
-    const w = awaitingBgReview.where as {
-        bgClearedAt: null;
-        OR: { status: { in: string[] }; bgConsentAt?: { not: null } }[];
-    };
-    if (row.bgClearedAt) return false; // where pins bgClearedAt: null
-    return w.OR.some((clause) => {
-        if (!clause.status.in.includes(row.status)) return false;
-        if (clause.bgConsentAt) return row.bgConsentAt; // { not: null } ⇒ present
-        return true;
-    });
+function whereMatches(row: { kind: ProcessKind; status: ProcessStatus; bgConsentAt: boolean; bgClearedAt: boolean }): boolean {
+    const w = awaitingBgReview.where as { kind: string; status: { in: string[] }; bgConsentAt: { not: null }; bgClearedAt: null };
+    return row.kind === w.kind && w.status.in.includes(row.status) && row.bgConsentAt && !row.bgClearedAt;
 }
 
 describe('awaitingBgReview', () => {
-    test('has ≡ where across status × bgConsentAt × bgClearedAt', () => {
-        for (const status of ALL_STATUSES) {
-            for (const bgConsentAt of [true, false]) {
-                for (const bgClearedAt of [true, false]) {
-                    const row = { status, bgConsentAt, bgClearedAt };
-                    expect(awaitingBgReview.has(row)).toBe(whereMatches(row));
+    test('has ≡ where across kind × status × bgConsentAt × bgClearedAt', () => {
+        for (const kind of ALL_KINDS) {
+            for (const status of ALL_STATUSES) {
+                for (const bgConsentAt of [true, false]) {
+                    for (const bgClearedAt of [true, false]) {
+                        const row = { kind, status, bgConsentAt, bgClearedAt };
+                        expect(awaitingBgReview.has(row)).toBe(whereMatches(row));
+                    }
                 }
             }
         }
     });
 
-    test('encodes awaitingBgReview exactly', () => {
-        // cleared ⇒ never awaiting, regardless of status
-        expect(awaitingBgReview.has({ status: 'PENDING_BG_REVIEW', bgConsentAt: true, bgClearedAt: true })).toBe(false);
-        // review states: awaiting whenever not cleared, consent irrelevant
-        expect(awaitingBgReview.has({ status: 'PENDING_BG_REVIEW', bgConsentAt: false, bgClearedAt: false })).toBe(true);
-        expect(awaitingBgReview.has({ status: 'RENEWAL_PENDING_BG', bgConsentAt: false, bgClearedAt: false })).toBe(true);
-        // parallel states: awaiting only once consent is recorded
-        expect(awaitingBgReview.has({ status: 'PENDING_PAYMENT', bgConsentAt: true, bgClearedAt: false })).toBe(true);
-        expect(awaitingBgReview.has({ status: 'PENDING_PAYMENT', bgConsentAt: false, bgClearedAt: false })).toBe(false);
-        expect(awaitingBgReview.has({ status: 'PENDING_BG_CLEARANCE', bgConsentAt: true, bgClearedAt: false })).toBe(true);
-        // unrelated statuses never await
-        expect(awaitingBgReview.has({ status: 'INTAKE', bgConsentAt: true, bgClearedAt: false })).toBe(false);
-        expect(awaitingBgReview.has({ status: 'ACTIVE', bgConsentAt: true, bgClearedAt: false })).toBe(false);
+    test('lists only a check review waiting with consent, never a household application', () => {
+        expect(awaitingBgReview.has({ kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', bgConsentAt: true, bgClearedAt: false })).toBe(true);
+        expect(awaitingBgReview.has({ kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', bgConsentAt: false, bgClearedAt: false })).toBe(false);
+        expect(awaitingBgReview.has({ kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', bgConsentAt: true, bgClearedAt: true })).toBe(false);
+        expect(awaitingBgReview.has({ kind: 'PERSON_BG', status: 'BLOCKED', bgConsentAt: true, bgClearedAt: false })).toBe(false);
+        for (const kind of ['INITIAL', 'RENEWAL'] as const) {
+            for (const status of ['PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_BG_CLEARANCE', 'RENEWAL_PENDING_BG'] as const) {
+                expect(awaitingBgReview.has({ kind, status, bgConsentAt: true, bgClearedAt: false })).toBe(false);
+            }
+        }
     });
 
     test('where is the reviewer-queue Prisma fragment', () => {
-        expect(awaitingBgReview.where).toEqual({
-            bgClearedAt: null,
-            OR: [
-                { status: { in: ['PENDING_BG_REVIEW', 'RENEWAL_PENDING_BG'] } },
-                { status: { in: ['PENDING_PAYMENT', 'PENDING_BG_CLEARANCE'] }, bgConsentAt: { not: null } },
-            ],
-        });
+        expect(awaitingBgReview.where).toEqual({ kind: 'PERSON_BG', status: { in: ['PENDING_BG_REVIEW'] }, bgConsentAt: { not: null }, bgClearedAt: null });
     });
 });
 

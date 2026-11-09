@@ -13,6 +13,10 @@ setupIntegrationDb();
 const CATALOG_GTIN = "4006381333931";
 const PROVISIONAL = buildProvisionalGtin13(123);
 
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true, [Symbol.for("@checkin/component-kit/NotWiredError")]: true });
+
 const post = (gtin13: string) =>
   create({ req: new Request("http://test/api/inventory/org-items", { method: "POST", body: JSON.stringify({ gtin13 }) }), params: {} });
 
@@ -63,12 +67,33 @@ describeDb("POST org-items", () => {
     expect(await db.orgItem.count()).toBe(0);
   });
 
-  it("answers 502 when the host bound no catalog, rather than calling the part unknown", async () => {
+  it("answers 503 \"No catalog is connected\" when the host bound no catalog, rather than calling the part unknown", async () => {
     configureLocalInventory({
       auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
       org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
     });
-    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 502 });
+    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(await db.orgItem.count()).toBe(0);
+  });
+
+  it("answers 503 \"No catalog is connected\" for an unbound catalog from another copy of the kit", async () => {
+    configureLocalInventory({
+      auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
+      org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+      catalog: { getActiveItem: async () => { throw foreignNotWired("catalog.getActiveItem"); } },
+    });
+    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    expect(await db.orgItem.count()).toBe(0);
+  });
+
+  it("answers 503 naming who fixes it when the catalog database does not exist, adding nothing", async () => {
+    configureLocalInventory({
+      auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
+      org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
+      catalog: { getActiveItem: async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); } },
+    });
+    await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+    expect(await db.orgItem.count()).toBe(0);
   });
 
   it("refuses a wrong check digit and a GTIN that is no active catalog item, adding nothing", async () => {

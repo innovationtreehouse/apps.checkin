@@ -36,8 +36,8 @@ const resolveDonatedPartAccounts = jest.fn();
 jest.mock("@checkin/expense", () => ({ getExpenseSettings, donatedAssetLineIds, resolveDonatedPartAccounts }));
 const booksMap = { accounts: jest.fn(), classes: jest.fn() };
 jest.mock("@/lib/finance/booksMap", () => ({ booksMap }));
-const notifyFinanceAlert = jest.fn();
-jest.mock("@/lib/emailRecipients", () => ({ notifyFinanceAlert }));
+const emailAlert = jest.fn().mockResolvedValue(true);
+jest.mock("@/lib/emailRecipients", () => ({ emailAlert }));
 
 async function config(): Promise<BulkDonationConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -135,7 +135,7 @@ describe("bulk-donation wiring", () => {
   it("names what gift-of-goods posting lacks, from the books map the drain reads", async () => {
     const { inKindPostingMissing } = await import("../configure");
     delete process.env.QBO_REALM_ID;
-    booksMap.accounts.mockResolvedValue({ INKIND_EXPENSE: "401", FIXED_ASSETS: "402" });
+    booksMap.accounts.mockResolvedValue({});
     await expect(inKindPostingMissing()).resolves.toEqual([
       "QuickBooks company (QBO_REALM_ID)",
       "no account picked for: Gifts of goods: in-kind income, Gifts of goods: clearing account (finance's past bookings)",
@@ -177,8 +177,15 @@ describe("bulk-donation wiring", () => {
     expect(depositStatus).toHaveBeenCalledWith(ORG.id, "benevity", ["D1"]);
 
     await deposits!.handOverFailing([{ disbursementId: "D1", reason: "it has no disbursement date" }, { disbursementId: "D2", reason: "it nets to zero or less, so no deposit is due" }]);
-    expect(notifyFinanceAlert.mock.calls[0][0]).toBe("finance.donationDepositHandOver");
-    expect(notifyFinanceAlert.mock.calls[0][1].batches).toBe("D1: it has no disbursement date; D2: it nets to zero or less, so no deposit is due");
+    expect(emailAlert.mock.calls[0][0]).toBe("finance.donationDepositHandOver");
+    expect(emailAlert.mock.calls[0][1].batches).toBe("D1: it has no disbursement date; D2: it nets to zero or less, so no deposit is due");
+  });
+
+  it("throws when the hand-over alert was not sent, so the failures stay unraised and are alerted again", async () => {
+    process.env.QBO_REALM_ID = "123";
+    const { deposits } = await config();
+    emailAlert.mockResolvedValueOnce(false);
+    await expect(deposits!.handOverFailing([{ disbursementId: "D1", reason: "it has no disbursement date" }])).rejects.toThrow("not sent");
   });
 
   it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {
@@ -196,13 +203,8 @@ describe("bulk-donation wiring", () => {
     await expect(inKindQb!.booksMap.accounts()).resolves.toEqual({ INKIND_INCOME: "400" });
     await expect(inKindQb!.booksMap.classes()).resolves.toEqual(new Map([[1, "7"]]));
     await inKindQb!.sweepIncomplete({ orgId: ORG.id, since: new Date("2026-10-01T08:00:00Z") });
-    expect(notifyFinanceAlert.mock.calls[0][0]).toBe("finance.inKindSweepIncomplete");
-    expect(notifyFinanceAlert.mock.calls[0][1].since).toBe("2026-10-01");
-    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 3, remaining: 12, cause: "system" });
-    expect(notifyFinanceAlert.mock.calls[1][0]).toBe("finance.inKindDrainStopped");
-    expect(notifyFinanceAlert.mock.calls[1][1]).toMatchObject({ failures: "3", remaining: "12", cause: expect.stringMatching(/may be down/) });
-    await inKindQb!.drainStopped({ orgId: ORG.id, failures: 1, remaining: 4, cause: "connection" });
-    expect(notifyFinanceAlert.mock.calls[2][1]).toMatchObject({ failures: "1", cause: expect.stringMatching(/Reconnect QuickBooks/) });
+    expect(emailAlert.mock.calls[0][0]).toBe("finance.inKindSweepIncomplete");
+    expect(emailAlert.mock.calls[0][1].since).toBe("2026-10-01");
   });
 
   it("reads which donated lines became assets from the expense library's capital review", async () => {

@@ -68,10 +68,9 @@ export default function ReceiptTable({
               )}
               {delivery && (
                 <Table.Td>
-                  {r.pushGivenUp && <Badge size="sm" color="red" mr="xs">Catch-up stopped: re-send by hand</Badge>}
-                  {r.lastPushFailure ? (
+                  {r.lastPushFailedAt ? (
                     <Text size="sm" span>
-                      Failed{r.lastPushFailedAt ? ` ${new Date(r.lastPushFailedAt).toLocaleString()}` : ""}: {r.lastPushFailure}
+                      Failed since {new Date(r.lastPushFailedAt).toLocaleString()}: re-send from its page
                     </Text>
                   ) : (
                     <Text size="sm" c="dimmed" span>No failed attempt recorded</Text>

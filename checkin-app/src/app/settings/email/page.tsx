@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Alert, Badge, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useSeedForm } from "@/hooks/useSeedForm";
@@ -146,8 +145,6 @@ export default function EmailSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="email" />
-
       {error && <LoadError what="the email settings" message={error} onRetry={reload} />}
 
       {!data ? (

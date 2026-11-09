@@ -8,8 +8,18 @@ import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
 import { resolveDonatedPartAccounts } from "../../services/donatedPartAccounts";
 import { lookupCatalogInfo } from "../../lib/expense-qb-processor";
+import { qbPostingOnAt } from "../../lib/expense-qb-poster";
+import { donatedAssetLineIds, giftsAwaitingCapitalReview } from "../../services/donatedCapitalService";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
-import { ORG } from "../helpers/seed";
+import { finance } from "../../routes";
+import { bindPorts, catalogResolving, ORG, principal } from "../helpers/seed";
+
+/** What the catalog client throws when its configured database does not exist. */
+const catalogDbMissing = () => Object.assign(new Error("Database does not exist"), { code: "P1003" });
+
+/** A NotWiredError from a second copy of component-kit, as a built app can load: the kit's brand and name, another class. */
+const foreignNotWired = (port: string) =>
+  Object.assign(new Error(`${port} is not wired`), { name: "NotWiredError", kind: "settings", [Symbol.for("@checkin/component-kit/KindedError")]: true, [Symbol.for("@checkin/component-kit/NotWiredError")]: true });
 
 describe("callerId", () => {
   it("returns an integer id", () => {
@@ -28,7 +38,6 @@ describe("callerId", () => {
 describe("runtime", () => {
   it("binds inert adapters for every unbound port", async () => {
     const rt = getExpenseRuntime();
-    expect(await rt.catalogEvents.eventsSince("org", 0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], owner: null });
     const notConnected = await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31").catch((err: unknown) => err);
@@ -47,8 +56,14 @@ describe("runtime", () => {
       catalog.getActiveItem("0000000000017"),
       catalog.getItemNames(["0000000000017"]),
       catalog.lookupItems("Acme", [{ index: 1, partNumber: "P1" }]),
+      getExpenseRuntime().catalogEvents.eventsSince("org", 0),
     ];
     for (const call of calls) expect(kindOf(await call.catch((err: unknown) => err))).toBe("settings");
+  });
+
+  it("the mapping catalog route answers an unbound catalog with 503 \"No catalog is connected\"", async () => {
+    const ctx = { req: new Request("http://test/api/expense/mapping-catalog"), params: {}, principal: principal(3, { isFinance: true }) };
+    await expect(finance.mappingCatalog(ctx)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
   });
 
   it("matching carries on without the catalog and records that it is not connected", async () => {
@@ -57,6 +72,31 @@ describe("runtime", () => {
     expect(await resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).toEqual([
       { lineId: 7, reason: "catalog not connected" },
     ]);
+  });
+
+  it("an unbound catalog from another copy of the kit still reads as not connected", async () => {
+    const unbound = async () => { throw foreignNotWired("catalog"); };
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: unbound } });
+    const ctx = { req: new Request("http://test/api/expense/mapping-catalog"), params: {}, principal: principal(3, { isFinance: true }) };
+    await expect(finance.mappingCatalog(ctx)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
+    const line = { id: 1, partNumber: "P1", manufacturer: null, description: "drill", nonInventory: false };
+    expect(await lookupCatalogInfo([line], "Acme")).toEqual({ gtin13ByItemId: new Map(), info: new Map(), catalogNotConnected: true });
+    expect(await resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).toEqual([
+      { lineId: 7, reason: "catalog not connected" },
+    ]);
+  });
+
+  it("the mapping catalog route answers a missing catalog database with 503 naming who fixes it", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: async () => { throw catalogDbMissing(); } } });
+    const ctx = { req: new Request("http://test/api/expense/mapping-catalog"), params: {}, principal: principal(3, { isFinance: true }) };
+    await expect(finance.mappingCatalog(ctx)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
+  });
+
+  it("matching and gift accounts pass a missing catalog database up, never \"not connected\"", async () => {
+    bindPorts({ catalog: { ...catalogResolving({}), listCategories: async () => { throw catalogDbMissing(); } } });
+    const line = { id: 1, partNumber: "P1", manufacturer: null, description: "drill", nonInventory: false };
+    await expect(lookupCatalogInfo([line], "Acme")).rejects.toMatchObject({ code: "P1003" });
+    await expect(resolveDonatedPartAccounts(ORG, [{ lineId: 7, gtin13: "0000000000017", isCapital: false }])).rejects.toMatchObject({ code: "P1003" });
   });
 
   it("the inert outbound gateway sends nothing", async () => {
@@ -68,6 +108,18 @@ describe("runtime", () => {
   it("assertOrg accepts only the injected org", async () => {
     await expect(assertOrg(ORG)).resolves.toBeUndefined();
     await expect(assertOrg("org-other")).rejects.toThrow(/not this org/);
+  });
+
+  it.each([
+    ["giftsAwaitingCapitalReview", () => giftsAwaitingCapitalReview("org-other")],
+    ["donatedAssetLineIds", () => donatedAssetLineIds("org-other", { giftSource: "receipt", giftId: 1 })],
+    ["qbPostingOnAt", () => qbPostingOnAt("org-other")],
+    ["resolveDonatedPartAccounts", () => resolveDonatedPartAccounts("org-other", [])],
+  ])("%s refuses another org as a wiring bug, before any read", async (_name, call) => {
+    const err = await call().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/not this org/);
+    expect(isServiceError(err)).toBe(false);
   });
 });
 

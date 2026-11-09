@@ -79,6 +79,13 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
   return { id, name, firstName: given, lastName, isAdult };
 }
 
+/** Each person's name; the library passes ids already resolved through merges. */
+async function personNames(personIds: number[]): Promise<Map<number, string>> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
+  return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
+}
+
 /**
  * The one live, sign-in-verified person whose email or approved mail alias is exactly this
  * address and who would pass the `receipt-submitter` gate if signed in, else null. Claims come
@@ -87,13 +94,6 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
  * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
  * holder who typed it.
  */
-/** Each person's name; the library passes ids already resolved through merges. */
-async function personNames(personIds: number[]): Promise<Map<number, string>> {
-  const { default: prisma } = await import("@/lib/prisma");
-  const people = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { id: true, name: true } });
-  return new Map(people.flatMap((p) => (p.name ? [[p.id, p.name] as const] : [])));
-}
-
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
   const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
@@ -164,9 +164,9 @@ async function reimburseeHasAccount(personId: number): Promise<boolean> {
   return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
-async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
+async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
   const [{ default: prisma }, { addNonMemberAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/ownHousehold")]);
-  return addNonMemberAdult(prisma, name);
+  return addNonMemberAdult(prisma, name, actorId);
 }
 
 /** The Gmail reader when mail intake binds (mailboxConfig.ts); otherwise intake reports "unbound". */
@@ -190,26 +190,28 @@ const MAILBOX_LISTING_ALERT = {
 
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailCeiling", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.receiptMailCeiling", {
       unresolved: String(unresolved),
       refused: String(refused),
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ceiling alert failed:");
+    });
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailAgeing", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    const sent = await emailAlert("finance.receiptMailAgeing", {
       messages: String(messages),
       since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ageing alert failed:");
+    });
+    // Throwing leaves the mail unstamped, so the next run alerts again.
+    if (!sent) throw new Error("Receipt mail ageing alert was not sent");
   },
   async mailListingFailed({ kind }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert(MAILBOX_LISTING_ALERT[kind], {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert(MAILBOX_LISTING_ALERT[kind], {
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mailbox listing alert failed:");
+    });
   },
 };
 

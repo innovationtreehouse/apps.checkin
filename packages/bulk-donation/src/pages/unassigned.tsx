@@ -3,13 +3,13 @@ import { useState } from "react";
 import { Button, Checkbox, Group, Select, Table, Text, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad, useOwners } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { LoadError, Pager } from "@checkin/component-ui";
+import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 import type { GiftRow } from "./transactions";
 
 /** /donations/unassigned — gifts that still need an owner or an organizational-level mark. */
 export default function UnassignedPage() {
   const canWrite = useCanWrite();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useUrlPage();
   const gifts = useLoad<GiftRow[]>(paged("/transactions/unassigned", page), { keepPrevious: true });
   const owners = useOwners();
   const [choice, setChoice] = useState<Record<number, string | null>>({});

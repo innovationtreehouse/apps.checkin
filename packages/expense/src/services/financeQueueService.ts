@@ -31,7 +31,7 @@ interface Item {
   tab: FinanceQueueTabKey;
   expense: RowExpense | null;
   /** A failed intake has no expense: its row carries the payload's facts instead. */
-  intake?: { receiptId: string; vendorName: string | null; date: string | null; amountCents: number; currency: string };
+  intake?: { receiptId: string; vendorName: string | null; date: string | null; amountCents: number; currency: string; failureReason: string | null };
   reason: FinanceQueueReason;
   waitingSince: Date;
   actionable: boolean;
@@ -43,7 +43,7 @@ const ROW_FIELDS = { id: true, vendorName: true, receiptDate: true, submittedAt:
 
 /**
  * Details that come from `personal` columns (a QuickBooks error, a review's stored text) stay on
- * the expense page: a queue row is classified `internal`.
+ * the expense page: a queue row's reasons are classified `internal`.
  */
 const ROW_DETAIL_CODES = new Set(["QB_DRIFT", "QB_NO_CLASS"]);
 
@@ -85,7 +85,7 @@ async function candidateIds(orgId: string): Promise<string[]> {
       where: {
         ...open,
         OR: [
-          { state: { in: ["assign_ownership", "owner_approval", "capital_review", "set_depreciation_cycle", "qb_pending"] } },
+          { state: { in: ["assign_ownership", "owner_approval", "capital_review", "set_depreciation_cycle", "qb_pending", "qb_error"] } },
           { approvals: { some: { status: { in: ["unknown", "exception_raised"] } } } },
           { needsReimbursement: true, backfill: false, reimburseePersonId: null },
           { holds: { some: { status: "PENDING" } } },
@@ -145,12 +145,12 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
     }
   }
 
-  const payloads = await db.receivedExpensePayload.findMany({ where: { orgId, status: { in: ["failed", "refused"] } }, select: { receiptId: true, payloadJson: true, receivedAt: true } });
+  const payloads = await db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, payloadJson: true, receivedAt: true, failureReason: true } });
   for (const p of payloads) {
     items.push({
       tab: "expenses",
       expense: null,
-      intake: { receiptId: p.receiptId, ...payloadFacts(p.payloadJson) },
+      intake: { receiptId: p.receiptId, ...payloadFacts(p.payloadJson), failureReason: p.failureReason },
       reason: { code: "INTAKE_FAILED", text: FINANCE_QUEUE_REASONS.INTAKE_FAILED, href: `/receipts/${encodeURIComponent(p.receiptId)}` },
       waitingSince: p.receivedAt,
       actionable: principal.isFinance,
@@ -185,7 +185,7 @@ function rowsOf(items: Item[], tab: FinanceQueueTabKey): FinanceQueueRow[] {
     const e = it.expense;
     const row = e
       ? { expenseId: e.id, vendorName: e.vendorName, date: e.receiptDate ?? e.submittedAt.toISOString().slice(0, 10), amountCents: e.receiptTotalCents, currency: e.currency }
-      : { expenseId: null, vendorName: it.intake!.vendorName, date: it.intake!.date, amountCents: it.intake!.amountCents, currency: it.intake!.currency };
+      : { expenseId: null, vendorName: it.intake!.vendorName, date: it.intake!.date, amountCents: it.intake!.amountCents, currency: it.intake!.currency, failureReason: it.intake!.failureReason };
     rows.set(key, { row: { ...row, reasons: [it.reason] }, since: it.waitingSince });
   }
   const sorted = [...rows.values()].map(({ row, since }) => ({ row: { ...row, reasons: [...row.reasons].sort((a, b) => reasonOrder(a.code) - reasonOrder(b.code)) }, since }));

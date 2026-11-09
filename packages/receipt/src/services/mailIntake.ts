@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import type { MailboxReader, MailMessage, MailPart, MailRefusal, ReceiptPrincipal } from "../contract";
+import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
@@ -105,6 +105,26 @@ export function fromAddress(headers: Headers | undefined): string | null {
   // A display name holds no `@`: one there would be a second candidate address.
   const spec = (bare.match(/^[^<>@]*<([^<>]*)>\s*$/)?.[1] ?? bare).trim();
   return ADDR_SPEC.test(spec) ? spec.toLowerCase() : null;
+}
+
+/** The lowercased addresses a To or Cc header lists; a header that cannot be read lists none. */
+function listedAddresses(headers: Headers | undefined, name: string): string[] {
+  return headerValues(headers, name).flatMap((value) => {
+    const bare = withoutCommentsAndQuotes(value);
+    if (bare === null) return [];
+    return bare.split(/[,;:]/).map((a) => (a.match(/<([^<>]*)>/)?.[1] ?? a).trim().toLowerCase());
+  });
+}
+
+/**
+ * A reply to one of the mailbox's own notices, or a copy on which the mailbox is only in Cc: mail a
+ * "no receipt" notice would only interrupt. A forward can keep the In-Reply-To of the mail it
+ * forwards, so only one naming our notice counts. Mail to an alias lists the mailbox nowhere.
+ */
+export function isSideCopy(headers: Headers | undefined, mailboxAddress: string): boolean {
+  if (headerValues(headers, "In-Reply-To").some((id) => isNoticeMessageId(id, mailboxAddress))) return true;
+  const mine = mailboxAddress.toLowerCase();
+  return listedAddresses(headers, "Cc").includes(mine) && !listedAddresses(headers, "To").includes(mine);
 }
 
 type AuthResToken = { word: string } | { sep: ";" | "=" };
@@ -445,6 +465,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored, refused } = mailFiles(msg, reader);
+    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
+    if (files.length === 0 && refused.length === 0 && !isSideCopy(msg.payload.headers, reader.address)) {
+      refused.push({ file: "your email", reason: "no_receipt" });
+    }
     // Every file already in the ledger: nothing to download.
     const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
     const ledgered = files.length > 0 && rows.length >= files.length;

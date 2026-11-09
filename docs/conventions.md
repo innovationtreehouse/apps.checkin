@@ -195,6 +195,28 @@ missed a row stored at a different time of day.
 
 ---
 
+## A paged list keeps its place in the URL
+
+- **A paged list keeps its page in the URL query (`page`), with the filters,
+  view tabs and sort that decide its rows.** A reload, the back button and a
+  shared link land on the same rows, and each page is its own page view in the
+  finance view log.
+- **Typed search text stays out of the URL.** It lives in the screen's state,
+  and a change starts again on page 1. Selects, date pickers and toggles go in
+  the URL.
+- **Paging pushes a history entry; a filter, view or sort change replaces the
+  entry and drops `page`.** Back steps through pages, not filter states.
+- **A bad or out-of-range `page` never shows an error.** A missing,
+  non-numeric, zero or negative `page` is page 1. A list that knows its total
+  shows its last page for a page past the end; a list without one shows the
+  empty page with its pager.
+- **`limit` stays out of the URL** while no screen lets anyone pick a page size.
+- **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
+  `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
+  for the page or a filter.
+
+---
+
 ## A shared helper has one home
 
 - **Before writing a small helper, look in the package that owns its kind, and
@@ -206,6 +228,56 @@ missed a row stored at a different time of day.
     own database.
   - `@checkin/quickbooks`: moving a day for a books window (`shiftDate`).
   - `@checkin/money` and `@checkin/component-ui`: as the section above says.
+
+---
+
+## One process, one implementation
+
+- **A step that happens in two places is one piece of code both call.** When
+  the same decision, check or sequence of steps is needed by two libraries, two
+  kinds of record or two routes, it is written once and both call it. A copy, a
+  near-copy or a second implementation "for our side" is a fork: the two drift,
+  and each fix lands in only one of them.
+- **A record crosses into another library only to change owner.** Handing a
+  record to the library that takes the next step is fine when nothing flows
+  back and the hand-over is audited and either atomic or retried. Copying it so
+  another library can run the same steps on its own copy is the fork above.
+- **Where the domain says two things are treated the same, they run the same
+  code.** "The same rule" kept true by two implementations is a rule waiting to
+  diverge.
+
+The failure is slow. Each copy is correct the day it is written; the defect is
+the later fix that reaches one of them.
+
+---
+
+## A simple machine with a known risk beats a complete one nobody can read
+
+- **Whether a step can be undone depends on what undoing it costs, and where.**
+  - **A bad state that lives entirely in the app, the app must give a way out
+    of.** Nobody can repair it by hand without editing the database, so the
+    software owes a path back: an undo, or a reset that returns the record to a
+    known starting point and has it go through again.
+  - **A decision whose effects are outside the app may be declared
+    irreversible.** Once it has reached the books, a physical label or another
+    party, unwinding it in the app would mean modelling every outside effect
+    to keep them in step. Past that point the app says the decision is final,
+    and a mistake is cleaned up by hand. That costs a person some work, and it
+    keeps the machine readable. The point is chosen, stated and the same
+    everywhere the decision is taken.
+- **Take a decision as late as it can be taken, after the things that could
+  reverse it.** A decision taken before its record settles needs machinery to
+  unwind it when the record moves; one taken after needs none.
+- **An edge case the design does not handle is an accepted, written-down risk,
+  not a branch.** Record how it could happen, what it costs when it does, and
+  how it is cleaned up by hand. Do not add a state, flag or route whose only
+  purpose is a case that rarely or never happens.
+- **A state nothing can reach is removed.** Code for an unreachable case is not
+  insurance; it is a second account of the system that every reader has to
+  disprove.
+
+The failure is unreadability. A machine that covers everything is one nobody
+can hold in their head, and the bugs live in the transitions nobody traced.
 
 ---
 
@@ -230,25 +302,34 @@ missed a row stored at a different time of day.
   `getOrgEventConsumers` return nothing instead, for reads that must not throw,
   such as one after a commit. A missing principal, or one without an integer id,
   is a 401. An unbound push or write port throws rather than report success,
-  usually `NotWiredError`. Expense's outbound gateway, workflow-mapping's push
-  ports and the add-person port in expense and receipt throw a plain `Error`.
+  usually `NotWiredError`. Expense's outbound gateway and the add-person port in
+  expense and receipt throw a plain `Error`.
   Donations' capital review is the exception that does nothing when unbound, since
   no line then goes to review. An unbound read port falls back to an inert adapter
   that returns an empty result, or throws where it has no answer to give: expense's
-  QuickBooks reader throws `QuickBooksNotConnectedError`, expense's catalog reader
-  and workflow-mapping's catalog match throw `NotWiredError`, so an unbound catalog
-  never reads as "no match", and workflow-mapping's `checkReferences` and
-  `getActiveItem` throw a plain `Error`. A callee that takes an `orgId` from its caller checks it with
-  `assertOrg` first.
+  QuickBooks reader throws `QuickBooksNotConnectedError`, and every library's
+  catalog reader and catalog event source throw `NotWiredError`, so an unbound
+  catalog never reads as "no match" or "no events". A route that reads an
+  unbound catalog answers 503 "No catalog is connected"; a missing catalog database
+  answers 503 naming who fixes it; an outage stays 502. A route or matcher reads only
+  `NotWiredError` as "not connected", never another `settings` failure, and tests
+  for it with the kit's branded `isNotWired`; the kit's `catalogSettingsMessage`
+  holds both 503 wordings. The catch-up sweep records an unbound event source as
+  `notConnected` and raises no alert; any other failure to read, a missing catalog
+  database included, is an unreadable catalog and alerts. A callee that takes an `orgId`
+  from its caller checks it with `assertOrg` first.
 
 - **At a crossing, a callee's 4xx means refused for good.** When one library
   calls another, a `ServiceError` or http error in the 4xx range, or a
   validation error (400), means the item will never pass: the caller stops
-  retrying and shows a person. A 401 and a 429 are not refusals: a 401 is a bug
-  in our wiring, a 429 a passing overload. Anything else means try again. A
+  retrying and shows a person. A 401, a 403 and a 429 are not refusals: a 401
+  or 403 is a bug in our wiring or the system actor's permissions, a 429 a
+  passing overload. Anything else means try again. A
   callee never throws a 4xx for something that could pass later, nor a plain
   error for an item it will never take. "Already done" is a return value, never
-  a throw. The kit's `kindOf` reads errors this way.
+  a throw. The kit's `kindOf` reads errors this way, at system-actor crossings;
+  a 403 for a person's own permission is shown to that person as a refusal and
+  is not read through `kindOf`.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race
   it can tolerate is caught where it happens and re-read or thrown as

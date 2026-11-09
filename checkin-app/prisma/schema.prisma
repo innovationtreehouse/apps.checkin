@@ -376,6 +376,7 @@ model Household {
   orgMembership     OrgMembership?
   trustedAdults     TrustedAdult[]
   emergencyContacts EmergencyContact[]
+  personBgRequests  OrgMembershipProcess[] @relation("PersonBgRequestedForHousehold")
 }
 
 /// An emergency contact for a household. Modeled as a separate entity (1 household
@@ -548,6 +549,12 @@ model OrgMembershipProcess {
   /// @sensitivity:public
   subjectPersonId       Int?
   subjectPerson         Person?                    @relation("PersonBgSubject", fields: [subjectPersonId], references: [id])
+  /// The household whose consent opened this PERSON_BG review, set once at opening
+  /// and never changed. Null on every other kind.
+  /// @sensitivity:public
+  requestedForHouseholdId Int?
+  // Restrict, as on orgMembershipId: a household is archived, never deleted.
+  requestedForHousehold Household?               @relation("PersonBgRequestedForHousehold", fields: [requestedForHouseholdId], references: [id], onDelete: Restrict)
   /// @sensitivity:public
   kind                  OrgMembershipProcessKind
   /// @sensitivity:internal
@@ -613,12 +620,13 @@ model OrgMembershipProcess {
   /// no benefit. lib/outreach is the only send surface for renewal mail.
   /// @sensitivity:internal
   renewalReminderSentAt DateTime?
-  /// @sensitivity:internal
+  /// A scholarship or payment-plan request is the Board's and finance's alone.
+  /// @sensitivity:hardship
   isPaymentPlanRequested Boolean @default(false)
   /// Which of the two asks isPaymentPlanRequested stands for. Null means the
   /// request predates this column, which is why it is nullable and never
   /// backfilled: what a family asked for is not a value to infer on their behalf.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
   scholarshipRequestKind ScholarshipRequestKind?
   /// The household's intake note as submitted with this application. A snapshot, not
   /// a live read: the household may edit or clear Household.intakeNotes afterwards,
@@ -638,6 +646,7 @@ model OrgMembershipProcess {
   attestations BackgroundCheckAttestation[]
 
   @@index([orgMembershipId])
+  @@index([requestedForHouseholdId])
   @@index([status])
 }
 
@@ -1123,6 +1132,10 @@ model Program {
   claimantShopifyProductId  String?
   /// @sensitivity:public
   claimantShopifyVariantId  String?
+  /// Set once the sale sweep has taken the reserved-seat product off sale after
+  /// the program ended. Nothing clears it.
+  /// @sensitivity:internal
+  claimantProductHiddenAt   DateTime?
   /// Durable "Shopify stock needs a push" flag: set when a stock write could not
   /// be confirmed (lib/shopify/stock.ts adjustProgramInventory).
   /// @sensitivity:internal
@@ -1212,7 +1225,9 @@ model ProgramVolunteer {
   programId     Int
   /// @sensitivity:public
   personId Int
-  /// @sensitivity:internal
+  /// Program staff see who else is core on their own program. Personal, so a
+  /// lead or core-volunteer view needs no internal grant to carry it.
+  /// @sensitivity:personal
   isCore        Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
@@ -1228,27 +1243,24 @@ model ProgramParticipant {
   personId             Int
   /// @sensitivity:public
   status               ProgramParticipantStatus @default(PENDING)
-  /// @sensitivity:personal
+  /// How a family pays is finance's and the Board's alone: program staff, sysadmins
+  /// and other staff roles see whether a place is paid, never how.
+  /// @sensitivity:hardship
   isPaymentPlanRequested Boolean                  @default(false)
   /// Which of the two asks isPaymentPlanRequested stands for. Null means the
   /// request predates this column; never backfilled, because what a family asked
-  /// for is not a value to infer on their behalf.
-  ///
-  /// 'internal', deliberately a tier ABOVE the flag beside it: programLeadMentor
-  /// holds their_program_participants:personal, so a 'personal' field here would
-  /// tell a program volunteer that this family asked for a fee waiver. That a
-  /// request exists is already visible to them; which door it knocked on is
-  /// board/finance-confidential, same as the request route's own gate.
-  /// @sensitivity:internal
+  /// for is not a value to infer on their behalf. Same tier as the flag.
+  /// @sensitivity:hardship
   scholarshipRequestKind ScholarshipRequestKind?
-  /// Same tier as paymentPlanDeniedAt — workflow timestamps lead mentors need.
+  /// A workflow timestamp lead mentors need. It says only that a place is unpaid,
+  /// not how the family will pay: a family paying by check is pending too.
   /// @sensitivity:personal
   pendingSince         DateTime?                @default(now())
   /// Point-in-time snapshot of the household's org-membership status the moment a
   /// scholarship/payment-plan request was APPROVED (status flipped to ACTIVE).
   /// Membership changes over time, so this can't be derived later from the live
   /// OrgMembership row — it must be stamped at approval. Null until approved.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
   wasOrgMemberAtApproval Boolean?
   /// Hold-ledger state: stamped when a
   /// scholarship application takes a seat out of Shopify's pool (-1). Cleared
@@ -1257,14 +1269,15 @@ model ProgramParticipant {
   /// grace-period expiry (cron) — or consumed by approval, which moves it to
   /// seatTakenWithoutSaleAt. NOT NULL is the transactional guard every release path checks
   /// before adjusting Shopify.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
   inventoryHeldAt      DateTime?
   /// Hold-ledger state: stamped when a board member denies a pending
   /// scholarship/payment-plan request (the seat stays held — see
   /// inventoryHeldAt — so the applicant may still pay normally). Cleared on
   /// re-application. Drives the grace-period expiry sweep alongside
-  /// BoardSettings.scholarshipDenialGraceDays.
-  /// @sensitivity:personal
+  /// BoardSettings.scholarshipDenialGraceDays. A refusal says a request existed,
+  /// so it carries the request's tier.
+  /// @sensitivity:hardship
   paymentPlanDeniedAt  DateTime?
   /// Shopify order id (numeric, from the orders/paid webhook) this enrollment was
   /// activated by. Stored so the reconciler can join a later refund/chargeback/cancel
@@ -1274,7 +1287,7 @@ model ProgramParticipant {
   /// Stamped when this place took its seat out of Shopify without a sale: a
   /// confirmed admin comp whose -1 succeeded, or approval of a request whose
   /// hold was really taken. Withdrawal returns the seat (+1) only when set.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
   seatTakenWithoutSaleAt DateTime?
   /// When the person withdrew: set with status WITHDRAWN, null otherwise.
   /// Same tier as pendingSince — a workflow timestamp lead mentors need.
@@ -1305,7 +1318,9 @@ model Event {
   /// @sensitivity:public
   description String?
 
-  /// @sensitivity:internal
+  /// The session page shows its staff whether attendance is confirmed. Personal,
+  /// so a lead or core-volunteer view needs no internal grant to carry it.
+  /// @sensitivity:personal
   attendanceConfirmedAt   DateTime?
   /// @sensitivity:internal
   attendanceConfirmedById Int?
@@ -1569,42 +1584,71 @@ model AuditLog {
 }
 
 /// One view of finance records other than the viewer's own (docs/rules/revenue.md).
-/// Records who looked at which records through which endpoint, never what the
-/// records said. Written by `recordFinanceView` (lib/finance/financeViewLog.ts);
-/// read only by the Board. Kept indefinitely.
+/// Records who looked at which records, on which page or through which API call,
+/// and which marked fields of each, never what the records said. Written by
+/// lib/finance/financeViewLog.ts; read only by the Board. Kept indefinitely.
 model FinanceViewLog {
   /// @sensitivity:internal
   id        Int      @id @default(autoincrement())
+  /// The first call's time on a page-view row.
   /// @sensitivity:internal
   viewedAt  DateTime
   /// The viewer's person id. No FK, as on AuditLog: the row outlives the person.
   /// @sensitivity:internal
   actorId   Int
-  /// The role the view was chosen under; null only on rows copied from the
-  /// bulk-donation donor-read audit, which did not record it.
+  /// The role the view was chosen under (a page-view row: its first call's);
+  /// null only on rows copied from the bulk-donation donor-read audit.
   /// @sensitivity:internal
   role      String?
-  /// The registry key, e.g. `GET /api/receipts/[id]`.
+  /// The registry key, e.g. `GET /api/receipts/[id]`. Null on rows that carry `calls`.
   /// @sensitivity:internal
-  endpoint  String
-  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string.
+  endpoint  String?
+  /// The path parameters, e.g. `{"id":"r_123"}`. Never the query string. Null on rows that carry `calls`.
   /// @sensitivity:internal
-  params    Json
+  params    Json?
+  /// Record refs (`Expense:e_123`) on rows that carry `records`; bare ids on older rows.
   /// @sensitivity:internal
   recordIds String[]
+  /// Null on rows that carry `calls`; those use `recordCount`.
   /// @sensitivity:internal
-  rowCount  Int
+  rowCount  Int?
   /// `viewedAt` rounded down to fifteen minutes (UTC); repeats within it collapse.
   /// @sensitivity:internal
   window    DateTime
-  /// Hex SHA-256 of the endpoint, the params with keys sorted, and the sorted record ids.
+  /// Hex SHA-256 of what the row showed; `open:<uuid>` while a page view is still merging.
   /// @sensitivity:internal
   viewKey   String
+  /// The page path the browser claimed, e.g. `/expense/expenses/e_123`; null on an untagged row.
+  /// @sensitivity:internal
+  pagePath    String?
+  /// The browser's page-view id; null on an untagged row.
+  /// @sensitivity:internal
+  pageViewId  String?
+  /// Each call in the row: `{ endpoint, path, query, role }`, query holding only declared parameters.
+  /// @sensitivity:internal
+  calls       Json?
+  /// Each record: `{ ref: "Expense:e_123", fields: ["submitterId"] }`. Field names, never values.
+  /// @sensitivity:internal
+  records     Json?
+  /// The number of distinct records.
+  /// @sensitivity:internal
+  recordCount Int?
+  /// On a page-view row still taking calls: its first call's time plus 30 s. Null once closed, and on other rows.
+  /// @sensitivity:internal
+  closesAt    DateTime?
+  /// Page-view ids of identical rows collapsed into this one, so each id's first user stays known.
+  /// @sensitivity:internal
+  mergedPageViewIds String[] @default([])
 
   @@unique([actorId, viewKey, window])
   @@index([viewedAt])
   @@index([actorId, viewedAt])
   @@index([recordIds], type: Gin)
+  // Page id first: the writer also looks an id up alone, to find who first used it.
+  @@index([pageViewId, actorId])
+  // Closing reads only one person's open rows.
+  @@index([actorId, closesAt])
+  @@index([mergedPageViewIds], type: Gin)
 }
 
 model Account {
@@ -1714,24 +1758,24 @@ model IntegrationErrorLog {
 /// auto-purge after 90 days.
 model CronRunLog {
   /// @sensitivity:internal
-  id         Int      @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   /// Route slug — the last path segment of /api/cron/<job>.
   /// @sensitivity:internal
-  job        String
+  job            String
   /// @sensitivity:internal
-  startedAt  DateTime
+  startedAt      DateTime
   /// @sensitivity:internal
-  finishedAt DateTime @default(now())
+  finishedAt     DateTime @default(now())
   /// Whether the run COMPLETED — not whether it was clean. A sweep that isolates
   /// per-row failures still completed, so it lands here as true with `error` set.
   /// Drives "is this job still running" (lib/cronRuns.ts lastSuccessByJob).
   /// @sensitivity:internal
-  success    Boolean
+  success        Boolean
   /// Why the run was not clean — the throw's message, the HTTP status, or the count
   /// of rows the sweep could not process. Null means the run did all of its work.
   /// Drives "is this job still working", independently of `success`.
   /// @sensitivity:internal
-  error      String?
+  error          String?
   /// Count of this run's failures per failure kind, e.g. {"connection": 2}. Null when not recorded.
   /// @sensitivity:internal
   failuresByKind Json?
@@ -1781,6 +1825,30 @@ model OpsIncident {
 
   @@index([key])
   @@index([closedAt])
+}
+
+/// A QuickBooks fault code the app has received, per kind it was sorted as. Holds codes,
+/// kinds, counts, dates and lane names only: no detail, request id, amount or name, which
+/// is what lets sysadmins read it. Written by lib/qboFaultCodes.ts; rows are never pruned.
+model QboFaultCodeSeen {
+  /// The fault code as QuickBooks sent it, such as "6000".
+  /// @sensitivity:internal
+  code        String
+  /// The failure kind the report carried: system, connection, settings, data or bug.
+  /// @sensitivity:internal
+  kind        String
+  /// Never reset, including when the code table changes.
+  /// @sensitivity:internal
+  count       Int      @default(1)
+  /// @sensitivity:internal
+  firstSeenAt DateTime @default(now())
+  /// @sensitivity:internal
+  lastSeenAt  DateTime @default(now())
+  /// Library and lane of the latest report, such as "expense posting".
+  /// @sensitivity:internal
+  lastLane    String
+
+  @@id([code, kind])
 }
 
 /// An off-diagram lifecycle row some digest has already reported. Deleted when the

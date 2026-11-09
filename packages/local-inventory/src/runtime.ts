@@ -3,7 +3,7 @@
  * boot; routes read it through the accessors below. Binding touches no
  * database — the services below build lazily on first request.
  */
-import { defineRuntime, settleCounts } from "@checkin/component-kit";
+import { defineRuntime, NotWiredError, settleCounts } from "@checkin/component-kit";
 import { db } from "./lib/db";
 import { createInventoryRepository } from "./lib/repositories/inventoryRepository";
 import { createLocationRepository } from "./lib/repositories/locationRepository";
@@ -15,7 +15,7 @@ import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
 import { createReceiptService, type ReceiptService } from "./lib/services/receiptService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
-import { inertCatalogEventSource, type CatalogEventSource, type InventoryAlerts, type InventoryPrincipal, type InventoryRuntimeConfig } from "./contract";
+import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig } from "./contract";
 
 export const localInventoryRuntime = defineRuntime<InventoryRuntimeConfig, InventoryPrincipal>("local-inventory");
 const requireRuntime = localInventoryRuntime.require;
@@ -37,13 +37,8 @@ export function getCatalogEventSource(): CatalogEventSource {
 /** Whether the catalog the host bound has an active item with this GTIN; throws when the host bound none. */
 export async function catalogHasActiveItem(gtin13: string): Promise<boolean> {
   const catalog = requireRuntime().catalog;
-  if (!catalog) throw new Error("local-inventory: no catalog is bound, so no catalog item can be checked");
+  if (!catalog) throw new NotWiredError("local-inventory catalog");
   return (await catalog.getActiveItem(gtin13)) != null;
-}
-
-/** The alerts the host bound, if any. */
-export function getInventoryAlerts(): InventoryAlerts | undefined {
-  return requireRuntime().alerts;
 }
 
 function buildServices() {

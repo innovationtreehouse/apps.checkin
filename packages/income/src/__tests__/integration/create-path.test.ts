@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
+import { ServiceError, type FailureReport } from "@checkin/component-kit";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
@@ -438,6 +439,24 @@ describeDb("postPayout — claim, lookup and settle", () => {
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.lost_claim" } })).toBe(1);
   });
 
+  it("a refused create whose post lost its claim reports nothing", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "reject";
+    // Another post takes the payout over once this one holds the claim.
+    qbo.onWindowRead = async () => void (await db.payoutReconciliation.updateMany({
+      where: { orgId: ORG_A, source: "shopify", payoutGid: p, postClaimedAt: { not: null } },
+      data: { postClaimedAt: new Date(Date.now() + 60_000) },
+    }));
+
+    await drain();
+
+    expect(reports).toEqual([]);
+    expect(await rowFor(p)).not.toMatchObject({ kind: "POST_FAILED" });
+  });
+
   it("finance's dismiss takes over a stalled post; its late create leaves a note that keeps the payout in the queue", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
@@ -772,6 +791,18 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
+  it("hands a refused create to the on-failure port with its fault codes and request id", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.mode = "reject";
+
+    await drain();
+
+    expect(reports).toEqual([{ lane: "deposit-build", kind: "data", faultCodes: ["6000"], requestId: "tid", detail: `payout reconciliation ${(await rowFor(p)).id}` }]);
+  });
+
   it("failed: a refused create opens POST_FAILED; later runs leave it, finance's retry posts it with the same key", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
@@ -1010,6 +1041,29 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     );
     expect(lines).toHaveLength(4);
     expect(lines.reduce((s, l) => s + l.cents, 0)).toBe(9830);
+  });
+
+  it("hands a deposit that cannot be built to the on-failure port", async () => {
+    const g = orderPayout(2);
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "83" } });
+    let lists = 0;
+    const reports: FailureReport[] = [];
+    bind({
+      owners: {
+        list: async () => {
+          // The bucket check reads the owners first; the deposit build's read is the one that fails.
+          if (++lists > 1) throw new ServiceError(429, "busy");
+          return owners;
+        },
+      },
+      onFailure: (r) => void reports.push(r),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await drain();
+    expect(reports).toEqual([{ lane: "deposit-build", kind: "system", status: 429, detail: `payout reconciliation ${(await rowFor(g)).id}` }]);
   });
 
   const camp = { id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" };
@@ -1868,7 +1922,6 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     const row = await rowFor("D1");
     const legacy = { ...disbursement(), lines: [{ role: "BENEVITY_DONATIONS", budgetOwnerId: 7, amountCents: 14_700 }] };
     await db.payoutReconciliation.update({ where: { id: row!.id }, data: { expected: legacy } });
-    roleAccounts = { ...ROLES, BENEVITY_DONATIONS: "60" };
 
     expect(await drain()).toMatchObject({ post: { posted: 0, held: 1 } });
     expect(qbo.posts).toHaveLength(0);

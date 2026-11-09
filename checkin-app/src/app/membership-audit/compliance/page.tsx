@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Alert, Anchor, Badge, Button, Card, Center, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
+import { Alert, Anchor, Badge, Button, Card, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -44,6 +44,15 @@ type MergeInheritedRow = {
   householdId: number;
   lastBackgroundCheck: string;
   fromName: string;
+};
+type ComplianceAnswer = {
+  households?: Household[];
+  peopleNeedingBgCheck?: PersonRow[];
+  peopleMissingDob?: PersonRow[];
+  blanketStamped?: BlanketStampedRow[];
+  mergeInheritedBgChecks?: MergeInheritedRow[];
+  peopleAwaitingAgreement?: PersonRow[];
+  peopleNeedingAgreement?: PersonRow[];
 };
 
 // Reason tag -> human label + badge color. Keys mirror the endpoint's tags.
@@ -99,17 +108,14 @@ function PersonSection({
  * auto-terminate. The board follows up manually — nothing here acts on its own.
  */
 export default function CompliancePage() {
-  const [households, setHouseholds] = useState<Household[]>([]);
-  const [peopleNeedingBgCheck, setPeopleNeedingBgCheck] = useState<PersonRow[]>([]);
-  const [peopleMissingDob, setPeopleMissingDob] = useState<PersonRow[]>([]);
-  const [blanketStamped, setBlanketStamped] = useState<BlanketStampedRow[]>([]);
-  const [mergeInherited, setMergeInherited] = useState<MergeInheritedRow[]>([]);
   const [clearedSince, setClearedSince] = useState("");
-  const [peopleAwaitingAgreement, setPeopleAwaitingAgreement] = useState<PersonRow[]>([]);
-  const [peopleNeedingAgreement, setPeopleNeedingAgreement] = useState<PersonRow[]>([]);
+  // Keyed by the date, so a slower answer for an earlier date never replaces the current one,
+  // and the previous rows stay up (with the filter) while the next date loads.
+  const { data, error, loading, retrying, reload } = useLoad<ComplianceAnswer>(
+    `/api/membership-audit/compliance${clearedSince ? `?bgClearedSince=${encodeURIComponent(clearedSince)}` : ""}`,
+    { keepPrevious: true },
+  );
   const [requestedIds, setRequestedIds] = useState<Set<number>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [submittedIds, setSubmittedIds] = useState<Set<number>>(new Set());
 
@@ -144,43 +150,17 @@ export default function CompliancePage() {
     }
   };
 
-  const load = useCallback((since: string) => fetch(
-    `/api/membership-audit/compliance${since ? `?bgClearedSince=${encodeURIComponent(since)}` : ""}`,
-  )
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHouseholds(data.households ?? []);
-        setPeopleNeedingBgCheck(data.peopleNeedingBgCheck ?? []);
-        setPeopleMissingDob(data.peopleMissingDob ?? []);
-        setBlanketStamped(data.blanketStamped ?? []);
-        setMergeInherited(data.mergeInheritedBgChecks ?? []);
-        setPeopleAwaitingAgreement(data.peopleAwaitingAgreement ?? []);
-        setPeopleNeedingAgreement(data.peopleNeedingAgreement ?? []);
-      } else {
-        setError("Failed to load compliance data. Ensure you have the proper authorizations.");
-      }
-    })
-    .catch((e) => {
-      console.error("Failed to load compliance data:", e);
-      setError("Network error loading compliance data.");
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  const failure = error && <LoadError what="compliance data" message={error} onRetry={reload} />;
+  if (!data) return failure || <PageLoader />;
 
-  useEffect(() => { load(clearedSince); }, [load, clearedSince]);
-
-  if (loading) return <PageLoader />;
-
-  if (error) {
-    return (
-      <Center mih="60vh">
-        <Title order={3} c="red">{error}</Title>
-      </Center>
-    );
-  }
+  const stale = loading || retrying;
+  const households = data.households ?? [];
+  const peopleNeedingBgCheck = data.peopleNeedingBgCheck ?? [];
+  const peopleMissingDob = data.peopleMissingDob ?? [];
+  const blanketStamped = data.blanketStamped ?? [];
+  const mergeInherited = data.mergeInheritedBgChecks ?? [];
+  const peopleAwaitingAgreement = data.peopleAwaitingAgreement ?? [];
+  const peopleNeedingAgreement = data.peopleNeedingAgreement ?? [];
 
   return (
     <Stack>
@@ -270,42 +250,45 @@ export default function CompliancePage() {
           label="Cleared since"
           description={`Showing every clearance. Narrow to ${BLANKET_STAMP_CUTOFF} to hide anything predating the per-adult re-import.`}
           value={clearedSince}
-          onChange={(e) => { setLoading(true); setClearedSince(e.currentTarget.value); }}
+          onChange={(e) => setClearedSince(e.currentTarget.value)}
           maw={260}
         />
-        {blanketStamped.length === 0 ? (
-          <Text c="dimmed" size="sm">Nothing to confirm in this range.</Text>
-        ) : (
-          blanketStamped.map((row) => (
-            <Card key={row.processId} withBorder radius="md" padding="lg">
-              <Text fw={600} fz="lg">{row.householdName}</Text>
-              <Text size="sm" c="dimmed" mb="xs">
-                Cleared {new Date(row.bgClearedAt).toLocaleDateString()}
-                {row.leads.some((l) => l.likelySubject)
-                  ? ""
-                  : row.consentRecorded
-                    ? " · consent recorded by someone outside this household"
-                    : " · no consent recorded"}
-              </Text>
-              <Stack gap="xs">
-                {row.leads.map((lead) => (
-                  <Paper key={lead.personId} withBorder radius="sm" p="xs">
-                    <Group justify="space-between" wrap="wrap">
-                      <div>
-                        <Text fw={500}>{lead.name}</Text>
-                        <Text size="sm" c="dimmed">
-                          {lead.likelySubject
-                            ? "Submitted their own consent — likely the one who was checked"
-                            : "No evidence either way — check the report"}
-                        </Text>
-                      </div>
-                    </Group>
-                  </Paper>
-                ))}
-              </Stack>
-            </Card>
-          ))
-        )}
+        {failure}
+        <Stack gap="sm" aria-busy={stale} style={{ opacity: stale ? 0.5 : 1 }}>
+          {blanketStamped.length === 0 ? (
+            <Text c="dimmed" size="sm">Nothing to confirm in this range.</Text>
+          ) : (
+            blanketStamped.map((row) => (
+              <Card key={row.processId} withBorder radius="md" padding="lg">
+                <Text fw={600} fz="lg">{row.householdName}</Text>
+                <Text size="sm" c="dimmed" mb="xs">
+                  Cleared {new Date(row.bgClearedAt).toLocaleDateString()}
+                  {row.leads.some((l) => l.likelySubject)
+                    ? ""
+                    : row.consentRecorded
+                      ? " · consent recorded by someone outside this household"
+                      : " · no consent recorded"}
+                </Text>
+                <Stack gap="xs">
+                  {row.leads.map((lead) => (
+                    <Paper key={lead.personId} withBorder radius="sm" p="xs">
+                      <Group justify="space-between" wrap="wrap">
+                        <div>
+                          <Text fw={500}>{lead.name}</Text>
+                          <Text size="sm" c="dimmed">
+                            {lead.likelySubject
+                              ? "Submitted their own consent — likely the one who was checked"
+                              : "No evidence either way — check the report"}
+                          </Text>
+                        </div>
+                      </Group>
+                    </Paper>
+                  ))}
+                </Stack>
+              </Card>
+            ))
+          )}
+        </Stack>
       </Stack>
 
       {/* Standing, unlike the list above: every merge can add a row, and this is how the

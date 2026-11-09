@@ -36,8 +36,6 @@ const base = {
   donorLastName: "Giver",
   donorCompanyName: null,
   donorReplacedAt: null,
-  withdrawnAfterMoneyAt: null,
-  withdrawalSettledAt: null,
   replayConflictAt: null,
   outcome: "ACCEPTED",
   decidedAt: "2026-10-03T12:00:00.000Z",
@@ -114,17 +112,43 @@ describe("in-kind gift page", () => {
     expect(screen.getByText("The load for donation:4 failed: Not a provisional GTIN: 0011111111116")).toBeInTheDocument();
   });
 
-  it("keeps a failed retry's error up until dismissed", async () => {
+  it("keeps a failed retry's error up until dismissed, and lets it be tried again", async () => {
     mockGift = { ...manual, inventoryLoadedAt: null };
-    mockApi.mockRejectedValue(new HttpError("Catalog item 0011111111116 not found", 409));
+    mockApi.mockRejectedValue(new HttpError("Inventory is unavailable", 503));
     wrap(<ManualGiftPage />);
     fireEvent.click(screen.getByRole("button", { name: "Load again" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "Catalog item 0011111111116 not found", color: "red", autoClose: false }),
+        expect.objectContaining({ message: "Inventory is unavailable", color: "red", autoClose: false }),
       ),
     );
     expect(mockReload).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Load again" })).toBeEnabled();
+  });
+
+  it("turns the button off with the server's reason when inventory refuses the load", async () => {
+    mockGift = { ...manual, inventoryLoadedAt: null };
+    mockApi.mockRejectedValue(new HttpError("This source was already applied with a different inventory delta.", 409));
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    expect(await screen.findByRole("button", { name: "Can't be loaded: adjust stock by hand" })).toBeDisabled();
+    expect(screen.getByText("This source was already applied with a different inventory delta.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load again" })).not.toBeInTheDocument();
+    expect(mockReload).not.toHaveBeenCalled();
+  });
+
+  it("tells a viewer without permission they can't load, and keeps the load open for someone who can", async () => {
+    mockGift = { ...manual, inventoryLoadedAt: null };
+    mockApi.mockRejectedValue(new HttpError("Forbidden", 403));
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "You don't have permission to load goods into inventory.", color: "red" }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Can't be loaded: adjust stock by hand" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load again" })).toBeEnabled();
   });
 
   it("offers no retry to the Board, which cannot load inventory", () => {
@@ -135,13 +159,13 @@ describe("in-kind gift page", () => {
   });
 
   it("sends a receipt gift's file and goods to its receipt", () => {
-    mockGift = { ...receipt, withdrawnAfterMoneyAt: "2026-09-05T00:00:00.000Z", state: "withdrawal" };
+    mockGift = { ...receipt, replayConflictAt: "2026-09-05T00:00:00.000Z", state: "replay" };
     wrap(<ReceiptGiftPage />);
     expect(mockPath).toBe("/in-kind/receipt/4");
     expect(screen.getByRole("link", { name: "Receipt r-77" })).toHaveAttribute("href", "/receipts/r-77");
     expect(screen.getByRole("link", { name: "on the receipt" })).toHaveAttribute("href", "/receipts/r-77");
     expect(screen.getByRole("link", { name: "its receipt" })).toHaveAttribute("href", "/receipts/r-77");
-    expect(screen.getByText(/after the money arrived/)).toBeInTheDocument();
+    expect(screen.getByText(/^The receipt was resent with different values/)).toBeInTheDocument();
     expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
   });
 });

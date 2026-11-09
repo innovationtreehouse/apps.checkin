@@ -3,7 +3,7 @@ import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
-import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
+import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
@@ -395,6 +395,13 @@ describe("findOrCreate", () => {
     expect(postFailure(new Error("boom"))).toEqual({ error: "boom", failure: "bug" });
   });
 
+  it("postFailureError keeps a failure's kind, fault codes and request id", () => {
+    const err = postFailureError({ error: "refused", failure: "data", codes: ["2500"], requestId: "t1" });
+    expect(kindOf(err)).toBe("data");
+    expect(err).toMatchObject({ message: "refused", codes: ["2500"], requestId: "t1" });
+    expect(postFailureError({ error: "boom", failure: "system" })).not.toHaveProperty("requestId");
+  });
+
   it("failed: a create that fails after the match read answered says QuickBooks answered", async () => {
     fetchMock
       .mockResolvedValueOnce(rows("Deposit", []))
@@ -559,14 +566,6 @@ describe("findOrCreateInKindJournal", () => {
     const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, accountId: "600" } : l));
     await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may credit only in-kind income/);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("debits an account a retired role still holds in the books map", async () => {
-    fetchMock
-      .mockResolvedValueOnce(rows("JournalEntry", []))
-      .mockResolvedValueOnce(prefs("2025-02-28"))
-      .mockResolvedValueOnce(json({ JournalEntry: { Id: "89" } }));
-    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { ...accounts, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" } }))).resolves.toEqual({ kind: "created", id: "89" });
   });
 
   it("refuses an unbalanced entry, before reading QuickBooks", async () => {

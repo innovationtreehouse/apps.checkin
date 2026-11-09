@@ -37,10 +37,14 @@ describe('payment-plan request ends when the application moves on', () => {
         await prisma.person.update({ where: { id: adult.id }, data: { isHouseholdLead: true } });
         const membership = await prisma.orgMembership.create({ data: { householdId: household.id, status: 'NONE', isVolunteerFamily: false } });
         const process = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', isPaymentPlanRequested: true, ...fields },
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), isPaymentPlanRequested: true, ...fields },
         });
         return { processId: process.id, householdId: household.id, orgMembershipId: membership.id, adultId: adult.id };
     }
+
+    /** The check review the household's consent opened. */
+    const reviewOf = async (householdId: number) =>
+        (await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: householdId, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() } })).id;
 
     async function queueIds() {
         mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
@@ -59,7 +63,7 @@ describe('payment-plan request ends when the application moves on', () => {
     async function wipe() {
         const households = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
         const ids = households.map((h) => h.id);
-        const processes = await prisma.orgMembershipProcess.findMany({ where: { orgMembership: { householdId: { in: ids } } }, select: { id: true } });
+        const processes = await prisma.orgMembershipProcess.findMany({ where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] }, select: { id: true } });
         const processIds = processes.map((p) => p.id);
         await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { in: processIds } } });
         await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: { in: processIds } } });
@@ -100,16 +104,18 @@ describe('payment-plan request ends when the application moves on', () => {
     });
 
     it('rejection, then Board reset: no request returns', async () => {
-        const { processId } = await requestedProcess();
-        await attest(boardId, processId, { result: 'REJECT' });
-        await boardResetReview(processId, boardId);
+        const { processId, householdId, adultId } = await requestedProcess();
+        const reviewId = await reviewOf(householdId);
+        await attest(boardId, reviewId, { result: 'REJECT', note: 'concerning', subjectPersonIds: [adultId] });
+        await boardResetReview(reviewId, boardId, { reason: 'second look' });
         await expectNoOpenRequest(processId);
     });
 
     it('rejection, then the rejector changes to approve: no request returns', async () => {
-        const { processId, adultId } = await requestedProcess();
-        await attest(boardId, processId, { result: 'REJECT' });
-        await attest(boardId, processId, { result: 'APPROVE', subjectPersonIds: [adultId] });
+        const { processId, householdId, adultId } = await requestedProcess();
+        const reviewId = await reviewOf(householdId);
+        await attest(boardId, reviewId, { result: 'REJECT', note: 'concerning', subjectPersonIds: [adultId] });
+        await attest(boardId, reviewId, { result: 'APPROVE' });
         await expectNoOpenRequest(processId);
     });
 
@@ -135,10 +141,11 @@ describe('payment-plan request ends when the application moves on', () => {
     });
 
     it('a real open request stays listed through what leaves it at PENDING_PAYMENT', async () => {
-        const { processId, adultId } = await requestedProcess();
+        const { processId, householdId, adultId } = await requestedProcess();
+        const reviewId = await reviewOf(householdId);
         await activateByProcessId(processId, `order-noitem-${TAG}-${processId}`, null);
-        await attest(boardId, processId, { result: 'APPROVE', subjectPersonIds: [adultId] });
-        await boardResetReview(processId, boardId);
+        await attest(boardId, reviewId, { result: 'APPROVE', subjectPersonIds: [adultId] });
+        await boardResetReview(reviewId, boardId, { reason: 'misclick' });
 
         const row = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
         expect(row.status).toBe('PENDING_PAYMENT');

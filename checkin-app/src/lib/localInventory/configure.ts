@@ -8,9 +8,6 @@
 import { configureLocalInventory } from "@checkin/local-inventory";
 import { catalogReader } from "@/lib/catalog/reader";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/components/host";
-import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
-
-const alerts = orgEventAlerts("board.inventoryEventsStuck", "Inventory catalog event alert failed:");
 
 export function configureLocalInventoryRuntime(): void {
   configureLocalInventory({
@@ -18,6 +15,5 @@ export function configureLocalInventoryRuntime(): void {
     org: getOrg,
     catalogEventSource: { eventsSince: catalogEventsSince },
     catalog: { getActiveItem: catalogReader.getActiveItem },
-    alerts,
   });
 }

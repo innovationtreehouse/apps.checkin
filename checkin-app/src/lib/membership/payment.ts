@@ -14,7 +14,11 @@ import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus 
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
+import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
 import type { Prisma } from "@/generated/prisma/client";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 /**
  * Payment phase (PENDING_PAYMENT -> ACTIVE).
@@ -140,7 +144,7 @@ export type ActivateOutcome =
 async function settle(
     processId: number,
     opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
-): Promise<{ outcome: ActivateOutcome; householdId?: number }> {
+): Promise<{ outcome: ActivateOutcome; householdId?: number; disputed?: boolean }> {
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
@@ -220,7 +224,10 @@ async function settle(
             return { outcome: "no_item" as const };
         }
 
-        const activating = !!process.bgClearedAt;
+        // Every adult's standing is re-read under the locks: a rejection since the check
+        // was stamped holds the payment unactivated, and settle then blocks it.
+        const disputed = !!process.bgClearedAt && (await householdHasDisputedCheck(tx, membership.householdId));
+        const activating = !!process.bgClearedAt && !disputed;
         if (activating) {
             const applied = await setHouseholdStatus(tx, process.orgMembershipId!, {
                 from: ["NONE", "REVOKED", "ACTIVE"],
@@ -233,7 +240,7 @@ async function settle(
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null, ...(closesRequest ? { isPaymentPlanRequested: true } : {}) },
             // Leaving PENDING_PAYMENT ends any payment-plan request, approved or not.
-            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false },
+            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false, ...(disputed ? { bgClearedAt: null } : {}) },
         });
         // Under the row lock the status can't have moved; if it did, roll the household write back.
         if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -246,12 +253,12 @@ async function settle(
                 oldData: { status: process.status },
                 newData: activating
                     ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit }
-                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit },
+                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(disputed ? { bgCleared: false, reason: "a person in the household has a disputed background check" } : {}), ...(certificationNote ? { certificationNote } : {}), ...approvalAudit },
             },
         });
         return activating
             ? { outcome: "active" as const, householdId: membership.householdId, isInitial: process.kind === "INITIAL" }
-            : { outcome: "held" as const };
+            : { outcome: "held" as const, ...(disputed ? { householdId: membership.householdId, disputed } : {}) };
     });
 
     // Side effects outside the transaction: a slow/failed send must not roll back
@@ -274,6 +281,10 @@ async function settle(
         });
     }
     if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
+    if ("disputed" in result && result.disputed && result.householdId !== undefined) {
+        const { householdId } = result;
+        await afterActivationCommitted("background-check settle", processId, householdId, async () => (await settleModule()).settleHouseholdBg(householdId));
+    }
     return result;
 }
 

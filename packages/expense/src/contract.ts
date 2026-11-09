@@ -80,8 +80,8 @@ export interface SignoffDirectory {
   isAdult(personId: number): Promise<boolean>;
   /** Live known adults whose name contains `query`, by name, at most `limit` of them. */
   searchAdults(query: string, limit: number): Promise<Array<{ personId: number; name: string }>>;
-  /** Adds a non-member adult known only by name, in a household of their own; returns their Person.id. */
-  addNonMemberAdult(name: string): Promise<number>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`; returns their Person.id. */
+  addNonMemberAdult(name: string, actorId: number): Promise<number>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
@@ -160,13 +160,12 @@ export interface CatalogEventSource {
   eventsSince(orgId: string, afterId: number): Promise<unknown[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
-
-/** Alerts the host binds to reach a person. */
-export interface ExpenseAlerts {
-  /** Catalog events left undone: newly failed, stalled over the cap, or the catalog unreadable. */
-  orgEventsStuck(event: { failed: number; unprocessed: number; unreadable: boolean }): Promise<void>;
-}
+/** An unbound event source says so rather than answer "no events". */
+export const inertCatalogEventSource: CatalogEventSource = {
+  eventsSince: async () => {
+    throw new NotWiredError("CatalogEventSource.eventsSince");
+  },
+};
 
 // ── QuickBooks (QB-1 readers, QB-2 writer) ────────────────────────────────────
 

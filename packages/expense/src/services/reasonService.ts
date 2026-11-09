@@ -24,13 +24,18 @@ const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE",
 /** Reasons a conflicted FINANCE holder answers by choosing the line's bucket. */
 const BUCKET_CHOICE = new Set<ReasonCode>(["BUCKET_TO_ASSIGN", "BUCKET_UNKNOWN", "OWNER_EXCEPTION"]);
 
+/** Whether the expense has an outbox row: the drain retries only these, and the queue reads only these. */
+async function isOutboxed(expenseId: string): Promise<boolean> {
+  return (await db.expenseEvent.findFirst({ where: { expenseId }, select: { id: true } })) !== null;
+}
+
 /**
  * The bucket that stops an outboxed, postable expense for a missing QuickBooks Class, or undefined
  * when none does; its name is null for a line with no bucket.
  */
 async function missingClass(expense: { id: string; backfill: boolean; qbTxnId: string | null; qbMatchState: string }, ownerIds: (number | null)[]) {
   if (expense.backfill || expense.qbTxnId || !POSTABLE_QB_STATES.includes(expense.qbMatchState)) return undefined;
-  if (!(await db.expenseEvent.findFirst({ where: { expenseId: expense.id }, select: { id: true } }))) return undefined;
+  if (!(await isOutboxed(expense.id))) return undefined;
   if (ownerIds.includes(null)) return { bucketName: null };
   const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
   const unclassed = ownerIds.find((id) => id !== null && !buckets.get(id)?.quickBooksClassId);
@@ -86,7 +91,8 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const conflicted = await isConflicted(expense, me);
   const lineFacts = [...facts.values()];
   const actionable = (r: DerivedReason): boolean => {
-    if (!principal.isFinance) return false;
+    // The Problems list's Retry answers it, not a queue action.
+    if (!principal.isFinance || r.code === "QB_PROCESSING_FAILED") return false;
     if (BOOKKEEPING.has(r.code) || BUCKET_CHOICE.has(r.code)) return true;
     if (conflicted || r.code === "SIGNER_HELD") return false;
     // A Board member may record the authorization when no finance holder can, but it never counts for them.

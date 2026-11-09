@@ -1,4 +1,4 @@
-import { defineRuntime } from "@checkin/component-kit";
+import { defineRuntime, type OnFailure } from "@checkin/component-kit";
 import {
   inertCatalogEventSource,
   inertCatalogReader,
@@ -12,7 +12,6 @@ import {
   inertSignoffDirectory,
   type CatalogEventSource,
   type CatalogReader,
-  type ExpenseAlerts,
   type OrgIdentity,
   type OutcomeMail,
   type Outbound,
@@ -39,12 +38,12 @@ export interface QuickBooksPorts {
 export interface ExpenseConfig {
   /** Async accessor, called per request: the host may resolve the org from its own store. */
   org: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   budgetOwners?: OwnerDirectory;
   /** Who may fill a sign-off seat: bucket approvers, role holders, households, membership. */
   signoff?: SignoffDirectory;
   catalog?: CatalogReader;
   catalogEvents?: CatalogEventSource;
-  alerts?: ExpenseAlerts;
   /** Display names, for showing who a reimbursee is. */
   people?: PeopleDirectory;
   quickbooks?: Partial<QuickBooksPorts>;
@@ -56,11 +55,11 @@ export interface ExpenseConfig {
 
 export interface ExpenseRuntime {
   org: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   budgetOwners: OwnerDirectory;
   signoff: SignoffDirectory;
   catalog: CatalogReader;
   catalogEvents: CatalogEventSource;
-  alerts?: ExpenseAlerts;
   people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
   outbound: Outbound;
@@ -73,11 +72,11 @@ export const expenseRuntime = defineRuntime<ExpenseRuntime, { id: number }>("exp
 export function configureExpense(config: ExpenseConfig): void {
   expenseRuntime.configure({
     org: config.org,
+    onFailure: config.onFailure,
     budgetOwners: config.budgetOwners ?? inertOwnerDirectory,
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
     catalogEvents: config.catalogEvents ?? inertCatalogEventSource,
-    alerts: config.alerts,
     people: config.people ?? inertPeopleDirectory,
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,

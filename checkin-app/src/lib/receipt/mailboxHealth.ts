@@ -17,7 +17,8 @@ export async function getReceiptMailboxHealth(): Promise<ConfigCheck[]> {
         await withTimeout(gmailAccessToken(mailbox)(), "The token refresher");
         return [{ id, label, ok: true, detail: "Connected." }];
     } catch (err) {
-        const detail = kindOf(err) === "connection" ? message(err) : `Off: the token refresher failed (${message(err)}).`;
+        const kind = kindOf(err);
+        const detail = kind === "connection" || kind === "settings" ? message(err) : `Off: the token refresher failed (${message(err)}).`;
         return [{ id, label, ok: false, detail }];
     }
 }

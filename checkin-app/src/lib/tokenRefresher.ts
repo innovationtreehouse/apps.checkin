@@ -2,7 +2,8 @@
  * Invokes a token refresher Lambda (QuickBooks or Gmail) for `{ action: "current" }`. A failed
  * invocation is `connection` when the refresher names it ReconsentRequired (a revoked login a
  * person must reconnect), and `system` otherwise, which is all a refresher deployed before
- * that name existed can answer.
+ * that name existed can answer. An answer that is not JSON is `settings`: the function name
+ * points at something other than a refresher.
  */
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { KindedError } from "@checkin/component-kit";
@@ -14,6 +15,8 @@ export interface RefresherCall {
   service: string;
   /** The connection error's message: what to reconnect, and who does it. */
   reconnect: string;
+  /** The settings error's message for an answer that is not JSON: what to check, and who does it. */
+  malformed: string;
 }
 
 /** Only errorType is read: the error message can echo token-endpoint detail. */
@@ -38,5 +41,9 @@ export async function invokeRefresher(call: RefresherCall): Promise<unknown> {
     if (errorType(res.Payload) === "ReconsentRequired") throw new KindedError("connection", call.reconnect);
     throw new KindedError("system", `${call.service} ${call.functionName} failed`);
   }
-  return JSON.parse(new TextDecoder().decode(res.Payload));
+  try {
+    return JSON.parse(new TextDecoder().decode(res.Payload));
+  } catch {
+    throw new KindedError("settings", call.malformed);
+  }
 }

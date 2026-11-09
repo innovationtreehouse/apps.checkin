@@ -13,8 +13,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessStatus } from "@/lib/membership/lifecycle";
-import { clearingApprovals } from "@/lib/membership/approvals";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -39,7 +38,8 @@ interface ProcessRow {
   bgClearedAt: string | null;
   paidAt: string | null;
   attestations: Attestation[];
-  subjectPerson: { id: number; name: string | null } | null;
+  requestedForHouseholdId: number | null;
+  subjectPerson: { id: number; name: string | null; householdId: number | null } | null;
   orgMembership: {
     householdId: number;
     isVolunteerFamily: boolean;
@@ -71,11 +71,14 @@ const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
 const statusColor = (status: string) => STATUS_COLORS[status] || "gray";
 const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " "));
 
-// The background check is a parallel track: an application still needs review
-// when it hasn't cleared and is past consent. ONE definition, shared with the
-// server (fix #1): awaitingBgReview.has — client-safe (booleans in, no Prisma).
+// A check review in the reviewer queue. ONE definition, shared with the server:
+// awaitingBgReview.has — client-safe (booleans in, no Prisma).
 const awaitingBg = (r: ProcessRow) =>
-  awaitingBgReview.has({ status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
+  awaitingBgReview.has({ kind: r.kind as ProcessKind, status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
+
+// A household application past consent whose check has not cleared waits on its people's check reviews.
+const waitingOnCheckReview = (r: ProcessRow) =>
+  r.kind !== "PERSON_BG" && !!r.orgMembership && !!r.bgConsentAt && !r.bgClearedAt && r.status !== "BLOCKED";
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
@@ -97,7 +100,7 @@ function ApplicationsBoard() {
   // the EXTERNAL-phase route).
   // The disabled state is UX only — the server is the real enforcement.
   const ownHousehold = (r: ProcessRow) =>
-    sharesHousehold(me?.householdId, r.orgMembership?.householdId);
+    [r.orgMembership?.householdId, r.subjectPerson?.householdId, r.requestedForHouseholdId].some((h) => sharesHousehold(me?.householdId, h ?? null));
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [messageId, setMessageId] = useState<number | null>(null);
@@ -140,7 +143,7 @@ function ApplicationsBoard() {
     }
   };
 
-  const resetReview = async (processId: number) => {
+  const resetReview = async (processId: number, reason: string, wrongPerson: boolean) => {
     setBusyId(processId);
     setMessageId(processId);
     setMessage("");
@@ -148,7 +151,7 @@ function ApplicationsBoard() {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action: "reset" }),
+        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -194,23 +197,41 @@ function ApplicationsBoard() {
     }
   };
 
-  // An awaiting row only ever holds APPROVE attestations (any REJECT blocks it).
+  // An awaiting review only ever holds APPROVE attestations (any REJECT blocks it).
   const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
-  // Approvals that count toward clearing; unnamed or other-adult approvals don't.
-  const counted = (r: ProcessRow) => clearingApprovals(r.attestations, r.kind === "PERSON_BG");
 
+  // Every reset takes a reason. A review a household asked for can also be reset as
+  // naming the wrong person, which returns it to no person.
   const confirmResetReview = (r: ProcessRow) => {
-    modals.openConfirmModal({
+    let reason = "";
+    let wrongPerson = false;
+    const modalId = modals.openConfirmModal({
       title: "Start this background-check review over?",
       children: (
-        <Text size="sm">
-          This discards the {approvals(r)} approval(s) recorded for <strong>{processLabel(r)}</strong>{" "}
-          and asks the reviewers to start again. Use it when an approval was recorded by
-          mistake — the check itself has not cleared yet, so nothing else changes.
-        </Text>
+        <Stack gap="xs">
+          <Text size="sm">
+            This discards the {r.attestations.length} decision(s) recorded for <strong>{processLabel(r)}</strong>{" "}
+            and asks the reviewers to start again. The check itself has not cleared, so nothing else changes.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+          {r.kind === "PERSON_BG" && r.requestedForHouseholdId !== null && r.subjectPerson && (
+            <Switch
+              label="The review names the wrong person — the next reviewer names again"
+              onChange={(e) => { wrongPerson = e.currentTarget.checked; }}
+            />
+          )}
+        </Stack>
       ),
-      labels: { confirm: "Discard approvals", cancel: "Cancel" },
-      onConfirm: () => resetReview(r.id),
+      labels: { confirm: "Start over", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to start a review over.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        resetReview(r.id, reason.trim(), wrongPerson);
+      },
     });
   };
 
@@ -462,8 +483,8 @@ function ApplicationsBoard() {
               {awaitingBg(r) && (
                 <Group mt="md" gap="md" wrap="wrap" align="center">
                   <Text size="sm" c="dimmed">
-                    Background check (in parallel) — <Text component="span" fw={600}>{counted(r)}/2</Text> approvals toward clearance.
-                    {approvals(r) > counted(r) && ` ${approvals(r) - counted(r)} more recorded that name no one or a different adult — start the review over to clear it.`}
+                    Background check — <Text component="span" fw={600}>{approvals(r)}/2</Text> approvals toward clearance
+                    {r.subjectPerson ? "." : "; the first reviewer names the person."}
                   </Text>
                   {/* The board's way back from a reviewer's misclick: the review is still
                       open, so discarding the attestations undoes it with nothing to unwind. */}
@@ -473,6 +494,12 @@ function ApplicationsBoard() {
                     </Button>
                   )}
                 </Group>
+              )}
+
+              {waitingOnCheckReview(r) && (
+                <Text size="sm" c="dimmed" mt="md">
+                  Background check (in parallel) — waiting on the household&apos;s check review.
+                </Text>
               )}
 
               {r.status === "PENDING_PAYMENT" && (
@@ -507,8 +534,9 @@ function ApplicationsBoard() {
                       <Text size="sm" mb="sm">
                         A reset sends the review back for two new approvals. The reviewer who rejected
                         may also change their answer to approve, which does the same and counts as the first.
+                        An application blocked by a person&apos;s check review moves on when that review is reset.
                       </Text>
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => resetReview(r.id)}>
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
                         Reset for re-review
                       </Button>
                       {ownHousehold(r) && (

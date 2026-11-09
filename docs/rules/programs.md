@@ -111,9 +111,7 @@ Things the app takes as true because they are handled outside it.
 - No program targets anyone over 25, and an age limit above that is refused.  [Decision]
 
 - A declared adult clears any youth minimum and fails any youth maximum. Nothing
-  verifies the claim. Checking a date of birth and telling a guardian were both
-  considered and refused; a minor who declares themselves an adult is a risk
-  taken knowingly.  [Decision — deliberate limit]
+  verifies the claim, and no guardian is told.  [Decision — deliberate limit]
 
 - A program leader is 23 or older, the floor belonging to the role rather than to
   adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]
@@ -290,10 +288,10 @@ Things the app takes as true because they are handled outside it.
 - The self-approval bar covers deciding a request, not repairing one. Confirming
   a hold somebody's failed store call never made benefits nobody.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
-- A family that holds a place can always pay for it. Each paid program has a
-  second, hidden "reserved seat" item in the store besides its public one, and
-  every checkout the app sends a family to uses it — in the app a checkout only
-  ever follows a claim. It does not count stock, so it never sells out: the
+- A family that holds a place can pay for it until the program ends. Each paid
+  program has a second, hidden "reserved seat" item in the store besides its
+  public one, and every checkout the app sends a family to uses it — in the app
+  a checkout only ever follows a claim. It does not count stock, so it never sells out: the
   family's place is already counted by the app, and the app's own count is the
   only gate. A program without one falls back to the public item.  [Decision]
 
@@ -333,9 +331,14 @@ Things the app takes as true because they are handled outside it.
 - Each program has an off-sale date, set by the board, defaulting to its start
   date; it may fall before or after the start. On that date new claims stop, and
   the next daily run closes enrollment and hides the public item, retrying each
-  day until the store confirms. Families who claimed in time still pay through
-  the reserved-seat item. Moving only the start date never reopens an ended
-  sale.  [Decision]
+  day until the store confirms. Moving only the start date never reopens an
+  ended sale.  [Decision]
+
+- A family whose unpaid claim was made in time can still pay it through the
+  reserved-seat item until the program ends, whether enrollment was closed by the off-sale date's daily
+  run or by the Board by hand. It may also still request a scholarship or payment
+  plan after the off-sale date, and the request takes its seat as any request
+  does.  [Decision — Owner ruling, 2026-11-08]
 
 - A program with no reserved-seat item keeps its public item on sale past the
   off-sale date, because hiding it would stop claimed families paying; the
@@ -353,6 +356,12 @@ Things the app takes as true because they are handled outside it.
 
 - One week after the off-sale date the board is emailed the claims still unpaid,
   once per program.  [Decision]
+
+- An ended program offers no payment. The app signs no checkout for it and sends
+  its families no reminder to pay, and the next daily run takes both store items
+  off sale, retrying each day until the store confirms. The Board settles a
+  claim still unpaid by hand. A payment that arrives anyway, from a checkout
+  opened before the end, still activates the claim it pays for.  [Decision — Owner ruling, 2026-11-08]
 
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]
@@ -378,8 +387,7 @@ Things the app takes as true because they are handled outside it.
 - A request whose seat hold failed waits for a board member to take the seat off
   sale by hand. It can still be approved or denied without one, deliberately: the
   queue offers each as a named action behind a confirmation that states the
-  oversell risk. A failed store call is the organisation's fault, and stranding
-  the family is the worse outcome.  [Decision — deliberate limit]
+  oversell risk.  [Decision — deliberate limit]
 
 - Denying a request whose seat hold failed returns the enrollment to unpaid. The
   family goes back to paying normally, and the denial is kept in the audit log.  [Decision — Owner ruling, 2026-11-01]
@@ -414,6 +422,10 @@ Things the app takes as true because they are handled outside it.
 
 - A program leader sees whether a participant has paid, never how. Method,
   scholarship, and payment plan are not theirs.  [Decision — *Principle: least privilege*]
+
+- An enrollment's scholarship or payment-plan request, its seat hold, approval or
+  refusal, and a comp, are read by the board and finance only. A sysadmin or a
+  program's staff sees whether the place is paid, not how.  [Decision — owner: "payment plan and scholarship should be board and finance only. all staff shouldn't see it by default"]
 
 - Only the board and sysadmins set a program's price or its store variant. A
   program leader cannot: a price change can make their own family's place

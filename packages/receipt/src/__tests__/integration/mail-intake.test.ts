@@ -32,6 +32,7 @@ function fakeMailbox() {
   const attachments = new Map<string, string>();
   const downloads: string[] = [];
   const reader: MailboxReader = {
+    address: "receipts@example.org",
     listRecent: async () => [...messages.keys()],
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
     getAttachment: async (_messageId, attachmentId) => {
@@ -556,6 +557,12 @@ describeDb("mail intake listing failure", () => {
     expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
     expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
     expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "connection" }, { orgId: TEST_ORG_ID, kind: "connection" }]);
+  });
+
+  it("hands each listing failure to the on-failure port", async () => {
+    failListing();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await readMailbox();
   });
 
   it.each([

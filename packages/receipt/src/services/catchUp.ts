@@ -1,9 +1,8 @@
-// Catch-up steps for the host's existing daily cron handler. Each is idempotent, capped,
-// and returns counts only. Nothing here runs at boot or on its own schedule.
+// Sweeps for the host's existing daily cron handler. Each moves stranded receipts to a state a
+// person acts on; none retries a step. Each is idempotent, capped, and returns counts only.
+// Nothing here runs at boot or on its own schedule.
 import { db } from "../db";
-import { sendDonorSync } from "../lib/donor-sync";
-import { pushReceipt } from "../lib/receipt-flow";
-import { audit } from "../repositories/receipt";
+import { audit, recordFailure } from "../repositories/receipt";
 import { getOrgId } from "../runtime";
 
 export const OCR_INTERRUPTED_AFTER_MS = 10 * 60 * 1000;
@@ -65,6 +64,7 @@ export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: num
         });
         if (moved.count === 0) return;
         await audit(tx, id, null, { action: "pipeline_failed", fieldChanged: "state", valueBefore: "uploaded", valueAfter: "stuck in uploaded" });
+        await recordFailure(tx, id, "stuck in uploaded");
         swept++;
       })
       .catch((err) => {
@@ -73,104 +73,4 @@ export async function sweepStuckUploaded(now = new Date()): Promise<{ swept: num
       });
   }
   return { swept, failed };
-}
-
-/** Catch-up stops retrying a receipt after this many catch-up push failures in a row. */
-export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
-
-/**
- * Ids catch-up has given up on. A refusal gives up at once. Otherwise a receipt is given up once
- * its latest MAX_CONSECUTIVE_PUSH_FAILURES push attempts are all catch-up failures. A success or a
- * manual push (one with an acting user) ends the run. A delivery anywhere in the org since also
- * ends an outage's run, since the receiver accepting a push means it may accept these too; it does
- * not end a bug's. A `push_failed` row with no kind predates kinds and reads as an outage.
- */
-export async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
-  const lastDelivery = await db.receiptAuditLog.findFirst({
-    where: { action: "pushed", receipt: { orgId } },
-    select: { id: true },
-    orderBy: { id: "desc" },
-  });
-  const log = await db.receiptAuditLog.findMany({
-    where: { receiptId: { in: ids }, action: { in: ["pushed", "push_failed", "push_refused"] } },
-    select: { id: true, receiptId: true, action: true, userId: true, valueBefore: true },
-    orderBy: { id: "desc" },
-  });
-  const run = new Map<string, number>();
-  const ended = new Set<string>();
-  const out = new Set<string>();
-  for (const { id, receiptId, action, userId, valueBefore } of log) {
-    if (!receiptId || ended.has(receiptId)) continue;
-    if (action !== "push_failed" || userId !== null) {
-      ended.add(receiptId);
-      if (action === "push_refused") out.add(receiptId);
-      continue;
-    }
-    if (valueBefore !== "bug" && id <= (lastDelivery?.id ?? 0)) continue;
-    const failures = (run.get(receiptId) ?? 0) + 1;
-    run.set(receiptId, failures);
-    if (failures >= MAX_CONSECUTIVE_PUSH_FAILURES) {
-      out.add(receiptId);
-      ended.add(receiptId);
-    }
-  }
-  return out;
-}
-
-/** Where a finalized, not-yet-delivered receipt stands with catch-up, for the review screen. */
-export interface PushRecord {
-  pushGivenUp: boolean;
-  lastPushFailedAt: Date | null;
-  lastPushFailure: string | null;
-}
-
-/** The push record of each of `ids`, all of which should be finalized and not yet delivered. */
-export async function pushRecords(orgId: string, ids: string[]): Promise<Map<string, PushRecord>> {
-  if (ids.length === 0) return new Map();
-  const [skip, failures] = await Promise.all([
-    givenUp(orgId, ids),
-    db.receiptAuditLog.findMany({
-      where: { receiptId: { in: ids }, action: { in: ["push_failed", "push_refused"] } },
-      select: { receiptId: true, changedAt: true, valueAfter: true },
-      orderBy: [{ receiptId: "asc" }, { id: "desc" }],
-      distinct: ["receiptId"],
-    }),
-  ]);
-  // Rows come newest first within each receipt; the first one seen is the latest.
-  const latest = new Map<string | null, (typeof failures)[number]>();
-  for (const f of failures) if (!latest.has(f.receiptId)) latest.set(f.receiptId, f);
-  return new Map(
-    ids.map((id) => {
-      const failure = latest.get(id);
-      return [id, { pushGivenUp: skip.has(id), lastPushFailedAt: failure?.changedAt ?? null, lastPushFailure: failure?.valueAfter ?? null }];
-    }),
-  );
-}
-
-/** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
-export async function repushUnpushed(): Promise<{ pushed: number; failed: number; skipped: number }> {
-  const orgId = await getOrgId();
-  const rows = await db.receipt.findMany({
-    where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } },
-    select: { id: true },
-    orderBy: { uploadedAt: "asc" },
-  });
-  const skip = await givenUp(orgId, rows.map((r) => r.id));
-  const due = rows.filter((r) => !skip.has(r.id)).slice(0, CATCH_UP_CAP);
-  let pushed = 0;
-  for (const { id } of due) if (await pushReceipt(id, null)) pushed++;
-  return { pushed, failed: due.length - pushed, skipped: skip.size };
-}
-
-/** X13 re-send for receipts whose donor change donations has not heard. */
-export async function resendDonorSync(): Promise<{ resent: number; failed: number }> {
-  const rows = await db.receipt.findMany({
-    where: { orgId: await getOrgId(), donorSync: "pending" },
-    select: { id: true },
-    orderBy: { uploadedAt: "asc" },
-    take: CATCH_UP_CAP,
-  });
-  let resent = 0;
-  for (const { id } of rows) if (await sendDonorSync(id, null)) resent++;
-  return { resent, failed: rows.length - resent };
 }

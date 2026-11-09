@@ -170,8 +170,9 @@ model AccountMap {
   donationAccount       String   @map("donation_account")
   /// @sensitivity:internal
   matchAccount          String   @map("match_account")
+  /// Unread: fees reduce income. Kept, with a default so new rules insert, until it can be dropped.
   /// @sensitivity:internal
-  feesAccount           String   @map("fees_account")
+  feesAccount           String   @default("") @map("fees_account") @ignore
   /// QuickBooks account id a matched gift's donation amount books to; null until finance picks one.
   /// @sensitivity:internal
   donationAccountId     String?  @map("donation_account_id")
@@ -523,11 +524,18 @@ model InKindPosting {
   claimedAt           DateTime? @map("claimed_at")
   /// @sensitivity:internal
   qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbPostAttempts      Int       @default(0) @map("qb_post_attempts")
-  // The kind of the last failed post (system, connection, settings, data, bug); null when the last post did not fail.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbFailureKind       String?   @map("qb_failure_kind")
+  // When the gift's post first failed; set while null, cleared when a post settles without failing. Set means stuck.
+  /// @sensitivity:internal
+  qbFirstFailedAt     DateTime? @map("qb_first_failed_at")
+  // The latest failed post's error, shown only on the gift's own page.
+  /// @sensitivity:internal
+  qbLastError         String?   @map("qb_last_error")
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
   /// @sensitivity:internal

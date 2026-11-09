@@ -5,8 +5,8 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
-import { KindedError } from "@checkin/component-kit";
+import { MAX_DRIFT_CHECKS_PER_RUN, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import type { FailureReport } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db, getPrisma } from "../../db";
@@ -18,6 +18,7 @@ import { InKindQbResolveInputSchema, resolveInKindQb, type InKindQbResolveInput 
 import { DEFAULT_DONATION_SETTINGS, readDonationSettings, updateDonationSettings } from "../../services/settingsService";
 import type { InKindAccounts, InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
+import { retryStuckItem, stuckItems } from "../../stuckItems";
 
 const orgId = TEST_ORG_ID;
 const FINANCE = 10;
@@ -133,10 +134,9 @@ let assets: number[];
 /** The expense account rules: supplies for any part, equipment for an asset; a GTIN here has no rule. */
 let unruled: Set<string>;
 let alerts: number;
-let drainStops: { failures: number; remaining: number; cause: string }[];
 /** The expense account rules port throws this, standing in for a fault in the app's own code. */
 let rulesThrow: Error | null;
-let drainStopAlertFails: boolean;
+let failures: FailureReport[];
 
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
@@ -150,6 +150,7 @@ function configure() {
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: FINANCE, name: "finance" }) },
     org: async () => ({ id: orgId, name: "Test Org" }),
+    onFailure: (r) => void failures.push(r),
     owners: { list: async () => BUCKETS },
     inKind: {
       financeHolders: async () => [FINANCE],
@@ -166,10 +167,6 @@ function configure() {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
       sweepIncomplete: async () => void alerts++,
-      drainStopped: async ({ failures, remaining, cause }) => {
-        if (drainStopAlertFails) throw new Error("SES down");
-        drainStops.push({ failures, remaining, cause });
-      },
     },
   });
 }
@@ -255,8 +252,7 @@ beforeEach(async () => {
   assets = [];
   unruled = new Set();
   alerts = 0;
-  drainStops = [];
-  drainStopAlertFails = false;
+  failures = [];
   rulesThrow = null;
   configure();
 });
@@ -375,106 +371,107 @@ describeDb("in-kind drain", () => {
     expect((await posting(id)).qbNote).toMatch(/closed books/);
   });
 
-  it("hands gifts that always fail on a bug to finance at the limit, so a newer gift then posts, and alerts finance each run the streak stops", async () => {
+  it("a failed post leaves the gift stuck with finance, the run goes on, and the drain never retries it", async () => {
     await switchOn();
-    const stuck = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
-    const newer = await acceptedGift();
+    const gifts = [await acceptedGift(), await acceptedGift()];
     rulesThrow = new Error("rules exploded");
 
-    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) {
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, exhausted: 0, stoppedAfterFailures: true });
-      expect(await posting(stuck[0])).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: run });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 2 });
+    for (const id of gifts) {
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date), qbLastError: expect.stringMatching(/rules exploded/), qbNote: expect.stringMatching(/rules exploded/) });
     }
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 0, exhausted: 3, stoppedAfterFailures: true });
-    expect(drainStops).toEqual(Array(MAX_POST_ATTEMPTS).fill({ failures: 3, remaining: 1, cause: "bug" }));
-    for (const id of stuck) {
-      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS, qbNote: expect.stringMatching(/stopped trying after 5 failed attempts: .*rules exploded/) });
-    }
-    expect((await inKindAcceptService.listQueue(orgId, FINANCE)).filter((g) => g.qbState === "NEEDS_FINANCE").map((g) => g.id).sort()).toEqual([...stuck].sort());
-    await expect(posting(newer)).rejects.toThrow();
-
-    // The fault remains, but the newer gift gets its turn: its own failure now shows.
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, exhausted: 0, stoppedAfterFailures: false });
-    expect(await posting(newer)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1 });
+    expect((await inKindAcceptService.listQueue(orgId, FINANCE)).filter((g) => g.qbState === "NEEDS_FINANCE").map((g) => g.id).sort()).toEqual([...gifts].sort());
 
     rulesThrow = null;
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
-    expect(await posting(newer)).toMatchObject({ matchState: "CREATED" });
-    expect(await posting(stuck[0])).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
-    expect(qbo.posts).toHaveLength(1);
-    expect(drainStops).toHaveLength(MAX_POST_ATTEMPTS);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, failed: 0, waiting: 2 });
+    expect(qbo.posts).toHaveLength(0);
   });
 
-  it("finance can still book a gift handed over at the limit", async () => {
+  it("a retry from the Problems list posts a stuck gift once and clears its failure", async () => {
     await switchOn();
     const id = await acceptedGift();
     rulesThrow = new Error("rules exploded");
-    for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
+    await runInKindQbPosting(orgId);
+    rulesThrow = null;
+
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
+
+    expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbFirstFailedAt: null, qbLastError: null });
+    expect(qbo.posts).toHaveLength(1);
+    expect(await stuckItems()).toEqual([]);
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 404 });
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a retry while the closing date cannot be read reports that nothing was posted and keeps the gift stuck", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    rulesThrow = new Error("rules exploded");
+    await runInKindQbPosting(orgId);
+    rulesThrow = null;
+    const { qbFirstFailedAt } = await posting(id);
+    qbo.refuseCloseRead = true;
+
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 409 });
+
+    expect(await posting(id)).toMatchObject({ qbFirstFailedAt });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await stuckItems()).toHaveLength(1);
+    qbo.refuseCloseRead = false;
+  });
+
+  it("finance can book a stuck gift, which clears its failure", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    rulesThrow = new Error("rules exploded");
+    await runInKindQbPosting(orgId);
     expect((await posting(id)).matchState).toBe("NEEDS_FINANCE");
 
     rulesThrow = null;
     expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
+    expect(await posting(id)).toMatchObject({ qbFirstFailedAt: null, qbLastError: null });
   });
 
-  it("finance's failed book counts no attempt, and can always be asked again", async () => {
+  it("finance's failed book keeps the gift stuck from its first failure, and can always be asked again", async () => {
     await switchOn();
     const id = await acceptedGift();
     rulesThrow = new Error("rules exploded");
-    for (let run = 1; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
-    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
+    await runInKindQbPosting(orgId);
+    const { qbFirstFailedAt } = await posting(id);
 
     for (let retry = 0; retry < 2; retry++) {
       await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503, message: "QuickBooks failed while booking; the gift can be booked again" });
-      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS - 1 });
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt });
     }
 
     rulesThrow = null;
     expect(await resolve(id, { action: "book" })).toMatchObject({ qbState: "CREATED" });
   });
 
-  it("a gift finance failed to book after the limit gets one more drain try, then returns to finance", async () => {
-    await switchOn();
-    const id = await acceptedGift();
-    rulesThrow = new Error("rules exploded");
-    for (let run = 0; run < MAX_POST_ATTEMPTS; run++) await runInKindQbPosting(orgId);
-    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503 });
-    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: MAX_POST_ATTEMPTS });
-
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ exhausted: 1 });
-    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS + 1 });
-  });
-
-  it("a run that cannot read the closing date counts no attempt against the gift", async () => {
+  it("a run that cannot read the closing date leaves the gift waiting, not stuck, and the next run posts it", async () => {
     await switchOn();
     const id = await acceptedGift();
     qbo.refuseCloseRead = true;
-    for (let run = 0; run <= MAX_POST_ATTEMPTS; run++) await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, closeDateRead: false });
-    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0 });
-    expect(drainStops).toEqual([]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1, failed: 0, closeDateRead: false });
+    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbFirstFailedAt: null });
+    expect(await stuckItems()).toEqual([]);
+
+    qbo.refuseCloseRead = false;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
   });
 
-  it("a failed streak alert does not fail the run", async () => {
-    await switchOn();
-    await acceptedGift();
-    await acceptedGift();
-    await acceptedGift();
-    qbo.refuseCreate = true;
-    drainStopAlertFails = true;
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, stoppedAfterFailures: true });
-  });
-
-  it("a create that landed but went unanswered is found by its key next run, never booked twice", async () => {
+  it("a create that landed but went unanswered is found by its key on retry, never booked twice", async () => {
     await switchOn();
     const id = await acceptedGift();
     qbo.dropAfterCreate = true;
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
-    expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED" });
-    expect((await posting(id)).qbCreateAttemptedAt).not.toBeNull();
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbCreateAttemptedAt: expect.any(Date), qbFirstFailedAt: expect.any(Date) });
 
     await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, bucketId: 2 }, { actorUserId: FINANCE, actorUsername: "finance" })).rejects.toMatchObject({ status: 409 });
 
     qbo.dropAfterCreate = false;
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0 });
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
     expect(qbo.posts).toHaveLength(1);
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
   });
@@ -505,150 +502,107 @@ describeDb("in-kind drain", () => {
     expect(await bookings(stuck)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
   });
 
-  it("claims that throw count toward the failure streak, which stops the run and alerts finance", async () => {
+  it("claims that throw are counted failed and the run goes on to every gift", async () => {
     await switchOn();
     for (let i = 0; i < 4; i++) await acceptedGift();
     const transaction = vi.spyOn(getPrisma(), "$transaction").mockRejectedValue(new Error("connection dropped"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, stoppedAfterFailures: true });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 4 });
     transaction.mockRestore();
-    expect(drainStops).toEqual([{ failures: 3, remaining: 1, cause: "bug" }]);
     expect(qbo.posts).toHaveLength(0);
   });
 
-  describe("the failure's kind decides what happens to the gift", () => {
-    it("system: QuickBooks down charges no gift, three in a row stop the run, and finance is told it may be down", async () => {
+  describe("any failed post leaves the gift stuck, whatever its kind", () => {
+    it("QuickBooks down: every gift the run reaches is stuck, and Retry clears each", async () => {
       await switchOn();
-      const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift(), await acceptedGift()];
+      const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift(), await acceptedGift({ totalCents: 4400 })];
       qbo.outage = true;
 
-      for (let run = 0; run < MAX_POST_ATTEMPTS + 1; run++) {
-        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, exhausted: 0, stoppedAfterFailures: true, stopKind: "system" });
-      }
-      for (const id of gifts.slice(0, 3)) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "system" });
-      expect(drainStops).toEqual(Array(MAX_POST_ATTEMPTS + 1).fill({ failures: 3, remaining: 1, cause: "system" }));
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 4 });
+      for (const id of gifts) expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
 
       qbo.outage = false;
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 4 });
-      expect(await posting(gifts[0])).toMatchObject({ matchState: "CREATED", qbFailureKind: null });
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, waiting: 4 });
+      for (const item of await stuckItems()) await retryStuckItem(item);
+      for (const id of gifts) expect(await posting(id)).toMatchObject({ qbFirstFailedAt: null });
+      expect(qbo.posts.length).toBeGreaterThan(0);
     });
 
-    it("system: a create failing after QuickBooks answered this post's reads is charged to the gift as a bug", async () => {
+    it("hands each saved failure to the on-failure port with its kind", async () => {
       await switchOn();
       const id = await acceptedGift();
       qbo.createAnswer = () => ({ status: 500 });
+      vi.spyOn(console, "warn").mockImplementation(() => {});
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
-      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+      await runInKindQbPosting(orgId);
+
+      expect(failures).toEqual([expect.objectContaining({ lane: "in-kind-posting", kind: "system", detail: `receipt gift ${id}` })]);
     });
 
-    it("system: once QuickBooks answered an earlier gift this run, an outage on a later gift is charged to it as a bug", async () => {
+    it("hands a post that throws to the on-failure port", async () => {
       await switchOn();
-      const first = await acceptedGift();
-      const second = await acceptedGift({ totalCents: 4400 });
-      qbo.afterCreate = async () => {
-        qbo.outage = true;
-      };
+      const id = await acceptedGift();
+      const transaction = vi.spyOn(getPrisma(), "$transaction").mockRejectedValue(new Error("connection dropped"));
+      vi.spyOn(console, "warn").mockImplementation(() => {});
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, failed: 1 });
-      expect(await posting(first)).toMatchObject({ matchState: "CREATED" });
-      expect(await posting(second)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
+      await runInKindQbPosting(orgId);
+      transaction.mockRestore();
+
+      expect(failures).toEqual([{ lane: "in-kind-posting", kind: "bug", detail: `receipt gift ${id}` }]);
     });
 
-    it("connection: the run stops at the first one, charges nothing, and tells finance to reconnect", async () => {
+    it("a lost connection leaves the gift stuck and the run tries the rest", async () => {
       await switchOn();
       const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
       qbo.createAnswer = () => ({ status: 401 });
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ connection: 1, failed: 0, stoppedAfterFailures: true, stopKind: "connection" });
-      expect(await posting(gifts[0])).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "connection" });
-      await expect(posting(gifts[1])).rejects.toThrow();
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3 });
+      for (const id of gifts) expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: expect.any(Date) });
       expect(qbo.posts).toHaveLength(0);
-      expect(drainStops).toEqual([{ failures: 1, remaining: 2, cause: "connection" }]);
     });
 
-    it("settings: the gift waits uncharged, is tried again each run, and the run carries on outside the stop count", async () => {
-      await switchOn();
-      const waiting = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
-      rulesThrow = new KindedError("settings", "in-kind account rules are not wired");
-      for (let run = 0; run < MAX_POST_ATTEMPTS + 1; run++) {
-        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ settings: 3, failed: 0, stoppedAfterFailures: false });
-      }
-      for (const id of waiting) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 0, qbFailureKind: "settings" });
-      expect(drainStops).toEqual([]);
-
-      rulesThrow = null;
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 3 });
-    });
-
-    it("data: a refusal holds the gift for finance after one try, naming the fault code and request id, and resets the stop count", async () => {
+    it("a refusal names the fault code and request id, and refusals with one code never stop the run", async () => {
       await switchOn();
       const refused = [await acceptedGift(), await acceptedGift(), await acceptedGift()];
       const next = await acceptedGift({ totalCents: 4400 });
       qbo.createAnswer = (n) => (n < 3 ? { status: 400, codes: ["6000"] } : null);
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 3, posted: 1, failed: 0, stoppedAfterFailures: false });
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, posted: 1 });
       for (const id of refused) {
-        expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbPostAttempts: 1, qbFailureKind: "data", qbNote: expect.stringMatching(/QuickBooks refused this gift: .*intuit_tid=tid.*codes 6000/) });
+        expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbLastError: expect.stringMatching(/QuickBooks refused this gift: .*intuit_tid=tid.*codes 6000/) });
       }
       expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, needs_finance: 0 });
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0 });
       expect(qbo.posts).toHaveLength(1);
     });
 
-    it("a failed read for the gift's own earlier entry on an outage leaves it to try again, uncharged; nothing is created", async () => {
+    it("a failed read for the gift's own earlier entry keeps it stuck; nothing is created until a retry finds the entry", async () => {
       await switchOn();
       const id = await acceptedGift();
       qbo.dropAfterCreate = true;
       await runInKindQbPosting(orgId);
-      const { qbPostAttempts } = await posting(id);
+      const { qbFirstFailedAt } = await posting(id);
       qbo.dropAfterCreate = false;
       qbo.sinceReadStatus = 503;
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
-      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts, qbFailureKind: "system" });
+      await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt, qbLastError: expect.stringMatching(/may already have booked this gift/) });
       expect(qbo.posts).toHaveLength(1);
       await expect(resolve(id, { action: "skip", reason: "looks unbooked" })).rejects.toMatchObject({ status: 503 });
 
       qbo.sinceReadStatus = null;
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+      await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
       expect(qbo.posts).toHaveLength(1);
       expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
     });
 
-    it("a refused read for the gift's own earlier entry goes to finance, which may already have it booked, and counts toward the stop", async () => {
+    it("a gift held without calling QuickBooks is not stuck", async () => {
       await switchOn();
-      const id = await acceptedGift();
-      qbo.dropAfterCreate = true;
-      await runInKindQbPosting(orgId);
-      qbo.dropAfterCreate = false;
-      qbo.sinceReadStatus = 400;
-
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, needs_finance: 0 });
-      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFailureKind: "bug", qbNote: expect.stringMatching(/may already have booked this gift/) });
-    });
-
-    it("a refused read every gift makes is the app's bug, not the gift's: tries are charged and the run stops, holding no gift at once", async () => {
-      await switchOn();
-      const gifts = [await acceptedGift(), await acceptedGift(), await acceptedGift(), await acceptedGift()];
-      qbo.depositReadStatus = 400;
-
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, needs_finance: 0, stoppedAfterFailures: true, stopKind: "bug" });
-      for (const id of gifts.slice(0, 3)) expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbPostAttempts: 1, qbFailureKind: "bug" });
-      expect(drainStops).toEqual([{ failures: 3, remaining: 1, cause: "bug" }]);
-    });
-
-    it("a gift held without calling QuickBooks leaves the stop count as it was", async () => {
-      await switchOn();
-      await acceptedGift();
-      await acceptedGift();
       const noValue = await zeroLineManualGift();
-      await acceptedGift();
-      await acceptedGift();
-      qbo.outage = true;
 
-      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 3, held: 1, stoppedAfterFailures: true, stopKind: "system" });
-      expect(await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: noValue } } })).toMatchObject({ matchState: "NEEDS_FINANCE" });
+      await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ held: 1, failed: 0 });
+      expect(await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: noValue } } })).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null });
     });
   });
 
@@ -732,11 +686,12 @@ describeDb("in-kind drain — a journal entry finance voided", () => {
     return copy;
   };
 
-  it("books a replacement when the only keyed entry was voided, and the sweep raises nothing for the void", async () => {
+  it("a retry books a replacement when the only keyed entry was voided, and the sweep raises nothing for the void", async () => {
     const { id, first } = await landed();
     voidEntry(first);
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, sweep: { flagged: 0 } });
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
 
     expect(qbo.posts).toHaveLength(2);
     const replacement = qbo.journals[1];
@@ -745,25 +700,25 @@ describeDb("in-kind drain — a journal entry finance voided", () => {
     expect(await posting(id)).toMatchObject({ matchState: "CREATED", qbNote: null });
   });
 
-  it("links the live entry when one of two keyed entries was voided", async () => {
+  it("a retry links the live entry when one of two keyed entries was voided", async () => {
     const { id, first } = await landed();
     const live = secondKeyedEntry(first);
     voidEntry(first);
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    await retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" });
 
     expect(qbo.posts).toHaveLength(1);
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: live.Id }]);
   });
 
-  it("two live keyed entries still go to finance", async () => {
+  it("on retry, two live keyed entries still go to finance", async () => {
     const { id, first } = await landed();
     secondKeyedEntry(first);
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ needs_finance: 1 });
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 409 });
 
     expect(qbo.posts).toHaveLength(1);
-    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE" });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null, qbNote: expect.stringMatching(/carry its key/) });
   });
 
   it("finance's skip applies when the gift's only keyed entry was voided", async () => {
@@ -898,7 +853,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect((await posting(id)).matchState).toBe("UNBOOKED");
   });
 
-  describe("a drain retry whose create lands between finance's read and write", () => {
+  describe("a retry whose create lands between finance's read and write", () => {
     /** A gift whose first create never reached the books, and the retry to land once, unanswered. */
     async function failedGiftAndRetry() {
       await switchOn();
@@ -911,7 +866,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
       const retry = async () => {
         qbo.duringByIdRead = qbo.afterSinceRead = null;
         qbo.dropAfterCreate = true;
-        await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1 });
+        await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
         qbo.dropAfterCreate = false;
       };
       return { id, attemptedAt, retry };
@@ -922,7 +877,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
       qbo.afterSinceRead = retry;
       await expect(resolve(id, { action: "skip", reason: "looks unbooked" })).rejects.toMatchObject({ status: 409 });
       expect(qbo.posts).toHaveLength(1);
-      expect(await posting(id)).toMatchObject({ matchState: "POST_FAILED", qbCreateAttemptedAt: attemptedAt });
+      expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbCreateAttemptedAt: attemptedAt });
       expect(await bookings(id)).toEqual([]);
 
       expect(await resolve(id, { action: "skip", reason: "looks unbooked" })).toMatchObject({ qbState: "CREATED" });
@@ -1032,25 +987,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
-  it("books donated equipment to the account a retired fixed-assets role still holds", async () => {
-    accounts = { ...ACCOUNTS, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" };
-    await switchOn();
-    const id = await acceptedGift();
-    const [, lathe] = await lineIds(id);
-    assets = [lathe];
-
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
-    expect(qbo.posts[0].body.Line.map((l) => l.JournalEntryLineDetail.AccountRef.value)).toEqual(["400", "600", "150"]);
-  });
-
-  it("matches a hand journal entry debiting an account a retired role still holds", async () => {
-    accounts = { ...ACCOUNTS, FIXED_ASSETS: "150" };
-    const id = await unbookedGift();
-    qbo.journals.push(handJournal("82", [["Credit", "400", 33], ["Debit", "600", 11], ["Debit", "150", 22]]));
-    await expect(resolve(id, { action: "match", journalEntryId: "82" })).resolves.toMatchObject({ qbState: "MATCHED" });
-  });
-
-  it("holds a line whose account a live books-map role books to, without trying the write", async () => {
+  it("holds a line whose account a books-map role books to, without trying the write", async () => {
     accounts = { ...ACCOUNTS, SHOPIFY_FEES: "610" };
     await switchOn();
     unruled.add(LATHE_GTIN);
@@ -1060,7 +997,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     await resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "610" });
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, failed: 0 });
-    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_ACCOUNT", qbPostAttempts: 0, qbNote: expect.stringMatching(/Lathe: .*books-map role's account/) });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_ACCOUNT", qbNote: expect.stringMatching(/Lathe: .*books-map role's account/) });
   });
 
   it("refuses to set donated equipment's account to one that is not a fixed asset", async () => {
@@ -1222,14 +1159,6 @@ describeDb("in-kind QuickBooks drift", () => {
       throw new Error("connection refused");
     };
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { failed: true } });
-    expect((await posting(id)).matchState).toBe("CREATED");
-  });
-
-  it("does not check a withdrawn gift, whose entry finance reverses by hand", async () => {
-    const id = await booked();
-    await db.inKindDonation.update({ where: { id }, data: { withdrawnAfterMoneyAt: new Date() } });
-    qbo.journals = [];
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 0, drifted: 0 } });
     expect((await posting(id)).matchState).toBe("CREATED");
   });
 

@@ -3,7 +3,7 @@
  * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
-import { httpError, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { catalogSettingsMessage, httpError, isNotWired, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
 import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
@@ -138,10 +138,17 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, princi
   return {};
 };
 
-/** Catalog category and subcategory names, through the CatalogReader port (empty until bound); 503 while the catalog is down. */
+/** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
+function refuseCatalogSettings(err: unknown): void {
+  const message = catalogSettingsMessage(err);
+  if (message) throw httpError(503, message);
+}
+
+/** Catalog category and subcategory names, through the CatalogReader port; 503 while the catalog is unbound, missing or down. */
 export const mappingCatalog: ExpenseRouteHandler = async () => {
   const catalog = getExpenseRuntime().catalog;
   const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]).catch((err: unknown) => {
+    refuseCatalogSettings(err);
     if (kindOf(err) === "system") throw httpError(503, "Catalog categories are unavailable; try again");
     throw err;
   });
@@ -204,15 +211,23 @@ export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView
 
 export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
   const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
-  // An unbound or unreachable catalog shows the map without names.
-  const names = await getItemNames(rows.map((r) => r.gtin13)).catch((err: unknown) => {
-    const kind = kindOf(err);
-    if (kind === "settings") return [];
-    if (kind !== "system") throw err;
-    logError("catalog_names_unavailable", { route: "ownership-map" }, err);
-    return [];
-  });
-  return { PartOwnerMap: rows, Item: names, ExpenseBucketView: await buckets() };
+  // An unbound catalog shows the map without names; an unreachable one also flags the names unavailable.
+  const names = await getItemNames(rows.map((r) => r.gtin13)).then(
+    (items) => ({ items, unavailable: false }),
+    (err: unknown) => {
+      if (isNotWired(err)) return { items: [], unavailable: false };
+      refuseCatalogSettings(err);
+      if (kindOf(err) !== "system") throw err;
+      logError("catalog_names_unavailable", { route: "ownership-map" }, err);
+      return { items: [], unavailable: true };
+    },
+  );
+  return {
+    PartOwnerMap: rows,
+    Item: names.items,
+    ExpenseBucketView: await buckets(),
+    ...(names.unavailable && { ExpenseCatalogNames: { unavailable: true } }),
+  };
 };
 
 /**
@@ -226,6 +241,7 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
   if (provisional) return `${id} was rejected by the catalog`;
   const active = await getActiveItem(gtin13).catch((err: unknown) => {
+    refuseCatalogSettings(err);
     console.error("[expense] catalog check failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");
   });

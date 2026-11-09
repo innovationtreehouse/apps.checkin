@@ -8,6 +8,7 @@ export const classifications = {
         requireFinanceReviewWithTax: 'internal',
         enforceReceiptAgeLimit: 'internal',
         receiptAgeLimitDays: 'internal',
+        ocrEnabled: 'internal',
     },
     Receipt: {
         id: 'internal',
@@ -30,6 +31,8 @@ export const classifications = {
         donorSync: 'internal',
         donorSyncSeq: 'internal',
         pushedAt: 'internal',
+        firstFailedAt: 'internal',
+        lastError: 'personal',
     },
     ReceiptDetail: {
         id: 'internal',
@@ -85,8 +88,8 @@ export const classifications = {
         changedAt: 'internal',
         action: 'internal',
         fieldChanged: 'internal',
-        valueBefore: 'personal',
-        valueAfter: 'personal',
+        valueBefore: 'pii',
+        valueAfter: 'pii',
         lineItemId: 'internal',
     },
     ReceiptPairDecision: {
