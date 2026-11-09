@@ -158,7 +158,7 @@ Things the app takes as true because they are handled outside it.
 
 - Change history can keep a date of birth past 25. A history record copies the
   date when a person's details are saved, and nothing removes that copy later.
-  This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21, 2026-10-27]
+  This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21]
 
 - Date of birth is the only field with an ageing-out rule. Broader retention is
   not automated; the general obligation is met by hand.  [Decision — deliberate limit]
@@ -183,14 +183,14 @@ Things the app takes as true because they are handled outside it.
 - A person in a position of trust holds any granted role (sysadmin, board, finance,
   operations, inventory manager, keyholder, background-check reviewer), owns a bucket
   or is its treasurer, leads a program, or may certify others on a tool. One list serves
-  every rule that names them.  [Decision — Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27; bucket owners per owner decision 2026-10-30]
+  every rule that names them.  [Decision — Board ruling B1/B2]
 
 - A trusted person's sign-in email changes only by a board member's action, with a
   written reason the record keeps. A merge counts: it needs the same when the trusted
   person is the merged-away side, or a trusted keeper takes the other side's identity
   or its linked sign-in accounts. Keeping a trusted person's record and identity, with
   no account coming across, needs neither. A sign-in account with
-  a different address cannot be linked to them.  [Decision — Board ruling B1/B2, 2026-10-27; trusted list per owner decision 2026-10-27; bucket owners per owner decision 2026-10-30]
+  a different address cannot be linked to them.  [Decision — Board ruling B1/B2]
 
 - A member's email is not edited from the household card, by them or by a lead,
   once they have signed in, are in a position of trust, or hold anything the board granted: a role, a program
@@ -213,18 +213,18 @@ Things the app takes as true because they are handled outside it.
   and nothing else opens until they answer. They are asked when someone else in that
   household has already signed in; someone in a household where nobody has signed in
   claims their record unasked. The question names the household and shows nothing of
-  the record.  [Decision — Board ruling B1/B2, 2026-10-27; scope per owner decision 2026-10-30]
+  the record.  [Decision — Board ruling B1/B2]
 
 - A yes leaves them in the household. A no leaves the household's record where it is,
   with everything on it and without the address, and gives the person a new empty record
   in a household of their own, because nobody knows they are who the household meant.
   Nothing from the old record reaches them, including any role it holds, and this is
   the one change to a trusted person's sign-in email made without the Board. Neither answer
-  lands while the household is denied.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+  lands while the household is denied.  [Decision — Board ruling B1/B2]
 
 - A youth stays in the household that added them, with no question, and cannot answer one. A youth
   never adds themselves to a household. Age here is what the record says at
-  first sign-in.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+  first sign-in.  [Decision — Board ruling B1/B2]
 
 - Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
@@ -240,7 +240,7 @@ Things the app takes as true because they are handled outside it.
   out of every live list, count and roster. A record of what happened still names
   them, from the archive, because hiding a since-merged identity there would
   falsify the history rather than protect anyone. An older merged record that
-  something still refers to stays as a hidden row until that is cleared.  [Decision — owner ruling 2026-10-31; *Principle: decisions are reversible*]
+  something still refers to stays as a hidden row until that is cleared.  [Decision — *Principle: decisions are reversible*]
 
 - A merge moves email, sign-in identity and verification together as one unit,
   never split across the two records.  [Decision]
@@ -341,13 +341,13 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
-- A board override that denies a change leaves the earlier approval standing.  [Decision — owner ruling 2026-11-01]
+- A board override that denies a change leaves the earlier approval standing.  [Decision]
 
 - Force-approve refuses an adult the household withdrew, and refuses when the
   family's household or the adult's own household is denied.  [Decision]
 
 - A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
-  and the family resubmits.  [Decision — owner ruling 2026-11-01]
+  and the family resubmits.  [Decision]
 
 - Denying a household's membership revokes, at once and in the same act, every
   review not already revoked or denied — approved, open or expired — on the

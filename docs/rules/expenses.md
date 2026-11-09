@@ -104,7 +104,7 @@ Things the app takes as true because they are handled outside it.
   reimbursed when that is someone else, unless the next rule skips that person.
   Neither email names the other person, and neither carries finance's reason or
   the total.
-  [Decision — owner ruling 2026-10-31]
+  [Decision]
 
 - A rejection email goes only to a person with a linked sign-in and an email
   address who has not turned off "Email me about my receipts and
@@ -126,12 +126,12 @@ Things the app takes as true because they are handled outside it.
   get one email naming the retailer and date and linking to the receipt. A card
   charge's sign-off, a backfill, and an approver's exception send none. Neither
   email names the other person, and neither carries a line's note or the total.
-  [Decision — owner ruling 2026-10-31]
+  [Decision]
 
 - A person may turn the receipt and reimbursement emails off; turning off all
   email also stops them. They are on until turned off. Only a live person with
   a verified sign-in email is emailed.
-  [Decision — owner ruling 2026-10-31; *Principle: fail closed*]
+  [Decision — *Principle: fail closed*]
 
 - An outcome email carries only what its recipient's own receipt pages show.
   [Decision — *Principle: least privilege*]
@@ -172,7 +172,7 @@ Things the app takes as true because they are handled outside it.
   Board member without a conflict signs it, after the Treasurer. Settling an
   exception without making it final adds no Board signature, because the new
   bucket's approver may still raise an exception.
-  [Decision — owner ruling 2026-10-30]
+  [Decision]
 
 - A tax or date the submitter fills in where the field was blank goes to
   finance review the same as one they changed. Finance sees which it was:
@@ -315,25 +315,25 @@ Things the app takes as true because they are handled outside it.
 - Every reading counts against the person's daily reading allowance, whether
   it succeeds or fails. The app never reads the receipt again by itself,
   because each reading costs money: the submitter presses "Read it again".
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - Finance or the Board may reset one person's daily reading allowance when that
   person has a good reason, so they need not wait for the next day. The reset
   gives a full allowance from that moment, needs a reason, and is recorded in
   the audit log.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - Three or more failed readings within a day put one line on the Problems
   list, "Receipt reading failed N times in the last day", with no error text or
   names, and that line sends the daily problems email to the alert address.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - Sysadmins, finance and the Board may turn automatic reading of receipts off
   and on, so reading can stop at once when a known problem needs a deploy.
   While it is off, no receipt is read and submitters are not offered "Read it
   again". The switch is apart from the other receipt settings, which stay
   finance's.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
   needs no spending sign-off. It is a donation, not an expense record.
@@ -360,7 +360,7 @@ Things the app takes as true because they are handled outside it.
 - Finance may restore an archived bucket. It comes back with its class, owner
   and treasurers. An archived bucket keeps its class, so no other bucket can
   hold that class when it returns. Each restore is recorded.
-  [Decision — owner ruling 2026-11-01]
+  [Decision]
 
 - A bucket's approvers are its owner and its treasurers, stored on the bucket
   and not derived from any program: a budget and a program need not match one
@@ -373,7 +373,7 @@ Things the app takes as true because they are handled outside it.
   while an open expense in it has a non-Everyday card-charge line with no Board
   authorization and no Board signature, so the change never removes a Board seat
   a line still owes.
-  [Decision — owner ruling 2026-11-01; *Policy: Financial Policy, Art. XII §XII.4*]
+  [Decision — *Policy: Financial Policy, Art. XII §XII.4*]
 
 - A change to whether a bucket is org-level undoes no signature, and the seats
   still unsigned follow the bucket as it now is. A bucket that becomes org-level
@@ -383,7 +383,7 @@ Things the app takes as true because they are handled outside it.
   approvers until the Board names them, and a Board member in their place gives
   the reason. Once it is a program bucket, its lines take no Board seat for being
   in it, on finance's change alone.
-  [Decision — owner ruling 2026-11-01]
+  [Decision]
 
 - A bucket's owner and treasurers are set by the board alone, because they come
   from the board-approved budget. Nobody sets, replaces or removes themself or
@@ -508,7 +508,7 @@ Things the app takes as true because they are handled outside it.
   not a signature at any step and is not refused for a conflict. It does not
   stop whoever moved it, or their household, from signing a step on the
   expense.
-  [Decision — owner ruling 2026-10-30]
+  [Decision]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line.
@@ -553,7 +553,7 @@ Things the app takes as true because they are handled outside it.
   it closes, using the facts of that moment. If the person reimbursed later
   loses their membership, or the Board-review total is later lowered, the expense
   still reaches the books and needs no new signature or approval.
-  [Decision — owner ruling 2026-10-31]
+  [Decision]
 
 - Someone who has already signed an expense and then joins the household of the
   submitter or the person reimbursed keeps their signature, and the expense
@@ -568,7 +568,7 @@ Things the app takes as true because they are handled outside it.
   being a different person. The expense still reaches the books, needing no new
   signature. A signature that has to be given again is judged anew against the
   surviving person.
-  [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*; owner accepted 2026-11-01]
+  [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.

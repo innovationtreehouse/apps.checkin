@@ -92,7 +92,7 @@ How the pieces are built is described in
   is left to decide and the conflict is closed as resolved. A resolved conflict
   records the item it was decided against; its audit entry keeps the item raised.
   This screen offers no way back to the original item; that is fixed by hand in
-  the global catalog. `[Decision — owner ruling 2026-10-31]`
+  the global catalog. `[Decision]`
 
 ### On-hand stock
 
