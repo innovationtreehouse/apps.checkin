@@ -56,12 +56,12 @@ describeDb("approver routes filter to the caller's buckets", () => {
     as(APPROVER);
     expect(await call(expenses.queue, "/queue?view=owner_approval")).toMatchObject({ Expense: [{ id: expenseId }] });
     as(OUTSIDER);
-    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [] });
+    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [], ExpenseWaitingOn: [] });
   });
 
   it("GET expenses: zero rows", async () => {
     as(OUTSIDER);
-    expect(await call(expenses.list, "/expenses")).toEqual({ Expense: [] });
+    expect(await call(expenses.list, "/expenses")).toEqual({ Expense: [], ExpenseWaitingOn: [] });
   });
 
   it("GET expenses/count: zero", async () => {
@@ -71,7 +71,7 @@ describeDb("approver routes filter to the caller's buckets", () => {
 
   it("GET queue: zero rows", async () => {
     as(OUTSIDER);
-    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [] });
+    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [], ExpenseWaitingOn: [] });
   });
 
   it("GET counts: every count zero", async () => {

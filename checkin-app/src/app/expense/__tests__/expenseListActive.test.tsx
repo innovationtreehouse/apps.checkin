@@ -85,7 +85,7 @@ describe("View descriptions on the expense list", () => {
     ["owner_exception", "Lines an approver raised an exception on. FINANCE settles each one."],
     ["capital_review", "Expenses at or over the capital thresholds. FINANCE decides which lines are capital assets."],
     ["set_depreciation_cycle", "Capital expenses with no depreciation schedule yet. FINANCE sets the cycle and owner bucket."],
-    ["qb_pending", "Signed-off expenses waiting for the app to post them to QuickBooks. Nobody needs to act."],
+    ["qb_pending", "Approved expenses waiting on their last signatures or on posting to QuickBooks."],
   ])("the %s view says what it lists and who acts", (view, description) => {
     renderList(`view=${view}`);
     expect(screen.getByText(description)).toBeInTheDocument();

@@ -45,6 +45,9 @@ const REVIEWED = [
   'services/submitterSeatService.ts: where: { orgId: await getOrgId(), ...TAKES_SUBMITTER_SEAT, reimburseePersonId: { not: null }, lineItems: { some: { signoffs: { none: { seat: "SUBMITTER" } } } } },',
   "services/submitterSeatService.ts: select: { id: true, reimburseePersonId: true },",
   "services/submitterSeatService.ts: return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));",
+  // Handed to signoffFactsForExpenses, which resolves them; reimburseeUnknown reads only whether one is set.
+  "services/waitingOnService.ts: submitterId: true,",
+  "services/waitingOnService.ts: reimburseePersonId: true,",
   // A prefilter that only excludes; the resolved facts decide on what stays.
   'services/badgeCounts.ts: where: { orgId: await getOrgId(), state: "qb_pending", backfill: false, submitterId: { not: me } },',
   // Skips redoing one's own approval; a merged approver's line falls through to approveLocked, which refuses it.
