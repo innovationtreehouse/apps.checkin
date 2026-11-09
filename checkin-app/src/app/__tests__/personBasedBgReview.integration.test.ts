@@ -16,7 +16,7 @@ import { activate } from '@/lib/membership/payment';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
 import { settleApplicationsAwaitingCheck, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { householdCheckStandings } from '@/lib/membership/checkStanding';
-import { notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
+import { notifyBoardCheckRejected, notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
@@ -24,7 +24,7 @@ jest.mock('@/lib/finance/reconcile/liveOrder', () => ({
     recordUnreportedReversal: jest.fn().mockResolvedValue(undefined),
     recordUnreportedReversalOnProcess: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined), notifyBoardPaymentException: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined), notifyBoardCheckRejected: jest.fn().mockResolvedValue(undefined), notifyBoardPaymentException: jest.fn().mockResolvedValue(undefined) }));
 
 const TAG = 'person-based-bg-review-test';
 let seq = 0;
@@ -110,7 +110,10 @@ afterAll(async () => {
     await prisma.$disconnect();
 });
 
-beforeEach(() => jest.mocked(notifyBoardPaidReject).mockClear());
+beforeEach(() => {
+    jest.mocked(notifyBoardPaidReject).mockClear();
+    jest.mocked(notifyBoardCheckRejected).mockClear();
+});
 
 describe('consent opens a check review with no person', () => {
     it('opens one review requested for the household, and a second consent reuses it', async () => {
@@ -185,6 +188,7 @@ describe('the first decision names the person', () => {
         expect(rejection).toMatchObject({ result: 'REJECT', subjectPersonId: f.lead2Id });
         expect((await row(f.appId)).status).toBe('BLOCKED');
         expect(notifyBoardPaidReject).toHaveBeenCalledWith(f.appId);
+        expect(notifyBoardCheckRejected).not.toHaveBeenCalled();
     });
 
     it("closes the named person's own empty review in favour of this one (PBR-11)", async () => {
@@ -468,5 +472,49 @@ describe('cutover: the daily settle opens a review for an application already wa
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: f.appId } })).toBe(1);
         expect((await row(f.appId)).bgClearedAt).toBeNull();
         expect((await settleApplicationsAwaitingCheck()).opened).toBe(0);
+    });
+});
+
+describe('the Board hears of each rejection once (PBR-2)', () => {
+    it('emails the Board when an adult in an ACTIVE household is rejected, and changes nothing on the membership', async () => {
+        const f = await family('ACTIVE', { membership: 'ACTIVE', paid: true, consent: true });
+        const reviewId = await ownReview(f.adultId);
+        await attest(revA, reviewId, { result: 'REJECT', note: 'concerning' });
+        expect((await row(reviewId)).status).toBe('BLOCKED');
+        expect((await row(f.appId)).status).toBe('ACTIVE');
+        expect(notifyBoardCheckRejected).toHaveBeenCalledTimes(1);
+        expect(notifyBoardCheckRejected).toHaveBeenCalledWith(reviewId);
+        expect(notifyBoardPaidReject).not.toHaveBeenCalled();
+    });
+
+    it('emails the Board when a rejection blocks an unpaid application', async () => {
+        const f = await family('PENDING_PAYMENT', { consent: true });
+        const reviewId = await ownReview(f.adultId);
+        await attest(revA, reviewId, { result: 'REJECT' });
+        expect((await row(f.appId)).status).toBe('BLOCKED');
+        expect(notifyBoardCheckRejected).toHaveBeenCalledWith(reviewId);
+        expect(notifyBoardPaidReject).not.toHaveBeenCalled();
+    });
+
+    it('emails the Board when a person in a household with no membership is rejected', async () => {
+        const household = await prisma.household.create({ data: { name: `${TAG} no membership ${seq++}` } });
+        const person = await prisma.person.create({ data: { name: `Loner ${seq}`, email: `loner-${seq}-${TAG}@example.com`, householdId: household.id } });
+        const reviewId = await ownReview(person.id);
+        await attest(revA, reviewId, { result: 'REJECT' });
+        expect(notifyBoardCheckRejected).toHaveBeenCalledWith(reviewId);
+    });
+
+    it('sends no second email on a retry, a re-settle or another reviewer, and one more after a Board reset and a new rejection', async () => {
+        const f = await family('ACTIVE', { membership: 'ACTIVE', paid: true, consent: true });
+        const reviewId = await ownReview(f.adultId);
+        await attest(revA, reviewId, { result: 'REJECT' });
+        await expect(attest(revA, reviewId, { result: 'REJECT' })).rejects.toBeDefined();
+        await expect(attest(revB, reviewId, { result: 'REJECT' })).rejects.toBeDefined();
+        await settleHouseholdBg(f.householdId);
+        expect(notifyBoardCheckRejected).toHaveBeenCalledTimes(1);
+
+        await boardResetReview(reviewId, board, { reason: 'recheck' });
+        await attest(revB, reviewId, { result: 'REJECT' });
+        expect(notifyBoardCheckRejected).toHaveBeenCalledTimes(2);
     });
 });

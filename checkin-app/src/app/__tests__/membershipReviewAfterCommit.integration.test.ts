@@ -21,6 +21,7 @@ jest.mock('@/lib/email', () => ({
 }));
 jest.mock('@/lib/membership/boardAlerts', () => ({
     notifyBoardPaidReject: jest.fn(),
+    notifyBoardCheckRejected: jest.fn(),
     notifyBoardPaymentException: jest.fn(),
 }));
 jest.mock('@/lib/membership/personBgTriggers', () => ({ openPersonBgForNewMember: jest.fn() }));

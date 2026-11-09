@@ -465,10 +465,15 @@ applications and is kept for history.
 - Applicant `/membership` page: unchanged. The family is not asked whose check it
   is.
 
-**Notifications.** No new templates. `membership.reviewNeeded` is unchanged. The
+**Notifications.** `membership.reviewNeeded` is unchanged. The
 `paymentOpen` / `paymentOpenExistingCheck` choice follows whether a review just
-cleared or the household already qualified. `board.paidReject` fires when a person's
-rejection blocks a paid application.
+cleared or the household already qualified. Each rejection sends the Board one
+email. `board.paidReject` fires when a person's rejection blocks a paid
+application. In every other case, `board.checkRejected` names the person, their
+household and the review (PBR-2). That covers an ACTIVE household, a household
+with no open application, and one whose open application is unpaid. It is sent on the
+review's own rejection, so a retry, a re-settle or the daily sweep never repeats
+it. A rejection after a Board reset is a new decision and sends again.
 
 **Reports.**
 - Compliance STALE_BG uses the predicate, so a household with a disputed adult is

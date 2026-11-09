@@ -60,7 +60,7 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
     const result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold));
 
     if (result.steps.includes("opened")) await notifyReviewers();
-    if (result.paidReject) await notifyBoardPaidReject(app.id);
+    if (result.steps.includes("paidReject")) await notifyBoardPaidReject(app.id);
     if (result.advanceExternal) await advanceExternalIfComplete(app.id);
     if (result.clearance) {
         await notifyClearanceOutcome(result.clearance, opts.reviewJustCleared ? undefined : { paymentOpenNotice: notifyPaymentOpenOnExistingCheck });
@@ -92,9 +92,10 @@ export async function settleApplicationsAwaitingCheck(): Promise<{ households: n
     return { households: households.length, opened, failed };
 }
 
-export type SettleStep = "denied" | "blocked" | "resumed" | "cleared" | "opened";
+/** "paidReject": the application blocked had been paid, and the Board is told so. */
+export type SettleStep = "denied" | "blocked" | "paidReject" | "resumed" | "cleared" | "opened";
 
-type Settled = { steps: SettleStep[]; paidReject?: boolean; advanceExternal?: boolean; clearance?: ClearanceOutcome };
+type Settled = { steps: SettleStep[]; advanceExternal?: boolean; clearance?: ClearanceOutcome };
 
 const ACTOR = systemActor("system:membership-bg-settle");
 const BLOCK_REASON = "check review rejected";
@@ -146,7 +147,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         });
         if (!count) return { steps };
         await audit(tx, processId, householdId, { status }, { status: "BLOCKED", reason: BLOCK_REASON, blockingReviewIds: blockingNow });
-        return { steps: ["blocked"], paidReject: !!process.paidAt };
+        return { steps: process.paidAt ? ["blocked", "paidReject"] : ["blocked"] };
     }
 
     if (cleared) return { steps };

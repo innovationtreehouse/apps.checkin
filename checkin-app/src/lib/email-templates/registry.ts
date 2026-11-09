@@ -148,6 +148,12 @@ export const REGISTRY = {
         defaultSubject: "Membership: a paid application was blocked at background check",
         defaultBody: "A household that already paid did not pass background-check review (application #{{processId}}). The membership has not been activated and a refund may be needed — please review and contact the household. {{actionLink}}",
     },
+    "board.checkRejected": {
+        allowedTokens: { personName: text, householdName: text, reviewId: text, actionLink: link("Open applications") },
+        sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", reviewId: "412", actionLink: SAMPLE_URL },
+        defaultSubject: "Membership: a background check was rejected",
+        defaultBody: "A background-check review of {{personName}} ({{householdName}}) was rejected (review #{{reviewId}}). No paid application was blocked, and nothing about the household's membership was changed automatically. Please review the case and decide what the Board does. {{actionLink}}",
+    },
     "board.paymentException": {
         // blurb: the exception kind's fixed description, kept in code (decision B-1).
         allowedTokens: { kind: text, blurb: text, exceptionId: text, actionLink: link("Open payment problems") },

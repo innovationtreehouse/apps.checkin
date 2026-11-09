@@ -243,7 +243,7 @@ describe('settleHouseholdBg — blocking and resuming', () => {
         const f = await family();
         const reviewId = await checkReview(f.otherId, 'BLOCKED');
         const id = await application(f.orgMembershipId, 'PENDING_BG_CLEARANCE', { paidAt: new Date() });
-        expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked']);
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked', 'paidReject']);
         expect((await row(id)).status).toBe('BLOCKED');
         const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: id }, orderBy: { id: 'desc' } });
         expect(audit.newData).toMatchObject({ status: 'BLOCKED', blockingReviewIds: [reviewId] });
