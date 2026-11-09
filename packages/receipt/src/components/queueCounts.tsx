@@ -8,6 +8,8 @@ import { FINANCE_ACTION_STATES } from "../nav";
 /** How many of the org's receipts each review queue holds, as GET /api/receipts/queue-counts returns them. */
 export interface QueueCounts {
   byState: Record<string, number>;
+  /** For a FINANCE viewer, the FINANCE queues' counts without receipts the viewer is conflicted on. */
+  actionableByState?: Record<string, number>;
   /** Finalized receipts not yet delivered to receiving. */
   notPushed: number;
   /** Of those, the ones catch-up has stopped retrying. */
@@ -40,15 +42,29 @@ export interface QueueBadge {
 export function queueBadge(queue: string, counts: QueueCounts | null, isFinance: boolean): QueueBadge | null {
   if (!counts || !queue) return null;
   const total = queue === NOT_PUSHED ? counts.notPushed : (counts.byState[queue] ?? 0);
-  const actionable = !isFinance ? 0 : queue === NOT_PUSHED ? counts.pushGivenUp : FINANCE_ACTION_STATES.includes(queue) ? total : 0;
+  const actionable = !isFinance
+    ? 0
+    : queue === NOT_PUSHED
+      ? counts.pushGivenUp
+      : FINANCE_ACTION_STATES.includes(queue)
+        ? (counts.actionableByState?.[queue] ?? 0)
+        : 0;
   if (actionable > 0) return { count: actionable, intent: "action" };
   return total > 0 ? { count: total, intent: "info" } : null;
 }
 
-/** A queue tab's count pill, in the host CountBadge's action and info looks. */
-export function QueueCount({ badge }: { badge: QueueBadge | null }) {
+/**
+ * A queue tab's count pill, in the host CountBadge's action and info looks. On a selected (green)
+ * tab the action pill turns gray with green text so it stands out from the button.
+ */
+export function QueueCount({ badge, selected = false }: { badge: QueueBadge | null; selected?: boolean }) {
   if (!badge) return null;
-  const look = badge.intent === "action" ? { color: "treehouseGreen", c: "black" } : { color: "gray.2", c: "gray.8" };
+  const look =
+    badge.intent === "info"
+      ? { color: "gray.2", c: "gray.8" }
+      : selected
+        ? { color: "gray.2", c: "treehouseGreen.9" }
+        : { color: "treehouseGreen", c: "black" };
   return (
     <Badge size="sm" variant="filled" {...look} aria-label={`${badge.count} ${badge.intent === "action" ? "to act on" : "in this queue"}`}>
       {badge.count}

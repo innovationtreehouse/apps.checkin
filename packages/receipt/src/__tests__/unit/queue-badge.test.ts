@@ -3,6 +3,7 @@ import { queueBadge, type QueueCounts } from "../../components/queueCounts";
 
 const counts: QueueCounts = {
   byState: { financial_review: 3, duplicate_flagged: 0, validation_failed: 2, submitter_review: 4, flow_error: 1 },
+  actionableByState: { financial_review: 3, duplicate_flagged: 0, flow_error: 1 },
   notPushed: 5,
   pushGivenUp: 2,
 };
@@ -23,6 +24,11 @@ describe("queueBadge", () => {
     ["not_pushed", { count: 5, intent: "info" }],
   ])("for the Board, %s shows %j: it reads but does not act", (queue, badge) => {
     expect(queueBadge(queue, counts, false)).toEqual(badge);
+  });
+
+  it("shows a FINANCE queue's total in gray when none of it is the viewer's to act on", () => {
+    const own = { ...counts, actionableByState: { financial_review: 0, duplicate_flagged: 0, flow_error: 0 } };
+    expect(queueBadge("financial_review", own, true)).toEqual({ count: 3, intent: "info" });
   });
 
   it("shows the undelivered total in gray once nothing has been given up on", () => {
