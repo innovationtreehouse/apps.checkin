@@ -12,8 +12,8 @@
  *   6. Per-row scope check: the view must cover the served field's tier on
  *      this row (the same fieldVisible/scopesHeld the stripper uses), else 404
  *      — a file the caller may not see is indistinguishable from none.
- *   7. On an `auditedRead` route, record the served row as a finance view
- *      unless the view is own-rows-only; a failed write is an opaque 500.
+ *   7. When the served field is marked and the row is not the caller's own,
+ *      record the view (./financeView); a failed write is an opaque 500.
  *   8. Emit row[field] (bytes) with the headers fixed for its content type.
  *
  * Errors thrown from the user fn: `ApiResponseError` → its status, message,
@@ -35,7 +35,8 @@ import {
     type Token,
 } from './core';
 import { buildCallerContext, callerHoldsRole, resolveAccess, scopesHeld } from './access-resolvers';
-import { ApiResponseError, idText, recordAuditedView, renderApiResponseError, viewReachesOthers, type HandlerContext } from './handler';
+import { ApiResponseError, renderApiResponseError, type HandlerContext } from './handler';
+import { fileRecords, recordView } from './financeView';
 // Side-effect import to register routes before fileHandler() is invoked.
 import './registry';
 
@@ -136,11 +137,9 @@ export function fileHandler<P extends Record<string, string> = Record<string, st
             return apiError('Internal Server Error', 500);
         }
 
-        if (spec.auditedRead && viewReachesOthers(viewTokens)) {
-            const recordId = idText(result.row.id ?? params.id);
-            if (!(await recordAuditedView(endpoint, auth, role, params, [recordId], 1))) {
-                return apiError('Internal Server Error', 500);
-            }
+        const records = fileRecords(model, field, result.row, callerCtx, params);
+        if (records.length > 0 && !(await recordView({ endpoint, req, auth, role, records, spec: undefined }))) {
+            return apiError('Internal Server Error', 500);
         }
 
         const headers: Record<string, string> = {

@@ -51,6 +51,9 @@ export interface CallerContext {
      *  Visit has no householdId column; it reaches a household only via
      *  personId ∈ this set. Drives 'led_households'. */
     ledHouseholdMemberIds: Set<number>;
+    /** Members of the caller's household, the caller included, lead or not. Read only by
+     *  the finance-view own-record check; no scope or field grant depends on it. */
+    householdMemberIds?: Set<number>;
 }
 
 /**
@@ -84,7 +87,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
     ctx.householdId = auth.user.householdId;
     ctx.isKeyholder = auth.user.isKeyholder;
 
-    const [ledPrograms, coreVols, visits, ledHouseholdMembers] = await Promise.all([
+    const [ledPrograms, coreVols, visits, ledHouseholdMembers, householdMembers] = await Promise.all([
         needs.programs
             ? prisma.program.findMany({
                   where: { leadMentorId: auth.user.id },
@@ -124,6 +127,9 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
                       : [],
               )
             : [],
+        needs.householdMembers && ctx.householdId !== undefined
+            ? prisma.person.findMany({ where: { householdId: ctx.householdId }, select: { id: true } })
+            : [],
     ]);
 
     for (const p of ledPrograms) {
@@ -136,6 +142,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
     }
     for (const v of visits) ctx.activeVisitorIds.add(v.personId);
     for (const m of ledHouseholdMembers) ctx.ledHouseholdMemberIds.add(m.id);
+    if (needs.householdMembers) ctx.householdMemberIds = new Set(householdMembers.map(m => m.id));
 
     const scopePrograms = [...ctx.programsLed, ...ctx.programsCoreVolIn];
     await Promise.all([

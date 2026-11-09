@@ -202,3 +202,14 @@ export const relations = {
     events: { model: "InKindGiftEventView", isList: true },
   },
 } as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  InKindQueueItemView: ["uploadedByUserId", "receiptTotalCents", "totalValueCents"],
+  InKindQueueLineView: ["valueCents", "suggestedValueCents"],
+  InKindDecisionView: ["totalValueCents"],
+  InKindBucketGiftView: ["totalValueCents"],
+  InKindBucketGiftLineView: ["valueCents"],
+  InKindGiftDetailView: ["receiptTotalCents", "totalValueCents", "donorFirstName", "donorLastName", "donorCompanyName"],
+  InKindGiftDetailLineView: ["valueCents", "suggestedValueCents"],
+} as const;

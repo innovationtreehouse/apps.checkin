@@ -10,7 +10,10 @@ import { getServerSession } from 'next-auth/next';
 import { routes } from '@checkin/bulk-donation';
 import { GET } from '../route';
 
-jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({
     routes: { inKind: { listQueue: jest.fn() } },

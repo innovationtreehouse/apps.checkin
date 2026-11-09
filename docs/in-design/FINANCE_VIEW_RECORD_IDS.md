@@ -3,22 +3,22 @@
 Design for making the finance view record (the finance-view rule in
 `docs/rules/revenue.md`) say exactly what each look at finance information
 showed: who looked, on which page, which records, and which sensitive fields
-of them. No code changes with this doc.
+of them. It is built in three PRs (see "The PR split").
 
-**Status: every question is decided. Nothing is being built yet.** B11 narrows
-slightly (Q17): five routes that show no money and no person stop being logged.
-That changes a Board ruling, so the boundary PR waits for the Board's
-confirmation.
+**Status: every question is decided. PR 1 (the log table) is merged; PR 2 (the
+boundary) is built.** The finance-view rule narrows slightly: five routes that show no money
+and no person stop being logged. @thpr confirmed the narrowing on 2026-11-08
+and released the boundary PR.
 
 ## The problem
 
 The rule says the record holds "who looked, which records, through which
-screen, and when". Today the handler guesses two of those:
+screen, and when". Before PR 2, the handler guessed two of those:
 
-- **Which records.** On a route flagged `auditedRead: true`, `handler()` records
+- **Which records.** On a route flagged `auditedRead: true`, `handler()` recorded
   `row.id ?? row.payoutGid` for every top-level row of every key in the
-  stripped response (`checkin-app/src/security/handler.ts`). Nothing checks that
-  the field is the finance record's id, or that the row is a record at all.
+  stripped response (`checkin-app/src/security/handler.ts`). Nothing checked that
+  the field was the finance record's id, or that the row was a record at all.
 - **Which screen.** The row stores the API route's registry key
   (`GET /api/expense/expenses/[id]`) and its path params, and no query string.
   The Board's tab then guesses a noun from the path prefix
@@ -55,9 +55,9 @@ The routes audited today that this affects are listed in "Routes no longer
 logged".
 
 - **Where the mark lives.** A schema annotation beside `@sensitivity` on each
-  field, for example `/// @moneyLink` (the name is settled in the boundary
-  PR). It goes in each library's `schema.prisma`, and in the hand-authored
-  synthetic classification files for view models. The generator
+  field: `/// @financeMark`. It goes in each library's `schema.prisma`, and in
+  the hand-authored synthetic classification files for view models, as their
+  `marks` export. The generator
   (`checkin-app/scripts/security-generator.js`) carries the mark into the
   generated classifications the handler reads. `packages/s-ingest-core` runs
   the same generator, so `ShopOrder` is marked the same way.
@@ -125,6 +125,22 @@ financeView: {
 Ids are read from the stripped response, so the log names only what left the
 server.
 
+Build notes (PR 2), not owner decisions:
+
+- A record named from a nested list (`members[].id`) takes the marked fields
+  inside its own element. Any other record takes every marked field of the row.
+- Marked fields that no record can take, because the row's declared id is
+  missing (a finance-queue intake row before PR 3 sends `receiptId`), are kept
+  under `unnamed:<key>`. The view is still logged.
+- A Shopify order is named by its `legacyId`. A row that carries only the
+  order's GID takes the number from it with the s-ingest helper
+  (`packages/s-ingest-core/src/dates.ts`), so one order has one name on every
+  screen. No route sends a `ShopOrder` today.
+- The own-record check for household-owned records reads one lookup of the
+  viewer's household member ids. It runs only on routes that can send
+  `ProgramParticipant` or `OrgMembershipProcess`, and is used only to leave
+  rows out of the log; no field grant depends on it.
+
 Records that live only in another system are named by that system and the
 record's type (Q14, decided): `QuickBooks.Transaction:4412` and
 `Benevity.Disbursement:BEN-889`. A transaction has one name on every screen, so
@@ -148,7 +164,10 @@ The log records one entry per page view, not per API call (Q10 (a) and Q11,
 decided).
 
 - **The browser tags each call.** Each page load mints a page-view id. Every API
-  call from that page carries the id and the page's path in a header. A single
+  call from that page carries the id and the page's path in two headers,
+  `X-Page-View-Id` and `X-Page-View-Path` (named in PR 2). A malformed id, a
+  path that is not a same-origin page path, or a route not on the page's list
+  makes the call untagged. A single
   wrapper installed in the app shell tags every same-origin `/api` call, so
   none of the roughly 200 `fetch()` call sites change.
 - **The server merges.** The audited calls carrying one page-view id merge into
@@ -317,7 +336,10 @@ marked fields it sends.
 | `GET /api/expense/donated-capital` | `DonatedCapitalLine` ← `id` (a view model) |
 | `GET /api/receipts/[id]/duplicate-group` | `Receipt` ← param `id`, `members[].id`, `members[].copyOfId`, `dismissed[]` (decided) |
 | `GET /api/receipts`, needs-attention, confirmations, `[id]` | `Receipt` ← `id` (view models of `Receipt`) |
-| `GET /api/workflow-mapping/receipts`, `[id]`, audit-log | `ReceivedReceipt` ← `id`, or ← `receivedReceiptId` on the audit log |
+| `GET /api/receipts/[id]/audit-logs` | `Receipt` ← `receiptId` |
+| `GET /api/workflow-mapping/receipts`, audit-log | `ReceivedReceipt` ← `id`, or ← `receivedReceiptId` on the audit log |
+| `GET /api/workflow-mapping/receipts/[id]` | `Receipt` ← `WorkflowReceiptView.receiptId` |
+| `GET /api/finance-ops/s-read/match-audit` | `ShopOrder` ← `orders[].orderLegacyId`; `OrgMembershipProcess` ← `memberships[].processId`, or `OrgMembership` ← `memberships[].membershipId` on a row with no application; `ProgramParticipant` ← `enrollments[]` `programId`:`personId` |
 | `GET /api/donations/disbursement-holds` | `Benevity.Disbursement` ← `disbursementId`; `Transaction` ← `transactionId` (Q4) |
 | `GET /api/donations/disbursement-events` | `Benevity.Disbursement` ← `disbursementId` (Q4) |
 | `GET /api/donations/in-kind/queue`, by-bucket | `InKindDonation` or `ManualInKindDonation` by `source` ← `id` |
@@ -346,6 +368,7 @@ All of these are audited today.
 | `GET /api/expense/qb-exclusions` | `qbTxnId`, `reason` and who excluded it: no amount, no person (Q17) |
 | `GET /api/income/qb-exclusions` | `qbTxnId` and `reason`: no amount, no person (Q17) |
 | `GET /api/receipts/ignored-files` | a file hash and a reason: mailbox configuration (Q17) |
+| `GET /api/donations/uploaded-files` | each Benevity upload's filename, counts and uploader: the upload itself is recorded, and opening the file stays logged |
 | `GET /api/expense/expenses/[id]/signoffs` | per-line seat status, no money or person (Q17) |
 | `GET /api/expense/expenses/[id]/line-item-approvals` | bucket, status, who decided: no money or person (Q17) |
 
@@ -378,11 +401,17 @@ mark.
    and the page allowlist map. `receiptId` in `FinanceQueueRow`'s
    classification. Retiring the `auditedRead` flag and its guard test, which
    the start-up checks replace. The reworded `docs/rules/revenue.md` register
-   line, which narrows B11 (Q17). **It waits for the Board's confirmation** of
-   that narrowing.
+   line, which narrows the finance-view rule, confirmed by @thpr on 2026-11-08.
 3. **App code: the browser and the tab.** The app-shell wrapper that tags each
    `/api` call; `receiptId` in the finance-queue rows; `financeViewKinds.ts` as
    the model-to-page link map; the tab's new entry.
+   The tab pages by offset (`skip: (page - 1) * …` in
+   `checkin-app/src/app/api/system-status/finance-views/route.ts`) over a log
+   that grows at the head. A view logged between two clicks shifts every row,
+   so "Older" repeats a row. PR 3 replaces the offset with a stable position,
+   for example a `before=<viewedAt,id>` marker kept in the URL per the paging
+   convention in `docs/conventions.md`. The exact form is for PR 3 to propose.
+   (From jee7s's approval of #2720.)
 
 Until (3) ships, no call carries the header, so every call writes its own row,
 as today but with exact records and fields.
@@ -490,7 +519,7 @@ as today but with exact records and fields.
   files, signoffs and line-item approvals. Amounts on their own still log a
   view (Q15), so the payouts list and a bucket approver's expense lines stay
   logged. The Q4 entries for the two exclusion lists are dropped.
-  [Decision — owner, pending Board confirmation]
+  [Decision — owner; confirmed 2026-11-08]
 
   Draft wording for the `docs/rules/revenue.md` register line, for review.
   `revenue.md` is unchanged until the boundary PR:
@@ -503,6 +532,89 @@ as today but with exact records and fields.
   >   matching, is not recorded. A person looking at their own receipts is not
   >   recorded, and neither is a count. Only the Board reads the record.
   >   [Decision — owner; Board ruling B11, narrowed]
+
+- **Book price is public; actual price is private.** Book prices,
+  membership fees and expense thresholds are policy and are not marked:
+  `Program.*PriceCents`, `BoardSettings.*FeeCents`, `ExpenseOrgSettings.*Cents`,
+  and the threshold copies on an expense (`Expense.everydayTotalLimitCents`,
+  `everydayItemLimitCents`). Any discount, waiver, scholarship amount, or price
+  actually charged or paid is marked, including `ShopOrderLine.priceCents`, the
+  suggested values on in-kind lines, processor and platform fees
+  (`Transaction.causeSupportFeeCents`, `merchantFeeCents`, `checkFeeCents`;
+  `ShopPayout.*FeeCents`; `ShopBalanceTransaction.feeCents`;
+  `IncomeBalanceTxnView.feeCents`) and the discount codes a buyer used
+  (`ShopOrder.discountCodes`, `MatchAuditOrderRow.discountCodes`).
+  `BoardSettings.volunteerFamilyDiscountCode` is set-up and not marked.
+  [Decision — owner]
+- **Writes do not log views.** Only a GET is a view. A write is recorded
+  by its own change audit. The writes that send a marked field, and the parts
+  of them no change audit records, were listed for @thpr; fixing those gaps is
+  separate work.  [Decision — owner]
+- **Payment plans and scholarships are Board and finance only.** Board and
+  finance views of those fields are logged by the marks; a family's own view is
+  not. Staff access to them is narrowed separately; until it is, the marks
+  log whatever staff can still see. Nothing here depends on the order.
+  [Decision — owner]
+- **A row with no id of its own is the record it belongs to.** A payments
+  live order is its `PaymentException`; a payout's balance transactions are the
+  payout (`ShopPayout`), not their order; a workflow receipt view is
+  `Receipt:<receiptId>`; a match-audit order row is the Shopify order,
+  named `ShopOrder:<orderLegacyId>` everywhere; `ProgramParticipant` is
+  `programId:personId`.  [Decision — owner]
+- **Nested rows are never records of their own.** A marked field on a
+  nested row (an expense's lines, a hold's transaction, a confirmation's lines)
+  counts toward the top-level record that holds it, declared or not. Viewing an
+  expense's lines logs `Expense:e_123` with the marked field names found
+  anywhere inside it.  [Decision — owner]
+- **The model can follow a field.** The in-kind queue picks
+  `InKindDonation` or `ManualInKindDonation` by `source` (`receipt`, `manual`);
+  income reconciliation picks `ShopPayout` or `Benevity.Disbursement` (`shopify`,
+  `benevity`). A value not in the map does not refuse the response: the row is
+  logged as `unknown-source:<value>:<id>`.  [Decision — owner]
+- **Family is their own.** Any member of a household, lead or not, viewing
+  their own household's records (enrolments, payment-plan and scholarship
+  requests) is viewing their own, and is not logged. A membership process whose
+  `requestedForHouseholdId` is the viewer's household is their own for every
+  member.  [Decision — owner]
+- **The match audit's buyers are marked.** `MatchAuditOrderRow.customerEmail`,
+  `MatchAuditMembershipRow.householdName` and `manualPaymentByName`, and
+  `MatchAuditEnrollmentRow.personName` are the same buyers and people as the
+  fields already marked.  [Decision — owner]
+
+- **A picklist is not a finance view.** The reimbursee picker's
+  `ExpenseReimburseeView` (candidate people) is not marked. The expense's actual
+  reimbursee stays marked.  [Decision — owner]
+- **The vendor is marked everywhere it appears:** `Expense.vendorName`,
+  `FinanceQueueRow.vendorName`, the receipt's `retailer` (stored and every view)
+  and the workflow `vendorName`. A catalog or inventory `retailer` is where an
+  item can be bought, not a purchase's vendor, and is not marked.
+  [Decision — owner]
+- **The in-kind submitter is the submitter:** `InKindDonation.uploadedByUserId`
+  and `InKindQueueItemView.uploadedByUserId` are marked.  [Decision — owner]
+- **The stored copy of a whole receipt is marked:**
+  `ReceivedReceipt.receiptJson`, like the other stored payloads.  [Decision — owner]
+- **The expense history's values are marked:** `ExpenseAuditLog.valueBefore`
+  and `valueAfter`. They copy a reimbursee id, a tax amount or a note into the
+  history.  [Decision — owner]
+- **An actor's name is not marked:** `MatchAuditEnrollmentRow.compedByName`
+  names who comped an enrolment, like the unmarked approver ids.
+  [Decision — owner]
+- **A match-audit membership row names its application, else its membership
+ :** `OrgMembershipProcess:<processId>`, or `OrgMembership:<membershipId>`
+  on a row with no application.  [Decision — owner]
+- **A receipt's change history names the receipt:** `Receipt:<receiptId>`,
+  not each history entry.  [Decision — owner]
+- **The register line names the household.** The `revenue.md` finance-view line
+  says "other than a person's view of their own or their household's", so the
+  narrowed line states the household exemption too.  [Decision — owner]
+- **The Benevity upload list is not logged.** It shows each upload's
+  filename, row counts and uploader, never the file's contents. The upload is
+  recorded when it happens, so reading the list adds nothing. Opening an
+  uploaded file (`GET /api/donations/uploaded-files/[id]/blob`) stays logged
+  through its marked `fileBlob`.  [Decision — owner]
+- **A mailed receipt's sender is its submitter.**
+  `ReceiptMailItem.senderAddress` is marked, so the held mail list
+  (`GET /api/receipts/mail-items`) stays logged.  [Decision — owner]
 
 ## Open questions for @thpr
 

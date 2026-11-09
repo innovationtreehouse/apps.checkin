@@ -38,6 +38,7 @@ model PayoutReconciliation {
   /// @sensitivity:internal
   payoutDate        String    @map("payout_date")
   /// @sensitivity:internal
+  /// @financeMark
   payoutNetCents    Int       @map("payout_net_cents")
   /// @sensitivity:internal
   status            String    @map("status")
@@ -52,6 +53,7 @@ model PayoutReconciliation {
   /// @sensitivity:internal
   depositTxnDate    String?   @map("deposit_txn_date")
   /// @sensitivity:internal
+  /// @financeMark
   depositTotalCents Int?      @map("deposit_total_cents")
   /// @sensitivity:internal
   reason            String?   @map("reason")

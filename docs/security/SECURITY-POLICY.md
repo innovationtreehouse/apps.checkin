@@ -108,6 +108,11 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 1. Add the field in `prisma/schema.prisma` with a `/// @sensitivity:<tier>` comment above it.
 2. Run `npx prisma generate` and commit the regenerated `src/security/generated/classifications.ts`.
 3. If the field should be exposed: nothing else to do unless its tier isn't already covered. Every existing view that grants `*:<that-tier>` will now expose it automatically. A schema tier change is the policy change; maintainer reviews under CODEOWNERS.
+4. If the field is a finance amount actually charged, paid, given or moved, or names a person or company tied to money (the list is in `docs/in-design/FINANCE_VIEW_RECORD_IDS.md`), add `/// @financeMark` beside its `@sensitivity`. A synthetic view model lists its marked fields in its file's `marks` export. A GET response that carries a marked field on a row that is not the viewer's own writes a finance view log row; nothing on the route needs flagging. Book prices, fee schedules and thresholds are not marked.
+
+### Declaring a finance view's records
+
+By default a logged row names its own model and `id`. Where that is wrong (a view model, a pointer to another record, a composite id, an id in the path or nested), declare `financeView.records` on the route; `financeView.query` lists the query parameters that pick the screen. Registration refuses a route that can send a marked field on top-level rows with no `id` and no declaration, a declared field that is not classified, a model that is neither classified nor an outside name (`QuickBooks.Transaction`, `Benevity.Disbursement`), and an id that a role able to see a marked field cannot see. A page whose panels should fold into one log entry goes in `src/security/pageViewFolds.ts`.
 
 ### Sending data to a third party
 
@@ -173,7 +178,7 @@ export const GET = fileHandler('GET /api/things/[id]/file', async ({ params }) =
 | `application/pdf` | `inline` | none (Chrome's PDF viewer refuses a sandboxed document) |
 | `text/plain` (sent as `; charset=utf-8`) | `attachment` | none |
 
-The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `checkin-app/scripts/migrated-routes.txt`. On an `auditedRead` route the handler records the served row as a finance view unless the view is own-rows-only, and a failed write is an opaque 500. The handler does not check magic bytes or stream from storage; those are the route's job (see `docs/architecture/RECEIPT.md`, "File storage").
+The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `checkin-app/scripts/migrated-routes.txt`. When the served field carries `/// @financeMark` and the row is not the caller's own, the handler records the view in the finance view log, and a failed write is an opaque 500. The handler does not check magic bytes or stream from storage; those are the route's job (see `docs/architecture/RECEIPT.md`, "File storage").
 
 ## What this layer does NOT cover (yet)
 

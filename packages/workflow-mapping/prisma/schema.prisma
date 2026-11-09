@@ -57,6 +57,7 @@ model ReceivedReceipt {
   /// @sensitivity:public
   state           String   @default("pending_review")
   /// @sensitivity:personal
+  /// @financeMark
   receiptJson     String   @map("receipt_json")
   /// @sensitivity:internal
   validationNotes String?  @map("validation_notes")
@@ -143,6 +144,7 @@ model WorkflowAuditLog {
   /// @sensitivity:public
   toState           String?  @map("to_state")
   /// @sensitivity:internal
+  /// @financeMark
   details           String?
   /// @sensitivity:public
   createdAt         DateTime @default(now()) @map("created_at")

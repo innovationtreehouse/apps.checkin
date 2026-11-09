@@ -261,3 +261,14 @@ export const relations = {
     members: { model: "ReceiptDuplicateMember", isList: true },
   },
 } as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  ReceiptView: ["retailer", "uploadedByUserId", "reimbursementFor", "reimburseePersonId", "donorFirstName", "donorLastName", "donorCompanyName", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
+  ReceiptLineView: ["uploadedByUserId", "unitPriceCents", "totalPriceCents"],
+  ReceiptConfirmationView: ["retailer", "reimburseePersonId", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
+  ReceiptConfirmationLineView: ["reimburseePersonId", "unitPriceCents", "totalPriceCents"],
+  ReceiptReimbursedView: ["retailer", "reimburseePersonId", "receiptTotalCents"],
+  ReceiptDuplicateQueueRow: ["retailer", "receiptTotalCents"],
+  ReceiptDuplicateMember: ["uploaderName"],
+} as const;

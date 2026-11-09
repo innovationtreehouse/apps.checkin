@@ -70,3 +70,10 @@ export const relations = {
     lineItems: { model: "WorkflowReceiptLineView", isList: true },
   },
 } as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  WorkflowReceiptSummary: ["vendorName", "receiptTotalCents"],
+  WorkflowReceiptView: ["vendorName", "receiptTotalCents", "taxCents", "shippingCents", "discountCents"],
+  WorkflowReceiptLineView: ["unitPriceCents", "totalPriceCents"],
+} as const;

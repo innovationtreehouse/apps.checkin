@@ -30,6 +30,7 @@ model UploadedFile {
   /// @sensitivity:internal
   originalFilename   String    @map("original_filename")
   /// @sensitivity:pii
+  /// @financeMark
   fileBlob           Bytes?    @map("file_blob")
   /// @sensitivity:internal
   fileHash           String    @map("file_hash")
@@ -89,28 +90,37 @@ model Transaction {
   foreignExchangeRate    Float?    @map("foreign_exchange_rate")
 
   /// @sensitivity:internal
+  /// @financeMark
   companyName            String?   @map("company_name")
   /// @sensitivity:internal
   corporatePeerCampaign  String?   @map("corporate_peer_campaign")
   /// @sensitivity:internal
+  /// @financeMark
   donationAmountCents    Int       @default(0) @map("donation_amount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   matchAmountCents       Int       @default(0) @map("match_amount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   causeSupportFeeCents   Int       @default(0) @map("cause_support_fee_cents")
   /// @sensitivity:internal
+  /// @financeMark
   merchantFeeCents       Int       @default(0) @map("merchant_fee_cents")
   /// @sensitivity:internal
+  /// @financeMark
   checkFeeCents          Int       @default(0) @map("check_fee_cents")
   /// @sensitivity:internal
   donationMethod         String?   @map("donation_method")
   /// @sensitivity:internal
   donationType           String?   @map("donation_type")
   /// @sensitivity:pii
+  /// @financeMark
   donorFirstName         String?   @map("donor_first_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorLastName          String?   @map("donor_last_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorComment           String?   @map("donor_comment")
 
   /// @sensitivity:internal
@@ -141,6 +151,7 @@ model TransactionCommentRule {
   /// @sensitivity:internal
   orgId             String   @map("org_id")
   /// @sensitivity:pii
+  /// @financeMark
   comment           String
   /// @sensitivity:internal
   ownerId           Int      @map("owner_id")
@@ -219,6 +230,7 @@ model DisbursementEvent {
   /// @sensitivity:internal
   disbursementId String   @map("disbursement_id")
   /// @sensitivity:internal
+  /// @financeMark
   payload        String
   /// @sensitivity:internal
   createdAt      DateTime @default(now()) @map("created_at")
@@ -302,16 +314,20 @@ model InKindDonation {
   /// @sensitivity:internal
   receiptId              String    @map("receipt_id")
   /// @sensitivity:internal
+  /// @financeMark
   receiptTotalCents      Int?      @map("receipt_total_cents")
   /// @sensitivity:internal
   receiptDate            String?   @map("receipt_date")
   /// @sensitivity:internal
   moneyReceivedAt        DateTime? @map("money_received_at")
   /// @sensitivity:pii
+  /// @financeMark
   donorFirstName         String?   @map("donor_first_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorLastName          String?   @map("donor_last_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorCompanyName       String?   @map("donor_company_name")
   /// @sensitivity:internal
   donorRecordedAt        DateTime? @map("donor_recorded_at")
@@ -319,6 +335,7 @@ model InKindDonation {
   withdrawnAfterMoneyAt  DateTime? @map("withdrawn_after_money_at")
   // The receipt's uploader (CompletedReceipt.submitterId), who may not decide the gift.
   /// @sensitivity:internal
+  /// @financeMark
   uploadedByUserId           Int?       @map("uploaded_by_user_id")
   // Set when a later donor replaced a different one already recorded.
   /// @sensitivity:internal
@@ -378,10 +395,13 @@ model ManualInKindDonation {
   /// @sensitivity:internal
   orgId              String                     @map("org_id")
   /// @sensitivity:pii
+  /// @financeMark
   donorFirstName     String                     @map("donor_first_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorLastName      String                     @map("donor_last_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorCompanyName   String?                    @map("donor_company_name")
   /// @sensitivity:internal
   donationDate       String                     @map("donation_date")
@@ -433,9 +453,11 @@ model ManualInKindDonationLine {
   description String?
   /// The line's total value as finance set it when accepting; null until then.
   /// @sensitivity:internal
+  /// @financeMark
   valueCents  Int?                 @map("value_cents")
   /// The value ops suggested at recording; finance sees it and decides.
   /// @sensitivity:internal
+  /// @financeMark
   suggestedValueCents Int?         @map("suggested_value_cents")
   /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
   /// @sensitivity:internal
@@ -464,6 +486,7 @@ model InKindDonationLine {
   /// @sensitivity:internal
   quantity          Float
   /// @sensitivity:internal
+  /// @financeMark
   valueCents        Int            @map("value_cents")
   /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
   /// @sensitivity:internal
@@ -539,6 +562,7 @@ model InKindPosting {
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
   /// @sensitivity:internal
+  /// @financeMark
   bookedTotalCents    Int?      @map("booked_total_cents")
   /// @sensitivity:internal
   bookedTxnDate       String?   @map("booked_txn_date")
