@@ -13,6 +13,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
+import { KeyVolunteerAgreementCard } from "@/components/admin/KeyVolunteerAgreementCard";
 import { membershipYearLabel, variantSlotYears } from "@/lib/programYear";
 
 interface Settings {
@@ -26,6 +27,7 @@ interface Settings {
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
   releasedLibraries: string[];
+  keyVolunteerAgreementVersion: number;
 }
 
 interface YearVariant {
@@ -90,7 +92,9 @@ export default function MembershipSettingsPage() {
 
   const { data, error, reload } = useLoad<{ settings: SettingsBody }>("/api/settings/membership");
   const body = data?.settings;
-  const releasedLibraries = (body && "BoardSettings" in body ? body.BoardSettings : body)?.releasedLibraries ?? [];
+  const settingsRow = body && "BoardSettings" in body ? body.BoardSettings : body;
+  const releasedLibraries = settingsRow?.releasedLibraries ?? [];
+  const kvaVersion = settingsRow?.keyVolunteerAgreementVersion ?? 1;
 
   const current = { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) };
 
@@ -432,6 +436,8 @@ export default function MembershipSettingsPage() {
           </Card>
 
           {isBoardMember && <LibraryReleaseCard key={releasedLibraries.join()} initial={releasedLibraries} />}
+
+          {isBoardMember && <KeyVolunteerAgreementCard key={kvaVersion} initialVersion={kvaVersion} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

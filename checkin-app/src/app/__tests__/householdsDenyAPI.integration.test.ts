@@ -12,6 +12,7 @@ import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { setRoleFlag } from '@/lib/roles';
+import { seedSignedKeyVolunteer } from '@/lib/dev/seed-helpers';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -65,6 +66,7 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
             where: { email: { contains: TAG } }, select: { id: true, householdId: true },
         });
         await prisma.auditLog.deleteMany({ where: { actorId: { in: ids.map(u => u.id) } } });
+        await prisma.orgMembershipProcess.deleteMany({ where: { kind: 'KEY_VOLUNTEER_AGREEMENT', subjectPersonId: { in: ids.map(u => u.id) } } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids.map(u => u.householdId) } } });
         await prisma.person.deleteMany({ where: { email: { contains: TAG } } });
         await prisma.household.deleteMany({ where: { id: { in: ids.map(u => u.householdId) } } });
@@ -106,6 +108,8 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         const grantee = await prisma.person.create({
             data: { email: `grantee-${TAG}@example.com`, name: 'Grantee', household: { create: { name: "Test HH" } } },
         });
+
+        await seedSignedKeyVolunteer(prisma, grantee.id);
 
         let deny: ReturnType<typeof post> | undefined;
         await prisma.$transaction(async (tx) => {

@@ -302,11 +302,13 @@ describe("membership page", () => {
     const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
     const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
 
-    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws. */
+    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws.
+     *  The Key Volunteer panel's status read answers nothing owed and is not counted. */
     function mockReads(reads: Array<[ok: boolean, body: unknown, status?: number] | "offline">) {
       let n = 0;
       const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         void init;
+        if (String(input).includes("/key-volunteer")) return { ok: true, status: 200, ...jsonBody({ owesSignature: false }) } as Response;
         const read = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] as const : reads[Math.min(n++, reads.length - 1)];
         if (read === "offline") throw new TypeError("Failed to fetch");
         const [ok, body, status = ok ? 200 : 403] = read;
