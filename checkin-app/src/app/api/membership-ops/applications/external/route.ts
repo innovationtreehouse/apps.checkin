@@ -22,8 +22,8 @@ export const dynamic = "force-dynamic";
  * Completing the contract + background-check consent advances the application to
  * PENDING_PAYMENT; the background check then reviews in parallel with payment.
  *
- * A Key Volunteer Agreement is a Board document: only a board member acts on one
- * here, or a sysadmin while no board member exists (mayManageKeyVolunteers).
+ * On a Key Volunteer Agreement, every action but 'reset-signing' is the Board's,
+ * or a sysadmin's while no board member exists (mayManageKeyVolunteers).
  */
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -54,7 +54,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         select: { orgMembershipId: true, subjectPersonId: true, kind: true },
     });
     if (!process) return apiError("Application not found", 404);
-    if (process.kind === "KEY_VOLUNTEER_AGREEMENT" && !(await mayManageKeyVolunteers(prisma, auth.user))) {
+    if (process.kind === "KEY_VOLUNTEER_AGREEMENT" && action !== "reset-signing" && !(await mayManageKeyVolunteers(prisma, auth.user))) {
         return apiError("Only board members can act on a Key Volunteer Agreement.", 403);
     }
     if (await hasHouseholdConflict(prisma, actorId, await applicantHousehold(prisma, process))) {

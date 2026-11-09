@@ -3,7 +3,7 @@
  */
 /**
  * The Key Volunteer Agreement outside the role write: the caller's own status,
- * the Board's version bump, and who may record a signature by hand.
+ * the Board's version bump, and who may act on an agreement by hand.
  */
 import prisma from '@/lib/prisma';
 import { POST as EXTERNAL_POST } from '@/app/api/membership-ops/applications/external/route';
@@ -20,13 +20,15 @@ function asSession(user: Record<string, unknown>) {
     (getServerSession as jest.Mock).mockResolvedValue({ user });
 }
 
-function markContract(processId: number) {
+function externalAction(processId: number, action: string, extra: Record<string, string> = {}) {
     return EXTERNAL_POST(new Request('http://localhost:4000/api/membership-ops/applications/external', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ processId, action: 'mark-contract' }),
+        body: JSON.stringify({ processId, action, ...extra }),
     }) as unknown as import('next/server').NextRequest);
 }
+
+const markContract = (processId: number) => externalAction(processId, 'mark-contract');
 
 describe('Key Volunteer Agreement service', () => {
     let boardId: number;
@@ -84,10 +86,22 @@ describe('Key Volunteer Agreement service', () => {
         expect(await getKeyVolunteerSelfStatus(signedId)).toMatchObject({ personId: signedId, owesSignature: false });
     });
 
-    it('records a signature by hand for a board member, never for a sysadmin while a board exists', async () => {
+    it('refuses a sysadmin recording a signature or attaching an envelope while a board exists', async () => {
         asSession({ id: sysadminId, isSysadmin: true });
         expect((await markContract(staleOpenProcessId)).status).toBe(403);
-        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: staleOpenProcessId } })).toMatchObject({ status: 'PENDING_EXTERNAL_ACTION' });
+        expect((await externalAction(staleOpenProcessId, 'set-envelope', { envelopeId: `other-${TAG}` })).status).toBe(403);
+        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: staleOpenProcessId } })).toMatchObject({
+            status: 'PENDING_EXTERNAL_ACTION', contractSignedAt: null, zohoEnvelopeId: `env-${TAG}`,
+        });
+    });
+
+    it('lets a sysadmin reset signing on a Key Volunteer Agreement', async () => {
+        asSession({ id: sysadminId, isSysadmin: true });
+        const res = await externalAction(staleOpenProcessId, 'reset-signing', { reason: 'signer asked for a fresh link' });
+        expect(res.status).toBe(200);
+        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: staleOpenProcessId } })).toMatchObject({
+            status: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: null,
+        });
     });
 
     it('a version bump archives older open agreements and asks every Key Volunteer to sign again', async () => {

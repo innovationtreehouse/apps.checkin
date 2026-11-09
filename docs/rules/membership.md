@@ -612,18 +612,19 @@ Procedure below is built on them.
   person first chooses to sign, since each request costs money.  [Decision —
   @thpr, 2026-10-30]
 
-- Only a board member records a Key Volunteer Agreement signature by hand; a
-  sysadmin who is not on the Board cannot, outside the bootstrap case below.
-  [Decision — @thpr, 2026-11-08]
+- On a Key Volunteer Agreement, recording the signature by hand and attaching a
+  signing request are for a board member only; a sysadmin who is not on the Board
+  cannot, outside the bootstrap case below. Resetting the signing is not limited
+  to the Board.  [Decision — @thpr, 2026-11-08]
 
-- While no board member exists, a sysadmin may grant the Key Volunteer role and
-  record its signature by hand, so a new installation can seat its first board.
-  [Decision — @thpr, 2026-11-08]
+- While no board member exists, a sysadmin may grant and remove the Key Volunteer
+  role and record its signature by hand, so a new installation can seat its first
+  board.  [Decision — @thpr, 2026-11-08]
 
 - Removing the Key Volunteer role while its agreement is open and unsigned closes
   that agreement and recalls its signing request, with an audit record. It is a
-  Board act; nothing removes the role automatically.  [Decision — @thpr,
-  2026-11-08]
+  Board act, or a sysadmin's while no board member exists; nothing removes the
+  role automatically.  [Decision — @thpr, 2026-11-08]
 
 - The agreement is signed once and signed again only when the Board marks it
   materially changed by starting a new version. A new version asks every Key
