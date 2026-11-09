@@ -25,8 +25,8 @@ export default function ReceiptFile({
   rotationPath?: string;
 }) {
   const [text, setText] = useState<string | null>(null);
-  const [turn, setTurn] = useState(rotation);
-  useEffect(() => setTurn(rotation), [rotation]);
+  const [turned, setTurned] = useState<number | null>(null);
+  const turn = turned ?? rotation;
   useEffect(() => {
     if (mimeType !== "text/plain") return;
     void fetch(src).then((r) => (r.ok ? r.text() : `Couldn't load the file (HTTP ${r.status})`)).then(setText);
@@ -37,11 +37,11 @@ export default function ReceiptFile({
   const rotate = async (path: string, by: number) => {
     const before = turn;
     const next = (before + by + 360) % 360;
-    setTurn(next);
+    setTurned(next);
     try {
       await api(path, { method: "PUT", body: JSON.stringify({ rotation: next }) });
     } catch (err) {
-      setTurn(before);
+      setTurned(before);
       notifications.show({ title: "Couldn't save the rotation", message: errorMessage(err), color: "red", autoClose: false });
     }
   };
