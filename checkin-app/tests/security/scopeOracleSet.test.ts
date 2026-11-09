@@ -73,7 +73,6 @@ const ORACLES = [
     'shop-org-members-strip.test.ts',
     'shopify-read-strip.test.ts',
     'stripper-scalar.test.ts',
-    'tombstone-census-strip.test.ts',
     'toolstatus-self-scope.test.ts',
     'unconfirmed-stock-strip.test.ts',
     'visit-household-lead-scope.test.ts',
