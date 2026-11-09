@@ -63,6 +63,8 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
         eventIdsInScopePrograms: new Set(),
         activeVisitorIds: new Set(),
         ledHouseholdMemberIds: new Set(),
+        // Populated in every full context, so masking it away must leave the stripped output unchanged.
+        householdMemberIds: new Set([5, 6]),
         ...opts,
     };
 }
@@ -187,6 +189,7 @@ function maskToNeeds(full: CallerContext, needs: CtxNeeds): CallerContext {
         ledHouseholdMemberIds: needs.ledHouseholdMembers
             ? full.ledHouseholdMemberIds
             : new Set(),
+        householdMemberIds: needs.householdMembers ? full.householdMemberIds : undefined,
     };
 }
 

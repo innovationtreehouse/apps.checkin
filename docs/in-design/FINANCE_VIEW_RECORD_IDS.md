@@ -3,7 +3,7 @@
 Design for making the finance view record (the finance-view rule in
 `docs/rules/revenue.md`) say exactly what each look at finance information
 showed: who looked, on which page, which records, and which sensitive fields
-of them. No code changes with this doc.
+of them. It is built in three PRs (see "The PR split").
 
 **Status: every question is decided. PR 1 (the log table) is merged; PR 2 (the
 boundary) is built.** B11 narrows slightly (Q17): five routes that show no money
@@ -13,12 +13,12 @@ and released the boundary PR.
 ## The problem
 
 The rule says the record holds "who looked, which records, through which
-screen, and when". Today the handler guesses two of those:
+screen, and when". Before PR 2, the handler guessed two of those:
 
-- **Which records.** On a route flagged `auditedRead: true`, `handler()` records
+- **Which records.** On a route flagged `auditedRead: true`, `handler()` recorded
   `row.id ?? row.payoutGid` for every top-level row of every key in the
-  stripped response (`checkin-app/src/security/handler.ts`). Nothing checks that
-  the field is the finance record's id, or that the row is a record at all.
+  stripped response (`checkin-app/src/security/handler.ts`). Nothing checked that
+  the field was the finance record's id, or that the row was a record at all.
 - **Which screen.** The row stores the API route's registry key
   (`GET /api/expense/expenses/[id]`) and its path params, and no query string.
   The Board's tab then guesses a noun from the path prefix

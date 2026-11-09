@@ -689,11 +689,14 @@ function anyScopeSees(tokens: readonly Token[], model: string, field: string): b
     return tier !== undefined && fieldVisible(tier, tokens, ALL_SCOPES);
 }
 
-/** True when some role holding `tokens` can be sent a marked field on `model` or its nested rows. */
+/**
+ * True when some role holding `tokens` can be sent a marked field on `model` or its nested
+ * rows in a JSON response. A field a file route serves never leaves as JSON, so it is skipped.
+ */
 export function marksVisible(tokens: readonly Token[], model: string, seen: Set<string> = new Set()): boolean {
     if (seen.has(model)) return false;
     seen.add(model);
-    if ((marks[model] ?? []).some(field => anyScopeSees(tokens, model, field))) return true;
+    if ((marks[model] ?? []).some(field => !isFileOnlyField(model, field) && anyScopeSees(tokens, model, field))) return true;
     return Object.values(modelRelations(model)).some(rel => marksVisible(tokens, rel.model, seen));
 }
 

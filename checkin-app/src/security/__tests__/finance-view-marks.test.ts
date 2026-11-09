@@ -12,12 +12,15 @@ import {
     defineFileRoute,
     defineRoute,
     financeViewErrors,
+    getFileRoute,
     getRoute,
     markErrors,
     marks,
+    marksVisible,
     type OrderedViewEntry,
     type RouteSpec,
 } from '@/security/core';
+import '@/security/registry';
 import { handler, type ModelBag } from '@/security/handler';
 import { fileHandler } from '@/security/fileHandler';
 import {
@@ -474,5 +477,64 @@ describe('routes Q17 stops logging', () => {
         const spec = getRoute(endpoint);
         expect(spec).toBeDefined();
         expect((spec?.returns ?? []).filter(model => (marks[model] ?? []).length > 0)).toEqual([]);
+    });
+});
+
+describe('routes audited before field marks still log', () => {
+    // Every route that carried `auditedRead` before marks replaced it, apart from those
+    // the doc's "Routes no longer logged" table names. Unmarking a field these depend on fails here.
+    const STILL_LOGGED = [
+    'GET /api/donations/comment-rules',
+    'GET /api/donations/disbursement-events',
+    'GET /api/donations/disbursement-holds',
+    'GET /api/donations/in-kind/by-bucket',
+    'GET /api/donations/in-kind/manual',
+    'GET /api/donations/in-kind/manual/[id]',
+    'GET /api/donations/in-kind/queue',
+    'GET /api/donations/in-kind/receipt/[id]',
+    'GET /api/donations/transactions',
+    'GET /api/donations/transactions/[id]',
+    'GET /api/donations/transactions/unassigned',
+    'GET /api/donations/uploaded-files',
+    'GET /api/donations/uploaded-files/[id]/blob',
+    'GET /api/expense/donated-capital',
+    'GET /api/expense/expense-events',
+    'GET /api/expense/expenses',
+    'GET /api/expense/expenses/[id]',
+    'GET /api/expense/expenses/[id]/qb-candidates',
+    'GET /api/expense/expenses/[id]/reimbursee-vendor',
+    'GET /api/expense/finance-queue',
+    'GET /api/expense/queue',
+    'GET /api/expense/received-expense-payloads',
+    'GET /api/finance-ops/membership-payment-plans',
+    'GET /api/finance-ops/payment-plans',
+    'GET /api/finance-ops/payments',
+    'GET /api/income/payouts',
+    'GET /api/income/payouts/[gid]',
+    'GET /api/income/reconciliation',
+    'GET /api/income/reconciliation/[id]/candidates',
+    'GET /api/receipts',
+    'GET /api/receipts/[id]',
+    'GET /api/receipts/[id]/audit-logs',
+    'GET /api/receipts/[id]/duplicate-group',
+    'GET /api/receipts/[id]/file',
+    'GET /api/receipts/confirmations',
+    'GET /api/receipts/duplicate-queue',
+    'GET /api/receipts/mail-items',
+    'GET /api/receipts/mail-items/[id]/file',
+    'GET /api/receipts/needs-attention',
+    'GET /api/workflow-mapping/audit-log',
+    'GET /api/workflow-mapping/receipts',
+    'GET /api/workflow-mapping/receipts/[id]',
+    ];
+
+    it.each(STILL_LOGGED)('%s can send a marked field', endpoint => {
+        const route = getRoute(endpoint);
+        const file = getFileRoute(endpoint);
+        expect(route ?? file).toBeDefined();
+        const logs = route
+            ? (route.returns ?? []).some(model => route.orderedView.some(([, tokens]) => marksVisible(tokens, model)))
+            : file !== undefined && (marks[file.file.model] ?? []).includes(file.file.field);
+        expect(logs).toBe(true);
     });
 });
