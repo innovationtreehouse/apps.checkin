@@ -156,10 +156,15 @@ set to a different mailbox. The access token comes from an Infra-owned refresher
 Lambda, which alone holds the refresh token; an answer naming another mailbox is
 refused.
 
-**Reading.** The window is the last 3 days, with no stored cursor, and the
+**Reading.** The window is the last 30 days, with no stored cursor, and the
 `ReceiptMailItem` ledger makes a re-read free through its unique
-`(gmailMessageId, attachmentHash)`. The query is `newer_than:3d -in:sent -in:drafts`,
-and Gmail's default search leaves out Spam and Trash.
+`(gmailMessageId, attachmentHash)`. The query is `newer_than:30d -in:sent -in:drafts`,
+and Gmail's default search leaves out Spam and Trash. A listed message the ledger
+shows finished is not fetched again: it has a ledger row, none of them deferred, and
+no `ReceiptMailAtRisk` row. A message is marked at risk before it is read and the
+mark is cleared once every file was read, held, ignored, discarded or refused, so
+mail left partly read, even by a run that died, is fetched again. Runs can stop for
+up to 30 days without losing mail.
 
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as

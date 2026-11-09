@@ -14,9 +14,9 @@ import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { isAutomated, sendMailReplies } from "./mailReplies";
 
-// ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
-// window, or more than MAIL_WINDOW_DAYS × MAIL_CAP mailed receipts inside one window; widen either then.
-export const MAIL_WINDOW_DAYS = 3;
+// ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than 30 days,
+// or a flood bigger than the per-run caps drain inside 30 days; widen the window or the caps then.
+export const MAIL_WINDOW_DAYS = 30;
 /** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
 export const MAIL_CAP = 10;
 /** Downloads charged to held mail per run (see chargeHold); the rest wait for the next run. */
@@ -25,8 +25,9 @@ export const MAIL_HELD_CAP = 50;
 export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
 /** Held and deferred items past which nothing more is stored; finance is alerted once per run while over it. */
 export const MAIL_HELD_CEILING = 500;
-// ponytail: every listed message is fetched each run before the ledger is checked, so a flood larger than this
-// budget's worth of fetches can still push a later receipt past the window, with an alert; widen the budget then.
+// ponytail: a finished message is skipped unfetched, but every unfinished one, and every message that left no
+// ledger row (no file, or every file refused), is fetched each run; a flood of those larger than this budget's
+// worth of fetches inside 30 days can still push a later receipt past the window, with an alert; widen the budget then.
 /** Wall time per run; messages not reached wait for the next run. */
 export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
@@ -644,7 +645,26 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       update: receivedAt ? { receivedAt } : {},
     });
 
-  async function readListed(ids: string[], reader: MailboxReader): Promise<void> {
+  /**
+   * Listed messages the ledger shows finished, which are not fetched again: at least one ledger row, none of
+   * them deferred, and no at-risk row. A message is marked at risk before it is read and cleared only once
+   * every file was read, held, ignored, discarded or refused, so one left partly read, even by a crash, stays open.
+   */
+  async function finishedMessages(ids: string[]): Promise<Map<string, number>> {
+    const [items, open] = await Promise.all([
+      db.receiptMailItem.findMany({ where: { orgId, gmailMessageId: { in: ids } }, select: { gmailMessageId: true, status: true } }),
+      db.receiptMailAtRisk.findMany({ where: { gmailMessageId: { in: ids } }, select: { gmailMessageId: true } }),
+    ]);
+    const unfinished = new Set([...open.map((r) => r.gmailMessageId), ...items.flatMap((r) => (r.status === "deferred" ? [r.gmailMessageId] : []))]);
+    const files = new Map<string, number>();
+    for (const { gmailMessageId } of items) if (!unfinished.has(gmailMessageId)) files.set(gmailMessageId, (files.get(gmailMessageId) ?? 0) + 1);
+    return files;
+  }
+
+  async function readListed(listed: string[], reader: MailboxReader): Promise<void> {
+    const finished = await finishedMessages(listed);
+    for (const files of finished.values()) counts.skipped += files;
+    const ids = listed.filter((id) => !finished.has(id));
     const readClean: string[] = [];
     for (const [i, id] of ids.entries()) {
       if ((capped() && holdsSpent()) || outOfTime()) {
@@ -657,9 +677,11 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       }
       counts.messages++;
       const deferredBefore = counts.deferred;
+      const overCeilingBefore = counts.overCeiling;
       let msg: MailMessage | null = null;
       try {
         msg = await reader.getMessage(id);
+        await leftUnread(id, new Date(Number(msg.internalDate)));
         await readMessage(msg, reader);
       } catch (err) {
         counts.failed++;
@@ -667,11 +689,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
         await leftUnread(id, msg && new Date(Number(msg.internalDate)));
         continue;
       }
-      if (counts.deferred > deferredBefore) await leftUnread(id, new Date(Number(msg.internalDate)));
-      else readClean.push(id);
+      if (counts.deferred === deferredBefore && counts.overCeiling === overCeilingBefore) readClean.push(id);
     }
     await db.receiptMailAtRisk.deleteMany({
-      where: { orgId, OR: [{ gmailMessageId: { in: readClean } }, { alertedAt: { not: null }, gmailMessageId: { notIn: ids } }] },
+      where: { orgId, OR: [{ gmailMessageId: { in: readClean } }, { alertedAt: { not: null }, gmailMessageId: { notIn: listed } }] },
     });
   }
 
