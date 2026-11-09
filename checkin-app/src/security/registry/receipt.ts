@@ -56,6 +56,8 @@ defineRoute({ endpoint: 'GET /api/receipts/reimbursements', authorize: 'authenti
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SHARED_READ_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
+// Anyone who may view the receipt's file turns its image; a display setting, not an edit.
+defineRoute({ endpoint: 'PUT /api/receipts/[id]/rotation', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_READ_VIEW });
 defineRoute({ endpoint: 'PATCH /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/[id]/line-items', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
 defineRoute({ endpoint: 'PATCH /api/receipts/[id]/line-items/[lineItemId]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
