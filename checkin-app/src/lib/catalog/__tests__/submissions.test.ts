@@ -54,9 +54,9 @@ describe('catalog submissions bound to the catalog', () => {
     });
 
     it('lets a catalog error propagate', async () => {
-        reportConflict.mockRejectedValue(new Error('GTIN not found: B'));
+        reportConflict.mockRejectedValue(new Error('Part ID not found: B'));
         await expect(
             submissions.reportConflict({ itemReferenceId: 1, existingGtin13: 'A', proposedGtin13: 'B', receiptId: '9', lineItemId: 2 }),
-        ).rejects.toThrow('GTIN not found: B');
+        ).rejects.toThrow('Part ID not found: B');
     });
 });
