@@ -44,7 +44,7 @@ export interface InventoryRuntimeConfig {
 export interface CatalogItemReader {
   /** The approved, non-archived catalog item with this GTIN, or null. */
   getActiveItem(gtin13: string): Promise<{ gtin13: string } | null>;
-  /** Up to `take` active catalog items whose name, GTIN or category contains the query, in any case. */
+  /** Up to `take` active catalog items whose name, GTIN, reference part number or category contains the query, in any case. */
   searchItems(query: string, take: number): Promise<{ gtin13: string }[]>;
 }
 
