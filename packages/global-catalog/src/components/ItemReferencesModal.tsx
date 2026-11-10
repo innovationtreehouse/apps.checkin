@@ -58,7 +58,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
   if (editing) {
     return (
       <Table.Tr>
-        <Table.Td><TextInput size="xs" aria-label="Part number" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label="Store part number" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Manufacturer" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Retailer" value={form.retailer} onChange={(e) => setForm({ ...form, retailer: e.currentTarget.value })} /></Table.Td>
@@ -165,7 +165,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
         <Table withTableBorder withColumnBorders mb="md" style={{ tableLayout: "fixed" }}>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th w="16%">Part Number</Table.Th>
+              <Table.Th w="16%">Store part #</Table.Th>
               <Table.Th w="18%">Description</Table.Th>
               <Table.Th w="16%">Manufacturer</Table.Th>
               <Table.Th w="16%">Retailer</Table.Th>
@@ -180,7 +180,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
             ))}
             {showAdd && (
               <Table.Tr>
-                <Table.Td><TextInput size="xs" aria-label="Part number" placeholder="Part number" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><TextInput size="xs" aria-label="Store part number" placeholder="Store part #" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Description" placeholder="Description" value={addForm.description} onChange={(e) => setAddForm({ ...addForm, description: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Manufacturer" placeholder="Manufacturer" value={addForm.manufacturer} onChange={(e) => setAddForm({ ...addForm, manufacturer: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Retailer" placeholder="Retailer" value={addForm.retailer} onChange={(e) => setAddForm({ ...addForm, retailer: e.currentTarget.value })} /></Table.Td>

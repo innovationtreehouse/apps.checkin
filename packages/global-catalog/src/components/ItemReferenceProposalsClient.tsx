@@ -59,7 +59,7 @@ export default function ItemReferenceProposalsClient() {
                 <Table.Th>Organization</Table.Th>
                 <Table.Th>Item</Table.Th>
                 <Table.Th>Manufacturer</Table.Th>
-                <Table.Th>Part #</Table.Th>
+                <Table.Th><Tooltip label="As printed on the store's receipt."><span>Store part #</span></Tooltip></Table.Th>
                 <Table.Th>Description</Table.Th>
                 <Table.Th>Retailer</Table.Th>
                 <Table.Th>Conv.</Table.Th>
