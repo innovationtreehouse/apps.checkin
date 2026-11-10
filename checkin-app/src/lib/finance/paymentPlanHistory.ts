@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { jsonField } from "@/lib/membership/checkStanding";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { PAST_PAGE_SIZE } from "./paymentPlanHistoryPage";
 
 export type PaymentPlanOutcome = "APPROVED" | "REFUSED";
@@ -41,11 +41,14 @@ async function personNames(ids: Iterable<number>) {
     return new Map(people.map((p) => [p.id, p]));
 }
 
-// The audit rows that can be program decisions. It also matches whole-row snapshots of a
-// withdrawn refused place, which programAuditOutcome drops.
-const PROGRAM_DECISION_AUDIT: Prisma.AuditLogWhereInput = {
+// The audit rows that record a program decision, matched in the database. A whole-row
+// snapshot (enrollment, withdrawal, refund) carries `personId`; a decision never does.
+export const PROGRAM_DECISION_AUDIT: Prisma.AuditLogWhereInput = {
     tableName: "ProgramParticipant",
-    newData: { path: ["isPaymentPlanRequested"], equals: false },
+    AND: [
+        { newData: { path: ["isPaymentPlanRequested"], equals: false } },
+        { newData: { path: ["personId"], equals: Prisma.DbNull } },
+    ],
     OR: [
         { AND: [{ newData: { path: ["status"], equals: "ACTIVE" } }, { newData: { path: ["wasOrgMemberAtApproval"], equals: true } }] },
         { AND: [{ newData: { path: ["status"], equals: "ACTIVE" } }, { newData: { path: ["wasOrgMemberAtApproval"], equals: false } }] },
