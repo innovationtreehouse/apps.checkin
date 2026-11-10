@@ -97,13 +97,14 @@ describe("global catalog", () => {
     expect(status).toBe(403);
   });
 
-  it("serves the (empty) proposal queue to a viewer", async () => {
-    // This journey makes no proposals, but the read path + its viewer gate must
-    // work — the Proposals screen relies on it.
-    const viewer = await loginAs("boardmember@example.com");
-    const { status, json } = await api<unknown[]>(viewer, "/api/catalog/proposals/item-references");
+  it("serves the proposal queue to a manager and denies it to a viewer", async () => {
+    const manager = await loginAs("inventory.manager@example.com");
+    const { status, json } = await api<unknown[]>(manager, "/api/catalog/proposals/item-references");
     expect(status).toBe(200);
     expect(Array.isArray(json)).toBe(true);
+
+    const viewer = await loginAs("boardmember@example.com");
+    expect((await api(viewer, "/api/catalog/proposals/item-references")).status).toBe(403);
   });
 
   it("returns 404 for an unknown item and 409 on a duplicate category letter (error states)", async () => {

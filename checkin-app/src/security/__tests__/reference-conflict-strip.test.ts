@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * The conflicts page reads where a part is now from the conflict's itemReference
- * relation, so that item must survive the stripper for every catalog viewer.
+ * relation, so that item must survive the stripper under the manager view.
  */
 import { stripBag } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
@@ -23,9 +23,9 @@ const ctx: CallerContext = {
 };
 
 describe('stripper — ReferenceConflict', () => {
-    it('keeps the raised item and the current item under the public view', () => {
+    it('keeps the raised item and the current item under the manager view', () => {
         const row = { id: 1, existingGtin13: 'raised', proposedGtin13: 'proposed', itemReference: { gtin13: 'current' } };
-        const tokens: readonly Token[] = ['public'];
+        const tokens: readonly Token[] = ['everyones:internal', 'public'];
         expect(stripBag({ ReferenceConflict: [row] }, tokens, ctx)).toEqual({ ReferenceConflict: [row] });
     });
 });
