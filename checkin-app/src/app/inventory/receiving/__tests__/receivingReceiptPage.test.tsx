@@ -218,6 +218,24 @@ describe("the receiving page for one receipt", () => {
       const panel = screen.getByRole("region", { name: "Line 2 details" });
       expect(within(panel).getByRole("button", { name: "Save" })).toBeInTheDocument();
     });
+
+    it("marks a linked line not inventory from its open form", async () => {
+      detail = {
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus: "recognized" }, baseDetail.ReceivedReceiptLineStatus[1]],
+      };
+      mockApi.mockResolvedValue(null);
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Change" }));
+      fireEvent.click(within(screen.getByRole("region", { name: "Line 1 details" })).getByRole("button", { name: "Not inventory" }));
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/non-inventory", expect.anything()));
+    });
+
+    it("offers no Not inventory in the form of a line already not inventory", () => {
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Gift card/ })).getByRole("button", { name: "Change" }));
+      expect(within(screen.getByRole("region", { name: "Line 2 details" })).queryByRole("button", { name: "Not inventory" })).not.toBeInTheDocument();
+    });
   });
 
   it("shows an opened line's details beside its mapping form", () => {
