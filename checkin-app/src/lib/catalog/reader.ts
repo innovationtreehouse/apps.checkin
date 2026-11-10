@@ -19,7 +19,7 @@ export const catalogReader = {
 
   getItemNames: (gtin13s: string[]) => readService.getItemNames(gtin13s),
 
-  searchItems: (query: string) => readService.searchItems(query),
+  searchItems: (query: string, take?: number) => readService.searchItems(query, take),
 
   async lookupItems(retailer: string, lookups: CatalogItemsLookup["lookups"]) {
     return referenceMatchingService.lookupMany(retailer, catalogLookupEntrySchema.array().parse(lookups));

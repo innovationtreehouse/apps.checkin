@@ -37,13 +37,15 @@ export interface InventoryRuntimeConfig {
   org: () => Promise<OrgIdentity>;
   /** S5 replay read; inert (no events) until the host binds it to the catalog. */
   catalogEventSource?: CatalogEventSource;
-  /** Active catalog item read; unbound, a catalog part is refused as unreachable. */
+  /** Active catalog item reads; unbound, a catalog part is refused as unreachable and search skips catalog names. */
   catalog?: CatalogItemReader;
 }
 
-/** The approved, non-archived catalog item with this GTIN, or null. */
 export interface CatalogItemReader {
+  /** The approved, non-archived catalog item with this GTIN, or null. */
   getActiveItem(gtin13: string): Promise<{ gtin13: string } | null>;
+  /** Up to `take` active catalog items whose name, GTIN or category contains the query, in any case. */
+  searchItems(query: string, take: number): Promise<{ gtin13: string }[]>;
 }
 
 /** One catalog OrgEvent row; `payload` is its stored JSON body without `eventType`. */
