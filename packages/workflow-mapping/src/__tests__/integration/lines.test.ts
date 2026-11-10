@@ -116,6 +116,7 @@ describeDb("propose", () => {
     expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toMatchObject({
       recognitionStatus: "provisional",
       provisionalItemGtin13: "2000000000015",
+      proposedName: "Widget",
     });
   });
 });
@@ -226,7 +227,7 @@ describeDb("a catalog remap after the manager's decision", () => {
     const { r, ls } = await proposedLine();
     await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000017" });
     await orgEventConsumer.onOrgEvents([approved]);
-    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null });
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null, proposedName: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 
@@ -234,7 +235,7 @@ describeDb("a catalog remap after the manager's decision", () => {
     const { r, ls } = await proposedLine();
     await lineItemService.markNonInventory(r.id, ls.id);
     await orgEventConsumer.onOrgEvents([approved]);
-    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null });
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, proposedName: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 
