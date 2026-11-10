@@ -195,6 +195,31 @@ describe("the receiving page for one receipt", () => {
     expect(screen.queryByText("non inventory")).not.toBeInTheDocument();
   });
 
+  describe("a line's actions", () => {
+    const actions = (name: RegExp) => within(screen.getByRole("row", { name })).queryAllByRole("button").map((b) => b.textContent);
+
+    it("offers Associate and Not inventory on an undecided line", () => {
+      wrap();
+      expect(actions(/Wood glue/)).toEqual(["Associate", "Not inventory"]);
+    });
+
+    it.each(["recognized", "provisional", "non_inventory"])("offers only Change on a %s line", (recognitionStatus) => {
+      detail = {
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus }, baseDetail.ReceivedReceiptLineStatus[1]],
+      };
+      wrap();
+      expect(actions(/Wood glue/)).toEqual(["Change"]);
+    });
+
+    it("opens the line's mapping form from Change", () => {
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Gift card/ })).getByRole("button", { name: "Change" }));
+      const panel = screen.getByRole("region", { name: "Line 2 details" });
+      expect(within(panel).getByRole("button", { name: "Save" })).toBeInTheDocument();
+    });
+  });
+
   it("shows an opened line's details beside its mapping form", () => {
     wrap();
     const row = screen.getByRole("row", { name: /Wood glue/ });

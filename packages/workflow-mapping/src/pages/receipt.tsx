@@ -284,6 +284,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     <Table.Td>
                       {isOpen ? (
                         <Button size="xs" variant="subtle" onClick={() => setOpenLineId(null)}>Close</Button>
+                      ) : ls.recognitionStatus !== "unrecognized" ? (
+                        <Button size="xs" variant="subtle" color="gray" onClick={() => setOpenLineId(ls.id)}>Change</Button>
                       ) : (
                         <Group gap={4} wrap="nowrap">
                           <Button size="xs" variant="light" onClick={() => setOpenLineId(ls.id)}>Associate</Button>
