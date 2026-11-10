@@ -72,13 +72,19 @@ describe("Programs I Lead library tabs", () => {
     expect(names(visibleLinks(PROGRAMS_I_LEAD, member, approverUnreleased))).toEqual(["In-kind gifts"]);
   });
 
-  it("badges with lines awaiting the viewer's sign-off", () => {
+  it("badges with the sum of the views' actionable counts", () => {
     const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
-    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { awaitingMySignoff: 2 } }))).toEqual({
-      count: 2,
+    const expense = { approver: 1, "actionable:owner_approval": 2, "actionable:qb_pending": 1 };
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense }))).toEqual({
+      count: 3,
       color: "treehouseGreen",
-      label: "2 expense lines awaiting your sign-off",
+      label: "3 expenses you can act on",
     });
+  });
+
+  it("shows no badge when the viewer can act on nothing, whatever the views hold", () => {
+    const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { approver: 1, "actionable:owner_approval": 0 } }))).toBeNull();
   });
 });
 

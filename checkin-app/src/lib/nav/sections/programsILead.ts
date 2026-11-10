@@ -2,13 +2,15 @@
  * The program-leader home (/programs-i-lead), distinct from the attendee "My
  * Programs" tab under My Activities. Lead status rides in on the todo-counts
  * payload. Expense approvals and in-kind gifts admit bucket owners and
- * treasurers, whose signal is the expense library's approver count.
+ * treasurers, whose signal is the expense library's approver count; its pill is the sum of the
+ * approvals page's green view pills.
  */
 import { EXPENSE_TABS } from "@checkin/expense/nav";
 import { BUCKET_GIFTS_TAB } from "@checkin/bulk-donation/nav";
 import type { NavGate, NavSection } from "@/lib/nav/types";
 import { firstVisibleHref, signedIn } from "@/lib/nav/gates";
 import { leadsAnyProgram, libraryCount } from "@/components/navBadges";
+import { expenseActionableTotal } from "@/lib/expense/actionCounts";
 
 const leadsProgram: NavGate = (_u, c) => leadsAnyProgram(c);
 const expenseApprover: NavGate = (_u, c) => libraryCount(c, "expense", "approver") > 0;
@@ -25,8 +27,8 @@ export const PROGRAMS_I_LEAD: NavSection = {
       library: "expense",
       visible: expenseApprover,
       badge: (c) => {
-        const n = libraryCount(c, "expense", "awaitingMySignoff");
-        return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} expense lines awaiting your sign-off` } : null;
+        const n = expenseActionableTotal(c);
+        return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} ${n === 1 ? "expense" : "expenses"} you can act on` } : null;
       },
     },
     { ...BUCKET_GIFTS_TAB, library: "bulk-donation", visible: expenseApprover },
