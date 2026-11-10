@@ -108,8 +108,8 @@ export const PAGES: PageEntry[] = [
   // Inventory (global catalog) — any catalog viewer; Learned References and Reference
   // Conflicts INVENTORY_MANAGER alone. The index redirects to the Global Catalog.
   // Write controls within each screen are INVENTORY_MANAGER-gated.
-  { href: '/catalog', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG },
-  { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin', visible: CATALOG },
+  { href: '/catalog', label: 'Global Catalog', section: 'Inventory', keywords: 'catalog parts items reference gtin part id', visible: CATALOG },
+  { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin part id', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/learned-references', label: 'Learned References', section: 'Inventory', keywords: 'item reference part mapping archive', visible: CATALOG_MANAGER },
   { href: '/catalog/provisional-items', label: 'Provisional Items', section: 'Inventory', keywords: 'proposals provisional item review approve', visible: CATALOG_MANAGER },

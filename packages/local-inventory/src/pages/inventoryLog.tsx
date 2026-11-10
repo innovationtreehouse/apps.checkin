@@ -155,7 +155,7 @@ function PartsView({ receiptId, onReceipt }: { receiptId: string; onReceipt: (id
                 <Table striped highlightOnHover withTableBorder>
                   <Table.Thead>
                     <Table.Tr>
-                      <Table.Th>When</Table.Th><Table.Th>Type</Table.Th><Table.Th>Part No.</Table.Th>
+                      <Table.Th>When</Table.Th><Table.Th>Type</Table.Th><Table.Th>Part ID</Table.Th>
                       <Table.Th>Field</Table.Th><Table.Th>Before</Table.Th><Table.Th>After</Table.Th><Table.Th>Receipt</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -317,7 +317,7 @@ function ApplyLines({ lines }: { lines: ApplyLine[] }) {
   return (
     <Table withTableBorder>
       <Table.Thead>
-        <Table.Tr><Table.Th>Part No.</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Conversion</Table.Th><Table.Th>Went to</Table.Th></Table.Tr>
+        <Table.Tr><Table.Th>Part ID</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Conversion</Table.Th><Table.Th>Went to</Table.Th></Table.Tr>
       </Table.Thead>
       <Table.Tbody>
         {lines.map((l, i) => (

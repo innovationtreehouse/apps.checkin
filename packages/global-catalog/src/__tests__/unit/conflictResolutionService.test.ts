@@ -51,14 +51,14 @@ describeDb("reportConflict", () => {
     await resetDb();
     const { refId } = await seedFixtures();
     await expect(reportConflict({ itemReferenceId: refId, ...BASE_CONFLICT, existingGtin13: "0000000000000" }))
-      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/GTIN not found/i) });
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Part ID not found/i) });
   });
 
   it("throws 400 when proposedGtin13 not in items table", async () => {
     await resetDb();
     const { refId } = await seedFixtures();
     await expect(reportConflict({ itemReferenceId: refId, ...BASE_CONFLICT, proposedGtin13: "0000000000000" }))
-      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/GTIN not found/i) });
+      .rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Part ID not found/i) });
   });
 
   it("persists optional fields as null when omitted", async () => {

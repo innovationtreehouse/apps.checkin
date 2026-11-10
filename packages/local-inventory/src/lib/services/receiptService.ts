@@ -44,7 +44,7 @@ function provisionalItemName(gtin13: string, provisionalName?: string): string {
 
 /** Stock is held under a provisional GTIN only when the GTIN is in the provisional range. */
 function assertProvisionalGtin(gtin13: string): void {
-  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional GTIN: ${formatGtinDisplay(gtin13)}`);
+  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional Part ID: ${formatGtinDisplay(gtin13)}`);
 }
 
 const positiveInt = z.number().int().positive();

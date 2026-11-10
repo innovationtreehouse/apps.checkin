@@ -131,7 +131,7 @@ export default function GlobalInventoryClient() {
       </Group>
 
           <Group mb="md" justify="space-between" align="flex-end">
-            <TextInput aria-label="Search items" placeholder="Search items…" description="Matches name, part number, ID, category or subcategory" value={search} onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }} style={{ flex: "1 1 320px" }} miw={0} />
+            <TextInput aria-label="Search items" placeholder="Search items…" description="Matches name, Part ID, store or mfr part #, category or subcategory" value={search} onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }} style={{ flex: "1 1 320px" }} miw={0} />
             <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => setArchived(e.currentTarget.checked ? "1" : "")} />
           </Group>
 
@@ -140,7 +140,7 @@ export default function GlobalInventoryClient() {
             <Table.Thead style={THEAD_STYLE}>
               <Table.Tr>
                 <Table.Th onClick={() => toggleSort("name")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Name <SortIcon active={sortBy === "name"} dir={sortDir} /></Group></Table.Th>
-                <Table.Th onClick={() => toggleSort("id")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Part Number <SortIcon active={sortBy === "id"} dir={sortDir} /></Group></Table.Th>
+                <Table.Th onClick={() => toggleSort("id")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Part ID <SortIcon active={sortBy === "id"} dir={sortDir} /></Group></Table.Th>
                 <Table.Th onClick={() => toggleSort("category")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Category <SortIcon active={sortBy === "category"} dir={sortDir} /></Group></Table.Th>
                 <Table.Th>Subcategory</Table.Th>
                 <Table.Th>Usage</Table.Th>

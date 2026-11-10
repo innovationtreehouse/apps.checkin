@@ -54,7 +54,7 @@ describeDb("POST org-items", () => {
 
   it("refuses another org's provisional part", async () => {
     await provisional(PROVISIONAL, "pending", { orgId: TEST_ORG_ID_2 });
-    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has GTIN P000123" });
+    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has Part ID P000123" });
   });
 
   it("answers 502 and adds nothing when the catalog can't be reached", async () => {

@@ -73,7 +73,7 @@ export const lineItemService = {
     const { catalogReader, catalogSubmissions } = ports();
 
     const item = await viaCatalog(async () => activeCatalogItemSchema.parse(await catalogReader.getActiveItem(gtin13)));
-    if (!item) throw httpError(404, `No catalog item has GTIN ${formatGtinDisplay(gtin13)}`);
+    if (!item) throw httpError(404, `No catalog item has Part ID ${formatGtinDisplay(gtin13)}`);
 
     const retailer = receipt.vendorName ?? undefined;
     const normalizedDesc =

@@ -55,7 +55,7 @@ describe("expense detail fields", () => {
     for (const text of ["B-100", "Acme Fasteners", "4", "$2.50", "$10.00", "0012345678905"]) {
       expect(within(row).getByText(text)).toBeInTheDocument();
     }
-    for (const header of ["Part #", "Manufacturer", "Qty", "Unit", "Total", "Part No."]) {
+    for (const header of ["Part #", "Manufacturer", "Qty", "Unit", "Total", "Part ID"]) {
       expect(screen.getByRole("columnheader", { name: header })).toBeInTheDocument();
     }
   });
@@ -66,7 +66,7 @@ describe("expense detail fields", () => {
     const row = screen.getByText("Bolts").closest("tr") as HTMLElement;
     const cells = within(row).getAllByRole("cell");
     const column = (name: string) => screen.getAllByRole("columnheader").findIndex((h) => h.textContent === name);
-    for (const header of ["Part #", "Manufacturer", "Part No."]) expect(cells[column(header)]).toHaveTextContent(/^—$/);
+    for (const header of ["Part #", "Manufacturer", "Part ID"]) expect(cells[column(header)]).toHaveTextContent(/^—$/);
   });
 
   it("badges delayed and capital lines, and only those", () => {

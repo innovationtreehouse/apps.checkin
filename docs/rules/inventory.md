@@ -40,10 +40,11 @@ How the pieces are built is described in
   item, across the whole catalog. A change must not create a second item for the
   same GTIN or move a GTIN to a different item. `[Decision]`
 
-- A GTIN shown to a person uses its short form: `P000123` for a provisional GTIN,
-  `03B0042` for one minted from the catalog's category and sequence, and the 13
-  digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
-  digits. `[Decision]`
+- A GTIN shown to a person is its **Part ID**, under that name on every screen:
+  `P000123` for a provisional GTIN, `03B0042` for one minted from the catalog's
+  category and sequence, and the 13 digits for a manufacturer's GTIN. A store's or
+  manufacturer's own number for a part is a part #, never a Part ID. CSV exports,
+  URLs and API values keep the raw digits. `[Decision — owner]`
 
 - A person picks a part from the catalog rather than typing its GTIN. A new org
   item or part-bucket mapping takes only a GTIN-13 with a valid check digit that

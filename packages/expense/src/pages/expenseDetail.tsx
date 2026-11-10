@@ -646,7 +646,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             <Table.Th ta="right">Qty</Table.Th>
             <Table.Th ta="right">Unit</Table.Th>
             <Table.Th ta="right">Total</Table.Th>
-            <Table.Th>Part No.</Table.Th>
+            <Table.Th>Part ID</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>
