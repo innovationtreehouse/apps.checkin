@@ -66,7 +66,7 @@ describe("associateGtin GTIN check", () => {
   it("404 for a GTIN no catalog item has", async () => {
     await expect(lineItemService.associateGtin(1, 2, { gtin13: "0044444444440" })).rejects.toMatchObject({
       status: 404,
-      message: "No catalog item has GTIN 0044444444440",
+      message: "No catalog item has Part ID 0044444444440",
     });
     expect(updateEditableLine).not.toHaveBeenCalled();
   });

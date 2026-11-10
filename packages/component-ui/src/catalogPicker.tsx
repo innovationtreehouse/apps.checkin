@@ -54,7 +54,7 @@ interface Option { value: string; label: string }
  * One part, picked by its GTIN-13: a catalog item found by name, category or the ID shown on
  * screen, or a provisional part typed by its `P` number. The server checks the part exists.
  */
-export function CatalogPicker({ label, value, onChange, w, placeholder = "Search by name or part no." }: {
+export function CatalogPicker({ label, value, onChange, w, placeholder = "Search by name, Part ID or part #" }: {
   label: string;
   value: string | null;
   onChange: (gtin13: string | null) => void;

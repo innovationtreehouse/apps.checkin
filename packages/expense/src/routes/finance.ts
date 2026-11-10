@@ -245,7 +245,7 @@ async function partRefusal(orgId: string, gtin13: string): Promise<string | null
     console.error("[expense] catalog check failed", err);
     throw httpError(502, "The catalog couldn't be reached; try again");
   });
-  return active ? null : `No active catalog item or pending provisional part has GTIN ${id}`;
+  return active ? null : `No active catalog item or pending provisional part has Part ID ${id}`;
 }
 
 export const setOwnership: ExpenseRouteHandler = async ({ req, principal }) => {

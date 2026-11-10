@@ -54,7 +54,7 @@ function RulePart({ partNumber }: { partNumber: string }) {
   return (
     <Group gap={4} wrap="nowrap">
       {partNumber}
-      <Tooltip label="Not a part number from the catalog, so this rule never matches a line">
+      <Tooltip label="Not a Part ID from the catalog, so this rule never matches a line">
         <Badge color="red" variant="light" size="sm">never matches</Badge>
       </Tooltip>
     </Group>
@@ -98,7 +98,7 @@ export default function AccountMappingPage() {
       <Table>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Category</Table.Th><Table.Th>Subcategory</Table.Th><Table.Th>Part No.</Table.Th>
+            <Table.Th>Category</Table.Th><Table.Th>Subcategory</Table.Th><Table.Th>Part ID</Table.Th>
             <Table.Th>Delayed</Table.Th><Table.Th>Capital</Table.Th><Table.Th>QB account</Table.Th><Table.Th />
           </Table.Tr>
         </Table.Thead>
@@ -141,7 +141,7 @@ export default function AccountMappingPage() {
             w={180}
           />
           <CatalogPicker
-            label="Part No."
+            label="Part ID"
             placeholder="* (any part)"
             value={form.partNumber === "*" ? null : form.partNumber}
             onChange={(v) => setForm({ ...form, partNumber: v ?? "*" })}

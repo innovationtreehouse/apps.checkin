@@ -14,6 +14,6 @@
     { "name": "a resend with a different delta", "expect": "refused", "status": 409, "message": "already applied with a different inventory delta", "after": "base", "set": { "lineItems.0.quantityDelta": 3 } },
     { "name": "an empty donationId", "expect": "refused", "status": 400, "message": "at source.donationId", "set": { "donationId": "" } },
     { "name": "a zero quantity", "expect": "refused", "status": 400, "message": "expected number to be >0", "set": { "lineItems.0.quantityDelta": 0 } },
-    { "name": "a provisional line whose GTIN is outside the provisional range", "expect": "refused", "status": 400, "message": "Not a provisional GTIN", "set": { "lineItems.0.isProvisional": true } }
+    { "name": "a provisional line whose GTIN is outside the provisional range", "expect": "refused", "status": 400, "message": "Not a provisional Part ID", "set": { "lineItems.0.isProvisional": true } }
   ]
 }

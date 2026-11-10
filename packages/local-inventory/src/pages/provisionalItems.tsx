@@ -39,14 +39,14 @@ export default function ProvisionalItemsPage() {
         <Title order={3}>Provisional Part Map</Title>
         {resolved.length > 0 && <Badge size="lg">{resolved.length} resolved</Badge>}
       </Group>
-      <TextInput placeholder="Search name, provisional #, or resolved to…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} mb="md" />
+      <TextInput placeholder="Search name, Part ID, or resolved to…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} mb="md" />
       {items.error && <LoadError what="provisional items" message={items.error} onRetry={items.reload} />}
       {stuck.length > 0 && (
         <Table withTableBorder mb="md" aria-label="Catalog decisions not applied">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>Name</Table.Th>
-              <Table.Th>Provisional #</Table.Th>
+              <Table.Th>Provisional Part ID</Table.Th>
               <Table.Th>Catalog decision not applied since</Table.Th>
               <Table.Th>Error</Table.Th>
             </Table.Tr>
@@ -70,7 +70,7 @@ export default function ProvisionalItemsPage() {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Name</Table.Th>
-                <Table.Th>Provisional #</Table.Th>
+                <Table.Th>Provisional Part ID</Table.Th>
                 <Table.Th>Resolved to</Table.Th>
                 <Table.Th>Reviewed</Table.Th>
               </Table.Tr>

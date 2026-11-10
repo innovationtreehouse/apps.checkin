@@ -43,7 +43,7 @@ beforeAll(() => {
   } as unknown as typeof ResizeObserver;
 });
 
-const BANNER = "Item names couldn't be loaded from the catalog. Showing part numbers.";
+const BANNER = "Item names couldn't be loaded from the catalog. Showing Part IDs.";
 
 /** Answers each catalog item read with the given status; 200 carries a name. */
 const catalogAnswers = (status: number) =>

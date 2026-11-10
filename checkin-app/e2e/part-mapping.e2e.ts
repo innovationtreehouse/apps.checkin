@@ -63,7 +63,7 @@ test.describe("Part mapping in the browser", () => {
     const { context, page, watch } = await openAsManager(browser, id);
 
     await lineRow(page, line).getByRole("button", { name: "Associate" }).click();
-    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill("dISTRIBUTION h");
+    await page.getByPlaceholder("Search the catalog by name, Part ID or category").fill("dISTRIBUTION h");
     await expect(page.getByRole("radio", { name: /Power Distribution Hub/ })).toBeVisible();
     await noProblems(watch, "catalog search");
     await context.close();
@@ -88,7 +88,7 @@ test.describe("Part mapping in the browser", () => {
     const { context, page, watch } = await openAsManager(browser, id);
 
     await lineRow(page, line).getByRole("button", { name: "Associate" }).click();
-    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(`E2E no such item ${stamp()}`);
+    await page.getByPlaceholder("Search the catalog by name, Part ID or category").fill(`E2E no such item ${stamp()}`);
     await page.getByRole("button", { name: "Propose new item" }).click();
     await page.getByPlaceholder("Proposed name").fill(`E2E proposed item ${stamp()}`);
     await page.getByPlaceholder("Category", { exact: true }).click();

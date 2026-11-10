@@ -83,7 +83,7 @@ describeDb("associate (CI3, optimistic)", () => {
   it.each([
     ["malformed", "12345", 400, /not a GTIN-13/],
     ["wrong check digit", "0000000000018", 400, /not a GTIN-13/],
-    ["unknown or archived", "0000000000031", 404, /No catalog item has GTIN 0000000000031/],
+    ["unknown or archived", "0000000000031", 404, /No catalog item has Part ID 0000000000031/],
   ])("%s GTIN: %i, nothing sent to the catalog, and the line unchanged", async (_case, gtin13, status, message) => {
     const { r, lines } = await pendingWithLines();
     await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13 })).rejects.toMatchObject({ status, message: expect.stringMatching(message) });

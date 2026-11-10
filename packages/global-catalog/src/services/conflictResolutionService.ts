@@ -30,7 +30,7 @@ export async function reportConflict(params: ReportConflictParams): Promise<{ id
   const foundItems = await catalogRepo.findItemsByGtins(gtins);
   const foundSet = new Set(foundItems.map((r) => r.gtin13));
   for (const gtin of gtins) {
-    if (!foundSet.has(gtin)) throw new ServiceError(400, `GTIN not found: ${formatGtinDisplay(gtin)}`);
+    if (!foundSet.has(gtin)) throw new ServiceError(400, `Part ID not found: ${formatGtinDisplay(gtin)}`);
   }
 
   const row = await itemRefRepo.createReferenceConflict({

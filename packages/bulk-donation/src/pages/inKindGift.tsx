@@ -183,7 +183,7 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
       <Table>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Item</Table.Th><Table.Th>GTIN</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Value</Table.Th>
+            <Table.Th>Item</Table.Th><Table.Th>Part ID</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Value</Table.Th>
             {isManual && <Table.Th>Suggested</Table.Th>}
           </Table.Tr>
         </Table.Thead>

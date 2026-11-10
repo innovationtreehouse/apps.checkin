@@ -184,7 +184,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     <>
       <Group justify="space-between" mb="md">
         <TextInput
-          placeholder="Search by name, GTIN, ID or location…"
+          placeholder="Search by name, Part ID or location…"
           value={search}
           onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }}
           maw={400}
@@ -200,7 +200,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Name</Table.Th>
-            <SortHeader col="gtin13" label="Part No." {...sortProps} />
+            <SortHeader col="gtin13" label="Part ID" {...sortProps} />
             <Table.Th>Have</Table.Th>
             <Table.Th>Desired</Table.Th>
             <SortHeader col="location" label="Location" {...sortProps} />

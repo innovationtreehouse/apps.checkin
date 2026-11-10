@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { buildGtin13 } from "@checkin/gtin";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 let mockLoads: Record<string, unknown> = {};
@@ -84,7 +85,7 @@ describe("Account holds panel", () => {
     );
     expect(screen.getByText("No account rule matches")).toBeInTheDocument();
     expect(screen.getByText("Several account rules match")).toBeInTheDocument();
-    expect(screen.getByText("No part number; pick an account")).toBeInTheDocument();
+    expect(screen.getByText("No Part ID; pick an account")).toBeInTheDocument();
     expect(screen.getByText("Not stock; pick an account")).toBeInTheDocument();
     expect(screen.queryByText("NO_MATCH")).not.toBeInTheDocument();
   });
@@ -94,7 +95,27 @@ describe("Account holds panel", () => {
       [{ id: 1, description: "Cable" }],
       [{ lineItemId: 1, reason: "NO_MATCH", matchedRows: [{ _lookupContext: { category: "Hardware", subcategory: "Cables", partNumber: "0000000000017", isDelayed: false, isCapital: false } }] }],
     );
-    expect(screen.getByText("Looked up by category Hardware, subcategory Cables, part number 0000000000017")).toBeInTheDocument();
+    expect(screen.getByText("Looked up by category Hardware, subcategory Cables, Part ID 0000000000017")).toBeInTheDocument();
+  });
+
+  it("shows a minted GTIN as its Part ID short form", () => {
+    const minted = buildGtin13("B", 2, 11);
+    renderWith(
+      [{ id: 1, description: "Cable" }, { id: 2, description: "Bolt" }],
+      [
+        { lineItemId: 1, reason: "NO_MATCH", matchedRows: [{ _lookupContext: { category: "Hardware", subcategory: "Cables", partNumber: minted, isDelayed: false, isCapital: false } }] },
+        {
+          lineItemId: 2, reason: "MULTIPLE_MATCHES",
+          matchedRows: [
+            { id: 7, orgId: "o", category: "*", subcategory: "*", partNumber: minted, isDelayed: null, isCapital: null, qbAccount: "4000" },
+            { id: 8, orgId: "o", category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "4100" },
+          ],
+        },
+      ],
+    );
+    expect(screen.getByText("Looked up by category Hardware, subcategory Cables, Part ID 02B0011")).toBeInTheDocument();
+    expect(screen.getByText("Rule * / * / 02B0011 → Supplies (4000)")).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(minted))).not.toBeInTheDocument();
   });
 
   it("lists a several-match line's rules with their account names, not JSON", () => {

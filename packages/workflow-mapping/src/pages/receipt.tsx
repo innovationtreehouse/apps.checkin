@@ -404,7 +404,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
         <>
           <TextInput
             size="xs"
-            placeholder="Search the catalog by name, GTIN or category"
+            placeholder="Search the catalog by name, Part ID or category"
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
             error={found.error && `Couldn't search the catalog: ${found.error}`}

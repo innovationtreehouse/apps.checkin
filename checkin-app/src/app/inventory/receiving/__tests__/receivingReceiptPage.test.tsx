@@ -58,7 +58,7 @@ beforeEach(() => {
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
 
-const BANNER = "Item names couldn't be loaded from the catalog. Showing part numbers.";
+const BANNER = "Item names couldn't be loaded from the catalog. Showing Part IDs.";
 
 /** The Mapping cell of the line whose row matches `name`. */
 const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).getAllByRole("cell")[6];
@@ -265,7 +265,7 @@ describe("the receiving page for one receipt", () => {
 
   describe("proposing from the associate search", () => {
     const hub = { gtin13: "0022222222220", name: "Power Hub", category: { name: "Electronics" }, subcategory: { name: "Control" } };
-    const SEARCH = "Search the catalog by name, GTIN or category";
+    const SEARCH = "Search the catalog by name, Part ID or category";
 
     const realFetch = global.fetch;
     afterEach(() => { global.fetch = realFetch; });

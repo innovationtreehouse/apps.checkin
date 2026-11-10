@@ -233,3 +233,4 @@ Product-owner decision — **design to these; do not relitigate the names or sha
 
 - **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](rules/membership.md).
 - **Treehouse Card** — any corporate/business/debit/credit card opened on the Treehouse EIN (reserved for future financial rules).
+- **Part ID** — the name every screen gives a catalog item's GTIN, shown in short form (`02B0011` minted, `P000002` provisional, 13 digits for a real barcode). A store's or manufacturer's number for the part is a **part #** (store part #, mfr part #), never a Part ID. The rule is in [rules/inventory.md](rules/inventory.md).

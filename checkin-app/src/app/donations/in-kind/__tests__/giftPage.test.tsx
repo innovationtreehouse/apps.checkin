@@ -107,9 +107,9 @@ describe("in-kind gift page", () => {
   });
 
   it("shows why a failed inventory load failed", () => {
-    mockGift = { ...manual, inventoryLoadedAt: null, inventoryLoadFailureReason: "Not a provisional GTIN: 0011111111116" };
+    mockGift = { ...manual, inventoryLoadedAt: null, inventoryLoadFailureReason: "Not a provisional Part ID: 0011111111116" };
     wrap(<ManualGiftPage />);
-    expect(screen.getByText("The load for donation:4 failed: Not a provisional GTIN: 0011111111116")).toBeInTheDocument();
+    expect(screen.getByText("The load for donation:4 failed: Not a provisional Part ID: 0011111111116")).toBeInTheDocument();
   });
 
   it("keeps a failed retry's error up until dismissed, and lets it be tried again", async () => {

@@ -151,8 +151,8 @@ describeDb("apply idempotency", () => {
     const refused = [{ gtin13: GTIN, quantityDelta: 1, isProvisional: true }];
 
     await expect(svc.applyDonation(TEST_ORG_ID, "7", refused)).rejects.toMatchObject({ status: 400 });
-    expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ sourceKey: "donation:7", status: "failed", failureReason: `Not a provisional GTIN: ${GTIN}` });
-    expect(await svc.donationFailureReason(TEST_ORG_ID, "7")).toBe(`Not a provisional GTIN: ${GTIN}`);
+    expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ sourceKey: "donation:7", status: "failed", failureReason: `Not a provisional Part ID: ${GTIN}` });
+    expect(await svc.donationFailureReason(TEST_ORG_ID, "7")).toBe(`Not a provisional Part ID: ${GTIN}`);
     expect(await svc.donationFailureReason(TEST_ORG_ID_2, "7")).toBeNull();
 
     await svc.applyDonation(TEST_ORG_ID, "7", [{ gtin13: GTIN, quantityDelta: 1 }]);

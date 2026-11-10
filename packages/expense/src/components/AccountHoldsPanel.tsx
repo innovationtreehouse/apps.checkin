@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Badge, Button, Group, Paper, Select, Table, Text } from "@mantine/core";
 import { formatCents } from "@checkin/money";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { send, useLoad } from "./api";
 import NonInventoryBadge from "./NonInventoryBadge";
@@ -47,7 +48,7 @@ interface MatchedRule {
 export const HOLD_REASON_WORDS: Record<string, string> = {
   NO_MATCH: "No account rule matches",
   MULTIPLE_MATCHES: "Several account rules match",
-  NO_PART_NUMBER: "No part number; pick an account",
+  NO_PART_NUMBER: "No Part ID; pick an account",
   NON_INVENTORY: "Not stock; pick an account",
 };
 
@@ -146,12 +147,12 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                   <Badge variant="light" color="orange">{HOLD_REASON_WORDS[h.reason] ?? h.reason}</Badge>
                   {ctx && (
                     <Text size="xs" c="dimmed" mt={4}>
-                      Looked up by category {ctx.category ?? "—"}, subcategory {ctx.subcategory ?? "—"}, part number {ctx.partNumber ?? "—"}
+                      Looked up by category {ctx.category ?? "—"}, subcategory {ctx.subcategory ?? "—"}, Part ID {ctx.partNumber ? formatGtinDisplay(ctx.partNumber) : "—"}
                     </Text>
                   )}
                   {rules.map((r) => (
                     <Text key={r.id} size="xs" c="dimmed" mt={4}>
-                      Rule {r.category} / {r.subcategory} / {r.partNumber} → {accountLabel(r.qbAccount)}
+                      Rule {r.category} / {r.subcategory} / {formatGtinDisplay(r.partNumber)} → {accountLabel(r.qbAccount)}
                     </Text>
                   ))}
                 </Table.Td>
