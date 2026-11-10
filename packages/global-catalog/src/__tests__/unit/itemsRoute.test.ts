@@ -53,6 +53,16 @@ describeDb("GET /api/catalog/items search", () => {
     expect(found.map((i) => i.name)).toEqual(["Breaker"]);
   });
 
+  it("finds an item by an active reference's part number in any case", async () => {
+    await prisma.itemReference.create({ data: { gtin13: "0022222222223", partNumber: "Hx-20n0001" } });
+    await prisma.itemReference.create({ data: { gtin13: "0011111111116", partNumber: "OLD-555", archivedAt: new Date() } });
+    expect(await names("HX-20N0001")).toEqual(["Hammer"]);
+    expect(await names("20n000")).toEqual(["Hammer"]);
+    expect(await names("old-555")).toEqual([]);
+    const found = await createCatalogRepository(prisma).searchItemsActive("hx-20N", 20);
+    expect(found.map((i) => i.name)).toEqual(["Hammer"]);
+  });
+
   it("counts the same rows the list returns", async () => {
     expect(await count(search("power"))).toEqual({ CatalogItemCount: { total: 1 } });
   });
