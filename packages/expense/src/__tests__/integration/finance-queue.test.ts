@@ -4,6 +4,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { financeQueueActionable, financeQueueCounts, financeQueueRows } from "../../services/financeQueueService";
+import { expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import { raiseFlag } from "../../services/flagService";
 import { expenseReasons } from "../../services/reasonService";
 import { writeAudit } from "../../lib/audit";
@@ -249,5 +250,17 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 2]] }) });
     const id = await awaiting(100);
     expect(await codes(BOARD, "board", id)).toEqual(["BOARD_LINE_APPROVAL"]);
+  });
+
+  it("counts an org-level line once, green in the Board tab only, for a Board member who also approves a bucket", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 200: [5] }, orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 6]] }) });
+    const orgLine = await awaiting(7);
+    const ownBucket = await awaiting(200);
+    expect(await codes(BOARD, "board", orgLine)).toEqual(["BOARD_LINE_APPROVAL"]);
+    expect(await codes(BOARD, "board", ownBucket)).not.toContain("BOARD_LINE_APPROVAL");
+    expect((await financeQueueCounts(BOARD)).board).toMatchObject({ actionable: 1, byReason: { BOARD_LINE_APPROVAL: 1 } });
+    expect((await expensesAwaitingMyApproval(BOARD)).map((e) => e.expenseId)).toEqual([ownBucket]);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(1);
+    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(1);
   });
 });
