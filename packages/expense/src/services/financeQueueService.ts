@@ -12,7 +12,7 @@ import type { QueueReason } from "../lib/reasons";
 import { reasonText } from "../lib/reasonWords";
 import { CLOSED_STATES } from "../lib/signoff";
 import { readExpenseSettings } from "./settingsService";
-import { signaturesWaiting } from "./signoffService";
+import { boardApprovalsWaiting, signaturesWaiting } from "./signoffService";
 import { expenseReasons } from "./reasonService";
 import {
   FINANCE_QUEUE_REASONS,
@@ -35,7 +35,7 @@ interface Item {
   reason: FinanceQueueReason;
   waitingSince: Date;
   actionable: boolean;
-  /** Lines or signatures for the signature reasons; 1 otherwise. */
+  /** Lines or signatures for the approval and signature reasons; 1 otherwise. */
   units: number;
 }
 
@@ -119,7 +119,9 @@ function queueReason(r: QueueReason, currency: string): FinanceQueueReason {
 /**
  * Every item waiting on finance or the Board, for this viewer. FINANCE and the Board read every
  * item; an item is actionable only when the viewer may take its action, never on a record the
- * viewer is conflicted on. Signatures come from signaturesWaiting.
+ * viewer is conflicted on. Line approvals only the Board can give come from boardApprovalsWaiting;
+ * one the viewer is conflicted on is listed but not actionable, so they see another Board member
+ * must act. Signatures come from signaturesWaiting.
  */
 export async function financeQueueItems(principal: ExpensePrincipal): Promise<Item[]> {
   if (!principal.isFinance && !principal.isBoard) return [];
@@ -156,6 +158,14 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
       actionable: principal.isFinance,
       units: 1,
     });
+  }
+
+  for (const { expense: e, give, conflicted } of await withContext("reading the approvals waiting on the Board", () => boardApprovalsWaiting(principal))) {
+    const row = { id: e.id, vendorName: e.vendorName, receiptDate: e.receiptDate, submittedAt: e.submittedAt, receiptTotalCents: e.receiptTotalCents, currency: e.currency };
+    const approve = (text: string, units: number, actionable: boolean) =>
+      items.push({ tab: "board", expense: row, reason: { code: "BOARD_LINE_APPROVAL", text }, waitingSince: e.submittedAt, actionable, units });
+    if (give.length > 0) approve(`${plural(give.length, "line", "lines")} to approve as Board`, give.length, true);
+    if (conflicted.length > 0) approve(`${plural(conflicted.length, "line waits", "lines wait")} for another Board member's approval: you are conflicted`, conflicted.length, false);
   }
 
   // Treasurer signatures for To sign, and Board signatures, from the line-actions function.

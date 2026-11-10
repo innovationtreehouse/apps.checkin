@@ -21,9 +21,9 @@ export const TAB_OF_QUEUE: Record<QueueTab, FinanceQueueTabKey> = { expenses: "e
 
 /**
  * The finance queue's reason codes: every expense-page reason (lib/reasons.ts), a failed intake,
- * and the signatures the viewer may give.
+ * the line approvals only a Board member can give, and the signatures the viewer may give.
  */
-export type FinanceQueueReasonCode = ReasonCode | "INTAKE_FAILED" | "TREASURER_SIGNATURE" | "BOARD_SIGNATURE";
+export type FinanceQueueReasonCode = ReasonCode | "INTAKE_FAILED" | "TREASURER_SIGNATURE" | "BOARD_LINE_APPROVAL" | "BOARD_SIGNATURE";
 
 /** Each reason's chip label, in the order a tab's list sorts by. */
 export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
@@ -46,6 +46,7 @@ export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
   QB_AWAITING_MATCH: "Waiting for a match",
   QB_VENDOR_MISSING: "No QuickBooks vendor",
   QB_UNBOOKED: "Not booked in QuickBooks",
+  BOARD_LINE_APPROVAL: "Approval to give as Board",
   BOARD_APPROVAL: "Board approval not recorded",
   SIGNER_HELD: "Held, no conflict-free signer",
   BOARD_SIGNATURE: "Board signature to give",
