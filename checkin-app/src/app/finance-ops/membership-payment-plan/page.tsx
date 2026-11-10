@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import { Button, Group, Modal, SegmentedControl, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
+import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { PAYMENT_PLAN_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -31,6 +32,12 @@ type MembershipPaymentPlanRequest = {
   };
 };
 
+type PastMembershipDecision = PaymentPlanDecisionRow & { householdName: string | null };
+
+const PAST_IDENTITY_COLUMNS: DataTableColumn<PastMembershipDecision>[] = [
+  { header: 'Household', render: (row) => <Text fw={500}>{row.householdName}</Text> },
+];
+
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
   const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
@@ -40,6 +47,7 @@ export default function MembershipPaymentPlansPage() {
 
   const [requests, setRequests] = useState<MembershipPaymentPlanRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'pending' | 'past'>('pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<number | null>(null);
@@ -222,12 +230,23 @@ export default function MembershipPaymentPlansPage() {
 
       <AlertBanner message={message} tone="error" />
 
-      <DataTable
-        columns={columns}
-        rows={requests}
-        getRowKey={(req) => `${req.id}`}
-        emptyMessage="No pending membership scholarship or payment plan requests."
+      <SegmentedControl
+        value={view}
+        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
+        style={{ alignSelf: 'flex-start' }}
       />
+
+      {view === 'past' ? (
+        <PastPaymentPlanDecisions<PastMembershipDecision> endpoint="/api/finance-ops/membership-payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={requests}
+          getRowKey={(req) => `${req.id}`}
+          emptyMessage="No pending membership scholarship or payment plan requests."
+        />
+      )}
 
       <Modal
         opened={confirmApproveOpened}

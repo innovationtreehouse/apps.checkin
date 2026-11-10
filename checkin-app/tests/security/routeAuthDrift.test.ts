@@ -478,6 +478,7 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'facility/trends': 'admin-role-gated — sysadmin/board',
     'facility/visits': 'admin-role-gated — sysadmin/board',
     'finance-ops/payment-plans': 'admin-role-gated — registry authorize finance-or-board',
+    'finance-ops/payment-plans/past': 'admin-role-gated — registry authorize finance-or-board',
     'finance-ops/s-read/match-audit': 'admin-role-gated — registry authorize BOARD; Board ops screen, Board may see enrollment match rows',
     'household/visits': "query-shaped — own household only (where householdId = caller's)",
     'kioskdisplay/certifications':
