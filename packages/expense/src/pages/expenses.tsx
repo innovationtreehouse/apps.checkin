@@ -71,7 +71,8 @@ export default function ExpensesPage() {
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
  * same list serves Finance and the approver's Programs I Lead tab. `views` are the views the
  * viewer can act in (expenseViewsFor); the routes refuse the others. `viewBadge` is the host's
- * pill beside a view's label: what the viewer can act on there.
+ * pill beside a view's label, given the view's total and whether it is selected; without it the
+ * label carries the total.
  */
 export function ExpenseList({
   detailBase,
@@ -82,7 +83,7 @@ export function ExpenseList({
   detailBase: string;
   defaultView: string;
   views?: readonly string[];
-  viewBadge?: (view: string) => ReactNode;
+  viewBadge?: (view: string, total: number | undefined, selected: boolean) => ReactNode;
 }) {
   const shown = VIEWS.filter((v) => views.includes(v.value));
   const fallbackView = (shown.find((v) => v.value === defaultView) ?? shown.find((v) => v.value === "all") ?? VIEWS[0]).value;
@@ -104,9 +105,8 @@ export function ExpenseList({
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];
-    const text = n ? `${v.label} (${n})` : v.label;
-    const badge = viewBadge?.(v.value);
-    return badge ? <Group gap={6} wrap="nowrap" justify="center">{text}{badge}</Group> : text;
+    if (!viewBadge) return n ? `${v.label} (${n})` : v.label;
+    return <Group gap={6} wrap="nowrap" justify="center">{v.label}{viewBadge(v.value, n, v.value === view)}</Group>;
   };
 
   return (

@@ -1,6 +1,6 @@
-// Counts for the host's nav pills: "Expense approvals" (lines waiting on the caller's approval,
-// the program approver's sign-off) and each expense list view's items the caller can act on. The
-// finance queue counts itself (financeQueueService). Each reads only the caller's own scope.
+// Counts for the host's nav pills: each expense list view's items the caller can act on, and the
+// lines waiting on the caller's approval. The finance queue counts itself (financeQueueService).
+// Each reads only the caller's own scope.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
@@ -59,7 +59,7 @@ async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): 
  * For the badges: the SIGNOFF_BADGE_EXPENSE_CAP newest expenses waiting on the caller's approval
  * among the SIGNOFF_BADGE_CANDIDATE_CAP newest candidates. Past either cap it is a lower bound: it
  * never counts a line the caller cannot approve, but leaves out work older than the candidates
- * read. The approver pill and the owner-approval view count read this.
+ * read. The owner-approval view count reads this.
  */
 export function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
   return awaitingApproval(principal, true);
@@ -70,13 +70,13 @@ export function allExpensesAwaitingMyApproval(principal: ExpensePrincipal): Prom
   return awaitingApproval(principal, false);
 }
 
-/** One nav poll's expensesAwaitingMyApproval, read on first use and shared by the approver pill and the owner-approval count. */
+/** One nav poll's expensesAwaitingMyApproval, read on first use and shared by the counts that read it. */
 export function approvalPoll(principal: ExpensePrincipal): () => Promise<ExpenseAwaitingApproval[]> {
   let read: Promise<ExpenseAwaitingApproval[]> | undefined;
   return () => (read ??= expensesAwaitingMyApproval(principal));
 }
 
-/** The approver pill: lines waiting on the caller's approval (expensesAwaitingMyApproval). */
+/** Lines waiting on the caller's approval (expensesAwaitingMyApproval). */
 export async function signoffsAwaitingCount(principal: ExpensePrincipal, awaiting = approvalPoll(principal)): Promise<number> {
   return (await awaiting()).reduce((n, e) => n + e.lineItemIds.length, 0);
 }
@@ -120,7 +120,7 @@ export async function expenseActionCounts(principal: ExpensePrincipal, awaiting 
  * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE) or record
  * the Board authorization. The query reads stored ids, so a merged-away submitter's expense stays a
  * candidate here and canMoveQbPending refuses it. Treasurer and Board signatures are the finance queue's To sign and
- * Board counts; a line's approval, the program approver's sign-off, is signoffsAwaitingCount's.
+ * Board counts; a line's approval, the program approver's sign-off, is the owner-approval count's.
  */
 export async function qbPendingActionCount(principal: ExpensePrincipal): Promise<number> {
   const me = callerId(principal);
