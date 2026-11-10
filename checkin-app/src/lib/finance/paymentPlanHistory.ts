@@ -7,9 +7,14 @@ export type PaymentPlanOutcome = "APPROVED" | "REFUSED";
 
 type Decision = { id: string; outcome: PaymentPlanOutcome; decidedAt: Date | null; decidedById: number | null };
 
-/** Outcome a program decision's audit row records, or null for any other ProgramParticipant edit. */
+/**
+ * Outcome a program decision's audit row records, or null for any other ProgramParticipant
+ * edit. A decision writes only the fields it changed; a withdrawal or refund writes the
+ * whole row, ids included, so a row carrying `personId` is never a decision.
+ */
 export function programAuditOutcome(newData: Prisma.JsonValue | null): PaymentPlanOutcome | null {
-    if (typeof jsonField(newData, "wasOrgMemberAtApproval") === "boolean") return "APPROVED";
+    if (jsonField(newData, "isPaymentPlanRequested") !== false || jsonField(newData, "personId") !== undefined) return null;
+    if (jsonField(newData, "status") === "ACTIVE" && typeof jsonField(newData, "wasOrgMemberAtApproval") === "boolean") return "APPROVED";
     if (typeof jsonField(newData, "paymentPlanDeniedAt") === "string") return "REFUSED";
     if (jsonField(newData, "reason") === "payment_plan_denied_no_hold") return "REFUSED";
     return null;
@@ -36,12 +41,25 @@ async function personNames(ids: Iterable<number>) {
     return new Map(people.map((p) => [p.id, p]));
 }
 
+// The audit rows that can be program decisions. It also matches whole-row snapshots of a
+// withdrawn refused place, which programAuditOutcome drops.
+const PROGRAM_DECISION_AUDIT: Prisma.AuditLogWhereInput = {
+    tableName: "ProgramParticipant",
+    newData: { path: ["isPaymentPlanRequested"], equals: false },
+    OR: [
+        { AND: [{ newData: { path: ["status"], equals: "ACTIVE" } }, { newData: { path: ["wasOrgMemberAtApproval"], equals: true } }] },
+        { AND: [{ newData: { path: ["status"], equals: "ACTIVE" } }, { newData: { path: ["wasOrgMemberAtApproval"], equals: false } }] },
+        { newData: { path: ["paymentPlanDeniedAt"], string_contains: "T" } },
+        { newData: { path: ["reason"], equals: "payment_plan_denied_no_hold" } },
+    ],
+};
+
 // ponytail: reads every decision and pages in memory — fine at a few hundred
 // requests a year; move paging into SQL if the history reaches the thousands.
 export async function programPaymentPlanHistory(page: number) {
     const [audits, stamped] = await Promise.all([
         prisma.auditLog.findMany({
-            where: { tableName: "ProgramParticipant", newData: { path: ["isPaymentPlanRequested"], equals: false } },
+            where: PROGRAM_DECISION_AUDIT,
             select: { id: true, timestamp: true, actorId: true, affectedEntityId: true, secondaryAffectedEntity: true, newData: true },
         }),
         prisma.programParticipant.findMany({

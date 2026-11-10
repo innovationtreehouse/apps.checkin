@@ -3,8 +3,9 @@
  */
 /**
  * The Past view of both payment-plan queues, end to end against Postgres: board
- * decisions made through the real approve and refuse routes show up with their
- * outcome and decider, a decision known only from its stamps still shows, the
+ * decisions made through the real approve and refuse routes show up once with their
+ * outcome and decider, even after the place is withdrawn, a decision known only from
+ * its stamps still shows, the
  * pending queue keeps only pending requests, and a role outside the queue's
  * audience is refused.
  */
@@ -16,6 +17,7 @@ import { GET as ProgramPast } from '@/app/api/finance-ops/payment-plans/past/rou
 import { POST as MembershipApprove } from '@/app/api/finance-ops/membership-payment-plans/route';
 import { POST as MembershipRefuse } from '@/app/api/finance-ops/membership-payment-plans/refuse/route';
 import { GET as MembershipPast } from '@/app/api/finance-ops/membership-payment-plans/past/route';
+import { DELETE as ParticipantExit } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -120,6 +122,14 @@ describe('program payment plans — Past', () => {
         asBoard();
         expect((await ProgramApprove(post('/api/finance-ops/payment-plans', { programId, participantId: approvedId }))).status).toBe(200);
         expect((await ProgramRefuse(post('/api/finance-ops/payment-plans/refuse', { programId, participantId: refusedId }))).status).toBe(200);
+        // A withdrawal audits the whole row, decision stamps included; it is not another decision.
+        for (const participantId of [approvedId, refusedId]) {
+            const req = new Request(`http://localhost/api/programs/${programId}/participants`, {
+                method: 'DELETE',
+                body: JSON.stringify({ participantId, mode: 'withdraw', reason: 'Family moved away' }),
+            }) as unknown as NextRequest;
+            expect((await ParticipantExit(req, { params: Promise.resolve({ id: String(programId) }) })).status).toBe(200);
+        }
     });
 
     const mine = async () =>
@@ -142,6 +152,13 @@ describe('program payment plans — Past', () => {
         asFinance();
         const row = (await mine()).find((r) => r.personId === stampOnlyId);
         expect(row).toMatchObject({ outcome: 'REFUSED', decidedByName: null, decidedAt: '2026-03-01T00:00:00.000Z' });
+    });
+
+    it('lists each decision once, though both places were later withdrawn', async () => {
+        asFinance();
+        const rows = await mine();
+        expect(rows.filter((r) => r.personId === approvedId).map((r) => r.outcome)).toEqual(['APPROVED']);
+        expect(rows.filter((r) => r.personId === refusedId).map((r) => r.outcome)).toEqual(['REFUSED']);
     });
 
     it('leaves the still-pending request out of Past and in the pending queue alone', async () => {
