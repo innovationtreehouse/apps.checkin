@@ -41,6 +41,7 @@ const ALLOWLIST: Record<string, string> = {
     // ── money: an order or refund must still find the row it paid for ─────────
     'lib/finance/reconcile/program.ts': 'Payment reconciler: matches Shopify orders to enrollment rows by order id. A withdrawn row keeps its shopifyOrderId, and a late order or refund must still land on it rather than read as unmatched.',
     'lib/finance/reconcile/reversals.ts': 'Refund/chargeback reconciler: matches by shopifyOrderId. A late refund on a withdrawn row must attach to it rather than delete it.',
+    'lib/finance/paymentPlanHistory.ts': 'Payment-plan decision history: an approved or refused request stays decided after the place is withdrawn.',
     'lib/finance/matchAudit.ts': 'Order-match audit: a historical report over which orders claimed which enrollments. A withdrawn row still claimed its order.',
     'app/api/finance-ops/s-read/match-audit/track/route.ts': 'Order-claim check: "has any enrollment claimed this order". A withdrawn row still holds its order; filtering it would report the order unmatched.',
 

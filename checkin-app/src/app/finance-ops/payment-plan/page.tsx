@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Badge, Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, Modal, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
+import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { PAYMENT_PLAN_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -42,6 +43,25 @@ type PaymentPlanRequest = {
   };
 };
 
+type PastProgramDecision = PaymentPlanDecisionRow & {
+  personName: string | null;
+  personEmail: string | null;
+  programName: string | null;
+};
+
+const PAST_IDENTITY_COLUMNS: DataTableColumn<PastProgramDecision>[] = [
+  {
+    header: 'Participant',
+    render: (row) => (
+      <>
+        <Text fw={500}>{row.personName}</Text>
+        <Text size="sm" c="dimmed">{row.personEmail}</Text>
+      </>
+    ),
+  },
+  { header: 'Program', render: (row) => <Text fw={500}>{row.programName}</Text> },
+];
+
 export default function PendingParticipantsPage() {
   const { formatDateTime } = useOrgTime();
   const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
@@ -53,6 +73,7 @@ export default function PendingParticipantsPage() {
   const [requests, setRequests] = useState<PaymentPlanRequest[]>([]);
   const [cutoff, setCutoff] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'pending' | 'past'>('pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<{ programId: number; participantId: number } | null>(null);
@@ -263,12 +284,23 @@ export default function PendingParticipantsPage() {
 
       <AlertBanner message={message} tone="error" />
 
-      <DataTable
-        columns={columns}
-        rows={requests}
-        getRowKey={(req) => `${req.programId}-${req.personId}`}
-        emptyMessage="No pending scholarship or payment plan requests."
+      <SegmentedControl
+        value={view}
+        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
+        style={{ alignSelf: 'flex-start' }}
       />
+
+      {view === 'past' ? (
+        <PastPaymentPlanDecisions<PastProgramDecision> endpoint="/api/finance-ops/payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={requests}
+          getRowKey={(req) => `${req.programId}-${req.personId}`}
+          emptyMessage="No pending scholarship or payment plan requests."
+        />
+      )}
 
       <Modal
         opened={confirmApproveOpened}
