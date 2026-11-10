@@ -9,13 +9,14 @@ import { GET as list } from "../route";
 import { POST as assign } from "../[id]/assign/route";
 import { POST as discard } from "../[id]/discard/route";
 import { GET as file } from "../[id]/file/route";
+import { GET as catchUpState, POST as catchUp } from "../catch-up/route";
 
 jest.mock("@/lib/finance/financeViewLog", () => ({
   ...jest.requireActual("@/lib/finance/financeViewLog"),
   recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("@checkin/receipt/services/mailQueueService", () => ({
-  mailQueueService: { listHeld: jest.fn(), assign: jest.fn(), discard: jest.fn(), getFile: jest.fn() },
+  mailQueueService: { listHeld: jest.fn(), assign: jest.fn(), discard: jest.fn(), getFile: jest.fn(), catchUp: jest.fn(), catchUpState: jest.fn() },
 }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>("next/server");
@@ -68,6 +69,8 @@ describe("mail queue routes admit FINANCE only", () => {
     () => assign(req("/3/assign", "POST", { email: "a@example.org" }), params()),
     () => discard(req("/3/discard", "POST", { reason: "spam" }), params()),
     () => file(req("/3/file"), params()),
+    () => catchUp(req("/catch-up", "POST"), noParams),
+    () => catchUpState(req("/catch-up"), noParams),
   ];
 
   it.each<[string, Record<string, boolean | string>]>([
@@ -83,6 +86,8 @@ describe("mail queue routes admit FINANCE only", () => {
     expect(service.assign).not.toHaveBeenCalled();
     expect(service.discard).not.toHaveBeenCalled();
     expect(service.getFile).not.toHaveBeenCalled();
+    expect(service.catchUp).not.toHaveBeenCalled();
+    expect(service.catchUpState).not.toHaveBeenCalled();
   });
 
   it("lists held items with their sender for FINANCE", async () => {
@@ -145,5 +150,31 @@ describe("file", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/pdf");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+});
+
+describe("catch-up", () => {
+  const LAST = { status: "ok" as const, messages: 4, receipts: 3, held: 1, waiting: 2, failed: 0, more: true };
+
+  it("starts a run for FINANCE and answers its state", async () => {
+    signIn({ isFinance: true });
+    service.catchUp.mockResolvedValue({ status: "started", lastRunAt: null, lastRun: null });
+    const res = await catchUp(req("/catch-up", "POST"), noParams);
+    expect(res.status).toBe(200);
+    expect(service.catchUp).toHaveBeenCalledTimes(1);
+    expect(await res.json()).toEqual({ status: "started", lastRunAt: null, lastRun: null });
+  });
+
+  it("answers busy while another run holds the mailbox", async () => {
+    signIn({ isFinance: true });
+    service.catchUp.mockResolvedValue({ status: "busy", lastRunAt: null, lastRun: null });
+    expect(await (await catchUp(req("/catch-up", "POST"), noParams)).json()).toMatchObject({ status: "busy" });
+  });
+
+  it("reads the last run's counts", async () => {
+    signIn({ isFinance: true });
+    service.catchUpState.mockResolvedValue({ status: "idle", lastRunAt: new Date("2026-11-09T10:00:00.000Z"), lastRun: LAST });
+    const res = await catchUpState(req("/catch-up"), noParams);
+    expect(await res.json()).toEqual({ status: "idle", lastRunAt: "2026-11-09T10:00:00.000Z", lastRun: LAST });
   });
 });

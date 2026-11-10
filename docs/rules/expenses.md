@@ -258,6 +258,12 @@ Things the app takes as true because they are handled outside it.
   5 for everyone else.
   [Decision — owner]
 
+- Finance may make mail intake catch up now instead of waiting for the daily
+  run. One catch-up makes at most 50 new receipts, each a paid automatic
+  reading, and only one mail run, daily or catch-up, reads the mailbox at a
+  time. Who started each catch-up is recorded.
+  [Decision — owner, 2026-11-08]
+
 - Finance approves a receipt held for review without writing a note. A reason
   for rejecting one is required and has its own field.
   [Decision]

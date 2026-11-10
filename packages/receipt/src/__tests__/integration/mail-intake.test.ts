@@ -12,7 +12,10 @@ import {
   MAIL_TIME_BUDGET_MS,
   MAIL_WINDOW_DAYS,
   INLINE_FLOOR_BYTES,
+  MAIL_CATCH_UP_CAP,
+  mailRunState,
   readMailbox,
+  startMailRun,
 } from "../../services/mailIntake";
 import { createMemoryFileStore } from "../../lib/fileStorage";
 import { createGmailReader } from "../../lib/gmail";
@@ -239,6 +242,63 @@ describeDb("mail intake", () => {
     for (let i = 0; i < MAIL_CAP; i++) send(`later${i}`, { from: [`other${i}@example.org`] });
     expect(await readMailbox()).toMatchObject({ receipts: 1, held: 2 * MAIL_CAP });
     expect((await db.receipt.findFirstOrThrow()).uploadedByUserId).toBe(ALICE.id);
+  });
+});
+
+describeDb("mail intake catch-up", () => {
+  const hold = (until: Date) => db.receiptMailLease.create({ data: { orgId: TEST_ORG_ID, until } });
+  const runEnds = () => vi.waitFor(async () => expect((await mailRunState()).running).toBe(false), { timeout: 10_000 });
+
+  it("reads past the cron's cap, records its counts and audits who started it", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    expect(MAIL_CATCH_UP_CAP).toBeGreaterThan(MAIL_CAP);
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
+    actAs(FINANCE);
+    expect(await mailQueueService.catchUp()).toMatchObject({ status: "started" });
+    await runEnds();
+    const state = await mailQueueService.catchUpState();
+    expect(state).toMatchObject({ status: "idle", lastRun: { status: "ok", messages: MAIL_CAP + 1, receipts: MAIL_CAP + 1, held: 0, waiting: 0, more: false } });
+    expect(state.lastRunAt).toBeInstanceOf(Date);
+    expect(await db.receiptAuditLog.findFirst({ where: { action: "mail_catch_up_started" } })).toMatchObject({ receiptId: null, userId: FINANCE.id });
+  });
+
+  it("says another run would read more when the cap stopped it", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
+    await readMailbox();
+    expect((await mailRunState()).lastRun).toMatchObject({ receipts: MAIL_CAP, waiting: 1, more: true });
+  });
+
+  it("refuses the cron and the button while another run holds the lease, reading nothing", async () => {
+    send("m1");
+    await hold(new Date(Date.now() + 60_000));
+    expect(await readMailbox()).toEqual({ status: "busy" });
+    actAs(FINANCE);
+    expect(await mailQueueService.catchUp()).toMatchObject({ status: "busy" });
+    expect(await mailQueueService.catchUpState()).toMatchObject({ status: "running" });
+    expect(await db.receiptMailItem.count()).toBe(0);
+    expect(await db.receiptAuditLog.count({ where: { action: "mail_catch_up_started" } })).toBe(0);
+  });
+
+  it("lets one of three simultaneous starts run", async () => {
+    send("m1");
+    const runs = await Promise.all([startMailRun(), startMailRun(), startMailRun()]);
+    expect(runs.map((r) => r.status).sort()).toEqual(["busy", "busy", "started"]);
+    for (const run of runs) if (run.status === "started") await run.done;
+    expect(await db.receiptMailItem.count()).toBe(1);
+  });
+
+  it("takes a lease a crashed run left past its expiry", async () => {
+    send("m1");
+    await hold(new Date(Date.now() - 1000));
+    expect(await readMailbox()).toMatchObject({ status: "ok", receipts: 1 });
+    expect((await mailRunState()).running).toBe(false);
+  });
+
+  it("refuses a catch-up with no mailbox set up", async () => {
+    configure({ ocr: okOcr() });
+    actAs(FINANCE);
+    await expect(mailQueueService.catchUp()).rejects.toMatchObject({ status: 409 });
   });
 });
 
