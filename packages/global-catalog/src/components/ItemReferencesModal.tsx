@@ -8,7 +8,7 @@ import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
-import type { ItemRow, ItemReferenceRow } from "./viewTypes";
+import { PART_NUMBER_HINT, partNumberLabel, type ItemRow, type ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
 // create/update routes ignore it — so it is shown read-only here.
@@ -58,7 +58,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
   if (editing) {
     return (
       <Table.Tr>
-        <Table.Td><TextInput size="xs" aria-label="Store part number" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label={partNumberLabel({ retailer: form.retailer || null, manufacturer: form.manufacturer || null })} value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Manufacturer" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Retailer" value={form.retailer} onChange={(e) => setForm({ ...form, retailer: e.currentTarget.value })} /></Table.Td>
@@ -76,7 +76,9 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
 
   return (
     <Table.Tr>
-      <Table.Td>{r.partNumber ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
+      <Table.Td>
+        {r.partNumber ? <><Text size="xs" c="dimmed">{partNumberLabel(r)}</Text>{r.partNumber}</> : <Text c="dimmed" size="sm">—</Text>}
+      </Table.Td>
       <Table.Td>{r.descriptionNormalized ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
       <Table.Td>{r.manufacturer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
       <Table.Td>{r.retailer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
@@ -165,7 +167,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
         <Table withTableBorder withColumnBorders mb="md" style={{ tableLayout: "fixed" }}>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th w="16%">Store part #</Table.Th>
+              <Table.Th w="16%"><Tooltip label={PART_NUMBER_HINT} multiline w={280}><span>Part #</span></Tooltip></Table.Th>
               <Table.Th w="18%">Description</Table.Th>
               <Table.Th w="16%">Manufacturer</Table.Th>
               <Table.Th w="16%">Retailer</Table.Th>
@@ -180,7 +182,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
             ))}
             {showAdd && (
               <Table.Tr>
-                <Table.Td><TextInput size="xs" aria-label="Store part number" placeholder="Store part #" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><Tooltip label={PART_NUMBER_HINT} multiline w={280}><TextInput size="xs" aria-label="Part #" placeholder="Part #" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Tooltip></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Description" placeholder="Description" value={addForm.description} onChange={(e) => setAddForm({ ...addForm, description: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Manufacturer" placeholder="Manufacturer" value={addForm.manufacturer} onChange={(e) => setAddForm({ ...addForm, manufacturer: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Retailer" placeholder="Retailer" value={addForm.retailer} onChange={(e) => setAddForm({ ...addForm, retailer: e.currentTarget.value })} /></Table.Td>

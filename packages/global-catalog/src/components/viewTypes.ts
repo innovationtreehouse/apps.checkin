@@ -131,3 +131,10 @@ export interface ReferenceConflictRow {
   /** Where the part is now; `existingGtin13` is the item the open conflict was raised against. */
   itemReference: { gtin13: string };
 }
+
+export const PART_NUMBER_HINT = "The store's item number when a retailer is given; the manufacturer's part number when a manufacturer is given.";
+
+/** Which number partNumber holds, by the key it pairs with; retailer wins as it does in matching. */
+export function partNumberLabel(ref: { retailer: string | null; manufacturer: string | null }): string {
+  return ref.retailer ? "Store part #" : ref.manufacturer ? "Mfr part #" : "Part #";
+}
