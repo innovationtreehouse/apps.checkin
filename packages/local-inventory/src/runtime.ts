@@ -41,6 +41,13 @@ export async function catalogHasActiveItem(gtin13: string): Promise<boolean> {
   return (await catalog.getActiveItem(gtin13)) != null;
 }
 
+/** GTINs of up to `take` active catalog items matching the query; throws when the host bound no catalog. */
+export async function catalogSearchGtins(query: string, take: number): Promise<string[]> {
+  const catalog = requireRuntime().catalog;
+  if (!catalog) throw new NotWiredError("local-inventory catalog");
+  return (await catalog.searchItems(query, take)).map((item) => item.gtin13);
+}
+
 function buildServices() {
   const inventoryRepo = createInventoryRepository(db);
   const inventoryService = createInventoryService({ inventoryRepo, db });

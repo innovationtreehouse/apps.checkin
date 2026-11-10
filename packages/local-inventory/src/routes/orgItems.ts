@@ -2,14 +2,14 @@
  * Org-item route factories. Rows carry their `location` / `backstockLocation`
  * relations, which the host stripper recurses into. Catalog item names are not
  * here — they live in the catalog's database — so reads carry the rows'
- * provisional parts, whose names are.
+ * provisional parts, whose names are, and search asks the catalog which GTINs a name matches.
  */
 import { formatGtinDisplay, isValidGtin13, parseGtinInput } from "@checkin/gtin";
 import { catalogSettingsMessage, httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { catalogHasActiveItem, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
+import { catalogHasActiveItem, catalogSearchGtins, getOrgId, getPrincipal, getServices, unlocatedWhere } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { pageArgs, provisionalNames } from "./_shared";
 
@@ -34,15 +34,37 @@ const updateSchema = createSchema
   })
   .strict();
 
-/** What the search box matches: GTIN, location, backstock, or the GTIN a typed short ID stands for. */
-export function itemSearch(q: string): Prisma.OrgItemWhereInput[] {
+/**
+ * What the search box matches: GTIN, location, backstock, the GTIN a typed short ID stands for,
+ * and `nameGtins`, the GTINs whose item name matched.
+ */
+export function itemSearch(q: string, nameGtins: readonly string[] = []): Prisma.OrgItemWhereInput[] {
   const gtin13 = parseGtinInput(q);
   return [
     { gtin13: { contains: q } },
     ...(gtin13 ? [{ gtin13 }] : []),
+    ...(nameGtins.length ? [{ gtin13: { in: [...new Set(nameGtins)] } }] : []),
     { location: { name: { contains: q, mode: "insensitive" } } },
     { backstockLocation: { name: { contains: q, mode: "insensitive" } } },
   ];
+}
+
+// ponytail: first 200 catalog matches only; a broad query can miss org items past the cap. Ask the catalog with this org's GTINs instead if that bites.
+const CATALOG_NAME_MATCHES = 200;
+
+/** GTINs whose catalog name or this org's provisional name contains q. A failed catalog search leaves catalog names out. */
+async function nameMatchedGtins(orgId: string, q: string): Promise<string[]> {
+  const [catalog, provisional] = await Promise.all([
+    catalogSearchGtins(q, CATALOG_NAME_MATCHES).catch((err: unknown) => {
+      console.error("[local-inventory] catalog name search failed", err);
+      return [];
+    }),
+    db.inventoryProvisionalItem.findMany({
+      where: { orgId, name: { contains: q, mode: "insensitive" } },
+      select: { provisionalGtin13: true },
+    }),
+  ]);
+  return [...catalog, ...provisional.map((p) => p.provisionalGtin13)];
 }
 
 /** The filter shared by the list and its count, so page totals match rows. */
@@ -50,7 +72,7 @@ async function itemWhere(sp: URLSearchParams): Promise<Prisma.OrgItemWhereInput>
   const orgId = await getOrgId();
   const where: Prisma.OrgItemWhereInput = sp.get("unlocated") === "true" ? unlocatedWhere(orgId) : { orgId };
   const q = sp.get("q")?.trim();
-  if (q) where.OR = itemSearch(q);
+  if (q) where.OR = itemSearch(q, await nameMatchedGtins(orgId, q));
   return where;
 }
 

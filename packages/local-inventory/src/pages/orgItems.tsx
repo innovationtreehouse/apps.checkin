@@ -184,7 +184,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     <>
       <Group justify="space-between" mb="md">
         <TextInput
-          placeholder="Search by part number or location…"
+          placeholder="Search by name, GTIN, ID or location…"
           value={search}
           onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }}
           maw={400}
