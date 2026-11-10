@@ -107,6 +107,9 @@ model ReceivedReceiptLineStatus {
   assignedGtin13         String?  @map("assigned_gtin13")
   /// @sensitivity:public
   provisionalItemGtin13  String?  @map("provisional_item_gtin13")
+  // The name the manager proposed for the provisional part; null when not provisional.
+  /// @sensitivity:public
+  proposedName           String?  @map("proposed_name")
   // Conversion factor (inventory units per receipt-line unit) for this line:
   // the matched reference's factor for auto-recognized lines, or the human-
   // entered factor for manual associate / provisional. Carried onto the S3

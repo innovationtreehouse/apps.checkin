@@ -36,7 +36,7 @@ export function assertEditable(received: Pick<ReceivedReceipt, "state">): void {
 }
 
 type LineDecision = Pick<ReceivedReceiptLineStatusRow,
-  "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13" | "conversionFactor" | "conversionVersion">;
+  "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13" | "proposedName" | "conversionFactor" | "conversionVersion">;
 
 /**
  * Write a line decision only if its receipt is still editable at write time, so a concurrent

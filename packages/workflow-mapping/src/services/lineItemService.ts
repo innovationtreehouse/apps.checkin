@@ -157,6 +157,7 @@ export const lineItemService = {
       recognitionStatus: "recognized",
       assignedGtin13: gtin13,
       provisionalItemGtin13: null,
+      proposedName: null,
       conversionFactor,
       conversionVersion: 1,
     }, {
@@ -208,6 +209,7 @@ export const lineItemService = {
       recognitionStatus: "provisional",
       assignedGtin13: null,
       provisionalItemGtin13: provisionalGtin13,
+      proposedName: body.proposedName,
       conversionFactor,
       conversionVersion: 1,
     }, {
@@ -230,7 +232,7 @@ export const lineItemService = {
     const edit = await loadEditableLine(receiptId, lineId);
     const { received } = edit;
 
-    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null }, {
+    await updateEditableLine(edit, { recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, proposedName: null }, {
       orgId: received.orgId,
       actorUserId: actor.id,
       actorUsername: actor.name,

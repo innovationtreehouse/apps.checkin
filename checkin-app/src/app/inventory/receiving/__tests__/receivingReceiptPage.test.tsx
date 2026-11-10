@@ -67,7 +67,7 @@ const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).
 const field = (label: string) => screen.getByText(label, { selector: "p" }).nextElementSibling?.textContent;
 
 describe("the receiving page's Mapping column", () => {
-  const mapped = (fields: { assignedGtin13?: string; provisionalItemGtin13?: string }) => {
+  const mapped = (fields: { assignedGtin13?: string; provisionalItemGtin13?: string; proposedName?: string }) => {
     detail = {
       ...baseDetail,
       ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], assignedGtin13: null, provisionalItemGtin13: null, ...fields, conversionFactor: 2 }] as typeof baseDetail.ReceivedReceiptLineStatus,
@@ -92,6 +92,14 @@ describe("the receiving page's Mapping column", () => {
     await act(async () => {});
     expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Wood glue ×2");
     expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("shows a proposed provisional part by its proposed name before it has a provisional row", async () => {
+    serve({}, {});
+    mapped({ provisionalItemGtin13: "0200002701237", proposedName: "Titebond II glue" });
+    wrap();
+    await act(async () => {});
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Titebond II glue ×2");
   });
 
   it("shows a provisional part by its provisional name", async () => {

@@ -39,6 +39,7 @@ export const classifications = {
         recognitionStatus: 'public',
         assignedGtin13: 'public',
         provisionalItemGtin13: 'public',
+        proposedName: 'public',
         conversionFactor: 'public',
         conversionVersion: 'public',
         updatedAt: 'public',

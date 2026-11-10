@@ -55,6 +55,7 @@ interface LineStatus {
   recognitionStatus: string;
   assignedGtin13: string | null;
   provisionalItemGtin13: string | null;
+  proposedName: string | null;
   conversionFactor: number;
 }
 interface Detail {
@@ -274,8 +275,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
             const lineBase = `${base}/lines/${ls.id}`;
             const isOpen = editable && openLineId === ls.id;
             const mappedGtin = ls.assignedGtin13 ?? ls.provisionalItemGtin13;
-            // A provisional part has no row until the receipt applies, and then takes the line's description as its name.
-            const mappedName = (mappedGtin && partLookup.names.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : li?.description) ?? (mappedGtin && partLabels.get(mappedGtin));
+            // A provisional part has no row until the receipt applies, and then takes the proposed name, else the line's description.
+            const mappedName = (mappedGtin && partLookup.names.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : ls.proposedName ?? li?.description) ?? (mappedGtin && partLabels.get(mappedGtin));
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>

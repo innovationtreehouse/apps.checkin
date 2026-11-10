@@ -19,14 +19,19 @@ export type ApplyResult =
 /** How long a push's claim holds before another caller may take it over (a crashed push). */
 export const APPLY_CLAIM_TTL_MS = 5 * 60_000;
 
-export type LineResolution = { gtin13: string; isProvisional?: boolean } | { nonInventory: true };
+export type LineResolution = { gtin13: string; isProvisional?: boolean; provisionalName?: string | null } | { nonInventory: true };
 
-type LineStatusFields = Pick<ReceivedReceiptLineStatusRow, "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13">;
+type LineStatusFields = Pick<ReceivedReceiptLineStatusRow, "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13" | "proposedName">;
+
+/** A provisional part's name: the proposed name, else the receipt line's description. */
+function provisionalName(proposedName: string | null | undefined, li: CompletedReceiptLineItem): string {
+  return proposedName ?? li.description;
+}
 
 /** What receiving decided for a line, as the money side carries it; undefined while unresolved. */
 export function lineResolution(ls: LineStatusFields | undefined): LineResolution | undefined {
   if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
-    return { gtin13: ls.provisionalItemGtin13, isProvisional: true };
+    return { gtin13: ls.provisionalItemGtin13, isProvisional: true, provisionalName: ls.proposedName };
   }
   if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) return { gtin13: ls.assignedGtin13 };
   if (ls?.recognitionStatus === "non_inventory") return { nonInventory: true };
@@ -46,7 +51,7 @@ export function buildExpenseReceipt(
       // A non-inventory line is no catalog part, so any GTIN the receipt arrived with is dropped.
       if ("nonInventory" in resolved) return { ...li, gtin13: null, isProvisional: undefined, provisionalName: undefined, nonInventory: true };
       return resolved.isProvisional
-        ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: li.description }
+        ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: provisionalName(resolved.provisionalName, li) }
         : { ...li, gtin13: resolved.gtin13 };
     }),
   };
@@ -192,7 +197,7 @@ async function pushAndSettle(
         isDelayed: li.isDelayed,
         conversionFactor: ls.conversionFactor,
         conversionVersion: ls.conversionVersion,
-        ...(isProvisional ? { isProvisional: true, provisionalName: li.description } : {}),
+        ...(isProvisional ? { isProvisional: true, provisionalName: provisionalName(ls.proposedName, li) } : {}),
       };
     });
 

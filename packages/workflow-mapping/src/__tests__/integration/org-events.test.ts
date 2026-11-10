@@ -18,7 +18,7 @@ const approved = (id: number, orgId?: string) =>
 
 async function provisionalLine(state: "pending_review" | "applying" | "apply_failed" | "resolved") {
   const r = await makeReceipt({ state });
-  return makeLineStatus(r.id, { recognitionStatus: "provisional", provisionalItemGtin13: PROV });
+  return makeLineStatus(r.id, { recognitionStatus: "provisional", provisionalItemGtin13: PROV, proposedName: "Widget" });
 }
 
 async function applied(): Promise<number[]> {
@@ -52,6 +52,7 @@ describeDb("S5 remap", () => {
       expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
         recognitionStatus: "recognized",
         assignedGtin13: REAL,
+        proposedName: null,
         conversionFactor: 6,
         conversionVersion: 2,
       });
@@ -60,6 +61,7 @@ describeDb("S5 remap", () => {
       expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).toMatchObject({
         recognitionStatus: "provisional",
         assignedGtin13: null,
+        proposedName: "Widget",
       });
     }
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
