@@ -112,10 +112,10 @@ export const PAGES: PageEntry[] = [
   { href: '/catalog/items', label: 'Catalog Items', section: 'Inventory', keywords: 'global catalog parts gtin', visible: CATALOG },
   { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG },
   { href: '/catalog/learned-references', label: 'Learned References', section: 'Inventory', keywords: 'item reference part mapping archive', visible: CATALOG_MANAGER },
-  { href: '/catalog/provisional-items', label: 'Provisional Items', section: 'Inventory', keywords: 'proposals provisional item review approve', visible: CATALOG },
-  { href: '/catalog/item-reference-proposals', label: 'Item Reference Proposals', section: 'Inventory', keywords: 'proposals item reference review approve', visible: CATALOG },
+  { href: '/catalog/provisional-items', label: 'Provisional Items', section: 'Inventory', keywords: 'proposals provisional item review approve', visible: CATALOG_MANAGER },
+  { href: '/catalog/item-reference-proposals', label: 'Item Reference Proposals', section: 'Inventory', keywords: 'proposals item reference review approve', visible: CATALOG_MANAGER },
   { href: '/catalog/reference-conflicts', label: 'Reference Conflicts', section: 'Inventory', keywords: 'item reference conflict resolve', visible: CATALOG_MANAGER },
-  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG_MANAGER },
   // Org inventory — same viewer gate; the receiving screens are
   // INVENTORY_MANAGER, FINANCE or BOARD and the work-queue screens
   // INVENTORY_MANAGER-only, like their routes.

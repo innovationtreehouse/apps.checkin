@@ -116,7 +116,7 @@ describe('Shop Ops directory agrees with the section gates', () => {
 });
 
 describe('Inventory directory agrees with the catalog-viewer gate', () => {
-  const MANAGER_ONLY = ['/catalog/learned-references', '/catalog/reference-conflicts'];
+  const MANAGER_ONLY = ['/catalog/learned-references', '/catalog/provisional-items', '/catalog/item-reference-proposals', '/catalog/reference-conflicts', '/catalog/conversion-challenges'];
   const inventoryEntries = PAGES.filter((p) => p.section === 'Inventory' && /^\/(catalog|inventory\/org-items)/.test(p.href) && !MANAGER_ONLY.includes(p.href));
   const counts = {
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
@@ -137,7 +137,7 @@ describe('Inventory directory agrees with the catalog-viewer gate', () => {
     for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, counts)).toBe(true);
   });
 
-  it('lists Learned References and Reference Conflicts to an inventory manager alone', () => {
+  it('lists the catalog references and review queues to an inventory manager alone', () => {
     const managerEntries = PAGES.filter((p) => MANAGER_ONLY.includes(p.href));
     expect(managerEntries).toHaveLength(MANAGER_ONLY.length);
     for (const entry of managerEntries) {

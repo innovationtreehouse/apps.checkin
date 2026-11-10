@@ -27,10 +27,10 @@ export const CATALOG_NAV_LINKS: readonly CatalogNavLink[] = [
       { name: "Items", href: "/catalog/items", icon: "📦" },
       { name: "Categories", href: "/catalog/categories", icon: "🗂️" },
       { name: "Learned References", href: "/catalog/learned-references", icon: "🔗", managerOnly: true },
-      { name: "Provisional Items", href: "/catalog/provisional-items", icon: "🧩" },
-      { name: "Item Reference Proposals", href: "/catalog/item-reference-proposals", icon: "📥" },
+      { name: "Provisional Items", href: "/catalog/provisional-items", icon: "🧩", managerOnly: true },
+      { name: "Item Reference Proposals", href: "/catalog/item-reference-proposals", icon: "📥", managerOnly: true },
       { name: "Reference Conflicts", href: "/catalog/reference-conflicts", icon: "⚠️", managerOnly: true },
-      { name: "Conversion Challenges", href: "/catalog/conversion-challenges", icon: "⚖️" },
+      { name: "Conversion Challenges", href: "/catalog/conversion-challenges", icon: "⚖️", managerOnly: true },
     ],
   },
 ];

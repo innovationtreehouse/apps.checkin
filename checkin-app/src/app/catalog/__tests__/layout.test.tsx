@@ -63,12 +63,12 @@ describe("catalog layout tabs", () => {
     expect(screen.getByRole("tab", { name: /Categories/ })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("hides the manager-only Learned References and Reference Conflicts from Board", () => {
+  it("hides the manager-only references and review queues from Board", () => {
     setSession({ id: 3, isBoardMember: true });
     setPathname("/catalog/items");
     renderLayout();
     expect(subtabNames(["Global Catalog", "Org Inventory", "Diagnostics", "Part mapping"])).toEqual([
-      "Items", "Categories", "Provisional Items", "Item Reference Proposals", "Conversion Challenges",
+      "Items", "Categories",
     ]);
   });
 
