@@ -131,7 +131,7 @@ export default function GlobalInventoryClient() {
       </Group>
 
           <Group mb="md" justify="space-between" align="flex-end">
-            <TextInput aria-label="Search items" placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }} maw={400} />
+            <TextInput aria-label="Search items" placeholder="Search items…" description="Matches name, part number, ID, category or subcategory" value={search} onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }} style={{ flex: "1 1 320px" }} miw={0} />
             <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => setArchived(e.currentTarget.checked ? "1" : "")} />
           </Group>
 

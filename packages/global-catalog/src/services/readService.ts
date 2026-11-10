@@ -29,7 +29,7 @@ export function getActiveItem(gtin13: string) {
   return catalogRepo.findActiveItemByGtin13(gtin13);
 }
 
-/** Active items whose name, GTIN, category or subcategory name contains the query in any case; a blank query matches nothing. */
+/** Active items whose name, GTIN, active reference part number, category or subcategory name contains the query in any case; a blank query matches nothing. */
 export async function searchItems(query: string) {
   const q = query.trim();
   return q ? catalogRepo.searchItemsActive(q, SEARCH_LIMIT) : [];
