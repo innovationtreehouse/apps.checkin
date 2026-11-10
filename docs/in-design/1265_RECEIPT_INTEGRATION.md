@@ -168,7 +168,7 @@ it is skipped when the refresher or mailbox is unset (local, flow tests). The
 constraint to state plainly: no machine-facing route can be added to checkin
 today, so push is not an option without first changing that rule.
 
-**Reading the mailbox.** Each run lists messages from the last 3 days. A message
+**Reading the mailbox.** Each run lists messages from the last 30 days. A message
 yields one receipt per file of an accepted type (§2): each attachment, each inline
 image, and **the body**, which is dropped only as the bullets below allow. A
 message with no attachment (an order confirmation, owner decision) is the common
@@ -285,15 +285,17 @@ sender's land in the mail queue, bounded per run and in total (below). The size 
 list are the containment; the rate limits for flooding are designed with the
 mailbox-flooding hardening, not here.
 
-The 3-day
+The 30-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
 Each run reads oldest first and its receipt cap (§4) counts only receipts, the OCR
 spend. Held items have caps of their own, so untrusted mail cannot push a
-member's receipt out of the window within the documented ceiling: each listed
-message still costs one fetch before the ledger check, so a flood of more
-messages than a run can fetch in its time budget can (the `ponytail:` note on
-`MAIL_TIME_BUDGET_MS` in `mailIntake.ts`).
-- A message whose files are all in the ledger is skipped before any download.
+member's receipt out of the window within the documented ceiling. A finished
+message costs nothing to list again, but an unfinished one, or one that left no
+ledger row, is fetched every run; a flood of those larger than a run can fetch
+in its time budget, sustained inside the window, still can (the `ponytail:` note
+on `MAIL_TIME_BUDGET_MS` in `mailIntake.ts`).
+- A finished message is skipped before it is fetched: it has at least one ledger
+  row, none of them deferred, and it is not stored as left unread.
 - Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
   next run. The charging rule is one function (`chargeHold`): each file downloaded
   from an unknown sender costs one file and its size, whether it is held, refused
@@ -315,8 +317,8 @@ check the folder in Gmail itself.
 
 **Mail about to leave the window** (`[Decision]`). The run reads mail oldest
 first, so mail it puts off (a cap or budget spent, the time budget reached, or
-a message whose reading failed) is read next run. Mail received more than two
-days ago will be out of the 3-day window by then, so finance gets one alert
+a message whose reading failed) is read next run. Mail received more than 29
+days ago will be out of the 30-day window by then, so finance gets one alert
 naming how many such messages there are and when the oldest arrived. Each such
 message is stored when the run leaves it, and removed once a later run reads it
 clean. The alert goes out on any run that finds one stored past that age, so a
@@ -327,9 +329,9 @@ has no known age, so it alerts on the first run that fails to fetch it.
 **Mailbox that cannot be listed** (`[Decision]`). The run alerts finance on every
 run the listing fails, still sends the acknowledgements owed, and the cron run
 records a failure, so System Status shows it. `ponytail:` ceiling is a cron that
-does not run at all for longer than 3 days, which System Status shows as not
-running, or more than 30 mailed receipts in one window; widen the window or the
-cap if either happens.
+does not run at all for longer than 30 days, which System Status shows as not
+running, or a flood bigger than the per-run caps drain inside 30 days; widen the
+window or the caps if either happens.
 
 **Message to receipt.**
 
@@ -370,7 +372,7 @@ cap if either happens.
   resolved, on each run.
 - **Over the sender's daily upload limit: deferred, not held** (owner ruling
   2026-10-16). The file is stored in the ledger as `deferred`, with its bytes, so
-  it no longer depends on the 3-day window. Each run retries deferred files first,
+  it no longer depends on the 30-day window. Each run retries deferred files first,
   oldest first, inside the run's receipt cap, as the sender re-resolved then. The
   upload limit is checked before OCR, so a refused retry spends no reading and no
   cap, and that sender's other deferred files wait for the next run; one sender
@@ -540,7 +542,7 @@ budget of `reconcile-shopify`:
 | 4. Gmail intake | 10 receipt files; 50 held files or 50 MB | one OCR call each, seconds to tens of seconds; starts no new message after 2 minutes |
 
 Gmail runs last because it is the only slow step; anything over its cap waits for
-the next day, which the 3-day window (§2a) allows. At hundreds of receipts a year
+the next day, which the 30-day window (§2a) allows. At hundreds of receipts a year
 the cap is rarely reached. Work done inside a user request (OCR, the first push, the first
 X13 call) stays in the request; the steps only catch what that missed.
 
