@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
@@ -113,13 +113,23 @@ function usePartNames(gtins: string[]): CatalogNames {
  */
 export default function ReceiptPage({ backHref = "/inventory/receiving" }: { backHref?: string }) {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
   const partLookup = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
   const [busy, setBusy] = useState(false);
   const [openLineId, setOpenLineId] = useState<number | null>(null);
 
-  async function act(path: string, body?: unknown, message = "Saved"): Promise<boolean> {
+  /** Returns to the page the receipt was opened from once the receipt is resolved. */
+  function leaveIfResolved(state: string): boolean {
+    if (state !== "resolved") return false;
+    notifications.show({ message: "Receipt resolved", color: "green" });
+    router.push(backHref);
+    return true;
+  }
+
+  /** Posts an action. A line decision (`lineDecision`) can complete and apply the receipt, so it re-reads the state after. */
+  async function act(path: string, body?: unknown, message = "Saved", lineDecision = false): Promise<boolean> {
     setBusy(true);
     try {
       const res = await api<{ state?: string; validationNotes?: string } | null>(path, {
@@ -129,7 +139,11 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       if (res?.validationNotes) {
         const title = res.state === "applying" ? "Apply didn't finish" : "Apply failed";
         notifications.show({ title, message: res.validationNotes, color: "red", autoClose: false });
-      } else notifications.show({ message, color: "green" });
+        return true;
+      }
+      // An unreadable state leaves the page as it is; the reload below reports the failure.
+      const after = lineDecision ? await api<Detail>(`/receipts/${id}`).catch(() => null) : null;
+      if (!(after && leaveIfResolved(after.ReceivedReceipt.state))) notifications.show({ message, color: "green" });
       return true;
     } catch (err) {
       notifications.show({ title: "Couldn't save", message: errorMessage(err), color: "red", autoClose: false });
@@ -159,6 +173,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
     try {
       await api(`${base}/run-matching`, { method: "POST" });
       const after = await api<Detail>(base);
+      if (leaveIfResolved(after.ReceivedReceipt.state)) return;
       if (after.ReceivedReceipt.matchingPendingSince) {
         notifications.show({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" });
       } else {
@@ -289,7 +304,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                       ) : (
                         <Group gap={4} wrap="nowrap">
                           <Button size="xs" variant="light" onClick={() => setOpenLineId(ls.id)}>Associate</Button>
-                          <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
+                          <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory", true)}>
                             Not inventory
                           </Button>
                         </Group>
@@ -310,7 +325,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                               if (await act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")) setOpenLineId(null);
                             }}
                             onSubmit={async (form, body) => {
-                              if (await act(`${lineBase}/${form}`, body)) setOpenLineId(null);
+                              if (await act(`${lineBase}/${form}`, body, "Saved", true)) setOpenLineId(null);
                             }}
                           />
                         </SimpleGrid>

@@ -2,7 +2,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test-helpers/rtl";
 import ReceiptPage from "@checkin/workflow-mapping/pages/receipt";
 
-jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }) }));
+jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }), useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: true } } }) }));
 
 let mockLoads: Record<string, unknown> = {};
