@@ -284,6 +284,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     <Table.Td>
                       {isOpen ? (
                         <Button size="xs" variant="subtle" onClick={() => setOpenLineId(null)}>Close</Button>
+                      ) : ls.recognitionStatus !== "unrecognized" ? (
+                        <Button size="xs" variant="subtle" color="gray" onClick={() => setOpenLineId(ls.id)}>Change</Button>
                       ) : (
                         <Group gap={4} wrap="nowrap">
                           <Button size="xs" variant="light" onClick={() => setOpenLineId(ls.id)}>Associate</Button>
@@ -304,6 +306,9 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                           <LineForm
                             busy={busy}
                             onCancel={() => setOpenLineId(null)}
+                            onNonInventory={ls.recognitionStatus === "non_inventory" ? undefined : async () => {
+                              if (await act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")) setOpenLineId(null);
+                            }}
                             onSubmit={async (form, body) => {
                               if (await act(`${lineBase}/${form}`, body)) setOpenLineId(null);
                             }}
@@ -351,10 +356,11 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ busy, onSubmit, onCancel }: {
+function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
   busy: boolean;
   onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
+  onNonInventory?: () => void;
 }) {
   const [form, setForm] = useState<LineFormKind>("associate");
   const [chosen, setChosen] = useState<CatalogItem | null>(null);
@@ -445,6 +451,9 @@ function LineForm({ busy, onSubmit, onCancel }: {
           Save
         </Button>
         <Button size="xs" variant="subtle" onClick={form === "propose" ? () => setForm("associate") : onCancel}>Cancel</Button>
+        {onNonInventory && (
+          <Button size="xs" variant="subtle" color="gray" loading={busy} onClick={onNonInventory}>Not inventory</Button>
+        )}
       </Group>
     </Stack>
   );
