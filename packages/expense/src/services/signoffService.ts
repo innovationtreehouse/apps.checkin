@@ -9,8 +9,8 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { boardApprovalNeeded, clearFrom, isConflicted, filledSeatsByLine, lineHolds, lockBucketLines, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
-import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
-import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/line-actions";
+import { APPROVABLE_STATUSES, CLOSED_STATES, approvesAsStandIn, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
+import { approvalWaitsOnBoard, lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { SIGNOFF_BADGE_EXPENSE_CAP } from "./badgeCounts";
@@ -307,10 +307,10 @@ export async function signoffStatus(expenseId: string) {
 export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
-  return (await callerLines(principal, expense)).map(({ facts: _facts, ...status }) => status);
+  return (await callerLines(principal, expense)).map(({ facts: _facts, waitsOnBoard: _waitsOnBoard, ...status }) => status);
 }
 
-/** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, and its facts. */
+/** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, its facts, and whether its approval waits on a Board member. */
 export async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
   return (await callerLinesFor(principal, [expense], readOnly)).get(expense.id)!;
 }
@@ -332,8 +332,9 @@ export async function callerLinesFor(principal: ExpensePrincipal, expenses: Expe
       const lines = [...byLine].map(([lineItemId, f]) => {
         const seats = filled.get(lineItemId) ?? [];
         const holds = lineHolds(approvalNeeded, f, seats);
-        const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvals.get(lineItemId) ?? null, facts: f, filled: seats, holds });
-        return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f };
+        const input: LineActionsInput = { caller, expense: held, approval: approvals.get(lineItemId) ?? null, facts: f, filled: seats, holds };
+        const { actions, awaiting } = lineActions(input);
+        return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f, waitsOnBoard: approvalWaitsOnBoard(input) };
       });
       return [expense.id, lines] as const;
     }),
@@ -378,6 +379,46 @@ export async function signaturesWaiting(principal: ExpensePrincipal): Promise<Si
       if (tab) row[tab].push(line.lineItemId);
     }
     if (row.toSign.length + row.board.length > 0) out.push(row);
+  }
+  return out;
+}
+
+/** One expense's lines whose approval waits on a Board member: the ones the caller may give, and the ones they are conflicted on. */
+export interface BoardApprovalsWaiting {
+  expense: Expense;
+  give: number[];
+  conflicted: number[];
+}
+
+/**
+ * For a Board member, the lines whose approval only a Board member can give: an org-level line, or
+ * one no bucket approver may approve. `give` holds the lines whose main act for the caller is that
+ * approval; `conflicted` the ones the caller may not decide because the expense is theirs or their
+ * household's, so another Board member must. Reads every open expense in the approval step, as the
+ * finance queue reads its other reasons.
+ */
+export async function boardApprovalsWaiting(principal: ExpensePrincipal): Promise<BoardApprovalsWaiting[]> {
+  if (!principal.isBoard) return [];
+  const me = actorOf(principal).userId;
+  const expenses = await db.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      state: "owner_approval",
+      NOT: { needsReimbursement: true, reimburseePersonId: null },
+      approvals: { some: { status: { in: [...APPROVABLE_STATUSES] } } },
+    },
+    orderBy: { submittedAt: "desc" },
+  });
+  const linesOf = await callerLinesFor(principal, expenses, true);
+  const out: BoardApprovalsWaiting[] = [];
+  for (const expense of expenses) {
+    const row: BoardApprovalsWaiting = { expense, give: [], conflicted: [] };
+    for (const line of linesOf.get(expense.id)!) {
+      if (line.actions.some((a) => a.act === "approve" && a.primary) && approvesAsStandIn(line.facts, me)) row.give.push(line.lineItemId);
+      else if (line.waitsOnBoard && line.facts.conflicted.includes(me)) row.conflicted.push(line.lineItemId);
+    }
+    if (row.give.length + row.conflicted.length > 0) out.push(row);
   }
   return out;
 }

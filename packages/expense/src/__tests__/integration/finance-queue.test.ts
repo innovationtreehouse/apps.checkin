@@ -209,3 +209,45 @@ describeDb("finance queue — a signer held in owner approval", () => {
     expect(await codes(principal(6, { isBoard: true }), "board", id)).toContain("SIGNER_HELD");
   });
 });
+
+describeDb("finance queue — line approvals only the Board can give", () => {
+  // 1 submitter, 11 their household · 3 FINANCE · 5,6 Board · bucket 7 org-level, 100 approved by 2.
+  beforeEach(() => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 6]] }) });
+  });
+
+  async function awaiting(ownerId: number) {
+    const id = await seedExpense({ state: "owner_approval" });
+    await seedApproval(id, await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" }), { ownerId, status: "pending" });
+    return id;
+  }
+
+  it("counts an org-level line in green for a Board member without a conflict", async () => {
+    const id = await awaiting(7);
+    const [row] = (await financeQueueRows(BOARD, "board")).filter((r) => r.expenseId === id);
+    expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line to approve as Board" }]);
+    expect((await financeQueueCounts(BOARD)).board).toMatchObject({ actionable: 1, total: 1, byReason: { BOARD_LINE_APPROVAL: 1 } });
+    expect(await financeQueueActionable(BOARD)).toBe(1);
+  });
+
+  it("lists it in gray for a Board member in the submitter's household, so they see another Board member must act", async () => {
+    const id = await awaiting(7);
+    const conflicted = principal(6, { isBoard: true });
+    const [row] = (await financeQueueRows(conflicted, "board")).filter((r) => r.expenseId === id);
+    expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line waits for another Board member's approval: you are conflicted" }]);
+    expect((await financeQueueCounts(conflicted)).board).toMatchObject({ actionable: 0, total: 1, byReason: {} });
+    expect(await financeQueueActionable(conflicted)).toBe(0);
+  });
+
+  it("leaves out a program line its bucket approver can approve, and lists nothing for FINANCE outside the Board", async () => {
+    const id = await awaiting(100);
+    expect(await codes(BOARD, "board", id)).not.toContain("BOARD_LINE_APPROVAL");
+    expect(await codes(FINANCE, "board", await awaiting(7))).not.toContain("BOARD_LINE_APPROVAL");
+  });
+
+  it("counts a program line in green when every bucket approver is conflicted", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 2]] }) });
+    const id = await awaiting(100);
+    expect(await codes(BOARD, "board", id)).toEqual(["BOARD_LINE_APPROVAL"]);
+  });
+});
