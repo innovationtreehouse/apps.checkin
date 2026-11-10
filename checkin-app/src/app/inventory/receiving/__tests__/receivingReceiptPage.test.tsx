@@ -3,7 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MantineProvider } from "@mantine/core";
 import ReceiptPage from "@checkin/workflow-mapping/pages/receipt";
 
-jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }) }));
+const mockPush = jest.fn();
+jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }), useRouter: () => ({ push: mockPush }) }));
 const mockShow = jest.fn();
 const mockApi = jest.fn();
 
@@ -307,6 +308,59 @@ describe("the receiving page for one receipt", () => {
 
     expect(screen.queryByRole("region", { name: "Line 1 details" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "← Back" })).toHaveAttribute("href", "/inventory/receiving?queue=mapping");
+  });
+
+  describe("a line decision that completes the receipt", () => {
+    const QUEUE = "/inventory/receiving?queue=mapping";
+    /** Answers the decision's POST, and the re-read of the receipt with it in `state`. */
+    function afterDecision(state: string) {
+      mockApi.mockImplementation(async (path: string) =>
+        path === "/receipts/7" ? { ...baseDetail, ReceivedReceipt: { ...receipt, state } } : {});
+    }
+    const decide = () => {
+      render(<MantineProvider><ReceiptPage backHref={QUEUE} /></MantineProvider>);
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Not inventory" }));
+    };
+
+    it("returns to the queue it came from once the receipt is resolved", async () => {
+      afterDecision("resolved");
+      decide();
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(QUEUE));
+      expect(mockShow).toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+      expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/non-inventory", { method: "POST" });
+    });
+
+    it("stays on the receipt when the save leaves it needing mapping", async () => {
+      afterDecision("pending_review");
+      decide();
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "Marked not inventory", color: "green" }));
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("stays on the receipt when the apply failed", async () => {
+      afterDecision("apply_failed");
+      decide();
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7"));
+      await act(async () => {});
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(mockShow).not.toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+    });
+
+    it("stays on the receipt when the decision itself reports an apply failure", async () => {
+      mockApi.mockResolvedValue({ state: "apply_failed", validationNotes: "Expense: QuickBooks timed out" });
+      decide();
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Apply failed", color: "red" })));
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("returns to the queue when Run matching now resolves the receipt", async () => {
+      detail = { ...baseDetail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } };
+      afterDecision("resolved");
+      render(<MantineProvider><ReceiptPage backHref={QUEUE} /></MantineProvider>);
+      fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(QUEUE));
+      expect(mockShow).toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+    });
   });
 
   it("keeps an apply failure open as a red notification naming the leg and the reason", async () => {
