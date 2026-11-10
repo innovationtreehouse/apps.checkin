@@ -466,15 +466,28 @@ export type MailRun = { status: "unbound" } | { status: "busy" } | { status: "st
 
 /**
  * Takes the org's mail lease and starts one intake pass, `busy` when another run holds the lease.
+ * `beforeRun` runs while the lease is held; if it throws, the lease is freed and no pass starts.
  * `done` settles when the pass ends and the lease is released with its summary.
  */
-export async function startMailRun({ cap = MAIL_CAP, budgetMs = MAIL_TIME_BUDGET_MS } = {}): Promise<MailRun> {
+export async function startMailRun({
+  cap = MAIL_CAP,
+  budgetMs = MAIL_TIME_BUDGET_MS,
+  beforeRun,
+}: { cap?: number; budgetMs?: number; beforeRun?: () => Promise<unknown> } = {}): Promise<MailRun> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
   const orgId = await getOrgId();
   const started = Date.now();
   const until = new Date(started + budgetMs + LEASE_SLACK_MS);
   if (!(await takeLease(orgId, until))) return { status: "busy" };
+  try {
+    await beforeRun?.();
+  } catch (err) {
+    await db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0) } })
+      .catch((releaseErr: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", releaseErr));
+    throw err;
+  }
   const release = (counts: MailRunCounts | null) =>
     db.receiptMailLease
       .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts) } })
