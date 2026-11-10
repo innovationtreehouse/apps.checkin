@@ -105,6 +105,10 @@ defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', en
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 
+// Finance's mail catch-up: POST starts one background intake pass under the mail lease; GET reads whether one is running and the last run's counts. FINANCE only, like the queue.
+defineRoute({ endpoint: 'GET /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
+
 // Mail aliases (docs/rules/people-households.md): the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and
 // approve them, and nobody else reads them, so no `their_own` view. The address
