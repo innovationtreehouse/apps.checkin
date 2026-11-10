@@ -549,6 +549,20 @@ defineRoute({
     financeView: { records: [{ key: 'ProgramParticipant', id: ['programId', 'personId'], model: 'ProgramParticipant' }] },
 });
 
+// The payment-plan queue's Past view: approved and refused requests, one
+// ProgramPaymentPlanDecision row each. Same audience and grants as the queue.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/payment-plans/past',
+    authorize: 'finance-or-board',
+    envelope: null,
+    returns: ['ProgramPaymentPlanDecision'],
+    orderedView: [
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+    ],
+    financeView: { records: [{ key: 'ProgramPaymentPlanDecision', id: ['programId', 'personId'], model: 'ProgramParticipant' }], query: ['page'] },
+});
+
 // The "who is 18 as of the member-year start" roster (Membership Audit). Ships
 // the CLASSIFIED INPUTS, not a verdict: dateOfBirth plus the board's year
 // boundary, so the two as-of ages are derived client-side — the stripper drops
@@ -608,6 +622,20 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
+});
+
+// The membership payment-plan queue's Past view: approved and refused requests,
+// one MembershipPaymentPlanDecision row each. Same audience and grants as the queue.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/membership-payment-plans/past',
+    authorize: 'finance-or-board',
+    envelope: null,
+    returns: ['MembershipPaymentPlanDecision'],
+    orderedView: [
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+    ],
+    financeView: { records: [{ key: 'MembershipPaymentPlanDecision', id: 'processId', model: 'OrgMembershipProcess' }], query: ['page'] },
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
