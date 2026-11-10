@@ -199,6 +199,12 @@ How the pieces are built is described in
   at all, is a decision on the record.
   `[Decision — *Principle: least privilege*]`
 
+- The catalog audience reads finished catalog data: items, categories,
+  subcategories, references and the audit trail. The review queues are read
+  and worked by inventory managers only. Those queues are provisional items,
+  item-reference proposals, reference conflicts and conversion challenges.
+  `[Decision — owner]`
+
 - On-hand stock is read by the same audience as the catalog; only inventory
   managers change it. `[Decision — *Principle: least privilege*]`
 

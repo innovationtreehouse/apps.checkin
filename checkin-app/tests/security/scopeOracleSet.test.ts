@@ -28,6 +28,7 @@ const ORACLES = [
     'active-visitors-tombstone.test.ts',
     'budget-owner-strip.test.ts',
     'caller-context-no-id.integration.test.ts',
+    'catalog-review-queue-admission.test.ts',
     'classification-sources.test.ts',
     'cron-secret-authorize.test.ts',
     'donation-routes.test.ts',
