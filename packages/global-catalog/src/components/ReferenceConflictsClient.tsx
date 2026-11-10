@@ -54,8 +54,8 @@ export default function ReferenceConflictsClient() {
               <Table.Td>{c.manufacturer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
               <Table.Td>{c.retailer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
               <Table.Td>
-                {c.retailer && c.partNumber ? <Badge variant="light" color="blue" size="sm">Retailer + Part #</Badge>
-                  : c.manufacturer && c.partNumber ? <Badge variant="light" color="grape" size="sm">Mfg + Part #</Badge>
+                {c.retailer && c.partNumber ? <Badge variant="light" color="blue" size="sm">Retailer + store part #</Badge>
+                  : c.manufacturer && c.partNumber ? <Badge variant="light" color="grape" size="sm">Mfg + mfr part #</Badge>
                   : c.manufacturer && c.description ? <Badge variant="light" color="grape" size="sm">Mfg + Descr</Badge>
                   : <Tooltip label="Cannot produce automatic matches"><IconAlertTriangle size={16} color="var(--mantine-color-yellow-6)" /></Tooltip>}
               </Table.Td>

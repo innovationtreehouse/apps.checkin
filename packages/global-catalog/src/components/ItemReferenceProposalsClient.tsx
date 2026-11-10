@@ -9,7 +9,7 @@ import { IconCheck, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
-import type { ItemReferenceProposalRow } from "./viewTypes";
+import { PART_NUMBER_HINT, type ItemReferenceProposalRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
 
@@ -59,7 +59,7 @@ export default function ItemReferenceProposalsClient() {
                 <Table.Th>Organization</Table.Th>
                 <Table.Th>Item</Table.Th>
                 <Table.Th>Manufacturer</Table.Th>
-                <Table.Th>Part #</Table.Th>
+                <Table.Th><Tooltip label={PART_NUMBER_HINT} multiline w={280}><span>Part #</span></Tooltip></Table.Th>
                 <Table.Th>Description</Table.Th>
                 <Table.Th>Retailer</Table.Th>
                 <Table.Th>Conv.</Table.Th>
