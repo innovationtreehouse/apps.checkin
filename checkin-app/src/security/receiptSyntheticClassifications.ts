@@ -36,6 +36,11 @@
  * finance's free-text reason, the adding person's id and when. All `internal`
  * (owner ruling 2026-10-16): a hash fingerprints a file without holding it.
  *
+ * ReceiptMailCatchUp — mail intake's run state: `status` (POST: started or
+ * busy; GET: running or idle), when the last run ended (`lastRunAt`), and that
+ * run's counts (`lastRun`: messages read, receipts made, held, still waiting,
+ * failed, and whether work remains). Counts only, `internal`.
+ *
  * ReceiptFlowStatus — how many records sit in each state of the receipt flow:
  * receipts (plus finalized ones not yet delivered), receiving records and
  * expenses, each a list of `{ state, label, count }`, and when they were read.
@@ -249,6 +254,7 @@ export const classifications = {
     addedByUserId: "internal",
     createdAt: "internal",
   },
+  ReceiptMailCatchUp: { status: "internal", lastRunAt: "internal", lastRun: "internal" },
 } as const;
 
 export const relations = {
