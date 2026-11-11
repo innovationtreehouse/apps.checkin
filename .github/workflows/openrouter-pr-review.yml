@@ -25,7 +25,7 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     env:
-      # Routing, judging and the lane pick all use this one decision model.
+      # Routing, judging and the review step's lane pick all use this one decision model.
       DECISION_MODEL: baseten/mammoth-1:free
     # One review plus at most one rerun, each under the action's 22-minute budget.
     timeout-minutes: 50
