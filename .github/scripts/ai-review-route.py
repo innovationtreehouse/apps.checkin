@@ -163,7 +163,7 @@ def pr_diff(pr, repo, base, head):
             print(f"::notice::GitHub refused the PR diff ({e}); used git diff base...head", file=sys.stderr)
             return diff
         except Exception as e2:
-            print(f"::warning::could not read the diff ({e}; then {e2}); deciding on the file list", file=sys.stderr)
+            print(f"::warning::could not read the diff ({e}; then {e2}); continuing without it", file=sys.stderr)
             return ""
 
 
@@ -780,22 +780,23 @@ def is_question(body):
 
 def pending_questions(review_comments, issue_comments):
     """Trusted human questions with no bot answer yet: (kind, id, reply_to, comment). Inside a thread
-    the bot started, any question counts; elsewhere the comment must also name the AI/bot/reviewer."""
+    the bot started, any question counts; elsewhere the comment must mention @github-actions."""
     done = {m for c in review_comments + issue_comments if (c.get("user") or {}).get("login") == BOT
             for m in re.findall(r"<!-- ai-answer:(\w+:\d+) -->", c.get("body") or "")}
     bot_roots = {c["id"] for c in review_comments
                  if (c.get("user") or {}).get("login") == BOT and not c.get("in_reply_to_id")}
     found = []
-    # Newest first, and a question a later human reply follows is treated as settled by people.
+    # A question followed by a trusted reply from someone else is treated as settled by people.
     for kind, comments in (("r", review_comments), ("i", issue_comments)):
-        for pos, c in reversed(list(enumerate(comments))):
+        for pos, c in enumerate(comments):
             body = c.get("body") or ""
             if (c.get("user") or {}).get("login") == BOT or not _trusted(c) or not is_question(body) \
                     or f"{kind}:{c['id']}" in done:
                 continue
             root = c.get("in_reply_to_id") or c["id"]
-            if kind == "r" and any((x.get("in_reply_to_id") or x["id"]) == root and (x.get("user") or {}).get("login") != BOT
-                                   for x in comments[pos + 1:]):
+            who = (c.get("user") or {}).get("login")
+            if kind == "r" and any((x.get("in_reply_to_id") or x["id"]) == root and _trusted(x)
+                                   and (x.get("user") or {}).get("login") not in (BOT, who) for x in comments[pos + 1:]):
                 continue
             if (kind == "r" and root in bot_roots) or ASKS_AI.search(body):
                 found.append((kind, c["id"], root, c))
@@ -845,8 +846,7 @@ def answer():
     if not todo or not model:
         print(f"answer: {len(todo)} question(s), model {model or 'none'}; nothing to do")
         return
-    meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "baseRefOid,headRefOid"))
-    diff = pr_diff(pr, repo, meta["baseRefOid"], meta["headRefOid"])
+    diff = pr_diff(pr, repo, os.environ.get("BASE_SHA", ""), os.environ.get("HEAD_SHA", ""))
     start = time.monotonic()
     for kind, cid, root, c in todo:
         if time.monotonic() - start > ANSWER_BUDGET:
@@ -858,9 +858,8 @@ def answer():
             line = c.get("line") if c.get("side") == "RIGHT" else None  # LEFT or outdated: no head-file excerpt
             text = ask_model(model, diff, {"path": c.get("path") if kind == "r" else "", "line": line,
                                            "hunk": c.get("diff_hunk", ""), "thread": thread, "question": _clean(c["body"], 4000)})
-            text = re.sub(r"<!--.*?-->", "", text, flags=re.S).strip()  # a forged marker would hide a question
-            if not text:
-                continue
+            # Escaped so no marker survives, even rebuilt from nested comments; a forged one would hide a question.
+            text = text.replace("<!--", "&lt;!--").strip() or "I could not answer this from the code shown."
             mark = ANSWER_MARK % (kind, cid)
             if kind == "r":
                 gh("api", f"repos/{repo}/pulls/{pr}/comments/{root}/replies", "-f", f"body={mark}\n{text}")
@@ -885,7 +884,7 @@ def answer_selftest():
           {"id": 11, "user": u("bo"), "author_association": "OWNER", "body": "Joe, is this safe?"},
           {"id": 12, "user": u(BOT), "body": "Should we merge?"}]
     got = [(k, i) for k, i, _, _ in pending_questions(rc, ic)]
-    assert got == [("i", 10)], got
+    assert got == [("r", 2), ("i", 10)], got  # the asker's own follow-up does not settle 2
     assert is_question("why?\n```") and is_question("why? ") and not is_question("ok.")
     assert code_around("../etc/passwd", 3) == "" and code_around("/etc/passwd", 3) == ""
     import tempfile
@@ -908,6 +907,11 @@ def answer_selftest():
           {"id": 6, "user": u("ann"), "author_association": "MEMBER", "body": "@github-actions why?", "created_at": "5"}]
     assert [i for _, i, _, _ in pending_questions(c2, [])] == [6], pending_questions(c2, [])
     assert is_question("a" * 5000 + "? <!-- x -->") and not ASKS_AI.search("bot reviewer AI")
+    c3 = [{"id": 1, "user": u(BOT), "body": "f"},
+          {"id": 2, "user": u("ann"), "author_association": "MEMBER", "body": "why?", "in_reply_to_id": 1, "created_at": "1"},
+          {"id": 3, "user": u("eve"), "author_association": "NONE", "body": "no idea", "in_reply_to_id": 1, "created_at": "2"},
+          {"id": 4, "user": u("ann"), "author_association": "MEMBER", "body": "see line 40", "in_reply_to_id": 1, "created_at": "3"}]
+    assert [i for _, i, _, _ in pending_questions(c3, [])] == [2]  # untrusted or own replies do not settle it
     print("answer selftest ok")
 
 
