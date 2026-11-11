@@ -2,8 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 /**
- * ENROLLED_PARTICIPANT drift guard (lib/person/filters.ts), the enrollment-status
- * sibling of livePersonDriftGuard.test.ts.
+ * ENROLLED_PARTICIPANT drift guard (lib/person/filters.ts) for the
+ * enrollment-status filter.
  *
  * A WITHDRAWN ProgramParticipant row stays in the table as history. A read that
  * filters by nothing but programId/personId counts that row as an enrollment:
@@ -17,7 +17,7 @@ import { join, relative, sep } from 'node:path';
  *   1. A list/count call on the delegate:
  *        prisma|tx|db.programParticipant.findMany|findFirst|count|aggregate|groupBy(...)
  *      findUnique and the single-row writes take the composite key of one known
- *      row, the same boundary livePersonDriftGuard draws.
+ *      row.
  *   2. A nested read through a ProgramParticipant relation (Person.programParticipants,
  *      Program.participants): `<rel>: true`, or `<rel>: { ... }` whose body selects,
  *      includes, filters (`where:`) or quantifies (`some:`/`every:`/`none:`). An
@@ -40,7 +40,8 @@ const ROOTS = ['app', 'lib'].map((d) => join(SRC, d));
 const ALLOWLIST: Record<string, string> = {
     // ── money: an order or refund must still find the row it paid for ─────────
     'lib/finance/reconcile/program.ts': 'Payment reconciler: matches Shopify orders to enrollment rows by order id. A withdrawn row keeps its shopifyOrderId, and a late order or refund must still land on it rather than read as unmatched.',
-    'lib/finance/reconcile/reversals.ts': 'Refund/chargeback reconciler: matches by shopifyOrderId. A late refund on a withdrawn row must attach to it (design §5). The delete path\'s status guard lands with the withdraw write path.',
+    'lib/finance/reconcile/reversals.ts': 'Refund/chargeback reconciler: matches by shopifyOrderId. A late refund on a withdrawn row must attach to it rather than delete it.',
+    'lib/finance/paymentPlanHistory.ts': 'Payment-plan decision history: an approved or refused request stays decided after the place is withdrawn.',
     'lib/finance/matchAudit.ts': 'Order-match audit: a historical report over which orders claimed which enrollments. A withdrawn row still claimed its order.',
     'app/api/finance-ops/s-read/match-audit/track/route.ts': 'Order-claim check: "has any enrollment claimed this order". A withdrawn row still holds its order; filtering it would report the order unmatched.',
 
@@ -50,8 +51,6 @@ const ALLOWLIST: Record<string, string> = {
     // ── history and identity tooling ──────────────────────────────────────────
     'lib/person/merge/plan.ts': 'Person merge plan: moves every enrollment row, withdrawn ones included, so history follows the surviving person.',
     'app/api/membership-ops/participants/merge/analyze/route.ts': 'Person merge analysis: shows every enrollment row the merge will move, withdrawn ones included.',
-    'lib/programs/events.ts': 'Attendance-correction IDOR guard pinned to one target: a correction to a past session must still be allowed for someone who was enrolled then and has since withdrawn.',
-    'app/api/programs/[id]/eligible-participants/route.ts': 'Excludes anyone with a row for this program, withdrawn included, because enrolling them would collide with the composite key. Letting WITHDRAWN back in ships with the re-enrol upsert.',
 
     // ── dev-only tooling ──────────────────────────────────────────────────────
     'app/api/dev/shopify/orders-paid/route.ts': 'Dev-only mock-webhook firer (isDevInstance gated). Reads the rows named in the request body. No production effect.',

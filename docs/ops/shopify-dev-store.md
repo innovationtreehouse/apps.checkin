@@ -11,7 +11,7 @@ correct — `api/webhooks/shopify/route.ts` + `withWebhook`/`verifyShopifyHmac`
 (`webhookAuth.ts`) + the `config.ts` getters — so "make it real" is store setup +
 secret wiring, not new prod code. (This folds in the former separate
 implementation-plan doc; its runbook is §2 below. §2/§4/§6 anchors are kept
-because code comments and PRODUCTION_PLAN.md cite them.)
+because code comments cite them.)
 
 **Related:** `docs/ops/contract-signing-mock.md` (sibling in-process mock), #278
 (checkout-token honor-system TODO), #624/#625 (order-amount / price-alignment
@@ -93,6 +93,6 @@ out of scope.
   stable across redeploys, so there is no re-register on deploy.
 - **O4.** Decided: leave the dev store's `BoardSettings` variant and discount
   empty, as prod is configured.
-- **O5.** Volunteer discount / per-process checkout token (#278) stays
-  honor-system; a dev store lets us *test* the flow but doesn't fix the token
-  gap — tracked in #278, out of scope here.
+- **O5.** A dev store lets us *test* the checkout flow but doesn't change who can
+  redeem the volunteer code (#278) or which process a payment credits (#2694).
+  Both are out of scope here.

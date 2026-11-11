@@ -2,35 +2,40 @@
  * @jest-environment node
  */
 /**
- * Unit test for startIntake's race guard (M3): the check+create now runs inside
+ * Unit test for startIntake's race guard: the check+create runs inside
  * a transaction holding a FOR UPDATE lock on the Membership row, so a second
  * in-flight INITIAL process is never created — the tx's own re-check (via `tx`,
  * not the caller's stale pre-tx read) finds the winner and returns it. Mirrors
  * renewal's createRenewalProcess / renewalConcurrency.integration.test.ts intent,
- * but as a mocked-prisma unit test since this worktree has no DB.
+ * as a mocked-prisma unit test.
  */
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
 import { Prisma } from '@/generated/prisma/client';
-import { refuseSelfGrant } from '@/lib/membership/selfGrantGuard';
+import { findSelfGrantRefusal, recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
+import { invalidateAttendanceCache } from '@/lib/getFullAttendance';
+import { logger, logBackendError } from '@/lib/logger';
 
 const txMembershipProcess = { findMany: jest.fn(), create: jest.fn() };
 const txAuditLog = { create: jest.fn() };
 const txQueryRaw = jest.fn();
-// saveIntake's two person.creates now run on a tx client (they pair the create
-// with mintPersonId(tx) — #1693). Same delegate object as the root mock below,
+// saveIntake's two person.creates run on a tx client (they pair the create
+// with mintPersonId(tx)). Same delegate object as the root mock below,
 // so the assertions in this file stay pointed at one place.
 const mockPerson = { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() };
-const tx = { $queryRaw: txQueryRaw, person: mockPerson, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
+const mockHousehold = { update: jest.fn() };
+const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
 /** The id txQueryRaw hands back for mintPersonId. */
 const MINTED_ID = 2503;
 
+jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
+jest.mock('@/lib/person/mailAliases', () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
         // A getter, not a direct reference: jest hoists this factory above the
         // `const mockPerson` above, so reading it eagerly is a TDZ error.
         get person() { return mockPerson; },
-        household: { update: jest.fn() },
+        get household() { return mockHousehold; },
         orgMembershipProcess: { findFirst: jest.fn(), findUniqueOrThrow: jest.fn(), updateMany: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn() },
@@ -39,7 +44,7 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
-jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn() }));
+jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn(), getOwnBackgroundCheck: jest.fn() }));
 jest.mock('@/lib/emergencyContacts/service', () => ({
     upsertPrimaryContact: jest.fn(),
     reconcileHouseholdConflicts: jest.fn(),
@@ -49,16 +54,17 @@ jest.mock('@/lib/household/leads', () => {
     return { ...actual, addHouseholdLead: jest.fn() };
 });
 jest.mock('@/lib/membership/renewal', () => ({
-    householdBgIsFresh: jest.fn(),
-    nextBoundary: jest.fn(),
     householdApplicationOpenOrBlockedWhere: { OR: [] },
 }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
+    lockAndFindDeniedHousehold: jest.fn(),
     raiseDeniedHouseholdActivity: jest.fn(),
 }));
+jest.mock('@/lib/getFullAttendance', () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock('@/lib/membership/review', () => ({ applyVolunteerFamilyStatus: jest.fn() }));
-jest.mock('@/lib/membership/selfGrantGuard', () => ({ refuseSelfGrant: jest.fn() }));
+jest.mock('@/lib/membership/selfGrantGuard', () => ({ findSelfGrantRefusal: jest.fn(), recordSelfGrantRefusal: jest.fn() }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const prisma = require('@/lib/prisma').default;
@@ -67,13 +73,13 @@ const { getExternalStatus } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { upsertPrimaryContact, reconcileHouseholdConflicts } = require('@/lib/emergencyContacts/service');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
+const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { householdBgIsFresh } = require('@/lib/membership/renewal');
+const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { advanceExternalIfComplete } = require('@/lib/membership/external');
+const { advanceExternalIfComplete, getOwnBackgroundCheck } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ensureHouseholdMembership, raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
@@ -172,7 +178,7 @@ describe('startIntake race guard', () => {
         expect(txMembershipProcess.create).not.toHaveBeenCalled();
     });
 
-    it('P2002 race loser: the FOR UPDATE lock lost to a pre-fix instance, winner found on re-query', async () => {
+    it('P2002 race loser: a concurrent insert gets past the FOR UPDATE lock, winner found on re-query', async () => {
         const winner = { id: 101, orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE' };
         const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0' });
         prisma.$transaction.mockRejectedValueOnce(p2002);
@@ -214,13 +220,24 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toEqual([]);
     });
 
-    it('loads only live (unmerged) household members', async () => {
+    it("returns the caller's own background check as the external service reads it", async () => {
+        const caller = { id: 1, householdId: null, household: null, isHouseholdLead: false, isSysadmin: false };
+        prisma.person.findUnique.mockResolvedValue(caller);
+        getOwnBackgroundCheck.mockResolvedValue({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+
+        const state = await getIntakeState(1);
+
+        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(caller);
+        expect(state.ownBackgroundCheck).toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+    });
+
+    it('loads every household member, by id', async () => {
         prisma.person.findUnique.mockResolvedValue({ id: 1, householdId: null, household: null });
 
         await getIntakeState(1);
 
         const include = prisma.person.findUnique.mock.calls[0][0].include;
-        expect(include.household.include.householdMembers.where).toEqual({ mergedIntoId: null });
+        expect(include.household.include.householdMembers).toEqual({ orderBy: { id: "asc" } });
     });
 
     it('household with an in-flight process, primary/secondary parents and a child → full prefill + external lookup', async () => {
@@ -353,6 +370,112 @@ describe('saveIntake', () => {
         prisma.volunteerDesignation.findMany.mockResolvedValue([{ email: 'volunteer@gmail.com' }]);
     });
 
+    describe('age fields', () => {
+        const youthDob = new Date(new Date().getFullYear() - 14, 0, 1);
+        const asYouth = { ...baseUser, dateOfBirth: youthDob };
+        const declared = { dob: '', over25: true };
+
+        beforeEach(() => mockPerson.update.mockClear());
+
+        it.each([
+            ['primary parent', { primaryParent: declared }],
+            ['second parent', { secondaryParent: { id: 1, ...declared } }],
+            ['child', { children: [{ id: 1, dob: '' }] }],
+        ])('leaves a youth\'s own record unwritten when named as the %s, and says so', async (_section, input) => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            const { rejections } = await saveIntake(1, input);
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([expect.objectContaining({ section: 'primaryParent', code: 'youth' })]);
+        });
+
+        it('still saves the rest of a youth\'s form', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            await saveIntake(1, { primaryParent: declared, children: [{ id: 4, name: 'Kid' }] });
+            expect(mockPerson.update).toHaveBeenCalledTimes(1);
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
+
+        it('stores no declaration beside the primary parent\'s date on file', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...baseUser, dateOfBirth: new Date(new Date().getFullYear() - 22, 0, 1) });
+            await saveIntake(1, { primaryParent: { over25: true } });
+            expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
+        });
+
+        it('stores no declaration beside the second parent\'s date on file', async () => {
+            prisma.person.findUnique.mockResolvedValue({
+                ...baseUser,
+                household: { ...baseUser.household, householdMembers: [{ id: 1, isHouseholdLead: true }, { id: 4, isHouseholdLead: false, dateOfBirth: youthDob }] },
+            });
+            await saveIntake(1, { secondaryParent: { id: 4, over25: true } });
+            expect(mockPerson.update.mock.calls[0][0].data).toEqual({ isDeclaredAdult: false });
+        });
+
+        it('reports nothing when a youth\'s form resends their record unchanged', async () => {
+            prisma.person.findUnique.mockResolvedValue({ ...asYouth, name: 'Youth Lead', allergies: null });
+            const { rejections } = await saveIntake(1, {
+                primaryParent: { name: 'Youth Lead', dob: youthDob.toISOString().slice(0, 10), over25: false, allergies: null },
+            });
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([]);
+        });
+
+        it.each([
+            ['name', { name: 'New Name' }],
+            ['date', { dob: '2000-01-01' }],
+            ['allergies', { allergies: 'peanuts' }],
+        ])('reports a youth changing their own %s', async (_field, change) => {
+            prisma.person.findUnique.mockResolvedValue({ ...asYouth, name: 'Youth Lead', allergies: null });
+            const { rejections } = await saveIntake(1, { primaryParent: change });
+            expect(mockPerson.update).not.toHaveBeenCalled();
+            expect(rejections).toEqual([expect.objectContaining({ code: 'youth' })]);
+        });
+
+        it('reports a youth once when the form names them in two sections', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            const { rejections } = await saveIntake(1, { primaryParent: declared, secondaryParent: { id: 1, ...declared } });
+            expect(rejections).toHaveLength(1);
+        });
+
+        it('still saves a youth\'s household address', async () => {
+            prisma.person.findUnique.mockResolvedValue(asYouth);
+            mockHousehold.update.mockClear();
+            await saveIntake(1, { household: { line1: '1 Main St' }, primaryParent: declared });
+            expect(mockHousehold.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { line1: '1 Main St' } });
+        });
+
+        describe('second parent with a date on file', () => {
+            const withSecond = (dateOfBirth: Date | null) => ({
+                ...baseUser,
+                household: { ...baseUser.household, householdMembers: [{ id: 1, isHouseholdLead: true }, { id: 4, isHouseholdLead: true, dateOfBirth }] },
+            });
+
+            it.each([[null], ['']])('refuses replacing an under-18 date with a declaration (dob %j), saving nothing', async (dob) => {
+                prisma.person.findUnique.mockResolvedValue(withSecond(youthDob));
+                await expect(saveIntake(1, { secondaryParent: { id: 4, dob, over25: true } })).rejects.toMatchObject({
+                    code: 'under_18_declared',
+                    fields: ['secondaryParent'],
+                });
+                expect(mockPerson.update).not.toHaveBeenCalled();
+            });
+
+            it('accepts a declaration in a later save once the date is cleared', async () => {
+                prisma.person.findUnique.mockResolvedValue(withSecond(youthDob));
+                await saveIntake(1, { secondaryParent: { id: 4, dob: null, over25: false } });
+                expect(mockPerson.update.mock.calls[0][0].data).toEqual({ dateOfBirth: null, isDeclaredAdult: false });
+
+                prisma.person.findUnique.mockResolvedValue(withSecond(null));
+                await saveIntake(1, { secondaryParent: { id: 4, dob: null, over25: true } });
+                expect(mockPerson.update.mock.calls[1][0].data).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+            });
+
+            it('accepts a declaration replacing a date of 18 or over', async () => {
+                prisma.person.findUnique.mockResolvedValue(withSecond(new Date(new Date().getFullYear() - 22, 0, 1)));
+                await saveIntake(1, { secondaryParent: { id: 4, dob: null, over25: true } });
+                expect(mockPerson.update.mock.calls[0][0].data).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+            });
+        });
+    });
+
     // Designated addresses are set on a person only by the board.
     it('refuses a new second parent with a designated address, saving nothing', async () => {
         await expect(saveIntake(1, {
@@ -374,6 +497,25 @@ describe('saveIntake', () => {
         expect(prisma.person.create).not.toHaveBeenCalled();
     });
 
+    it('refuses a taken email for new people without confirming anyone holds it; other unique violations stay unexpected', async () => {
+        const violation = (target: string[]) => new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0', meta: { target } });
+        const input = {
+            secondaryParent: { name: 'New Parent', email: 'parent@example.com' },
+            children: [{ name: 'Kid', email: 'kid@example.com' }, { name: 'Kid Two', email: 'two@example.com' }, { name: 'No Email' }],
+        };
+
+        prisma.person.create.mockRejectedValueOnce(violation(['email']));
+        await expect(saveIntake(1, input)).rejects.toMatchObject({
+            code: 'email_in_use',
+            fields: ['secondaryParent', 'children'],
+            message: expect.stringContaining('If they already have an account'),
+        });
+
+        const other = violation(['id']);
+        prisma.person.create.mockRejectedValueOnce(other);
+        await expect(saveIntake(1, input)).rejects.toBe(other);
+    });
+
     it('no_household when the caller has no participant row', async () => {
         prisma.person.findUnique.mockResolvedValue(null);
         await expect(saveIntake(1, {})).rejects.toBeInstanceOf(IntakeError);
@@ -390,12 +532,12 @@ describe('saveIntake', () => {
         });
 
         expect(prisma.household.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { line1: '1 Main St' } });
-        expect(upsertPrimaryContact).toHaveBeenCalledWith(prisma, 7, {
+        expect(upsertPrimaryContact).toHaveBeenCalledWith(tx, 7, {
             name: 'Aunt May',
             phone: '555-555-2000',
             email: undefined,
         });
-        expect(reconcileHouseholdConflicts).toHaveBeenCalledWith(prisma, 7);
+        expect(reconcileHouseholdConflicts).toHaveBeenCalledWith(tx, 7);
     });
 
     it('household notes persist as intakeNotes (trimmed; empty → null)', async () => {
@@ -423,7 +565,7 @@ describe('saveIntake', () => {
         });
     });
 
-    // #1432 site 9 / Decision 5: a submitted-but-blank name is rejected, not
+    // A submitted-but-blank name is rejected, not
     // silently dropped — this is the caller's own name, always required.
     it('rejects blanking the primary parent (caller) name', async () => {
         await expect(saveIntake(1, { primaryParent: { name: '   ' } })).rejects.toMatchObject({ code: 'name_required' });
@@ -438,9 +580,8 @@ describe('saveIntake', () => {
         });
     });
 
-    // Intake used to write DoB with a bare `new Date`, bypassing the #1165 guard
-    // that every other interactive path funnels through: signup could persist an
-    // exact DoB for a 26+ person, with only the nightly cron as the net.
+    // Intake funnels DoB through the same guard as every other interactive path, so
+    // signup cannot persist an exact DoB for a 26+ person and rely on the nightly cron.
     it('strips a 26+ DoB at signup and declares the person an adult', async () => {
         prisma.person.create.mockResolvedValue({ id: 55 });
 
@@ -458,8 +599,8 @@ describe('saveIntake', () => {
         });
     });
 
-    // F1: one calendar-date convention across every DoB writer. A DoB stored at
-    // any other time of day fails SQL age filters cut at UTC midnight (#1447).
+    // One calendar-date convention across every DoB writer. A DoB stored at
+    // any other time of day fails SQL age filters cut at UTC midnight.
     it('stores a kept DoB at UTC midnight', async () => {
         const childBirthYear = new Date().getUTCFullYear() - 12;
 
@@ -478,7 +619,7 @@ describe('saveIntake', () => {
             where: { id: 4 },
             data: { name: 'Existing Parent' },
         });
-        expect(addHouseholdLead).toHaveBeenCalledWith(prisma, 7, 4);
+        expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 4);
     });
 
     it('secondary parent is new → create + addLeadOrRecord', async () => {
@@ -487,15 +628,11 @@ describe('saveIntake', () => {
         await saveIntake(1, { secondaryParent: { name: 'New Parent', email: 'NEW@X.com' } });
 
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', dateOfBirth: null, isDeclaredAdult: false, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', allergies: null },
         });
-        expect(addHouseholdLead).toHaveBeenCalledWith(prisma, 7, 55);
+        expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 55);
     });
 
-    // #1432 follow-up: the plan's table wrongly marked this row closed by
-    // #1688, which closed explicit `null` only — a blank/whitespace name still
-    // wrote through. Same rejection as sites 9/10 (Decision 5): a submitted
-    // name is required to be non-blank.
     it('rejects blanking an existing secondary parent name on update', async () => {
         await expect(saveIntake(1, { secondaryParent: { id: 4, name: '   ' } })).rejects.toMatchObject({ code: 'name_required' });
         expect(prisma.person.update).not.toHaveBeenCalled();
@@ -532,13 +669,14 @@ describe('saveIntake', () => {
     });
 
     it('a sysadmin who does not lead the household cannot promote a guardian through intake', async () => {
-        jest.mocked(refuseSelfGrant).mockResolvedValue(true);
-        prisma.person.create.mockResolvedValue({ id: 4 });
-        prisma.person.findUnique.mockResolvedValueOnce({ ...user, isHouseholdLead: false, isSysadmin: true });
+        const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
+        jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
+        prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
 
         const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Existing Parent' } });
 
-        expect(refuseSelfGrant).toHaveBeenCalledWith(prisma, 1, { personId: expect.any(Number), householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(findSelfGrantRefusal).toHaveBeenCalledWith(tx, 1, { personId: 4, householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
         expect(addHouseholdLead).not.toHaveBeenCalled();
         expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'not_lead', message: expect.stringContaining('only a lead') }]);
     });
@@ -552,6 +690,119 @@ describe('saveIntake', () => {
             { section: 'secondaryParent', code: 'household_denied', message: expect.stringContaining('denied membership') },
         ]);
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7, personId: 4 }));
+    });
+
+    it('a refused new second parent is recorded against the household, not the minted id', async () => {
+        jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce({ actorId: 1, affectedEntityId: 7, newData: {} });
+        prisma.person.create.mockResolvedValue({ id: 55 });
+        prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
+
+        await saveIntake(1, { secondaryParent: { name: 'New Parent' } });
+
+        expect(findSelfGrantRefusal).toHaveBeenCalledWith(tx, 1, { householdId: 7 }, { table: 'Person', attempted: { isHouseholdLead: true } });
+        expect(addHouseholdLead).not.toHaveBeenCalled();
+    });
+
+    it('a youth second parent is a rejection, kept as a household member', async () => {
+        prisma.person.create.mockResolvedValue({ id: 55 });
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadYouthError(7, 55));
+
+        const result = await saveIntake(1, { secondaryParent: { name: 'Young Person', dob: '2015-01-01' } });
+
+        expect(prisma.person.create).toHaveBeenCalled();
+        expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'youth', message: expect.stringContaining('under 18') }]);
+    });
+
+    it('raises a denied promotion only after the transaction commits', async () => {
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
+        const committed = jest.fn();
+        prisma.$transaction.mockImplementationOnce(async (cb: (t: unknown) => unknown) => {
+            const out = await cb(tx);
+            expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
+            committed();
+            return out;
+        });
+
+        await saveIntake(1, { secondaryParent: { id: 4, name: 'Existing Parent' } });
+
+        expect(committed).toHaveBeenCalled();
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it('a rollback drops the denied raise', async () => {
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
+        prisma.person.update.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('write failed'));
+
+        await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ id: 4, name: 'Child' }] })).rejects.toThrow('write failed');
+
+        expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
+    });
+
+    it('a rollback still records a self-grant refusal', async () => {
+        const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
+        jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
+        prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
+        prisma.person.update.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('write failed'));
+
+        await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ id: 4, name: 'Child' }] })).rejects.toThrow('write failed');
+
+        expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
+    });
+
+    describe('a failure after the outcome is settled', () => {
+        const dbDown = new Error('database unavailable');
+        const refusal = { actorId: 1, affectedEntityId: 4, newData: {} };
+        const refusedSysadmin = () => {
+            jest.mocked(findSelfGrantRefusal).mockResolvedValueOnce(refusal);
+            prisma.person.findUnique.mockResolvedValueOnce({ ...baseUser, isHouseholdLead: false, isSysadmin: true });
+            jest.mocked(recordSelfGrantRefusal).mockRejectedValueOnce(dbDown);
+        };
+
+        it('a failed denied raise still reports the committed save and refreshes the cache', async () => {
+            addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
+            raiseDeniedHouseholdActivity.mockRejectedValueOnce(dbDown);
+
+            const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' } });
+
+            expect(result.rejections).toEqual([expect.objectContaining({ code: 'household_denied' })]);
+            expect(invalidateAttendanceCache).toHaveBeenCalled();
+            const ref = expect.objectContaining({ householdId: 7, personId: 4 });
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('denied household raise'), ref, dbDown);
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake denied household raise', ref);
+        });
+
+        it('a failed refusal write still reports the committed save', async () => {
+            refusedSysadmin();
+
+            const result = await saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' } });
+
+            expect(result.rejections).toEqual([expect.objectContaining({ code: 'not_lead' })]);
+            expect(invalidateAttendanceCache).toHaveBeenCalled();
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('self-grant refusal'), refusal, dbDown);
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake self-grant refusal', refusal);
+        });
+
+        it('a failed refusal write leaves the rollback reporting its own error', async () => {
+            refusedSysadmin();
+            prisma.person.create.mockRejectedValueOnce(
+                new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0', meta: { target: ['email'] } }),
+            );
+
+            await expect(saveIntake(1, { secondaryParent: { id: 4, name: 'Parent' }, children: [{ name: 'Kid', email: 'kid@example.com' }] }))
+                .rejects.toMatchObject({ code: 'email_in_use' });
+
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake self-grant refusal', refusal);
+        });
+
+        it('a failed state read returns a null state, not an error', async () => {
+            prisma.person.findUnique.mockResolvedValueOnce(baseUser).mockRejectedValueOnce(dbDown);
+
+            const result = await saveIntake(1, { primaryParent: { name: 'Pat' } });
+
+            expect(result).toEqual({ state: null, rejections: [] });
+            expect(prisma.person.update).toHaveBeenCalled();
+            expect(logBackendError).toHaveBeenCalledWith(dbDown, 'saveIntake state read', { userId: 1 });
+        });
     });
 
     it('child already a household member → update; a new named child → create', async () => {
@@ -569,11 +820,11 @@ describe('saveIntake', () => {
             data: { name: 'Existing Kid' },
         });
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'New Kid', dateOfBirth: null, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'New Kid', allergies: null },
         });
     });
 
-    // #1432 site 10 / Decision 5: same rejection as the primary parent — an
+    // Same rejection as the primary parent — an
     // existing child's name can't be blanked through an update.
     it('rejects blanking an existing child name on update', async () => {
         await expect(saveIntake(1, { children: [{ id: 4, name: '   ' }] })).rejects.toMatchObject({ code: 'name_required' });
@@ -586,12 +837,12 @@ describe('saveIntake', () => {
         prisma.person.create.mockResolvedValue({ id: 56 });
         await saveIntake(1, { children: [{ name: '  John  ' }] });
         expect(prisma.person.create).toHaveBeenCalledWith({
-            data: { id: MINTED_ID, householdId: 7, name: 'John', dateOfBirth: null, allergies: null },
+            data: { id: MINTED_ID, householdId: 7, name: 'John', allergies: null },
         });
     });
 
-    // #1432 site 4: "   " is truthy, so the old `else if (child.name)` gate
-    // would have created a child with a whitespace-only stored name.
+    // "   " is truthy, so a bare `else if (child.name)` gate
+    // would create a child with a whitespace-only stored name.
     it('does not create a child from a whitespace-only name', async () => {
         const result = await saveIntake(1, { children: [{ name: '   ' }] });
         expect(prisma.person.create).not.toHaveBeenCalled();
@@ -631,7 +882,6 @@ describe('submitIntake', () => {
     });
 
     it('writes the status and its audit row in one transaction', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         prisma.auditLog.create.mockRejectedValueOnce(new Error('audit write failed'));
 
         await expect(submitIntake(1)).rejects.toThrow('audit write failed');
@@ -649,7 +899,6 @@ describe('submitIntake', () => {
     });
 
     it('CAS from INTAKE: a concurrent archive or double submit (count 0) → no_process, no audit, no advance (F-11)', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
 
         await expect(submitIntake(1)).rejects.toMatchObject({ code: 'no_process' });
@@ -669,36 +918,27 @@ describe('submitIntake', () => {
         });
     });
 
-    it('complete + bgFresh=false → no bgClearedAt stamp, allowlist deferred to the external advance', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
-
+    it('lands at PENDING_EXTERNAL_ACTION without stamping, then settles the household before the external advance', async () => {
         await submitIntake(1);
 
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
             where: { id: 11, status: 'INTAKE' },
             data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
         });
+        // Settle stamps a qualifying household, and blocks one whose adult is disputed.
+        expect(settleHouseholdBg).toHaveBeenCalledWith(7);
+        expect(settleHouseholdBg.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist (#874)', async () => {
-        householdBgIsFresh.mockResolvedValue(true);
+    it('a failed settle is logged and the committed intake still returns', async () => {
+        settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
 
-        const result = await submitIntake(1);
-
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 11, status: 'INTAKE' },
-            data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', bgClearedAt: expect.any(Date) }),
-        });
-        expect(prisma.auditLog.create).toHaveBeenCalled();
-        // Fresh-check shortcut skips clearBackgroundCheck for the whole cycle, so
-        // the designation allowlist must be matched here or never.
-        expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
-        expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+        await expect(submitIntake(1)).resolves.toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+        expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 11 });
     });
 
-    it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result (#878)', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
+    it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is
         // already met when we arrive — the advance carries the process to PENDING_PAYMENT.
         advanceExternalIfComplete.mockResolvedValue({ id: 11, status: 'PENDING_PAYMENT' });
@@ -709,8 +949,7 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_PAYMENT' });
     });
 
-    it('falls back to the re-read process when the external advance is a no-op (#878)', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
+    it('falls back to the re-read process when the external advance is a no-op', async () => {
         // Nothing pre-marked ⇒ advanceExternalIfComplete finds the gate unmet and
         // returns the still-PENDING_EXTERNAL_ACTION process (here left undefined to
         // exercise the fallback); submitIntake reports the phase it advanced to.
@@ -722,18 +961,4 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
     });
 
-    it('complete + fresh check + intake note → the note does not disqualify the shortcut', async () => {
-        prisma.person.findUnique.mockResolvedValue({
-            ...inFlightUser,
-            household: { ...inFlightUser.household, intakeNotes: 'please treat us as a volunteer household' },
-        });
-        householdBgIsFresh.mockResolvedValue(true);
-
-        await submitIntake(1);
-
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 11, status: 'INTAKE' },
-            data: expect.objectContaining({ bgClearedAt: expect.any(Date) }),
-        });
-    });
 });

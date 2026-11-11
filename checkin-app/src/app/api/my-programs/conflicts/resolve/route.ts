@@ -3,17 +3,18 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { intervalsOverlap } from "@/lib/attendanceConflicts";
 import { apiError } from "@/lib/api-response";
+import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 import { deleteSignificance } from "@/lib/visit/significance";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
  * Resolve an attendance conflict by deleting one of the duplicate Visit rows.
  * Real write, audited like every other Visit change (action DELETE, tableName
- * 'Visit', actorId, oldData snapshot) — see attendance/route.ts.
+ * 'Visit', actorId, oldData snapshot).
  *
  * Authorization is re-checked server-side (never trust the client): the caller
  * must lead the program that owns the event for the visit being deleted, or be a
- * global admin (isSysadmin/isBoardMember/isKeyholder) — mirroring the attendance route.
+ * global admin (isSysadmin/isBoardMember/isKeyholder).
  * And the visit must actually be part of an overlap, so we can't be tricked into
  * deleting a participant's legitimate sole visit.
  *
@@ -59,6 +60,9 @@ export const POST = withAuth({}, async (req, auth) => {
     const current = await tx.visit.findUnique({ where: { id: visit.id } });
     if (!current || current.deletedAt) {
       return { error: "Visit not found", status: 404 };
+    }
+    if (!current.departedAt) {
+      return { error: OPEN_VISIT_REFUSAL, status: 409 };
     }
 
     // Only delete a visit that genuinely overlaps another of the same

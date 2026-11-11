@@ -6,7 +6,7 @@
  * PENDING (attempts++/lastError) for the next run; the health_event preserves the incident
  * regardless. Emits its own heartbeat so a dead relay is caught by the missing-data floor.
  *
- * Concurrency (F19): the whole claim→publish drain runs under a Postgres advisory lock, so
+ * Concurrency: the whole claim→publish drain runs under a Postgres advisory lock, so
  * two overlapping invocations cannot read the same PENDING batch and double-publish — the
  * single-flight guarantee is defended in code, not just by reserved concurrency = 1. A second
  * invocation that can't take the lock skips cleanly (without a heartbeat — the lock-holder

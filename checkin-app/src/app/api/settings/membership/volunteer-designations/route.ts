@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON, isSignInVerified } from "@/lib/person/filters";
+import { isSignInVerified } from "@/lib/person/filters";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { handler } from "@/security/handler";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +56,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
     // ponytail: O(n) scan over people with an email, no indexed canonical column
     // — same tradeoff as volunteer-memberships, fine at this org's scale.
     const people = await prisma.person.findMany({
-        where: { email: { not: null }, ...LIVE_PERSON },
+        where: { email: { not: null }, ...IN_LIVE_HOUSEHOLD },
         select: {
             name: true,
             email: true,

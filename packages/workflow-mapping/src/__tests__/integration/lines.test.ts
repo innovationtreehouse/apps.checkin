@@ -1,4 +1,4 @@
-/** Line decisions: associate (CI3), propose, non-inventory, the 409 rule, auto-proceed, actor attribution. */
+/** Line decisions: associate, propose, non-inventory, the 409 rule, auto-proceed, actor attribution. */
 import { beforeEach, expect, it, vi } from "vitest";
 import type { CatalogItemReferenceProposal, CatalogProvisionalItemProposal, CatalogReferenceConflict } from "@checkin/receipt-types";
 import { db } from "../../db";
@@ -10,6 +10,8 @@ import { describeDb } from "../helpers/db";
 import { MANAGER, OTHER_ORG_ID, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
 const noRef = { exists: false, gtin13: null, id: null, conversionFactor: 1, conversionVersion: 1 };
+// The catalog's approved, non-archived items; an archived or unknown GTIN reads as null.
+const ACTIVE_GTINS = new Set(["0000000000017", "0000000000024"]);
 let refCheck: RefCheckResult;
 let submitted: {
   proposals: CatalogItemReferenceProposal[];
@@ -20,7 +22,11 @@ let sinks: ReturnType<typeof recordingSinks>;
 
 function catalog(): { catalogReader: CatalogReader; catalogSubmissions: CatalogSubmissions } {
   return {
-    catalogReader: { lookupItems: async () => [], checkReferences: async () => refCheck },
+    catalogReader: {
+      lookupItems: async () => [],
+      checkReferences: async () => refCheck,
+      getActiveItem: async (gtin13) => (ACTIVE_GTINS.has(gtin13) ? { gtin13, name: "Hex bolt" } : null),
+    },
     catalogSubmissions: {
       proposeItemReference: async (p) => (submitted.proposals.push(p), { id: 1 }),
       reportConflict: async (p) => (submitted.conflicts.push(p), { id: 2 }),
@@ -67,11 +73,23 @@ describeDb("associate (CI3, optimistic)", () => {
     ]);
   });
 
-  it("502 and the line unchanged when the catalog is not wired", async () => {
+  it("503 \"No catalog is connected\" and the line unchanged when the catalog is not wired", async () => {
     configure(sinks);
     const { r, lines } = await pendingWithLines();
-    await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017" })).rejects.toMatchObject({ status: 502 });
+    await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017" })).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
     expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).recognitionStatus).toBe("unrecognized");
+  });
+
+  it.each([
+    ["malformed", "12345", 400, /not a GTIN-13/],
+    ["wrong check digit", "0000000000018", 400, /not a GTIN-13/],
+    ["unknown or archived", "0000000000031", 404, /No catalog item has Part ID 0000000000031/],
+  ])("%s GTIN: %i, nothing sent to the catalog, and the line unchanged", async (_case, gtin13, status, message) => {
+    const { r, lines } = await pendingWithLines();
+    await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13 })).rejects.toMatchObject({ status, message: expect.stringMatching(message) });
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).recognitionStatus).toBe("unrecognized");
+    expect(submitted.proposals).toHaveLength(0);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(0);
   });
 
   it("404 for another org's receipt and for a line of another receipt", async () => {
@@ -98,6 +116,7 @@ describeDb("propose", () => {
     expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toMatchObject({
       recognitionStatus: "provisional",
       provisionalItemGtin13: "2000000000015",
+      proposedName: "Widget",
     });
   });
 });
@@ -113,8 +132,8 @@ describeDb("non-inventory and auto-proceed", () => {
   });
 });
 
-describeDb("line edits are refused on applying and resolved receipts", () => {
-  for (const state of ["applying", "resolved"] as const) {
+describeDb("line edits are refused once a receipt is sent to apply", () => {
+  for (const state of ["applying", "apply_failed", "resolved"] as const) {
     it(`409 on ${state} for every line decision`, async () => {
       const r = await makeReceipt({ state });
       const ls = await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
@@ -130,14 +149,6 @@ describeDb("line edits are refused on applying and resolved receipts", () => {
       expect(submitted.proposals).toHaveLength(0);
     });
   }
-
-  it("edits stay allowed on apply_failed (and do not auto-proceed)", async () => {
-    const r = await makeReceipt({ state: "apply_failed" });
-    const ls = await makeLineStatus(r.id, { recognitionStatus: "recognized", assignedGtin13: "0000000000017" });
-    await lineItemService.markNonInventory(r.id, ls.id);
-    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).recognitionStatus).toBe("non_inventory");
-    expect((await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } })).state).toBe("apply_failed");
-  });
 });
 
 describeDb("an id-less session is unauthenticated", () => {
@@ -216,7 +227,7 @@ describeDb("a catalog remap after the manager's decision", () => {
     const { r, ls } = await proposedLine();
     await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000017" });
     await orgEventConsumer.onOrgEvents([approved]);
-    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null });
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null, proposedName: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 
@@ -224,7 +235,7 @@ describeDb("a catalog remap after the manager's decision", () => {
     const { r, ls } = await proposedLine();
     await lineItemService.markNonInventory(r.id, ls.id);
     await orgEventConsumer.onOrgEvents([approved]);
-    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null });
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, proposedName: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 
@@ -249,12 +260,14 @@ describeDb("a catalog remap after the manager's decision", () => {
       await lines.update({ where: { id: ls.id }, data: { provisionalItemGtin13: P2 } });
       return found;
     };
-    const spy = vi.spyOn(lines, "findMany").mockImplementationOnce((args) =>
-      Object.assign(readThenRepropose(args), { [Symbol.toStringTag]: "PrismaPromise" as const }),
-    );
+    const spy = vi.spyOn(lines, "findMany").mockImplementationOnce((args) => {
+      const read = readThenRepropose(args);
+      return { then: read.then.bind(read), catch: read.catch.bind(read), finally: read.finally.bind(read), [Symbol.toStringTag]: "PrismaPromise" as const };
+    });
     await orgEventConsumer.onOrgEvents([approved]);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+    expect(await db.workflowFailedOrgEvent.count()).toBe(0);
     expect(await read(ls.id)).toMatchObject({ recognitionStatus: "provisional", provisionalItemGtin13: P2, assignedGtin13: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });

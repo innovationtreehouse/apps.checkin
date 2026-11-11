@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Local per-area test runner (docs/ops/per-library-testing.md).
 // Maps the files changed against a base ref to areas and runs only the light
-// tiers for those areas, serially: tsc, eslint, vitest unit (no DB container),
+// tiers for those areas, serially: tsc, eslint (checkin and packages), vitest unit (no DB container),
 // and the related checkin jest unit tests. Heavier tiers are opt-in and scoped
 // to the area. CI still runs every suite; this never replaces it.
 //
@@ -217,6 +217,9 @@ for (const dir of [...reached].sort()) {
 }
 const lintFiles = appFiles.filter(appExists).filter((f) => /\.(t|j)sx?$|\.mjs$/.test(f));
 if (lintFiles.length) add('eslint (changed checkin-app files)', 'npx', ['eslint', '--max-warnings', '0', '--no-warn-ignored', ...lintFiles], app);
+// CI lints every package from the root config (`npm run lint:packages`); its rules are per-file, so the changed files suffice.
+const pkgLintFiles = changed.filter((f) => f.startsWith('packages/') && existsSync(join(root, f)) && /\.(c|m)?(t|j)sx?$/.test(f));
+if (pkgLintFiles.length) add('eslint (changed packages/* files)', 'npx', ['eslint', '--max-warnings', '0', '--no-warn-ignored', ...pkgLintFiles], root);
 if (touched.has('packages/pg-test-harness') || [...touched].some((d) => byDir.get(d)?.library)) {
   add('library boundaries', 'node', ['scripts/check-library-boundaries.mjs'], root);
 }

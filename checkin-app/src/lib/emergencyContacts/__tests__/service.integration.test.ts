@@ -326,4 +326,11 @@ describe("countHouseholdsMissingValidContact — admin alarm", () => {
         expect(after.length).toBe(before.length + 1);
         expect(after).toContain(hh);
     });
+
+    it("leaves out a household whose only application the board closed", async () => {
+        const hh = await makeHousehold("alarm-closed");
+        const m = await prisma.orgMembership.create({ data: { householdId: hh, status: "NONE" } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: "INITIAL", status: "ARCHIVED" } });
+        expect(await findHouseholdsMissingValidContact(prisma)).not.toContain(hh);
+    });
 });

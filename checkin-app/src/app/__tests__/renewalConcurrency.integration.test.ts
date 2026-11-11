@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Concurrency test for renewal opening. runRenewalSweep (the board button and
- * the unscheduled cron) and concurrent presses check-then-act through the shared
+ * Concurrency test for renewal opening. runRenewalSweep (the board button) and
+ * concurrent presses check-then-act through the shared
  * createRenewalProcess. Across instances
  * two overlapping runs each read zero open processes and both reach the INSERT —
  * which would mint duplicate PENDING_RENEWAL rows (and a dangling process
@@ -14,8 +14,7 @@
  * clean no-op (returns null, no second audit row). Drop the index and the second
  * INSERT succeeds → this fails.
  *
- * The machine never emails (PR-2, outreach engine) — createRenewalProcess no
- * longer reminds, so this test no longer asserts a send; sendEmail is mocked only
+ * The machine never emails, so this test asserts no send; sendEmail is mocked only
  * as a blanket guard against any accidental real network call.
  */
 

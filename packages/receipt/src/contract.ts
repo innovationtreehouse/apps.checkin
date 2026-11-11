@@ -5,7 +5,8 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
+import type { FailureKind } from "@checkin/component-kit";
+import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
@@ -17,6 +18,10 @@ export interface ReceiptPrincipal {
   isAdult: boolean;
   /** Mailed receipts get the raised daily limit (a program lead or Board member); set by the sender lookup. */
   raisedMailLimit?: boolean;
+  /** A Board member, who confirms a reimbursement on behalf of a reimbursee with no account. */
+  isBoardMember?: boolean;
+  /** Holds finance, operations or the board, and so may add a non-member as reimbursee. */
+  addsPeople?: boolean;
 }
 
 export interface ReceiptAuth {
@@ -45,23 +50,21 @@ export interface ReceiptSink {
 
 // ── X13: in-kind donor → donations ───────────────────────────────────────────
 
-export const InKindDonorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  companyName: z.string().nullable(),
-});
-export type InKindDonor = z.infer<typeof InKindDonorSchema>;
+export { InKindDonorSchema, type InKindDonor } from "@checkin/receipt-types";
 
-/** X13. Both calls are idempotent on `receiptId`; a later recordInKindDonor replaces the donor. */
+/**
+ * X13. Both calls are idempotent on `receiptId`; a later recordInKindDonor replaces the donor.
+ * `seq` is the receipt's donorSyncSeq: the callee ignores a call older than one it has seen.
+ */
 export interface DonorSink {
-  recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void>;
-  withdrawInKind(orgId: string, receiptId: string): Promise<void>;
+  recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor, seq: number): Promise<void>;
+  withdrawInKind(orgId: string, receiptId: string, seq: number): Promise<void>;
 }
 
 // ── X12: reimbursement status ← expense ──────────────────────────────────────
 
-export const reimbursementStatusSchema = z.map(z.string(), z.object({ paidOn: z.string().nullable() }));
-export type PaidStatus = { paidOn: string | null };
+export const reimbursementStatusSchema = z.map(z.string(), z.object({ paidOn: z.string().nullable(), statusUnavailable: z.boolean().optional() }));
+export type PaidStatus = { paidOn: string | null; statusUnavailable?: boolean };
 
 /** An owed receipt; a backfilled one names the hand-booked QuickBooks transaction it matched. */
 export type ReimbursementAsk = { receiptId: string; qbEntity: string | null; qbTxnId: string | null };
@@ -71,10 +74,71 @@ export interface ReimbursementStatus {
   forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
+// ── Purchase outcome ← receiving, expense, donations ───────────────────────
+
+/** Where a finalized receipt's purchase stands downstream, as its uploader and reimbursee may read it. */
+export const purchaseOutcomeSchema = z.object({
+  receiving: z.enum(["waiting", "applying", "stuck", "received"]).nullable(),
+  /** The receipt's lines still open on receiving's receive queue; absent means none. */
+  openBackorders: z.number().int().nonnegative().optional(),
+  money: z
+    .object({
+      status: z.enum(["awaiting_confirmation", "awaiting_approval", "exception", "with_finance", "line_rejected", "complete", "backfill"]),
+      /** The approver's reason on each rejected line; empty otherwise. */
+      notes: z.array(z.string()),
+    })
+    .nullable(),
+  gift: z.enum(["awaiting_decision", "accepted", "refused", "returned"]).nullable(),
+});
+export type PurchaseOutcome = z.infer<typeof purchaseOutcomeSchema>;
+export const purchaseOutcomesSchema = z.map(z.string(), purchaseOutcomeSchema);
+
+/** The host's answer for finalized receipts; a receipt missing from it has not reached any downstream library. */
+export interface PurchaseOutcomes {
+  forReceipts(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>>;
+}
+
+// ── Submitter confirmations ← expense ──────────────────────────────────────
+
+/** A reimbursement whose expense waits for the person reimbursed to confirm its receipt. */
+export interface AwaitedConfirmation {
+  receiptId: string;
+  reimburseePersonId: number;
+  /** The fields of the finance change that cleared the last confirmation; empty when none was given. */
+  changedFields: string[];
+}
+
+/**
+ * The submitter's signature on a reimbursement whose expense exists, given by the person
+ * reimbursed. Finance changing what was claimed or is paid clears it there, and it is given again.
+ */
+export interface SubmitterConfirmations {
+  /** The org's reimbursements whose expense waits for the confirmation. */
+  awaiting(): Promise<AwaitedConfirmation[]>;
+  /**
+   * Records the confirmation on every line of the receipt's expense still waiting for it, signed by
+   * `signer`: the reimbursee, or a Board member on their behalf giving `reason`. False when none waits.
+   */
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
+  /** The given receipts whose expense waits for a confirmation `signerUserId` may sign, by the same rules `confirm` refuses with. */
+  confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
+}
+
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */
 export interface ReceiptHouseholds {
   /** Everyone in the given people's households. */
   householdOf(personIds: number[]): Promise<number[]>;
+}
+
+/**
+ * The host's record of merges. A receipt keeps the person ids it was written with, and a merge
+ * cannot reach this database, so every read asks here who an id names now.
+ */
+export interface ReceiptPersonIds {
+  /** The live person each id names today, following merges; null for an id that names nobody live. */
+  liveIds(personIds: number[]): Promise<Map<number, number | null>>;
+  /** Every id a row may still hold for this live person: their own and each one merged into them. */
+  storedIdsOf(personId: number): Promise<number[]>;
 }
 
 // ── OCR provider ─────────────────────────────────────────────────────────────
@@ -90,6 +154,7 @@ export const OcrLineItemSchema = z.object({
   manufacturer: z.string().max(100).optional(),
   quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: ocrMoney,
+  totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
 });
 
@@ -99,18 +164,23 @@ export const OcrDataSchema = z.object({
   receiptNumber: z.string().max(200).optional(),
   orderNumber: z.string().max(200).optional(),
   receiptDate: z.string().max(50),
-  currency: z.string().max(10),
+  currency: z.string().regex(CURRENCY_CODE),
   shipping: ocrMoney,
   tax: ocrMoney,
   discount: ocrMoney,
-  receiptTotal: ocrMoney,
+  // Null when the reading found no total; the submitter fills it in.
+  receiptTotal: ocrMoney.nullable(),
   receiptTotalText: z.string().max(100).optional(),
   lineItems: z.array(OcrLineItemSchema).max(200),
 });
 export type OcrLineItem = z.infer<typeof OcrLineItemSchema>;
 export type OcrData = z.infer<typeof OcrDataSchema>;
 
-export type OcrResult = { success: true; data: OcrData } | { success: false; error: string };
+/** A failure carries its kind and a short reason in plain words, never the service's own text. */
+export type OcrResult = { success: true; data: OcrData } | { success: false; kind: FailureKind; error: string };
+
+/** The reason of a `data` failure the reading service refused outright, so a run of them across receipts can be told apart. */
+export const OCR_FILE_REFUSED = "the reading service refused the file";
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
@@ -121,8 +191,32 @@ export interface OcrProvider {
 
 /** The host's people, for attributing a mailed receipt to its sender. */
 export interface ReceiptPeople {
-  /** The one live person allowed to submit receipts whose sign-in email is exactly this address, else null. */
+  /** The one live person allowed to submit receipts whom the host identifies by exactly this address, else null. */
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
+}
+
+/** The host's names for its people, for finance reading who uploaded a receipt. */
+export interface ReceiptPersonNames {
+  /** Each person's name by id; an id it can't name is missing. */
+  namesOf(personIds: number[]): Promise<Map<number, string>>;
+}
+
+/** A person the uploader may name as reimbursee. `id` is the Person.id. */
+export interface ReimburseeOption {
+  id: number;
+  name: string;
+}
+
+/** The host's people an uploader may name as reimbursee. Only an adult is reimbursed. */
+export interface ReceiptReimbursees {
+  /** Live adults whose name contains `query`, at most `limit` of them. */
+  search(query: string, limit: number): Promise<ReimburseeOption[]>;
+  /** The live person with this id and whether they are a known adult, else null. */
+  byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
+  /** Whether this person has an account to sign in with, and so confirms for themself. */
+  hasAccount(personId: number): Promise<boolean>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`. */
+  addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
 
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
@@ -149,6 +243,8 @@ export type MailMessage = z.infer<typeof MailMessageSchema>;
 
 /** Read-only access to the receipt mailbox. */
 export interface MailboxReader {
+  /** The mailbox's own address, from configuration. */
+  address: string;
   /** Ids of messages received in the last `days` days, oldest first. Mail the mailbox sent is not listed. */
   listRecent(days: number): Promise<string[]>;
   getMessage(id: string): Promise<MailMessage>;
@@ -164,9 +260,97 @@ export interface MailHoldCeilingEvent {
   refused: number;
 }
 
+/** Mail the run did not fully read that will be out of the window by the next daily run. */
+export interface MailAgingOutEvent {
+  orgId: string;
+  /** Messages at risk: partly read or failed ones, and every message a run did not reach. One that cannot be fetched counts, since its age is unknown. */
+  messages: number;
+  /** When the oldest dated at-risk message arrived; null when none could be dated. */
+  oldestReceivedAt: Date | null;
+}
+
+export interface MailListingFailedEvent {
+  orgId: string;
+  /** Why the listing failed, which decides the alert's wording. */
+  kind: FailureKind;
+}
+
+/** One acknowledgement of a mailed receipt, to one recipient. */
+/** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
+export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
+
+export interface MailRefusal {
+  file: string;
+  reason: MailRefusalReason;
+}
+
+export interface MailAcknowledgement {
+  to: string;
+  /** True when the recipient is the person the receipt is credited to. */
+  mine: boolean;
+  /** The credited person's name; null on a sender's copy when the receipt went to someone else. */
+  creditedName: string | null;
+  senderAddress: string;
+  /** Null on a notice that only reports refused files. */
+  receiptId: string | null;
+  receivedAt: Date;
+  /** The message's refused files; only ever on the sender's copy. */
+  refused: MailRefusal[];
+  /** Unique to this notice; its Message-ID is built from it by `noticeMessageId`. */
+  noticeId: string;
+}
+
+const NOTICE_ID_PREFIX = "<receipt-notice.";
+
+/** The Message-ID a notice goes out with, on the receipt mailbox's domain, so intake can tell a reply to it. */
+export function noticeMessageId(noticeId: string, mailboxAddress: string): string {
+  return `${NOTICE_ID_PREFIX}${noticeId}@${mailboxAddress.slice(mailboxAddress.lastIndexOf("@") + 1).toLowerCase()}>`;
+}
+
+/** True when `messageId` is one `noticeMessageId` made for this mailbox. */
+export function isNoticeMessageId(messageId: string, mailboxAddress: string): boolean {
+  const id = messageId.trim().toLowerCase();
+  return id.startsWith(NOTICE_ID_PREFIX) && id.endsWith(noticeMessageId("", mailboxAddress).slice(NOTICE_ID_PREFIX.length));
+}
+
+/** The host's mail out, for acknowledging mailed receipts. */
+export interface ReceiptReplies {
+  /** The live, sign-in-verified person's email and name, else null. */
+  contactOf(personId: number): Promise<{ email: string; name: string } | null>;
+  /** Sends one acknowledgement; false when it was not delivered. */
+  send(ack: MailAcknowledgement): Promise<boolean>;
+}
+
+/** A receipt outcome its uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "receipt_rejected";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
+}
+
 /** Finance alerts the host binds. */
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
+  mailAgingOut(event: MailAgingOutEvent): Promise<void>;
+  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
+}
+
+/** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */
+export interface ReceiptFileStore {
+  /** Writes once; refuses a key already written and a body not matching `sha256` (hex). */
+  put(key: string, bytes: Uint8Array, sha256: string): Promise<void>;
+  /** The object's bytes, or null when it does not exist. */
+  get(key: string): Promise<Uint8Array | null>;
+  delete(key: string): Promise<void>;
 }
 
 export interface ReceiptConfig {
@@ -176,12 +360,51 @@ export interface ReceiptConfig {
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
+  submitterConfirmations?: SubmitterConfirmations;
+  purchaseOutcomes?: PurchaseOutcomes;
   households?: ReceiptHouseholds;
+  personIds?: ReceiptPersonIds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
+  personNames?: ReceiptPersonNames;
+  reimbursees?: ReceiptReimbursees;
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;
+  /** Unset means acknowledgements wait unsent. */
+  replies?: ReceiptReplies;
+  /** Unset means outcome emails wait unsent. */
+  outcomeMail?: OutcomeMail;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
+  /** Unset means no row may have a key: reading or writing one throws. */
+  fileStore?: ReceiptFileStore;
+  /** New files go to the store instead of the database. */
+  storeNewFilesInBucket?: boolean;
 }
+
+// ── Route factories (mounted by the host under its handler()) ──────────────────
+
+/** The slice of a route context a factory consumes. */
+export interface ReceiptRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+  /** Which rows the view handler() picked may act on. */
+  access: "finance" | "submitter";
+  /** The caller's Person.id under FINANCE's own view; null under any other view, BOARD's included. */
+  financeActorId: number | null;
+  /** The caller's Person.id under the submitter view; null under the finance view or with no session person. */
+  submitterActorId: number | null;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type ReceiptBag = Record<string, unknown>;
+export type ReceiptRouteHandler = (ctx: ReceiptRouteCtx) => Promise<ReceiptBag>;
+
+/** A stored file a file-route factory serves; the host refuses a type it cannot deliver and emits `row.fileBlob`. */
+export interface ReceiptFile {
+  row: Record<string, unknown>;
+  contentType: string;
+  filename?: string;
+}
+export type ReceiptFileRouteHandler = (ctx: ReceiptRouteCtx) => Promise<ReceiptFile>;

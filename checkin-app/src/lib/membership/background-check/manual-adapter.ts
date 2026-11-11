@@ -6,7 +6,7 @@ import type { BackgroundCheckProvider } from "./provider";
  *
  * Consent link comes from the AVERITY_CONSENT_URL env var (Averity exposes no API,
  * so it's a static hosted deep link, configured out-of-band rather than board-edited).
- * After submitting on Averity the applicant self-reports in-app (#875); a board
+ * After submitting on Averity the applicant self-reports in-app; a board
  * member — who receives Averity's email — can also mark it as the backstop.
  */
 export class ManualBackgroundCheckProvider implements BackgroundCheckProvider {

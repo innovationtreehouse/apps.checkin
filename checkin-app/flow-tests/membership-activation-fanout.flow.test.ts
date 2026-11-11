@@ -47,20 +47,16 @@
  * standalone runner (docker-compose.flow.yml) sets; against a hand-started server,
  * export the same DATABASE_URL in the shell running jest.
  *
- * The OTHER fan-out items an activation could eventually trigger — mailing-list add,
- * badge-print queue, and the 18+ background-check trigger — do NOT exist yet and are
- * deliberately NOT asserted here (tracked as Q4/Q6/Q7). Add assertions when they land.
+ * The OTHER fan-out items an activation could trigger — mailing-list add, badge-print
+ * queue, and the 18+ background-check trigger — are deliberately NOT asserted here.
  */
 
 import { Pool } from "pg";
-import { loginAs, api } from "./helpers";
+import { loginAs, api, queuedReviewFor, setBgRecheckMonths, DELETE_REQUESTED_REVIEWS } from "./helpers";
 
 type State = { process: { id: number; status: string } | null; membershipStatus: string | null };
 // The reviewer queue, narrowed to what this test needs: the household leads a
 // reviewer picks from when naming whose background check they reviewed.
-type ReviewQueue = {
-    queue: { id: number; orgMembership: { household: { householdMembers: { id: number }[] } | null } | null }[];
-};
 
 // payment.ts › sendCongrats — the one and only activation email, in its INITIAL
 // wording (this journey activates a brand-new membership; a RENEWAL is thanked for
@@ -76,6 +72,7 @@ const APPLICANT_EMAIL = "parent.family@example.com";
  * lead's household. Idempotent — safe to run when there is nothing to clean up.
  */
 async function resetApplicantHousehold(pool: Pool): Promise<void> {
+    for (const sql of DELETE_REQUESTED_REVIEWS) await pool.query(sql, [APPLICANT_EMAIL]);
     await pool.query(
         `DELETE FROM "BackgroundCheckAttestation" a
          USING "OrgMembershipProcess" p, "OrgMembership" m, "Person" per
@@ -104,7 +101,12 @@ async function resetApplicantHousehold(pool: Pool): Promise<void> {
 
 describe("flow: membership post-payment activation fan-out", () => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    let restoreRecheck: () => Promise<void> = async () => {};
+    beforeAll(async () => {
+        restoreRecheck = await setBgRecheckMonths(await loginAs("boardmember@example.com"), 29);
+    });
     afterAll(async () => {
+        await restoreRecheck();
         // Leave a clean household so a sibling flow test that runs after this file sees a
         // non-member lead (this test activates it, which would 409 their startIntake).
         await resetApplicantHousehold(pool);
@@ -152,25 +154,20 @@ describe("flow: membership post-payment activation fan-out", () => {
         const afterExternal = await api<State>(applicant, "/api/membership");
         expect(afterExternal.json.process?.status).toBe("PENDING_PAYMENT");
 
-        // A check is recorded against a NAMED adult, so a reviewer must say whose report
-        // they read. The queue GET is where a real reviewer gets those ids, so read them
-        // the same way rather than reaching into the DB.
-        const queue = await api<ReviewQueue>(board, "/api/membership/reviews");
-        expect(queue.status).toBe(200);
-        const queued = queue.json.queue.find((q) => q.id === processId);
+        // The consent opened a check review for the household, naming nobody. A check is
+        // recorded against a NAMED adult, so its first reviewer says whose report they read,
+        // from the leads the queue GET lists, as a real reviewer does.
+        const queued = await queuedReviewFor(board, applicant.personaId);
         expect(queued).toBeDefined();
-        const leadIds = (queued!.orgMembership?.household?.householdMembers ?? []).map((p) => p.id);
-        expect(leadIds.length).toBeGreaterThan(0);
-        // A review covers ONE adult, and the first approval settles which — so both
-        // reviewers name the same person.
-        const subjectPersonIds = [leadIds[0]];
+        const leadIds = (queued!.requestedForHousehold?.householdMembers ?? []).map((p) => p.id);
+        expect(leadIds).toContain(applicant.personaId);
+        const subjectPersonIds = [applicant.personaId];
 
-        // Two DISTINCT reviewers approve the background check, both naming the same adult.
-        // The second approval on a named adult clears it; unpaid, so it stays at
-        // PENDING_PAYMENT (bgClearedAt now set) — payment will activate.
-        const a1 = await api(board, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId, result: "APPROVE", subjectPersonIds }) });
+        // Two DISTINCT reviewers approve; the second clears the lead, and the household's
+        // application, unpaid, stays at PENDING_PAYMENT (bgClearedAt now set) — payment will activate.
+        const a1 = await api(board, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId: queued!.id, result: "APPROVE", subjectPersonIds }) });
         expect(a1.status).toBe(200);
-        const a2 = await api(reviewer2, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId, result: "APPROVE", subjectPersonIds }) });
+        const a2 = await api(reviewer2, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId: queued!.id, result: "APPROVE" }) });
         expect(a2.status).toBe(200);
 
         const afterBg = await api<State>(applicant, "/api/membership");

@@ -60,7 +60,7 @@ function whereMatches(where: Record<string, unknown>, r: DbRow): boolean {
 
 // ---- classify: the six legal tuples --------------------------------------
 
-describe('classify — the legal states (§3 table)', () => {
+describe('classify — the legal states', () => {
     test('each legal tuple maps to its named state', () => {
         expect(classify(row('PENDING', false, false, false))).toBe('PENDING_UNPAID');
         expect(classify(row('PENDING', false, true, false))).toBe('PENDING_HOLD_FAILED');
@@ -75,7 +75,7 @@ describe('classify — the legal states (§3 table)', () => {
         expect(classify(row('PENDING', false, true, false))).toBe('PENDING_HOLD_FAILED');
     });
 
-    test('ACTIVE with vestigial req/den flags is still ACTIVE (§3 note)', () => {
+    test('ACTIVE with vestigial req/den flags is still ACTIVE', () => {
         // held=null is all that matters at ACTIVE; req/den are inert.
         expect(classify(row('ACTIVE', false, true, false))).toBe('ACTIVE');
         expect(classify(row('ACTIVE', false, false, true))).toBe('ACTIVE');
@@ -220,14 +220,12 @@ describe('enum parity', () => {
 
 // ---- transitions ------------------------------------------------------------
 
-describe('TRANSITIONS (§5 table as data)', () => {
+describe('TRANSITIONS (as data)', () => {
     const ALL: LifecycleState[] = ['UNENROLLED', 'PENDING_UNPAID', 'PENDING_HOLD_FAILED', 'PENDING_HELD', 'PENDING_HELD_DENIED', 'ACTIVE', 'WITHDRAWN'];
-    // WITHDRAWN is declared and read everywhere, but no transition writes it yet.
-    const EXPECTED_UNREACHABLE: LifecycleState[] = ['WITHDRAWN'];
 
-    test('every state except EXPECTED_UNREACHABLE is reachable from ∅', () => {
+    test('every state is reachable from ∅', () => {
         const r = reachability(TRANSITIONS, ALL, ['UNENROLLED'], ['UNENROLLED', 'ACTIVE']);
-        expect(r.unreachable).toEqual(EXPECTED_UNREACHABLE);
+        expect(r.unreachable).toEqual([]);
     });
 
     test('every edge references declared states only', () => {

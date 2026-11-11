@@ -48,7 +48,7 @@ describe('a refunded order never activates a program place', () => {
     const refundedMirrorOrder = (oid: string, children: number[]): MirrorOrder => ({
         orderGid: `gid://shopify/Order/${oid}`, legacyId: oid, customerEmail: null, financialStatus: 'REFUNDED',
         totalCents: 10000, subtotalCents: 10000, totalRefundedCents: 10000, discountCents: 0, discountCodes: [],
-        cancelledAt: null, updatedAt: new Date(),
+        processedAt: null, cancelledAt: null, updatedAt: new Date(),
         noteAttributes: [{ key: 'Program_ID', value: String(programId) }, { key: 'CheckMeIn_Account_ID', value: children.join(',') }],
     });
     const statusOf = async (personId: number) =>
@@ -59,7 +59,7 @@ describe('a refunded order never activates a program place', () => {
         // A board member to receive the CRITICAL email.
         await prisma.person.create({ data: { name: `Board ${TAG}`, email: `board-${TAG}@example.com`, isBoardMember: true, householdId } });
         programId = (await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT, claimantShopifyVariantId: CLAIMANT, maxParticipants: 2 },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT, claimantShopifyVariantId: CLAIMANT, maxParticipants: 2 },
         })).id;
     });
 
@@ -70,6 +70,8 @@ describe('a refunded order never activates a program place', () => {
             await prisma.auditLog.deleteMany({ where: { tableName: t, newData: { path: ['shopifyOrderId'], string_starts_with: `${TAG}-` } } });
         }
         await prisma.auditLog.deleteMany({ where: { tableName: 'ShopifyRefundSettlement', secondaryAffectedEntity: programId } });
+        await prisma.rSVP.deleteMany({ where: { event: { programId } } });
+        await prisma.event.deleteMany({ where: { programId } });
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.program.delete({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { householdId } });
@@ -113,8 +115,8 @@ describe('a refunded order never activates a program place', () => {
         expect(res.reversed).toBe(true);
         expect(res.activatedCount).toBe(0);
         expect(await statusOf(child)).toBe('PENDING');
-        const reopened = await prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId: oid, kind: 'REVERSED_BEFORE_ACTIVATION' } });
-        expect(reopened.status).toBe('OPEN');
+        const flag = await prisma.paymentException.findFirstOrThrow({ where: { shopifyOrderId: oid, kind: 'REVERSED_BEFORE_ACTIVATION' } });
+        expect(flag.status).toBe('RESOLVED');
     });
 
     it('an unrefunded order still activates', async () => {
@@ -156,7 +158,7 @@ describe('a refunded order never activates a program place', () => {
         const oid = orderId('F');
         const a = await pendingChild();
         const b = await pendingChild();
-        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 2 }]);
+        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 2, currentQuantity: 2 }]);
 
         await raiseReversalByOrderId(oid, 'REFUND', [{ variantId: VARIANT, quantity: 2, lineQuantity: 2 }], `refund-${oid}`);
         expect(await reconcileForwardProgram(refundedMirrorOrder(oid, [a, b]))).toBe(true);
@@ -169,10 +171,25 @@ describe('a refunded order never activates a program place', () => {
         expect(mockAdjust).toHaveBeenCalledWith({ id: programId, shopifyVariantId: VARIANT }, -2, 'refund-before-activation', { deferred: true });
     });
 
+    it("a refund that removes a paid place deletes the child's RSVPs for sessions that have not started", async () => {
+        const oid = orderId('H');
+        const child = (await prisma.person.create({ data: { name: `Child ${TAG}`, email: `child-${nextPerson++}-${TAG}@example.com`, householdId } })).id;
+        await prisma.programParticipant.create({ data: { programId, personId: child, status: 'ACTIVE', shopifyOrderId: oid } });
+        const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const event = await prisma.event.create({ data: { name: TAG, programId, startAt: start, endAt: new Date(start.getTime() + 2 * 60 * 60 * 1000) } });
+        await prisma.rSVP.create({ data: { eventId: event.id, personId: child, status: 'ATTENDING' } });
+        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 1, currentQuantity: 1 }]);
+
+        await raiseReversalByOrderId(oid, 'REFUND', [{ variantId: VARIANT, quantity: 1, lineQuantity: 1 }], `refund-${oid}`);
+
+        expect(await prisma.programParticipant.count({ where: { programId, personId: child } })).toBe(0);
+        expect(await prisma.rSVP.count({ where: { eventId: event.id, personId: child } })).toBe(0);
+    });
+
     it('a reversal only the reconciler saw is written to the ledger, so a late orders/paid stays refused after the flag is resolved', async () => {
         const oid = orderId('G');
         const child = await pendingChild();
-        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 1 }]);
+        (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: VARIANT, quantity: 1, currentQuantity: 1 }]);
 
         await reconcileForwardProgram(refundedMirrorOrder(oid, [child]));
         await prisma.paymentException.updateMany({ where: { shopifyOrderId: oid }, data: { status: 'RESOLVED', resolvedAt: new Date() } });

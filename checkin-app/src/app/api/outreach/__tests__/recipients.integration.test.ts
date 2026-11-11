@@ -41,13 +41,10 @@ async function makeHousehold(label: string) {
     return prisma.household.create({ data: { name: `${label} ${TAG}` } });
 }
 
-async function makeLead(householdId: number, email: string | null, opts: { emailSuppressed?: boolean; mergedIntoId?: number } = {}) {
+async function makeLead(householdId: number, email: string | null, opts: { emailSuppressed?: boolean } = {}) {
     const p = await prisma.person.create({
         data: { name: label(email), email, householdId, isHouseholdLead: true, emailSuppressed: !!opts.emailSuppressed },
     });
-    if (opts.mergedIntoId) {
-        await prisma.person.update({ where: { id: p.id }, data: { mergedIntoId: opts.mergedIntoId } });
-    }
     return p;
 }
 function label(email: string | null) { return email ?? 'no-email'; }
@@ -90,9 +87,9 @@ describe('outreach recipient snapshot', () => {
         const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
         const email = `settled-${TAG}@example.com`;
         await makeLead(hh.id, email);
-        // A terminal ACTIVE RENEWAL stamped inside the in-season window — "settled for the coming cycle".
+        // A terminal ACTIVE RENEWAL recording the coming year — "settled for the coming cycle".
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW },
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
         });
 
         const inSeason = await computeRecipientSnapshot('a', IN_SEASON_NOW);
@@ -108,7 +105,7 @@ describe('outreach recipient snapshot', () => {
         const staleEmail = `settled-prior-${TAG}@example.com`;
         await makeLead(staleHh.id, staleEmail);
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: staleMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2024, 6, 15)) },
+            data: { orgMembershipId: staleMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2024, 6, 15)), appliesToYear: 2024 },
         });
         const offSeason = await computeRecipientSnapshot('a', OFF_SEASON_NOW);
         expect(offSeason.items.find((i) => i.email === staleEmail)?.variant).toBe('renew');
@@ -145,7 +142,7 @@ describe('outreach recipient snapshot', () => {
         const email = `settled-c-${TAG}@example.com`;
         await makeLead(hh.id, email);
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW },
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
         });
 
         const c = await computeRecipientSnapshot('c', IN_SEASON_NOW);
@@ -171,19 +168,6 @@ describe('outreach recipient snapshot', () => {
         expect(joinItem?.status).toBe('skipped_unsubscribed');
         expect(renewItem?.variant).toBe('renew');
         expect(renewItem?.status).toBe('queued'); // renew is never suppressed
-    });
-
-    it('excludes a tombstoned (merged-away) lead', async () => {
-        await setBoundary(BOUNDARY);
-        const survivorHh = await makeHousehold('MergeSurvivor');
-        const survivor = await makeLead(survivorHh.id, `survivor-${TAG}@example.com`);
-
-        const tombstonedHh = await makeHousehold('MergeTombstone');
-        const tombstonedEmail = `tombstoned-${TAG}@example.com`;
-        await makeLead(tombstonedHh.id, tombstonedEmail, { mergedIntoId: survivor.id });
-
-        const snap = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        expect(snap.items.find((i) => i.email === tombstonedEmail)).toBeUndefined();
     });
 
     // No standalone "two leads share an email" case: Person.email is @unique at the DB

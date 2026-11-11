@@ -1,0 +1,13 @@
+/**
+ * Where a detail page goes after a decision: back to the queue it was opened from once nothing is
+ * left there for the viewer, else null, and the page reloads in place. A page opened from
+ * anywhere else has no queue and always reloads.
+ */
+export function backToQueue(queueHref: string | null | undefined, leftForViewer: boolean): string | null {
+  return queueHref && !leftForViewer ? queueHref : null;
+}
+
+/** Some expense line still has a main act for the viewer, from the refreshed sign-off status; a line without acts has none. */
+export function lineWaitsOnViewer(lines: ReadonlyArray<{ actions?: ReadonlyArray<{ primary: boolean }> }>): boolean {
+  return lines.some((l) => (l.actions ?? []).some((a) => a.primary));
+}

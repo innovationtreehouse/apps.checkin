@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billCandidate, depositCandidate, findMatch, purchaseCandidate, type MatchRequest } from "../match";
+import { billCandidate, depositCandidate, findMatch, purchaseCandidate, shiftDate, type MatchRequest } from "../match";
 import { appKeyOf } from "../client";
 import type { QboBill, QboDeposit, QboPurchase } from "../types";
 
@@ -31,6 +31,26 @@ const run = (deposits: QboDeposit[], req: Partial<MatchRequest> = {}) =>
   );
 
 describe("findMatch", () => {
+  it("ignores a voided entry carrying the key, so nothing stops a create", () => {
+    expect(run([deposit("10", "2025-03-05", 0, { PrivateNote: `app:${base.key}` })])).toEqual({ kind: "not-found" });
+  });
+
+  it("still finds a hand entry beside a voided entry carrying the key", () => {
+    expect(run([deposit("10", "2025-03-05", 0, { PrivateNote: `app:${base.key}` }), deposit("11", "2025-03-05", 123.45)])).toEqual({
+      kind: "found",
+      id: "11",
+      via: "amount",
+    });
+  });
+
+  it("finds a $0 record's own $0 entry by key", () => {
+    expect(run([deposit("10", "2025-03-05", 0, { PrivateNote: `app:${base.key}` })], { amountCents: 0 })).toEqual({
+      kind: "found",
+      id: "10",
+      via: "key",
+    });
+  });
+
   it("finds a single hand entry on net amount + date in window", () => {
     expect(run([deposit("10", "2025-03-05", 123.45), deposit("11", "2025-03-05", 99)])).toEqual({
       kind: "found",
@@ -152,5 +172,18 @@ describe("candidate adapters", () => {
     expect(purchaseCandidate(purchase)).toMatchObject({ amountCents: 1200, ref: "41" });
     expect(billCandidate(bill, (b) => b.DocNumber)).toMatchObject({ ref: "77", appKey: undefined });
     expect(billCandidate({ ...bill, DocNumber: "exp-9" }, (b) => b.DocNumber)).toMatchObject({ appKey: "exp-9" });
+  });
+});
+
+describe("shiftDate", () => {
+  it("crosses month, year and leap-day boundaries", () => {
+    expect(shiftDate("2026-01-31", 1)).toBe("2026-02-01");
+    expect(shiftDate("2026-01-01", -1)).toBe("2025-12-31");
+    expect(shiftDate("2024-03-01", -1)).toBe("2024-02-29");
+    expect(shiftDate("2026-03-01", -7)).toBe("2026-02-22");
+  });
+
+  it("throws on a date that does not parse", () => {
+    expect(() => shiftDate("not-a-date", 1)).toThrow(RangeError);
   });
 });

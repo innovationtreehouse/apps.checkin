@@ -4,8 +4,9 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
+import { emailWithheldParticipants, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import {
     loadEventEditContext,
     confirmAttendance,
@@ -57,7 +58,6 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
                     name: true,
                     leadMentorId: true,
                     volunteers: {
-                        where: { person: LIVE_PERSON },
                         select: {
                             programId: true,
                             personId: true,
@@ -66,12 +66,12 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
                         }
                     },
                     participants: {
-                        where: { person: LIVE_PERSON, ...ENROLLED_PARTICIPANT },
+                        where: ENROLLED_PARTICIPANT,
                         select: {
                             programId: true,
                             personId: true,
                             status: true,
-                            person: { select: { id: true, name: true, email: true } }
+                            person: { select: { id: true, name: true, email: true, dateOfBirth: true } }
                         }
                     }
                 }
@@ -85,7 +85,6 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
                 select: { id: true, personId: true, arrivedAt: true, departedAt: true, associatedEventId: true }
             },
             rsvps: {
-                where: { person: LIVE_PERSON },
                 select: { eventId: true, personId: true, status: true }
             }
         }
@@ -103,7 +102,12 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
     );
     if (!isStaff) throw forbidden('Forbidden: Not authorized to view this event');
 
-    return { Event: event };
+    if (!event.program) return { Event: event };
+    const viewerIsLeader = auth.type === 'session' && !auth.user.isSysadmin && !auth.user.isBoardMember;
+    const participants = event.program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader) }));
+    const emailWithheldFrom = emailWithheldParticipants(event.program.participants, viewerIsLeader);
+    const volunteers = event.program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
+    return { Event: { ...event, program: { ...event.program, volunteers, participants } } };
 });
 
 export const PATCH = withAuth({}, async (req: Request, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -140,5 +144,4 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
 const REFUSAL_STATUS: Record<EventRefusal, number> = {
     invalid: 400,
     forbidden: 403,
-    facility_closed: 403,
 };

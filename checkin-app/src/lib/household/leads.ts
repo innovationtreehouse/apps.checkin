@@ -1,11 +1,10 @@
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { isYouth } from "@/lib/time";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 
 /**
- * Shared household-lead ownership check (audit P1-2). Loads the person and
+ * Shared household-lead ownership check. Loads the person and
  * decides whether they may manage their household. `canManage` folds in the
  * sysadmin override, matching every call site's `!isLead && !isSysadmin` guard.
  * Returns null when the user has no household. Callers own the error strings
@@ -36,13 +35,13 @@ export async function leadHousehold(
 }
 
 /**
- * Maximum number of leads a single household may have (issue #269).
+ * Maximum number of leads a single household may have.
  * This is policy, not schema shape — change it here, not in a migration.
  */
 export const MAX_HOUSEHOLD_LEADS = 2;
 
 /**
- * The canonical "leads of household X" Prisma filter (a1). Single source of truth
+ * The canonical "leads of household X" Prisma filter. Single source of truth
  * for the `{ householdId, isHouseholdLead: true }` predicate that would otherwise
  * be hand-spelled at every count/list/stamp call site — keeps them from drifting.
  */
@@ -138,7 +137,7 @@ async function addHouseholdLeadTx(
         throw new HouseholdLeadYouthError(householdId, participantId);
     }
 
-    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId), ...LIVE_PERSON } });
+    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId) } });
     if (count >= MAX_HOUSEHOLD_LEADS) {
         throw new HouseholdLeadLimitError(householdId);
     }
@@ -148,7 +147,7 @@ async function addHouseholdLeadTx(
 }
 
 /**
- * Add a household lead, enforcing the per-household cap (issue #269) atomically.
+ * Add a household lead, enforcing the per-household cap atomically.
  *
  * Idempotent: if the participant is already a lead of the household this is a
  * no-op and does NOT count against the cap. Throws {@link HouseholdLeadLimitError}
@@ -203,7 +202,7 @@ async function removeHouseholdLeadTx(
     }
     if (!person?.isHouseholdLead) return { removed: false, reason: "not_lead" };
 
-    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId), ...LIVE_PERSON } });
+    const count = await tx.person.count({ where: { ...householdLeadsWhere(householdId) } });
     if (count <= 1) return { removed: false, reason: "last_lead" };
 
     await tx.person.update({ where: { id: participantId }, data: { isHouseholdLead: false } });

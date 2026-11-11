@@ -4,8 +4,8 @@
 /**
  * LIVE contract: single-pool product creation + the locked compare-and-set stock writer,
  * exercised through the app's real lib functions against the real dev store.
- * These are the exact call sequences the capacity model (#930,
- * docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md) depends on.
+ * These are the exact call sequences the capacity model
+ * (docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md) depends on.
  */
 // The lib's failure path reports through prisma + email — keep the live suite
 // DB- and mail-free (a live failure should fail the test, not email the board).
@@ -75,7 +75,7 @@ describe("live: single-pool product + inventory contract", () => {
         expect(String(variant.product_id)).toBe(productId);
         expect(variant.price).toBe("25.00");
         // The capacity model's load-bearing settings: Shopify tracks the count
-        // and REFUSES oversell (policy deny) — see #930.
+        // and REFUSES oversell (policy deny).
         expect(variant.inventory_management).toBe("shopify");
         expect(variant.inventory_policy).toBe("deny");
     });

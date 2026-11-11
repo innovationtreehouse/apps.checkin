@@ -20,7 +20,7 @@ export default function CatalogLayout({ children }: { children: React.ReactNode 
   const counts = useTodoCounts(status === "authenticated");
   const links = visibleLinks(INVENTORY, session?.user, counts);
   // Admitted as a catalog viewer, or as a library tab's own audience (e.g.
-  // FINANCE on Receiving). Tab visibility needs the release list from counts, so
+  // FINANCE on Part mapping). Tab visibility needs the release list from counts, so
   // the redirect waits for counts. Each page and route keeps its own gate.
   const authorized = canSeeCatalog(session?.user) || links.length > 0;
 

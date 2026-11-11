@@ -111,12 +111,44 @@ describe("membership-ops/participants/new page", () => {
     expect(await screen.findByDisplayValue("Household #8")).toBeInTheDocument();
   });
 
-  it("leaves the household unset when the deep-link lookup fails", async () => {
+  it("keeps the deep-linked household filled after a save, for the next person", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    setSearchParams("householdId=8");
+    const fetchMock = mockFetchJson({
+      "/api/membership-ops/households?id=8": { household: emptyHousehold },
+      "/api/membership-ops/participants": { participant: { email: null } },
+    });
+    renderWithProviders(<NewParticipantPage />);
+    await screen.findByDisplayValue("Household #8");
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "First Kid" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Participant" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Participant First Kid successfully!" })));
+    expect(screen.getByDisplayValue("Household #8")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/membership-ops/participants", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("leaves the deep-linked household cleared once staff clear it", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    setSearchParams("householdId=8");
+    mockFetchJson({ "/api/membership-ops/households?id=8": { household: emptyHousehold } });
+    renderWithProviders(<NewParticipantPage />);
+    await screen.findByDisplayValue("Household #8");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(screen.queryByDisplayValue("Household #8")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search households...")).toHaveValue("");
+  });
+
+  it("says so and leaves the household unset when the deep-link lookup fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     setSearchParams("householdId=404");
     mockFetchJson({}); // unmatched -> 404, res.ok false
     renderWithProviders(<NewParticipantPage />);
     await screen.findByText("Register New User");
+    expect(await screen.findByText("Couldn't load the linked household")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Search households...")).toHaveValue("");
   });
 
@@ -127,18 +159,6 @@ describe("membership-ops/participants/new page", () => {
     renderWithProviders(<NewParticipantPage />);
     await screen.findByText("Register New User");
     expect(screen.getByPlaceholderText("Search households...")).toHaveValue("");
-  });
-
-  it("logs and recovers when the deep-link lookup throws", async () => {
-    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
-    setSession({ id: 1, isSysadmin: true });
-    setSearchParams("householdId=9");
-    global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
-    renderWithProviders(<NewParticipantPage />);
-    await screen.findByText("Register New User");
-
-    await waitFor(() => expect(consoleError).toHaveBeenCalledWith("Failed to fetch deep linked household:", expect.any(Error)));
-    consoleError.mockRestore();
   });
 
   it("searches, selects, and clears a household", async () => {

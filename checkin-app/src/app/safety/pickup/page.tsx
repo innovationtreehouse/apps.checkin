@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Stack, Text, Title } from "@mantine/core";
+import { Card, Center, Group, Loader, Stack, Text, Title } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
+import { useLoad } from "@/lib/api";
 
 interface Review {
     id: number;
@@ -26,35 +27,10 @@ interface TrustedAdult {
  * board-facing context. Access + row scoping are enforced server-side.
  */
 export default function TrustedAdultPickupPage() {
-    const [items, setItems] = useState<TrustedAdult[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(false);
+    const { data, error, reload } = useLoad<{ trustedAdults?: TrustedAdult[] }>("/api/trusted-adults/operational");
+    const items = data?.trustedAdults ?? [];
 
-    const load = useCallback(() => fetch("/api/trusted-adults/operational")
-        .then(async (r) => {
-            const d = await r.json();
-            setItems(d.trustedAdults ?? []);
-        })
-        .catch((err) => {
-            console.error("Failed to load trusted adults for pickup:", err);
-            setError(true);
-        })
-        .finally(() => {
-            setLoading(false);
-        }),
-    []);
-
-    const reload = () => {
-        setLoading(true);
-        setError(false);
-        load();
-    };
-
-    useEffect(() => {
-        load();
-    }, [load]);
-
-    if (loading) {
+    if (!data && !error) {
         return (
             <Center h={200}>
                 <Loader />
@@ -73,17 +49,12 @@ export default function TrustedAdultPickupPage() {
             </div>
 
             {error ? (
-                <Alert color="red" title="Couldn't load the pickup list.">
-                    The list of approved trusted adults didn&apos;t load. Don&apos;t treat this as an empty list.
-                    <Button mt="sm" size="xs" variant="white" color="red" onClick={reload}>
-                        Retry
-                    </Button>
-                </Alert>
+                <LoadError what="the pickup list" message={error} onRetry={reload} />
             ) : (
                 items.length === 0 && <Text c="dimmed">No approved trusted adults to show.</Text>
             )}
 
-            {items.map((ta) => {
+            {!error && items.map((ta) => {
                 const latest = ta.reviews[0];
                 return (
                     <Card key={ta.id} withBorder radius="md" padding="sm">

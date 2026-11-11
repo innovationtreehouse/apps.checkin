@@ -45,10 +45,10 @@ describe('pageRegistry drift guard', () => {
   });
 });
 
-// Operations reaches Facility Ops in aggregate only (#1633): Print ID Badges and
+// Operations reaches Facility Ops in aggregate only: Print ID Badges and
 // Participation Trends. Each directory row must agree with the tab's own gate, or
-// the directory advertises a page that ejects the viewer — the same fork #1569 is
-// about, so the expectation is read off FACILITY_NAV_LINKS rather than retyped.
+// the directory advertises a page that ejects the viewer, so the expectation is
+// read off FACILITY_NAV_LINKS rather than retyped.
 describe('Facility Ops directory agrees with the section gates', () => {
   const ops = { isOperations: true };
   const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
@@ -68,7 +68,7 @@ describe('Facility Ops directory agrees with the section gates', () => {
     }
   });
 
-  // Q15: keyholders review unsynced scans; operations stay at aggregate only.
+  // Keyholders review unsynced scans; operations stay at aggregate only.
   it('lists /system-status/unsynced-scans to keyholders and not to operations', () => {
     const entry = entryFor('/system-status/unsynced-scans');
     expect(entry.visible({ isKeyholder: true }, null)).toBe(true);
@@ -76,7 +76,7 @@ describe('Facility Ops directory agrees with the section gates', () => {
   });
 });
 
-// #1569: the two divergences this change closed. Each row must match the section
+// Each row must match the section
 // gate it reads from, not the section's coarse "board" default.
 describe('Membership Ops directory agrees with the section gates', () => {
   const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
@@ -116,7 +116,8 @@ describe('Shop Ops directory agrees with the section gates', () => {
 });
 
 describe('Inventory directory agrees with the catalog-viewer gate', () => {
-  const inventoryEntries = PAGES.filter((p) => p.section === 'Inventory' && /^\/(catalog|inventory\/org-items)/.test(p.href));
+  const MANAGER_ONLY = ['/catalog/learned-references', '/catalog/provisional-items', '/catalog/item-reference-proposals', '/catalog/reference-conflicts', '/catalog/conversion-challenges'];
+  const inventoryEntries = PAGES.filter((p) => p.section === 'Inventory' && /^\/(catalog|inventory\/org-items)/.test(p.href) && !MANAGER_ONLY.includes(p.href));
   const counts = {
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building: 0,
@@ -134,6 +135,16 @@ describe('Inventory directory agrees with the catalog-viewer gate', () => {
   it('lists the Inventory entries to an active youth program volunteer', () => {
     const youthVolunteer = { ageBand: 'youth' as const, isProgramVolunteer: true, isActiveOrgMember: true };
     for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, counts)).toBe(true);
+  });
+
+  it('lists the catalog references and review queues to an inventory manager alone', () => {
+    const managerEntries = PAGES.filter((p) => MANAGER_ONLY.includes(p.href));
+    expect(managerEntries).toHaveLength(MANAGER_ONLY.length);
+    for (const entry of managerEntries) {
+      expect(entry.visible({ isInventoryManager: true }, counts)).toBe(true);
+      expect(entry.visible({ ageBand: 'youth', isProgramVolunteer: true, isActiveOrgMember: true }, counts)).toBe(false);
+      expect(entry.visible({ isBoardMember: true }, counts)).toBe(false);
+    }
   });
 });
 
@@ -154,6 +165,25 @@ describe('Receipt mail queue is listed to FINANCE only', () => {
     expect(entry.visible({ isFinance: true }, counts)).toBe(true);
     expect(entry.visible({ isBoardMember: true }, counts)).toBe(false);
     expect(entry.visible({ isSysadmin: true }, counts)).toBe(false);
-    expect(entryFor('/receipts/review').visible({ isBoardMember: true }, counts)).toBe(true);
+    expect(entryFor('/finance/review').visible({ isBoardMember: true }, counts)).toBe(true);
+  });
+});
+
+describe('Directory rows agree with the gates of the pages they open', () => {
+  const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
+
+  it('lists the certification grid to the roles its API admits, and not to a plain member or FINANCE', () => {
+    const grid = entryFor('/attendance/certifications');
+    expect(grid.visible({ isKeyholder: true }, null)).toBe(true);
+    expect(grid.visible({ isBoardMember: true }, null)).toBe(true);
+    expect(grid.visible({ isSysadmin: true }, null)).toBe(true);
+    expect(grid.visible({}, null)).toBe(false);
+    expect(grid.visible({ isFinance: true, isInventoryManager: true }, null)).toBe(false);
+  });
+
+  it('lists Safety Trusted Adults to the board and not to a keyholder', () => {
+    const trusted = entryFor('/safety/trusted-adults');
+    expect(trusted.visible({ isBoardMember: true }, null)).toBe(true);
+    expect(trusted.visible({ isKeyholder: true }, null)).toBe(false);
   });
 });

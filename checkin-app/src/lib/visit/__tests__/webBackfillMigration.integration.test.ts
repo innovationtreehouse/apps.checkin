@@ -43,7 +43,7 @@ test('migration moves audited roster marks to LEAD_MARKED, the rest to TYPED, an
             },
         });
 
-    const audited = await mk('WEB', 'WEB'); // pre-#1622 roster mark with an AT3 audit row
+    const audited = await mk('WEB', 'WEB'); // roster mark stamped WEB, with its audit row
     const plainWeb = await mk('WEB', 'WEB'); // typed clock / dashboard row
     const leadMarked = await mk('LEAD_MARKED', 'LEAD_MARKED'); // must survive untouched
 

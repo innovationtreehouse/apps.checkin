@@ -16,6 +16,7 @@ describe("LibraryReleaseCard", () => {
     await waitFor(() => expect(screen.getByLabelText(/^Income/)).toBeChecked());
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({
+      perYearVariantClient: true,
       releaseLibrary: { library: "expense", released: true },
     });
     expect(screen.getByLabelText(/^Expense/)).toBeChecked();

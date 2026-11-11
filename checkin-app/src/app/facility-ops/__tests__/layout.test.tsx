@@ -76,7 +76,7 @@ describe("FacilityLayout role gate", () => {
 
   // SectionTabs is not role-aware, so an unfiltered strip would offer operations
   // three tabs whose pages eject them to "/" — the section is reachable for them
-  // now, so the tabs have to track the same gates the pages do.
+  // so the tabs have to track the same gates the pages do.
   it("shows an operations user only the tabs they can open", () => {
     renderLayout("/facility-ops/print-badges", {
       data: { user: { id: 5, isOperations: true } },

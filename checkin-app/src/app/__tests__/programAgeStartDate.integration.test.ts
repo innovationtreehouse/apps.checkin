@@ -3,16 +3,15 @@
  */
 /**
  * Integration Test: age eligibility on the AUTHENTICATED enroll route is judged
- * as of the program's START date, not enrollment time (commit 2fd96fe).
+ * as of the program's START date, not enrollment time.
  *
  * The existing programAgeBounds test sets startAt = new Date(), which collapses
  * every boundary to "age today" and leaves the start-date logic unguarded. Here
  * the program begins ~8 months in the FUTURE and the participant's calendar age
  * crosses the minAge boundary in that window: 13 today, 14 by `startAt`.
  *
- * Correct (calculateAge(dob, startAt)) -> eligible -> 200.
- * Revert (calculateAge(dob), i.e. age-as-of-now) -> 13 < 14 -> 400. This test
- * fails if the route is reverted to enrollment-time age.
+ * Start-date age (calculateAge(dob, startAt)) -> eligible -> 200.
+ * Enrollment-time age (calculateAge(dob)) -> 13 < 14 -> 400, and this test fails.
  */
 
 import { POST as enrollParticipant } from '@/app/api/programs/[id]/participants/route';
@@ -45,6 +44,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
         // minAge 14, begins 2026-09-01. Free (no prices) so enrollment is allowed.
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: 'Age StartDate Test Program',
                 minAge: 14,
                 startAt: new Date('2026-09-01T00:00:00.000Z'),

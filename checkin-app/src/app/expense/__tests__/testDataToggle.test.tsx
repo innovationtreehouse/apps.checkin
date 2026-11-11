@@ -15,7 +15,6 @@ jest.mock("@checkin/expense/components/api", () => ({
     reload: () => {},
   }),
   useRoles: () => ({ isFinance: true, isBoard: false }),
-  useBuckets: () => [],
   send: jest.fn(),
 }));
 

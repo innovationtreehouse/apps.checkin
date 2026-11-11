@@ -18,20 +18,17 @@ describe("Home", () => {
         expect(signIn).toHaveBeenCalledWith("google");
     });
 
-    it("checks in a privileged, signed-in user", async () => {
+    it("offers no check-in or check-out: people badge at the kiosk", async () => {
         setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
         mockFetchJson({
             "/api/attendance": { access: "full", attendance: [], safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false } },
             "/api/membership": { membershipStatus: "ACTIVE" },
-            "/api/scan": { type: "checkin" },
         });
         renderWithProviders(<Home />);
 
         expect(await screen.findByText(/Welcome back/)).toBeInTheDocument();
 
-        fireEvent.click(await screen.findByRole("button", { name: /check in/i }));
-
-        expect(await screen.findByText("Successfully checked in!")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /check (in|out)/i })).not.toBeInTheDocument();
     });
 
     const violating = { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: true };

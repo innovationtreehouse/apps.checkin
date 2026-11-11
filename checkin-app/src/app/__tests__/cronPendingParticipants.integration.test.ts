@@ -5,7 +5,7 @@
  * Integration Tests for Cron Pending-Participants API
  * Tests GET /api/cron/pending-participants — the NON-DESTRUCTIVE sweep that warns
  * unpaid PENDING enrollments at day 1/3/6 and flags day-7+ rows as overdue for the
- * board. The cron never removes anyone (reviewer decision: removal is a human,
+ * board. The cron never removes anyone (removal is a human,
  * board-driven action) — it warns the household and, at day 3+/7+, digests the
  * board once per run so a person decides what happens next.
  *
@@ -81,7 +81,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await prisma.program.deleteMany({ where: { name: { contains: 'Pending Cron Test' } } });
 
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
             });
             programId = program.id;
 
@@ -161,7 +161,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await prisma.program.deleteMany({ where: { name: 'Pending Cron NoDigest Test Program' } });
 
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron NoDigest Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron NoDigest Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
             });
             programId = program.id;
 
@@ -218,7 +218,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await prisma.program.deleteMany({ where: { name: 'Pending Cron Email Test Program' } });
 
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron Email Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron Email Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
             });
             emailProgramId = program.id;
 
@@ -249,7 +249,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             eids.leadB = leadB.id;
             eids.noEmailChild = noEmailChild.id;
 
-            // Day-8 candidate: overdue, but NEVER removed by the cron anymore — it
+            // Day-8 candidate: overdue, but NEVER removed by the cron — it
             // only shows up in the leadership digest, flagged for a human to act on.
             const householdC = await prisma.household.create({ data: { name: 'Email Test HH C' } });
             householdOverdueId = householdC.id;
@@ -304,7 +304,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             const day3Warning = sent.filter((e) => e.subject === 'Please pay for Pending Cron Email Test Program within 4 days');
             expect(day3Warning.map((e) => e.to)).toEqual(['leadb-pending-cron-email-test@example.com']);
 
-            // No removal email exists anymore, for anyone, at any age.
+            // No removal email exists, for anyone, at any age.
             const removalEmails = sent.filter((e) => e.subject.includes('Removed from'));
             expect(removalEmails).toHaveLength(0);
 
@@ -329,6 +329,42 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             expect(digest[0].html).toContain('No Email Child — Pending Cron Email Test Program (day 3)');
             expect(digest[0].html).toContain('Overdue Person — Pending Cron Email Test Program (day 8)');
             expect(digest[0].html).toContain('action needed: remove the enrollment or contact the household');
+        });
+    });
+    describe('an ended program', () => {
+        let programId: number;
+        let householdId: number;
+
+        beforeAll(async () => {
+            await prisma.program.deleteMany({ where: { name: 'Pending Cron Ended Test Program' } });
+            const program = await prisma.program.create({
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-06-30'), name: 'Pending Cron Ended Test Program', phase: 'FINISHED', enrollmentStatus: 'CLOSED' }
+            });
+            programId = program.id;
+            const household = await prisma.household.create({ data: { name: 'Ended Test HH' } });
+            householdId = household.id;
+            const lead = await prisma.person.create({
+                data: { email: 'lead-pending-cron-ended-test@example.com', name: 'Ended Lead', householdId, isHouseholdLead: true }
+            });
+            await prisma.programParticipant.create({
+                data: { programId, personId: lead.id, status: 'PENDING', pendingSince: daysAgo(Date.now(), 6) }
+            });
+        });
+
+        afterAll(async () => {
+            await prisma.programParticipant.deleteMany({ where: { programId } });
+            await prisma.person.deleteMany({ where: { householdId } });
+            await prisma.program.deleteMany({ where: { id: programId } });
+            await prisma.household.deleteMany({ where: { id: householdId } });
+        });
+
+        it('sends the family no payment reminder', async () => {
+            process.env.CRON_SECRET = 'test-secret';
+            const res = await GET(mkReq('Bearer test-secret'));
+            expect(res.status).toBe(200);
+
+            const sent = __getSentEmails();
+            expect(sent.filter((e) => e.subject.includes('Pending Cron Ended Test Program'))).toHaveLength(0);
         });
     });
 });

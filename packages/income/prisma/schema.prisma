@@ -5,7 +5,7 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the income schema under checkin's security regime (design #1283 §7): the
+// Brings the income schema under checkin's security regime: the
 // same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
 // Paths are relative to this schema file.
 generator security {
@@ -17,9 +17,11 @@ datasource db {
   provider = "postgresql"
 }
 
-// One row per paid mirror payout once it is matched to a QuickBooks deposit or raised for
-// finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
-// deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
+// One row per deposit income expects: a paid mirror payout (source shopify) once it is matched
+// or raised for finance, or a giving-platform disbursement another lane handed over through
+// expectDeposit (source benevity). deposit_id is set only while the row holds a deposit, so the
+// unique pair means a deposit backs at most one row across every source. payout_net_cents is the
+// net seen at the last decision.
 // status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
 // the row holds a deposit. WAITING, POSTED, POST_FAILED, OVER_CAP and "created" belong to the create path.
 model PayoutReconciliation {
@@ -27,11 +29,16 @@ model PayoutReconciliation {
   id                Int       @id @default(autoincrement()) @map("id")
   /// @sensitivity:internal
   orgId             String    @map("org_id")
+  /// Where the money comes from: shopify | benevity.
+  /// @sensitivity:internal
+  source            String    @default("shopify") @map("source")
+  /// The source's key: a Shopify payout GID, or a Benevity disbursement id.
   /// @sensitivity:internal
   payoutGid         String    @map("payout_gid")
   /// @sensitivity:internal
   payoutDate        String    @map("payout_date")
   /// @sensitivity:internal
+  /// @financeMark
   payoutNetCents    Int       @map("payout_net_cents")
   /// @sensitivity:internal
   status            String    @map("status")
@@ -46,6 +53,7 @@ model PayoutReconciliation {
   /// @sensitivity:internal
   depositTxnDate    String?   @map("deposit_txn_date")
   /// @sensitivity:internal
+  /// @financeMark
   depositTotalCents Int?      @map("deposit_total_cents")
   /// @sensitivity:internal
   reason            String?   @map("reason")
@@ -66,16 +74,20 @@ model PayoutReconciliation {
   /// The app's note to finance about its own QuickBooks entry; keeps the payout in the queue until finance acts or clears it.
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
+  /// The deposit another lane expects (bank role, lines, memo); null on Shopify rows, built from the mirror.
+  /// @sensitivity:internal
+  expected            Json?     @map("expected")
 
-  @@unique([orgId, payoutGid])
+  @@unique([orgId, source, payoutGid])
   @@unique([orgId, depositId])
   @@index([orgId, status])
   @@map("payout_reconciliations")
 }
 
-// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks category).
-// budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
-// the OwnerDirectory port. Unmapped variants, and rows with no bucket, book at organization level.
+// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks Class) and the
+// QuickBooks income account its sales book to. budget_owner_id is checkin's BudgetOwner.id in
+// another database: no FK, validated through the OwnerDirectory port. A row with no bucket books
+// at organization level; a variant with no row, or a row with no account, is undecided.
 model IncomeItemCategory {
   /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
@@ -86,6 +98,8 @@ model IncomeItemCategory {
   /// @sensitivity:internal
   budgetOwnerId Int?     @map("budget_owner_id")
   /// @sensitivity:internal
+  quickBooksAccountId String? @map("qb_account_id")
+  /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
   /// @sensitivity:internal
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -94,8 +108,9 @@ model IncomeItemCategory {
   @@map("income_item_categories")
 }
 
-// The org's limits on the deposits one outbox drain may create. FINANCE may lower them;
-// raising one takes the board. Every change is written to the audit log.
+// The org's limits on the deposits one outbox drain may create, and the Benevity match window.
+// FINANCE may lower a limit; raising one takes the board. Finance or the board may move the window
+// either way. Every change is written to the audit log.
 model IncomeOrgSettings {
   /// @sensitivity:internal
   orgId                String @id @map("org_id")
@@ -103,14 +118,23 @@ model IncomeOrgSettings {
   maxCreatesPerRun     Int    @default(25) @map("max_creates_per_run")
   /// @sensitivity:internal
   maxCreateCentsPerRun Int    @default(2500000) @map("max_create_cents_per_run")
-  /// When income posting switched on: set once, by the first connected drain, never cleared.
+  /// The cents cap for Benevity deposits, per deposit and per run; maxCreateCentsPerRun is Shopify's.
+  /// @sensitivity:internal
+  benevityMaxCreateCentsPerRun Int @default(2500000) @map("benevity_max_create_cents_per_run")
+  /// Days either side of a Benevity deposit's date a QuickBooks deposit may match.
+  /// @sensitivity:internal
+  benevityMatchWindowDays Int @default(7) @map("benevity_match_window_days")
+  /// When Shopify posting switched on: set once, by the first drain that posts Shopify payouts, never cleared.
   /// @sensitivity:internal
   qbPostingOnAt        DateTime? @map("qb_posting_on_at")
+  /// When Benevity posting switched on: set once, by the first drain that posts Benevity deposits, never cleared.
+  /// @sensitivity:internal
+  benevityQbPostingOnAt DateTime? @map("benevity_qb_posting_on_at")
 
   @@map("org_settings")
 }
 
-// A QuickBooks deposit finance has permanently removed from matching (D5).
+// A QuickBooks deposit finance has permanently removed from matching.
 model IncomeQbMatchExclusion {
   /// @sensitivity:public
   id               Int      @id @default(autoincrement()) @map("id")

@@ -31,6 +31,15 @@ describe("ConflictsPage", () => {
     expect(await screen.findByText(/No attendance conflicts/)).toBeInTheDocument();
   });
 
+  it("says a failed load failed, with a retry, instead of loading forever", async () => {
+    setSession({ id: 1 });
+    global.fetch = jest.fn(async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ error: "Forbidden" }) }) as Response) as unknown as typeof fetch;
+    renderWithProviders(<ConflictsPage />);
+
+    expect(await screen.findByText("Couldn't load attendance conflicts")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading conflicts/)).not.toBeInTheDocument();
+  });
+
   it("lists conflicting visits for a participant", async () => {
     setSession({ id: 1 });
     mockFetchJson({ "/api/my-programs/conflicts": { conflicts } });

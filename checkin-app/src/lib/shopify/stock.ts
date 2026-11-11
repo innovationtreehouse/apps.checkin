@@ -1,11 +1,11 @@
 // Program stock engine: the one writer of a program's Shopify stock, its lease and
 // keyed-delta path, the unconfirmed-write settle, price sync and off-sale.
 
+import { centsToDecimalString } from "@checkin/money";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import type { TxClient } from "@/lib/db-client";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { config } from "@/lib/config";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { programVariantIds } from "@/lib/programs/variants";
@@ -209,7 +209,7 @@ async function readStock(gql: Gql, variantId: string, deadline: number) {
 
 /**
  * Send one recorded delta with `inventoryAdjustQuantities` and its idempotency key.
- * Shopify dedupes this mutation by key (dev store, 2026-10-14): a resend of a write
+ * Shopify dedupes this mutation by key (seen on the dev store): a resend of a write
  * that already landed returns its original result instead of applying it again, and
  * a resend of one that failed returns the original error. So the reply is always
  * definite: "applied", or a hard error (thrown), which means it did not apply.
@@ -469,7 +469,7 @@ async function alertStockPush(programId: number, variantId: string, reason: stri
         "adjustProgramInventory",
         error,
         { programId, shopifyVariantId: variantId, reason },
-        `Shopify stock for program ${programId} needs a push (${escapeHtml(reason)}): a change could not be confirmed and is still owed. The daily Shopify reconcile retries it.`,
+        `Shopify stock for program ${programId} needs a push (${reason}): a change could not be confirmed and is still owed. The daily Shopify reconcile retries it.`,
     );
 }
 
@@ -542,7 +542,7 @@ async function pushProgramStock(
                 "adjustProgramInventory",
                 new Error(`stock write ${result.expiredKey} for program ${programId} could not be confirmed`),
                 { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, parked: row?.shopifyStockParked ?? null },
-                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Shopify &gt; Unconfirmed Shopify stock.`,
+                `A Shopify stock write for program ${programId} (key ${result.expiredKey}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops > Shopify > Unconfirmed Shopify stock.`,
             );
         }
         return result.error === null && result.expiredKey === null;
@@ -575,7 +575,7 @@ export interface StockWriteOptions {
  * idempotency key and no compare: deltas commute with store sales. A timeout,
  * 5xx or IDEMPOTENCY_CONCURRENT_REQUEST resends the SAME request until Shopify
  * settles or the cap passes (15 s in a user request, 3 min otherwise). Shopify
- * dedupes this mutation by key (dev store, 2026-10-14), so a resend of a write
+ * dedupes this mutation by key (seen on the dev store), so a resend of a write
  * that already landed is not applied twice. A write left unsettled is resent
  * under its key by the next push; after a day (the key's lifetime) it is parked
  * as unconfirmed for the board instead.
@@ -704,8 +704,8 @@ export async function nudgeProgramStock(program: { id: number; shopifyVariantId:
  * still land, or a carry). The daily reconcile-shopify job calls it. Never throws.
  */
 export async function healProgramStock(): Promise<{ checked: number; settled: number }> {
-    // ponytail: the periodic drift check (recommendation §4, waiting on the board's
-    // store decision) will also read shopifyStockPushNeededAt; until then this is its only reader.
+    // ponytail: this is shopifyStockPushNeededAt's only reader; a periodic drift check
+    // could read it too.
     const programs = await prisma.program.findMany({
         where: {
             shopifyVariantId: { not: null },
@@ -868,7 +868,7 @@ export async function syncProgramPrice(
     if (variantIds.length === 0) return true;
 
     const context = { programId: program.id, variantIds, basePriceCents };
-    const emailIntro = `The Shopify price for program <strong>${escapeHtml(program.name)}</strong> is out of date. Set it by hand in Shopify on every variant listed below.`;
+    const emailIntro = `The Shopify price for program ${program.name} is out of date. Set it by hand in Shopify on every variant listed below.`;
 
     if (!basePriceCents || basePriceCents <= 0) {
         await reportShopifyFailure(
@@ -879,7 +879,7 @@ export async function syncProgramPrice(
         );
         return false;
     }
-    const price = (basePriceCents / 100).toFixed(2);
+    const price = centsToDecimalString(basePriceCents);
 
     // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
     if (config.shopifyMockActive()) {
@@ -910,7 +910,7 @@ export async function syncProgramPrice(
         };
         await outboundCall('shopify.product.update', bag, async (stripped) => {
             const sent = stripped.Program as { shopifyVariantId?: string | null; claimantShopifyVariantId?: string | null; nonOrgMemberPriceCents: number };
-            const sentPrice = (sent.nonOrgMemberPriceCents / 100).toFixed(2);
+            const sentPrice = centsToDecimalString(sent.nonOrgMemberPriceCents);
             for (const variantId of programVariantIds(sent)) {
                 const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
                     method: 'PUT',
@@ -953,7 +953,8 @@ export async function setProgramInventory(
 /**
  * Takes a program's store product off sale by setting its status to draft, so
  * neither the store page nor an old cart link can buy it. Idempotent. A program
- * without a product has nothing to take down and succeeds.
+ * without a product, or whose product Shopify no longer has (404), has nothing
+ * to take down and succeeds.
  *
  * Called by the sale sweep (lib/programs/saleSweep.ts) on the off-sale date for
  * programs that have a reserved-seat product. Nothing re-lists it automatically.
@@ -996,6 +997,10 @@ export async function setProgramProductOffSale(
                 body: JSON.stringify({ product: { id: Number(sentId), status: 'draft' } }),
             }, "Shopify product off sale");
         });
+        if (res.status === 404) {
+            console.log(`[SHOPIFY] Product ${productId} no longer exists; nothing left to take off sale`);
+            return true;
+        }
         if (!res.ok) {
             throw new Error(`Shopify product off-sale failed for ${productId}: ${res.status} ${await res.text()}`);
         }

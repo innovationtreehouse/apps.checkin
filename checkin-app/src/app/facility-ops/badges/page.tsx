@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Stack, TextInput } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { LoadError } from '@checkin/component-ui';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { useLoad } from '@/lib/api';
 import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
-import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useOrgTime } from '@/components/TimezoneProvider';
 
@@ -30,38 +30,15 @@ export default function AdminBadgesPage() {
     { header: 'Location', render: (b) => b.location || 'Front Door', sortBy: (b) => b.location },
   ];
 
-  const [loading, setLoading] = useState(true);
-  const [badges, setBadges] = useState<BadgeEvent[]>([]);
-  const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
+  const { data, error, reload } = useLoad<{ badges: BadgeEvent[] }>(ready ? '/api/facility/badges' : null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const fetchBadges = useCallback(() => fetch('/api/facility/badges')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setBadges(data.badges);
-      } else {
-        setMessage({ text: "Failed to load badge events.", tone: "error" });
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading badges.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchBadges();
-  }, [ready, fetchBadges]);
-
-  if (authLoading || loading) {
-    return <PageLoader />;
-  }
-
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
+  if (error) return <LoadError what="badge events" message={error} onRetry={reload} />;
+  if (!data) return <PageLoader />;
 
+  const { badges } = data;
   const multiLocation = new Set(badges.map((b) => b.location).filter(Boolean)).size > 1;
   const term = searchTerm.trim().toLowerCase();
   const visible = term
@@ -74,8 +51,6 @@ export default function AdminBadgesPage() {
 
   return (
     <Stack>
-      <AlertBanner message={message?.text} tone={message?.tone} />
-
       <TextInput
         placeholder={multiLocation ? "Filter by name, email, location, or ID..." : "Filter by name, email, or ID..."}
         value={searchTerm}

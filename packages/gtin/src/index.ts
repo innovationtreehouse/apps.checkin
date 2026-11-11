@@ -1,9 +1,18 @@
+/** The GTIN-13 check digit of exactly twelve digits; throws on any other input. */
 export function calculateChecksum(partial12: string): number {
+  if (!/^\d{12}$/.test(partial12)) {
+    throw new Error(`GTIN-13 checksum needs exactly 12 digits, got "${partial12}"`);
+  }
   let sum = 0;
   for (let i = 0; i < 12; i++) {
     sum += parseInt(partial12[i], 10) * (i % 2 === 0 ? 1 : 3);
   }
   return (10 - (sum % 10)) % 10;
+}
+
+/** Thirteen digits whose last is the GTIN-13 check digit of the first twelve. */
+export function isValidGtin13(value: string): boolean {
+  return /^\d{13}$/.test(value) && calculateChecksum(value.slice(0, 12)) === Number(value[12]);
 }
 
 export function buildGtin13(categoryLetter: string, subcategoryNumber: number, sequence: number): string {
@@ -41,13 +50,16 @@ export function formatProvisionalDisplay(gtin13: string): string {
   return "P" + String(sequence).padStart(6, "0");
 }
 
+/** The short ID of an org-minted GTIN; anything else, malformed input included, comes back as given. */
 export function formatGtinDisplay(gtin13: string): string {
+  if (!/^\d{13}$/.test(gtin13)) return gtin13;
   if (isProvisionalGtin13(gtin13)) {
     return formatProvisionalDisplay(gtin13);
   }
   if (gtin13.startsWith("0200")) {
     const subcategory = parseInt(gtin13.substring(4, 6), 10);
     const catPos = parseInt(gtin13.substring(6, 8), 10);
+    if (catPos < 1 || catPos > 26) return gtin13;
     const sequence = parseInt(gtin13.substring(8, 12), 10);
     const letter = String.fromCharCode(64 + catPos);
     return String(subcategory).padStart(2, "0") + letter + String(sequence).padStart(4, "0");
@@ -55,14 +67,13 @@ export function formatGtinDisplay(gtin13: string): string {
   return gtin13;
 }
 
-export function formatItemId(gtin13: string): string {
-  if (isProvisionalGtin13(gtin13)) {
-    const sequence = parseProvisionalSequence(gtin13);
-    return "P" + String(sequence).padStart(6, "0");
-  }
-  const subPart = gtin13.slice(4, 6);
-  const catPos = parseInt(gtin13.slice(6, 8), 10);
-  const catLetter = String.fromCharCode(64 + catPos);
-  const seqPart = gtin13.slice(8, 12);
-  return `${subPart}${catLetter}${seqPart}`;
+/** The checked GTIN-13 for a typed `P000123`, `03B0042` or 13 digits; null for anything else. */
+export function parseGtinInput(text: string): string | null {
+  const input = text.trim();
+  if (isValidGtin13(input)) return input;
+  const provisional = /^[Pp](\d{6})$/.exec(input);
+  if (provisional) return buildProvisionalGtin13(Number(provisional[1]));
+  const catalog = /^(\d{2})([A-Za-z])(\d{4})$/.exec(input);
+  return catalog ? buildGtin13(catalog[2], Number(catalog[1]), Number(catalog[3])) : null;
 }
+

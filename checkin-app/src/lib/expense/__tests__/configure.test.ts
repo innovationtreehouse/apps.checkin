@@ -1,4 +1,4 @@
-import type { Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
+import type { ExpensePosting, OutcomeMail, Outbound, PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
@@ -6,27 +6,36 @@ const budgetOwnerFindMany = jest.fn();
 const personFindUnique = jest.fn();
 const personMergeFindUnique = jest.fn();
 const personFindFirst = jest.fn();
+const personFindMany = jest.fn();
+const personMergeFindMany = jest.fn();
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     personRole: { findMany: personRoleFindMany },
     budgetOwner: { findUnique: budgetOwnerFindUnique, findMany: budgetOwnerFindMany },
-    person: { findUnique: personFindUnique, findFirst: personFindFirst },
-    personMerge: { findUnique: personMergeFindUnique },
+    person: { findUnique: personFindUnique, findFirst: personFindFirst, findMany: personFindMany },
+    personMerge: { findUnique: personMergeFindUnique, findMany: personMergeFindMany },
   },
 }));
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
-const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors }; outbound: Outbound }]>();
+const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors; posting: () => Promise<ExpensePosting | null> }; outbound: Outbound; outcomeMail: OutcomeMail }]>();
 const reimburseeVendorId = jest.fn();
-jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId }));
+class QuickBooksNotConnectedError extends Error {}
+jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId, QuickBooksNotConnectedError }));
 const createVendor = jest.fn();
 jest.mock("@checkin/quickbooks", () => ({ createVendor }));
-jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
+jest.mock("@/lib/components/host", () => ({ getOrg: jest.fn() }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
+const booksMapAccounts = jest.fn();
+jest.mock("@/lib/finance/booksMap", () => ({ booksMap: { accounts: booksMapAccounts } }));
+const emailAlert = jest.fn().mockResolvedValue(true);
+jest.mock("@/lib/emailRecipients", () => ({ emailAlert }));
+const sendPurchaseOutcome = jest.fn();
+jest.mock("@/lib/purchaseOutcomeMail", () => ({ sendPurchaseOutcome }));
 
-const NOT_DENIED = { NOT: { household: { orgMembership: { status: "DENIED" } } } };
+const NOT_DENIED = { household: { archivedAt: null }, NOT: { household: { orgMembership: { status: "DENIED" } } } };
 
 async function signoff(): Promise<SignoffDirectory> {
   await jest.isolateModulesAsync(async () => {
@@ -46,6 +55,18 @@ it("binds the library's outbound port to checkin's gateway", async () => {
   expect(configureExpense.mock.calls.at(-1)![0].outbound).toBe(gateway);
 });
 
+it("hands each outcome email copy to the host's purchase outcome mail and passes on whether it is done", async () => {
+  await jest.isolateModulesAsync(async () => {
+    (await import("../configure")).configureRuntime();
+  });
+  const mail = configureExpense.mock.calls.at(-1)![0].outcomeMail;
+  const notice = { receiptId: "r-1", outcome: "reimbursement_complete" as const, uploaderPersonId: 7, reimburseePersonId: 8, retailer: "Acme", receiptDate: "2026-10-02" };
+  sendPurchaseOutcome.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  expect(await mail.send(notice, "uploader")).toBe(true);
+  expect(await mail.send(notice, "reimbursee")).toBe(false);
+  expect(sendPurchaseOutcome.mock.calls).toEqual([[notice, "uploader"], [notice, "reimbursee"]]);
+});
+
 describe("expense signer directory excludes people in a DENIED household", () => {
   it("FINANCE and BOARD holders", async () => {
     personRoleFindMany.mockResolvedValue([{ personId: 4 }]);
@@ -55,24 +76,24 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     await dir.boardMembers();
 
     for (const [{ where }] of personRoleFindMany.mock.calls) {
-      expect(where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+      expect(where.person).toEqual(NOT_DENIED);
     }
   });
 
   it("a bucket's owner and treasurers", async () => {
     budgetOwnerFindUnique.mockResolvedValue({
       isOrgLevel: false,
-      owner: { id: 7, mergedIntoId: null, household: { orgMembership: { status: "DENIED" } } },
+      owner: { id: 7, household: { orgMembership: { status: "DENIED" } } },
       treasurers: [{ personId: 8 }],
     });
     const dir = await signoff();
 
     await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8], owner: 7 });
-    expect(budgetOwnerFindUnique.mock.calls[0][0].select.treasurers.where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+    expect(budgetOwnerFindUnique.mock.calls[0][0].select.treasurers.where.person).toEqual(NOT_DENIED);
   });
 
   it("an org-level bucket has no approvers and no owner", async () => {
-    budgetOwnerFindUnique.mockResolvedValue({ isOrgLevel: true, owner: { id: 7, mergedIntoId: null, household: null }, treasurers: [{ personId: 8 }] });
+    budgetOwnerFindUnique.mockResolvedValue({ isOrgLevel: true, owner: { id: 7, household: null }, treasurers: [{ personId: 8 }] });
     await expect((await signoff()).bucketApprovers(100)).resolves.toEqual({ orgLevel: true, approvers: [], owner: null });
   });
 
@@ -86,33 +107,47 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     expect(where).toMatchObject({ isOrgLevel: false });
     expect(where).not.toHaveProperty("archivedAt");
     const [owner, treasurer] = where.OR;
-    expect(owner).toEqual({ ownerId: 7, owner: { mergedIntoId: null, ...NOT_DENIED } });
-    expect(treasurer.treasurers.some).toEqual({ personId: 7, person: { mergedIntoId: null, ...NOT_DENIED } });
+    expect(owner).toEqual({ ownerId: 7, owner: NOT_DENIED });
+    expect(treasurer.treasurers.some).toEqual({ personId: 7, person: NOT_DENIED });
   });
 });
 
 describe("the live person an id resolves to", () => {
-  const people: Record<number, { id: number; mergedIntoId: number | null }> = {
-    1: { id: 1, mergedIntoId: 2 },
-    2: { id: 2, mergedIntoId: null },
-    5: { id: 5, mergedIntoId: 5 },
-  };
-  const archive: Record<number, { toId: number }> = { 3: { toId: 1 } };
+  const people: Record<number, { id: number }> = { 2: { id: 2 } };
+  const archive: Record<number, { toId: number }> = { 1: { toId: 2 }, 3: { toId: 2 }, 5: { toId: 6 } };
   beforeEach(() => {
     personFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => people[where.id] ?? null);
     personMergeFindUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) => archive[where.fromId] ?? null);
+    personFindMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.filter((id) => id in people).map((id) => ({ id })));
   });
 
-  it("is the person when live, the survivor through a tombstone or an archived merge, else null", async () => {
-    const dir = await signoff();
-    await expect(dir.livePersonFor(2)).resolves.toBe(2);
-    await expect(dir.livePersonFor(1)).resolves.toBe(2);
-    await expect(dir.livePersonFor(3)).resolves.toBe(2);
-    await expect(dir.livePersonFor(4)).resolves.toBeNull();
+  it("is the person when live, the survivor through the merge archive, else null", async () => {
+    const live = await (await signoff()).liveIds([2, 1, 3, 4]);
+    expect([...live]).toEqual([[2, 2], [1, 2], [3, 2], [4, null]]);
   });
 
-  it("stops on a cyclic merge chain", async () => {
-    await expect((await signoff()).livePersonFor(5)).resolves.toBeNull();
+  it("is nobody when the archived survivor is gone", async () => {
+    expect((await (await signoff()).liveIds([5])).get(5)).toBeNull();
+  });
+
+  it("every id stored for a live person is their own and each merged into them", async () => {
+    personMergeFindMany.mockResolvedValue([{ fromId: 1 }, { fromId: 3 }]);
+    await expect((await signoff()).storedIdsOf(2)).resolves.toEqual([2, 1, 3]);
+    expect(personMergeFindMany.mock.calls[0][0].where).toEqual({ toId: 2 });
+  });
+});
+
+describe("whether a reimbursee is an adult", () => {
+  it.each([
+    ["an adult by date of birth", { dateOfBirth: new Date("1980-01-01"), isDeclaredAdult: false }, true],
+    ["a declared adult with no date of birth", { dateOfBirth: null, isDeclaredAdult: true }, true],
+    ["a minor", { dateOfBirth: new Date(), isDeclaredAdult: false }, false],
+    ["someone of unknown age", { dateOfBirth: null, isDeclaredAdult: false }, false],
+    ["nobody live", null, false],
+  ])("answers for %s", async (_label, row, adult) => {
+    personFindFirst.mockResolvedValue(row);
+    await expect((await signoff()).isAdult(7)).resolves.toBe(adult);
+    expect(personFindFirst.mock.calls[0][0]).toMatchObject({ where: { id: 7 } });
   });
 });
 
@@ -124,15 +159,18 @@ describe("expense QuickBooks reader", () => {
     return configureExpense.mock.calls.at(-1)![0].quickbooks.reader;
   }
 
-  it("reads no rows while QuickBooks is off", async () => {
+  it("throws 'not connected', never an empty read, while QuickBooks is off", async () => {
     getQuickBooks.mockResolvedValue(null);
     const qb = await reader();
-    await expect(qb.purchasesBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
-    await expect(qb.billsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
-    await expect(qb.billPaymentsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
-    await expect(qb.purchasesByIds(["1"])).resolves.toEqual([]);
-    await expect(qb.billsByIds(["2"])).resolves.toEqual([]);
-    await expect(qb.billPaymentsByIds(["3"])).resolves.toEqual([]);
+    const reads = [
+      qb.purchasesBetween("2026-01-01", "2026-01-31"),
+      qb.billsBetween("2026-01-01", "2026-01-31"),
+      qb.billPaymentsBetween("2026-01-01", "2026-01-31"),
+      qb.purchasesByIds(["1"]),
+      qb.billsByIds(["2"]),
+      qb.billPaymentsByIds(["3"]),
+    ];
+    for (const read of reads) await expect(read).rejects.toBeInstanceOf(QuickBooksNotConnectedError);
   });
 
   it("maps by-id rows: a Bill's balance and linked BillPayments", async () => {
@@ -208,6 +246,84 @@ describe("expense reimbursee Vendor ports", () => {
   it("names a live person", async () => {
     personFindFirst.mockResolvedValue({ name: "Pat Lee" });
     await expect((await ports()).people.nameOf(9)).resolves.toBe("Pat Lee");
-    expect(personFindFirst.mock.calls[0][0].where).toEqual({ id: 9, mergedIntoId: null });
+    expect(personFindFirst.mock.calls[0][0].where).toEqual({ id: 9 });
+  });
+});
+
+describe("expense posting binding", () => {
+  async function ports() {
+    await jest.isolateModulesAsync(async () => {
+      (await import("../configure")).configureRuntime();
+    });
+    return configureExpense.mock.calls.at(-1)![0].quickbooks;
+  }
+
+  function clientWith(env: string, accountType: string | undefined) {
+    return { env, accounts: jest.fn(async () => [{ Id: "41", Name: "Card", FullyQualifiedName: "Card", AccountType: accountType }]) };
+  }
+
+  beforeEach(() => booksMapAccounts.mockResolvedValue({ EXPENSE_PAYMENT: "41" }));
+
+  it.each([
+    ["Credit Card", "CreditCard"],
+    ["Bank", "Cash"],
+  ])("binds the guarded client and the books map's account; a %s account pays by %s", async (accountType, paymentType) => {
+    const client = clientWith("sandbox", accountType);
+    getQuickBooks.mockResolvedValue(client);
+    await expect((await ports()).posting()).resolves.toEqual({ client, paymentAccountId: "41", paymentType, prod: false, sweepIncomplete: expect.any(Function) });
+  });
+
+  it("takes prod from the client's own environment, not a separate flag", async () => {
+    getQuickBooks.mockResolvedValue(clientWith("production", "Bank"));
+    await expect((await ports()).posting()).resolves.toMatchObject({ prod: true });
+  });
+
+  it("is unbound while the books map has no payment account", async () => {
+    booksMapAccounts.mockResolvedValue({});
+    await expect((await ports()).posting()).resolves.toBeNull();
+    expect(getQuickBooks).not.toHaveBeenCalled();
+  });
+
+  it("is unbound while QuickBooks is off", async () => {
+    getQuickBooks.mockResolvedValue(null);
+    await expect((await ports()).posting()).resolves.toBeNull();
+  });
+
+  it.each([
+    ["an Expense account", "Expense"],
+    ["an account QuickBooks no longer has", undefined],
+  ])("is unbound for %s and emails finance once", async (_label, accountType) => {
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", accountType));
+    const { posting } = await ports();
+    await expect(posting()).resolves.toBeNull();
+    await expect(posting()).resolves.toBeNull();
+    expect(emailAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("names what posting lacks for the status page, without emailing finance", async () => {
+    const { expensePostingMissing } = await import("../configure");
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Bank"));
+    await expect(expensePostingMissing()).resolves.toEqual([]);
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Expense"));
+    await expect(expensePostingMissing()).resolves.toEqual(["a Bank or Credit Card account for Organisation card (the one picked is a Expense account)"]);
+    getQuickBooks.mockResolvedValue(null);
+    await expect(expensePostingMissing()).resolves.toEqual(["a QuickBooks connection"]);
+    booksMapAccounts.mockResolvedValue({});
+    await expect(expensePostingMissing()).resolves.toEqual(["no account picked for: Organisation card"]);
+    expect(emailAlert).not.toHaveBeenCalled();
+  });
+
+  it("emails finance when the daily sweep reads a full page", async () => {
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Bank"));
+    const bound = await (await ports()).posting();
+    await bound!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") });
+    expect(emailAlert).toHaveBeenCalledTimes(1);
+    expect(emailAlert.mock.calls[0][1].since).toBe("2026-10-01");
+  });
+
+  it("matches Purchases against the same books-map account", async () => {
+    await expect((await ports()).refs.paymentAccountId()).resolves.toBe("41");
+    booksMapAccounts.mockResolvedValue({});
+    await expect((await ports()).refs.paymentAccountId()).resolves.toBeNull();
   });
 });

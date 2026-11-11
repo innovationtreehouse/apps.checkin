@@ -1,24 +1,18 @@
-import { defineRuntime } from "@checkin/component-kit";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import { defineRuntime, ServiceError, type OnFailure } from "@checkin/component-kit";
+import type { BooksMap, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
   IncomePrincipal,
   OrgIdentity,
-  OtherLaneClaims,
   OwnerDirectory,
   PayoutMirror,
   QbClassSource,
   QbDepositSource,
 } from "./contract";
-import type { DepositAccount } from "./lib/deposit-lines";
-
-/** QuickBooks account ids a created deposit's lines book to. */
-export type IncomeQbAccounts = Record<DepositAccount, string>;
 
 /** What the create path needs to write deposits. Unbound, nothing is created. */
 export interface IncomePosting {
   client: QuickBooksClient;
-  accounts: IncomeQbAccounts;
   /**
    * True only on a deploy whose Shopify mirror keeps the newest version of every row, so a
    * replay cannot hand the create path a reverted payout. Anything else creates nothing.
@@ -58,6 +52,7 @@ export interface IncomeConfig {
   auth?: IncomeAuth;
   /** Org identity as an async accessor, called per request: the host may read it from its store. */
   org?: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   mirror?: PayoutMirror;
   deposits?: QbDepositSource;
   owners?: OwnerDirectory;
@@ -66,11 +61,12 @@ export interface IncomeConfig {
    * a payout with a sale of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
    */
   classes?: QbClassSource;
-  /** QuickBooks id of the bank account payouts land in. Unset, nothing is matched. */
-  bankAccountId?: string;
+  /** Finance's books map: role -> QuickBooks account, bucket -> Class. A source whose bank role it leaves unset is not matched. */
+  booksMap?: BooksMap;
+  /** QuickBooks' live account list, read when an item's account is saved. */
+  quickBooksAccounts?: QboAccountList;
   posting?: IncomePosting;
   alerts?: IncomeAlerts;
-  otherLaneClaims?: OtherLaneClaims;
   /** Days after a payout within which its deposit must be booked. */
   windowDays?: number;
   /** Days before a payout a deposit may still be dated, for QuickBooks dates that run early. */
@@ -86,6 +82,15 @@ export function configureIncome(next: IncomeConfig): void {
 }
 
 export const getIncomeConfig = incomeRuntime.require;
+
+const NO_QUICKBOOKS: QboAccountList = async () => {
+  throw new ServiceError(503, "QuickBooks is not connected.");
+};
+
+/** QuickBooks' live account list; unbound, every read answers 503. */
+export function getQuickBooksAccounts(): QboAccountList {
+  return getIncomeConfig().quickBooksAccounts ?? NO_QUICKBOOKS;
+}
 
 /** The acting host user. A 401 if absent: host admission has already run. */
 export const getPrincipal = incomeRuntime.getPrincipal;

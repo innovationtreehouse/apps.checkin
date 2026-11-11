@@ -65,6 +65,7 @@ describe('GET /api/events/[id] — roster visit times reach program staff', () =
 
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: `Prog ${TAG}`,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
@@ -76,7 +77,7 @@ describe('GET /api/events/[id] — roster visit times reach program staff', () =
         // A program the staff above have nothing to do with — its event is the
         // negative case.
         const otherProgram = await prisma.program.create({
-            data: { name: `Other prog ${TAG}`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31') },
+            data: { appliesToYear: 2026, name: `Other prog ${TAG}`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31') },
         });
 
         const makeEvent = (programId: number, label: string) => prisma.event.create({

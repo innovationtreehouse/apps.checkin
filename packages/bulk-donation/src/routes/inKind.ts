@@ -1,12 +1,13 @@
 /** In-kind gifts: the finance queue and its accept step, gifts recorded without a receipt, and the approvers' view. */
 import { mapServiceErrors, parseId } from "@checkin/component-kit";
 import { z } from "zod";
+import { InKindQbResolveInputSchema, resolveInKindQb } from "../lib/in-kind-resolve";
 import { inKindService } from "../services/inKindService";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindSource } from "../services/inKindAcceptService";
 import { manualInKindService, ManualInKindInputSchema } from "../services/manualInKindService";
 import { getOrgId, getPrincipal } from "../runtime";
 import type { DonationRouteHandler, InKindDonor } from "../contract";
-import { auditContext, donorReader, pageArgs, parseBodyCapped } from "./_shared";
+import { auditContext, pageArgs, parseBodyCapped } from "./_shared";
 
 export const listQueue: DonationRouteHandler = async () => ({
   InKindQueueItemView: await inKindAcceptService.listQueue(await getOrgId(), (await getPrincipal()).id),
@@ -22,9 +23,20 @@ export function decide(source: InKindSource): DonationRouteHandler {
   };
 }
 
-const SettleInputSchema = z.object({ kind: z.enum(["withdrawal", "replay"]) });
+/** Finance books, skips (with a reason) or matches by id a gift the QuickBooks drain handed over; replies with its queue row. */
+export function qbResolve(source: InKindSource): DonationRouteHandler {
+  return async ({ req, params }) => {
+    const id = parseId(params.id);
+    const input = await parseBodyCapped(req, InKindQbResolveInputSchema);
+    const orgId = await getOrgId();
+    const audit = await auditContext(req);
+    return { InKindQueueItemView: await mapServiceErrors(() => resolveInKindQb(orgId, source, id, input, audit)) };
+  };
+}
 
-/** Finance settles a receipt gift's withdrawal or replay conflict. */
+const SettleInputSchema = z.object({ kind: z.enum(["replay"]) });
+
+/** Finance settles a receipt gift's replay conflict. */
 export const settleReceipt: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const { kind } = await parseBodyCapped(req, SettleInputSchema);
@@ -33,6 +45,15 @@ export const settleReceipt: DonationRouteHandler = async ({ req, params }) => {
   return { InKindSettleResult: await mapServiceErrors(() => inKindService.settle(orgId, id, kind, audit)) };
 };
 
+/** One gift for its page. */
+export function getGift(source: InKindSource): DonationRouteHandler {
+  return async ({ params }) => {
+    const id = parseId(params.id);
+    const orgId = await getOrgId();
+    return { InKindGiftDetailView: await mapServiceErrors(() => inKindAcceptService.getGift(orgId, source, id)) };
+  };
+}
+
 /** The host decides from the caller's view whether every bucket is shown or only those the caller approves. */
 export function listByBucket(seeAll: boolean): DonationRouteHandler {
   return async () => ({
@@ -40,11 +61,10 @@ export function listByBucket(seeAll: boolean): DonationRouteHandler {
   });
 }
 
-/** The host decides from the caller's view whether donor identity is read (and audited) at all. */
+/** The host decides from the caller's view whether donor identity is read at all. */
 export function listManual(withDonor: boolean): DonationRouteHandler {
   return async ({ req }) => {
-    const reader = withDonor ? await donorReader(req, "GET /api/donations/in-kind/manual") : null;
-    return { ManualInKindDonation: await manualInKindService.list(await getOrgId(), reader, pageArgs(req)) };
+    return { ManualInKindDonation: await manualInKindService.list(await getOrgId(), withDonor, pageArgs(req)) };
   };
 }
 

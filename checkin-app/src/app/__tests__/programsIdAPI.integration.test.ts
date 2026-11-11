@@ -35,7 +35,7 @@ describe('Individual Program API Integration Tests', () => {
     let publicMemberOnlyProgramId: number;
 
     // Distinctive name we assert NEVER appears in an anonymous response — the
-    // roster/association leak (#P0-5.1a) is closed iff this string is absent.
+    // roster/association leak is closed iff this string is absent.
     const ENROLLED_NAME = 'Roster Leak Canary';
     const PARENT_NAME = 'Roster Parent Canary';
     const PARENT_EMAIL = 'parent-prog-id-api-test@example.com';
@@ -116,17 +116,17 @@ describe('Individual Program API Integration Tests', () => {
 
         // Create mock programs
         const publicProgram = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
+            data: { appliesToYear: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).getUTCFullYear() - 1, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
         });
         publicProgramId = publicProgram.id;
 
         const orgMemberOnlyProgram = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
         });
         orgMemberOnlyProgramId = orgMemberOnlyProgram.id;
 
         const publicMemberOnlyProgram = await prisma.program.create({
-            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId }
+            data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId }
         });
         publicMemberOnlyProgramId = publicMemberOnlyProgram.id;
 
@@ -216,6 +216,29 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.name).toBe('Public Prog ID API Test');
         });
 
+        it('tells every caller why a new claim would be refused', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue(null);
+             const base = { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2999-12-31'), phase: 'RUNNING' as const, enrollmentStatus: 'OPEN' as const, leadMentorId: leadId };
+             const [open, full, ended] = await Promise.all([
+                 prisma.program.create({ data: { ...base, name: 'Open Prog ID API Test', offSaleAt: new Date('2999-01-01'), maxParticipants: 5 } }),
+                 prisma.program.create({ data: { ...base, name: 'Full Prog ID API Test', offSaleAt: new Date('2999-01-01'), maxParticipants: 0 } }),
+                 prisma.program.create({ data: { ...base, name: 'Ended Prog ID API Test', offSaleAt: new Date('2020-01-01') } }),
+             ]);
+             try {
+                 const closedBy = async (id: number) => {
+                     const req = new Request(`http://localhost:4000/api/programs/${id}`, { method: 'GET' });
+                     const res = await GET(req as unknown as import("next/server").NextRequest, createParams(id) as unknown as never);
+                     return (await res.json()).enrollmentClosedBy;
+                 };
+                 expect(await closedBy(open.id)).toBeNull();
+                 expect(await closedBy(full.id)).toBe('FULL');
+                 expect(await closedBy(ended.id)).toBe('SALE_ENDED');
+                 expect(await closedBy(publicProgramId)).toBe('CLOSED');
+             } finally {
+                 await prisma.program.deleteMany({ where: { id: { in: [open.id, full.id, ended.id] } } });
+             }
+        });
+
         it('should return 404 Not Found for invalid program ID', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId } });
 
@@ -295,7 +318,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.name).toBe('Public Member Only Prog ID API Test');
         });
 
-        // ── Roster / association leak regression (auth-consistency §5.1a) ───────────
+        // ── Roster / association leak ───────────────────────────────────────────────
         // ProgramParticipant rows + Participant.name are tier 'public', so per-field
         // stripping cannot hide WHO is enrolled. The route gates the association:
         // anonymous/non-enrolled get metadata + counts only, never the roster.
@@ -313,7 +336,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.participants).toBeUndefined();
              expect(data.volunteers).toBeUndefined();
              // The enrolled identity must not appear anywhere in the payload —
-             // nor the parent's, who rides the same roster rows since #1400.
+             // nor the parent's, who rides the same roster rows.
              expect(JSON.stringify(data)).not.toContain(ENROLLED_NAME);
              expect(JSON.stringify(data)).not.toContain(PARENT_NAME);
              expect(JSON.stringify(data)).not.toContain(PARENT_PHONE);
@@ -336,7 +359,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(JSON.stringify(data)).not.toContain(PARENT_NAME);
         });
 
-        it('returns the roster to the program lead mentor (staff tier unchanged)', async () => {
+        it('returns the roster to the program lead mentor (staff tier)', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
              const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, { method: 'GET' });
@@ -349,7 +372,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(JSON.stringify(data)).toContain(ENROLLED_NAME);
         });
 
-        // ── Parent contact band (#1400) ────────────────────────────────────────────
+        // ── Parent contact band ────────────────────────────────────────────────────
         // Runs the REAL stack (handler -> registry -> scopesHeld -> stripBag), so it
         // proves the their_program_households:pii grant actually delivers, not just
         // that the select asked for it.
@@ -386,7 +409,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(parents[0].email).toBeUndefined();
         });
 
-        // Regression pin for the narrowing #1425 landed. A parent-volunteer's Person
+        // Pins the narrow selects. A parent-volunteer's Person
         // row resolves their_program_households, and this view holds :pii + :personal
         // on it — so only the select keeps dateOfBirth/allergies/googleId off the
         // wire. Widening either select fails here with the offending keys named.
@@ -440,17 +463,16 @@ describe('Individual Program API Integration Tests', () => {
         });
     });
 
-    // ── ops-stg ACCESS GATE regression (the defect that killed the prior staging
-    // design) ─────────────────────────────────────────────────────────────────
+    // ── ops-stg ACCESS GATE ─────────────────────────────────────────────────────
     // GET /api/programs/[id] is registered `authorize: 'public'` (security/registry.ts)
     // and returns real enrolled participants' names/household/emergency-contact data —
     // exactly the surface an anonymous `curl` against a copy of PRODUCTION data must
     // never reach. `authorize: 'public'` unconditionally admits every caller regardless
     // of session state, so the gate has to be enforced ahead of that check
     // (resolveAccess in security/access-resolvers.ts), not only in authenticateRequest —
-    // this describe is that regression test, run against the REAL route (handler() ->
+    // this describe pins that, run against the REAL route (handler() ->
     // registry -> resolveAccess -> stripBag), not a mock of the gate.
-    describe('GET /api/programs/[id] — ops-stg access gate (regression: authorize:"public" must not bypass staging)', () => {
+    describe('GET /api/programs/[id] — ops-stg access gate (authorize:"public" does not bypass staging)', () => {
         const CHECKIN_ENV_BEFORE = process.env.CHECKIN_ENV;
 
         beforeEach(() => {
@@ -462,7 +484,7 @@ describe('Individual Program API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES an anonymous caller — the regression case for the defect that shipped real minors\' data to curl', async () => {
+        it('DENIES an anonymous caller', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
 
             const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, { method: 'GET' });
@@ -544,7 +566,7 @@ describe('Individual Program API Integration Tests', () => {
             });
 
             const pastBoundaryProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), name: 'Past Boundary Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
+                data: { appliesToYear: boundary.getUTCFullYear(), offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), name: 'Past Boundary Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
             });
             pastBoundaryProgramId = pastBoundaryProgram.id;
         });
@@ -578,10 +600,10 @@ describe('Individual Program API Integration Tests', () => {
             expect(data.viewerMemberPricingEligible).toBeUndefined();
         });
 
-        // #1397: membership fee paid, background check still with the board. Not a member
+        // Membership fee paid, background check still with the board. Not a member
         // (nothing else in the app treats them as one), but priced as one and
         // admitted to members-only programs. Paid BEFORE the renewal window opened
-        // (#1811: an in-window payment buys the coming year), so coverage stops at
+        // (an in-window payment buys the coming year), so coverage stops at
         // the upcoming boundary and the past-boundary case below still bites.
         describe('a household that has paid but is awaiting background clearance', () => {
             let paidPendingId: number;
@@ -599,7 +621,7 @@ describe('Individual Program API Integration Tests', () => {
                                 orgMembership: {
                                     create: {
                                         status: 'NONE',
-                                        processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: paidBeforeWindow, stageEnteredAt: paidBeforeWindow } },
+                                        processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: paidBeforeWindow, stageEnteredAt: paidBeforeWindow, appliesToYear: boundary.getUTCFullYear() - 1 } },
                                     },
                                 },
                             },
@@ -680,7 +702,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(res.status).toBe(401);
         });
 
-        // P1-3: bad-parse id (malformed input) returns 400, matching GET — NOT the
+        // A bad-parse id (malformed input) returns 400, matching GET — NOT the
         // 404 reserved for a valid id with no matching row. Checked before the
         // not-found/forbidden gates, so even an admin gets 400.
         it('returns 400 for an unparseable program ID (not 404)', async () => {
@@ -741,7 +763,7 @@ describe('Individual Program API Integration Tests', () => {
         it('clamps publiclyVisible to false when PATCHed onto a public (non-members-only) program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
              const prog = await prisma.program.create({
-                 data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, publiclyVisible: false, leadMentorId: leadId },
+                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, publiclyVisible: false, leadMentorId: leadId },
              });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${prog.id}`, { method: 'PATCH', body: JSON.stringify({ publiclyVisible: true }) });
@@ -759,7 +781,7 @@ describe('Individual Program API Integration Tests', () => {
         it('clears publiclyVisible when a members-only program is flipped to public', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
              const prog = await prisma.program.create({
-                 data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Flip Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId },
+                 data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Flip Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId },
              });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${prog.id}`, { method: 'PATCH', body: JSON.stringify({ orgMemberOnly: false }) });
@@ -773,7 +795,7 @@ describe('Individual Program API Integration Tests', () => {
              }
         });
 
-        // Denied-household lockout (auth-consistency §5 risk #2 / GAP-1). A denied
+        // Denied-household lockout. A denied
         // lead mentor keeps `user.id`, so the leadMentorId-match gate would still
         // pass — the denied check must reject before any mutation. No write occurs.
         it('blocks a denied lead mentor from editing their own program (401, no mutation)', async () => {
@@ -809,7 +831,7 @@ describe('Individual Program API Integration Tests', () => {
             newLeadId = newLead.id;
 
             const noLeadProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'No Lead Prog ID API Test',
                     phase: 'PLANNING',
                     startAt: new Date('2026-01-01'),
@@ -820,12 +842,12 @@ describe('Individual Program API Integration Tests', () => {
             noLeadProgramId = noLeadProgram.id;
 
             const noEventsProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name: 'No Events Prog ID API Test', phase: 'PLANNING', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId }
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name: 'No Events Prog ID API Test', phase: 'PLANNING', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId }
             });
             noEventsProgramId = noEventsProgram.id;
 
             const finishedProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'Finished Prog ID API Test',
                     phase: 'FINISHED',
                     enrollmentStatus: 'CLOSED',
@@ -838,7 +860,7 @@ describe('Individual Program API Integration Tests', () => {
             finishedProgramId = finishedProgram.id;
 
             const validPublishProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'Valid Publish Prog ID API Test',
                     phase: 'PLANNING',
                     startAt: new Date('2026-01-01'),
@@ -870,7 +892,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(noLeadProgramId) as unknown as never);
             expect(res.status).toBe(400);
             const data = await res.json();
-            expect(data.error).toBe('Cannot publish a program without a Lead Mentor assigned');
+            expect(data.error).toBe('Cannot publish a program without a Program Leader assigned');
         });
 
         it('rejects publishing without scheduled events (400)', async () => {
@@ -1044,11 +1066,11 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
             expect(res.status).toBe(403);
             const data = await res.json();
-            expect(data.error).toBe('Forbidden: Only administrators can reassign lead mentors');
+            expect(data.error).toBe('Forbidden: Only the Board can reassign Program Leaders');
         });
 
-        it('allows admins to reassign leadMentorId', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        it('allows the Board to reassign leadMentorId', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const req = new Request(`http://localhost:4000/api/programs/${validPublishProgramId}`, {
                 method: 'PATCH',
@@ -1077,6 +1099,7 @@ describe('Individual Program API Integration Tests', () => {
 
             const capped = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     offSaleAt: new Date('2999-01-01'),
@@ -1092,6 +1115,7 @@ describe('Individual Program API Integration Tests', () => {
 
             const uncapped = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     offSaleAt: new Date('2999-01-01'),
@@ -1166,6 +1190,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: 'Prog ID API Test Shopify Sale Ended',
@@ -1197,6 +1222,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: 'Prog ID API Test Shopify Sale Ended Cut',
@@ -1226,6 +1252,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Hidden',
@@ -1295,6 +1322,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Reopen',
@@ -1327,6 +1355,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Sysadmin',
@@ -1355,6 +1384,7 @@ describe('Individual Program API Integration Tests', () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2099-12-31'),
                     name: 'Prog ID API Test Sale Ended Restock',
@@ -1397,7 +1427,7 @@ describe('Individual Program API Integration Tests', () => {
         });
     });
 
-    // ── Variant⟺price invariant (#1520) ──────────────────────────────────────
+    // ── Variant⟺price invariant ───────────────────────────────────────────
     // The capacity/oversell math assumes a program has a Shopify variant iff it
     // has a price on some tier. PATCH accepts raw shopifyVariantId/memberPrice/
     // nonMemberPrice with no cross-check — these pin the guard that rejects both
@@ -1409,17 +1439,17 @@ describe('Individual Program API Integration Tests', () => {
 
         beforeAll(async () => {
             const freeProgram = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name: 'Free Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name: 'Free Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId },
             });
             freeProgramId = freeProgram.id;
 
             const pricedNoVariant = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'), name: 'Priced No Variant Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId, orgMemberPriceCents: 2500 },
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'), name: 'Priced No Variant Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId, orgMemberPriceCents: 2500 },
             });
             pricedNoVariantProgramId = pricedNoVariant.id;
 
             const pricedWithVariant = await prisma.program.create({
-                data: { offSaleAt: new Date('2999-01-01'),
+                data: { appliesToYear: 2026, offSaleAt: new Date('2999-01-01'),
                     name: 'Priced With Variant Prog ID API Test',
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
@@ -1658,7 +1688,7 @@ describe('Individual Program API Integration Tests', () => {
             leadBId = (await mk('pay-lead-b', hhB.id, true)).id;
             kidBId = (await mk('pay-kid-b', hhB.id)).id;
             programId = (await prisma.program.create({
-                data: { name: 'Pay Status Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
+                data: { appliesToYear: 2026, name: 'Pay Status Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
             })).id;
             await prisma.programParticipant.createMany({
                 data: [
@@ -1740,7 +1770,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
             expect(res.status).toBe(200);
         };
-        const flaggedHtml = () => emailSpy.mock.calls.map(c => String(c[1])).join('\n');
+        const flaggedHtml = () => emailSpy.mock.calls.map(c => String(c[1].people)).join('\n');
 
         beforeAll(async () => {
             hhId = (await prisma.household.create({ data: { name: 'Age HH' } })).id;
@@ -1748,7 +1778,7 @@ describe('Individual Program API Integration Tests', () => {
             kid10Id = (await prisma.person.create({ data: { email: 'age10-prog-id-api-test@example.com', name: 'Ten Year Canary', householdId: hhId, dateOfBirth: new Date(Date.UTC(2016, 0, 1)) } })).id;
             kid15Id = (await prisma.person.create({ data: { email: 'age15-prog-id-api-test@example.com', name: 'Fifteen Year Canary', householdId: hhId, dateOfBirth: new Date(Date.UTC(2011, 0, 1)) } })).id;
             programId = (await prisma.program.create({
-                data: { name: 'Age Recheck Prog ID API Test', startAt: new Date('2026-06-15'), endAt: new Date('2026-08-31'), phase: 'UPCOMING', leadMentorId: leadId },
+                data: { appliesToYear: 2026, name: 'Age Recheck Prog ID API Test', startAt: new Date('2026-06-15'), endAt: new Date('2026-08-31'), phase: 'UPCOMING', leadMentorId: leadId },
             })).id;
             await prisma.programParticipant.createMany({
                 data: [

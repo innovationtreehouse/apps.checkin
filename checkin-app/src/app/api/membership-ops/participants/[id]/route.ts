@@ -4,24 +4,15 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
-import { apiError, apiJson } from "@/lib/api-response";
+import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
-import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
+import { EMAIL_IN_USE_REFUSAL, isBadEmailChange, isEmailInUseError } from "@/lib/household/emailInUse";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
-
-/**
- * Whether a check dated `date` covers the coming membership year — the per-lead
- * form of householdBgIsFresh's rule. Unset policy means nothing is fresh.
- */
-async function bgCoversComingYear(date: Date | null): Promise<{ fresh: boolean; boundary: Date | null }> {
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
-    const recheckMonths = settings?.bgRecheckMonths ?? 0;
-    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
-    if (!date || !boundary || recheckMonths <= 0) return { fresh: false, boundary };
-    return { fresh: date.getTime() >= monthsBefore(boundary, recheckMonths).getTime(), boundary };
-}
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
+import { isYouth } from "@/lib/time";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -30,6 +21,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         return apiError("Unauthorized", 401);
     }
 
+    let requestedEmail: unknown;
     try {
         const resolvedParams = await params;
         const id = parseInt(resolvedParams.id, 10);
@@ -38,7 +30,8 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         const body = await request.json();
-        
+        requestedEmail = body.email;
+
         const updateData: Record<string, NonNullable<unknown> | null | string | number | boolean | Date> = {};
         if (body.name !== undefined) {
             const writtenName = nameWrite(body.name);
@@ -55,7 +48,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         }
         const nickname = nicknameWrite(body.nickname);
         if (nickname !== undefined) updateData.nickname = nickname;
-        if (body.email !== undefined) updateData.email = body.email;
+        if (body.email !== undefined) updateData.email = typeof body.email === "string" ? normalizeEmail(body.email) : body.email;
         if (body.phone !== undefined) {
             if (body.phone !== "" && body.phone !== null && !isValidPhone(body.phone)) {
                 return apiError(PHONE_ERROR, 400);
@@ -63,82 +56,30 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.phone = body.phone === "" || body.phone === null ? null : formatPhone(body.phone);
         }
         if (body.isDeclaredAdult !== undefined) updateData.isDeclaredAdult = Boolean(body.isDeclaredAdult);
-        let lastBackgroundCheck: Date | null | undefined;
-        if (body.lastBackgroundCheck !== undefined) {
-            // "" or null clears the date; otherwise expect a YYYY-MM-DD string
-            const raw = body.lastBackgroundCheck;
-            if (raw === "" || raw === null) {
-                lastBackgroundCheck = null;
-            } else {
-                lastBackgroundCheck = new Date(raw);
-                if (isNaN(lastBackgroundCheck.getTime())) {
-                    return apiError("Invalid background check review date", 400);
-                }
-            }
-            updateData.lastBackgroundCheck = lastBackgroundCheck;
-        }
 
         if (Object.keys(updateData).length === 0) {
             return apiError("No fields to update provided", 400);
         }
 
-        // dateOfBirth, householdId and isHouseholdLead are read for the guards below but deliberately
+        // dateOfBirth and householdId are read for the guards below but deliberately
         // kept out of the audit payload — this route neither ships nor writes them.
         const existing = await prisma.person.findUnique({
             where: { id },
-            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true, householdId: true, isHouseholdLead: true },
+            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!existing) {
             return apiError("Participant not found", 404);
         }
-        const { dateOfBirth: priorDob, householdId, isHouseholdLead, ...prior } = existing;
+        const { dateOfBirth: priorDob, householdId, ...prior } = existing;
 
-        // A background-check date clears a person, so no actor may change it for
-        // themselves or their own household. Compared by value because the edit form
-        // resubmits the unchanged date with every save.
-        let bgStaleWarning: string | undefined;
-        let bgAssertedReason: string | undefined;
-        if (lastBackgroundCheck !== undefined) {
-            const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
-            if (changed && await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
-                table: "Person",
-                attempted: { lastBackgroundCheck },
-            })) {
-                return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
-            }
-
-            // A later date extends the check's validity, which clears the person with no
-            // reviewer, so only the Board may assert it and must say why.
-            const extendsValidity = lastBackgroundCheck !== null
-                && (!prior.lastBackgroundCheck || lastBackgroundCheck.getTime() > prior.lastBackgroundCheck.getTime());
-            if (extendsValidity) {
-                if (!auth.user.isBoardMember) {
-                    return apiError("Only a Board member can set a later background check date", 403);
-                }
-                bgAssertedReason = typeof body.bgCheckReason === "string" ? body.bgCheckReason.trim() : "";
-                if (!bgAssertedReason) {
-                    return apiError("Setting a later background check date needs a reason stating the check happened", 400);
-                }
-            }
-
-            // A lead's check going from covering the coming year to not covering it can
-            // affect the household's membership, so the board confirms before it saves.
-            if (changed && isHouseholdLead) {
-                const before = await bgCoversComingYear(prior.lastBackgroundCheck);
-                if (before.fresh && !(await bgCoversComingYear(lastBackgroundCheck)).fresh) {
-                    bgStaleWarning = `${prior.name}'s background check covers the membership year starting ${before.boundary?.toISOString().slice(0, 10)}, and will not after this change. This could affect their household's membership.`;
-                    if (body.confirmBgStale !== true) {
-                        return apiJson({ error: bgStaleWarning, warning: bgStaleWarning, requiresConfirmation: true }, 409);
-                    }
-                }
-            }
+        if (isBadEmailChange(body.email, prior.email)) {
+            return apiError("Invalid email format", 400);
         }
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row
-        // that holds both — bulk import writes a DOB without touching the flag — is
-        // repaired on its next edit instead of being unsaveable, since the edit form
-        // resubmits the whole record.
+        // that holds both is repaired on its next edit instead of being unsaveable, since
+        // the edit form resubmits the whole record.
         if (updateData.isDeclaredAdult === true && priorDob) {
             updateData.isDeclaredAdult = false;
         }
@@ -160,7 +101,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             }
             if (await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
                 table: "Person",
-                attempted: { email: body.email ?? null },
+                attempted: { email: updateData.email ?? null },
             })) {
                 return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
             }
@@ -168,7 +109,14 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.googleId = null;
         }
 
+        // A new address gets its own first sign-in, and a youth stays where they were added:
+        // a Board edit closes a household question that the record's youth cannot answer.
+        if (emailChanged || (auth.user.isBoardMember && isYouth(priorDob))) {
+            updateData.householdJoinPending = false;
+        }
+
         const updatedParticipant = await prisma.$transaction(async (tx) => {
+            if (emailChanged && body.email) await removeAliasesForSignInEmail(tx, body.email, personActor(auth.user.id), "board_email_change");
             const unlinked = emailChanged ? (await tx.account.deleteMany({ where: { userId: id } })).count : 0;
             const updated = await tx.person.update({
                 where: { id },
@@ -186,8 +134,6 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                     oldData: prior,
                     newData: {
                         ...updateData,
-                        ...(bgStaleWarning && { bgStaleWarning }),
-                        ...(bgAssertedReason && { bgAssertedReason }),
                         ...(emailChangeReason && { emailChangeReason }),
                     },
                 },
@@ -225,6 +171,9 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
 
         return NextResponse.json({ participant: formatted });
     } catch (error) {
+        if (isEmailInUseError(error, requestedEmail)) {
+            return apiError(EMAIL_IN_USE_REFUSAL, 400);
+        }
         logger.error("Failed to update participant:", error);
         return apiError("Failed to update participant", 500);
     }

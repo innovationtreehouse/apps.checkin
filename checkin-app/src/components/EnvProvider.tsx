@@ -2,6 +2,7 @@
 
 import { createContext, useContext } from 'react';
 import type { CheckinEnv } from '@/lib/config';
+import type { DevMocks } from '@/lib/nav/sections/devTools';
 
 /**
  * Carries server-only runtime config into client components.
@@ -18,11 +19,16 @@ type EnvContextValue = {
     shopifyStoreDomain: string | null;
     /** True on ops-stg. Separate from checkinEnv, which staging deliberately collapses to 'prod' (see config.isStaging). */
     isStaging: boolean;
-    /** True when the optional CSV participant import module is switched on (config.csvImportEnabled). */
-    csvImportEnabled: boolean;
+    /** Which dev mocks are active (config.shopifyMockActive / config.bgMockActive); their Debug tabs show only then. */
+    devMocks: DevMocks;
 };
 
-const CheckinEnvContext = createContext<EnvContextValue>({ checkinEnv: 'prod', shopifyStoreDomain: null, isStaging: false, csvImportEnabled: false });
+const CheckinEnvContext = createContext<EnvContextValue>({
+    checkinEnv: 'prod',
+    shopifyStoreDomain: null,
+    isStaging: false,
+    devMocks: { shopify: false, bgConsent: false },
+});
 
 export function EnvProvider({
     value,
@@ -53,10 +59,6 @@ export function useIsStagingInstance(): boolean {
     return useContext(CheckinEnvContext).isStaging;
 }
 
-export function useCsvImportEnabled(): boolean {
-    return useContext(CheckinEnvContext).csvImportEnabled;
-}
-
 /**
  * The public Shopify store domain, supplied by the server at request time from the
  * runtime SHOPIFY_STORE_DOMAIN secret. Null when the store isn't configured. Client
@@ -65,4 +67,9 @@ export function useCsvImportEnabled(): boolean {
  */
 export function useShopifyStoreDomain(): string | null {
     return useContext(CheckinEnvContext).shopifyStoreDomain;
+}
+
+/** The dev mocks active on this instance. */
+export function useDevMocks(): DevMocks {
+    return useContext(CheckinEnvContext).devMocks;
 }

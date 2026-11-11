@@ -19,6 +19,29 @@ async function isStreamedBodyTooLarge(pathname: string, body: ReadableStream<Uin
     }
 }
 
+/** NextAuth's session cookie, under its secure prefix and its chunk suffixes. */
+const SESSION_COOKIE = /^(__Secure-)?next-auth\.session-token(\.\d+)?$/;
+
+function signInRedirect(req: NextRequest): NextResponse {
+    const signInUrl = new URL('/signin', req.url);
+    signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search);
+    return NextResponse.redirect(signInUrl);
+}
+
+/**
+ * Sends a session whose token the jwt callback emptied to /signin and expires its cookie,
+ * since /signin forwards any session it still sees back to the callbackUrl.
+ */
+function endEmptiedSession(req: NextRequest): NextResponse {
+    const res = signInRedirect(req);
+    for (const { name } of req.cookies.getAll()) {
+        if (SESSION_COOKIE.test(name)) {
+            res.cookies.set(name, '', { path: '/', maxAge: 0, secure: name.startsWith('__Secure-') });
+        }
+    }
+    return res;
+}
+
 /**
  * Site-wide org-login gate for the cloud dev instance (docs/ops/dev-instance.md, "Running the
  * cloud dev instance")
@@ -68,22 +91,22 @@ export async function middleware(req: NextRequest) {
     // Household-denial login gate — runs in ALL envs (prod included), unlike the dev org
     // gate further down. A board "Deny Membership" stamps token.denied via the jwt callback;
     // bounce every page navigation to the bare /access-denied screen. APIs self-enforce
-    // (authenticateRequest treats denied sessions as unauthenticated), so they're exempt
-    // via the matcher and don't need handling here.
+    // (authenticateRequest treats denied sessions as unauthenticated), so the /api branch
+    // above returns before this gate.
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
     if (token?.denied) {
         return NextResponse.redirect(new URL('/access-denied', req.url));
     }
 
+    // The jwt callback empties the token of a person merged away or deleted, and getToken()
+    // skips that callback. Every signed-in token names a subject; the dev guest's is 'guest'.
+    if (token && !token.sub) {
+        return endEmptiedSession(req);
+    }
+
     if (appConfig.isStaging()) {
-        // ACCEPTED WINDOW (not a bug, documented 2026-07-20): getToken() decodes the
-        // session cookie directly and does NOT run the jwt callback, so a revoked
-        // hd/emailVerified/canAccessStaging claim can keep admitting page navigation
-        // for up to the 8h session maxAge — identical to how the dev-instance org
-        // gate below has always behaved. The API surfaces do NOT have this window:
-        // authenticateRequest goes through getServerSession, which DOES re-run the
-        // jwt callback every request (auth-options.ts re-syncs from the DB), so an
-        // explicit canAccessStaging revocation takes effect immediately there.
+        // getToken() decodes the cookie without the jwt callback, so these claims can be stale;
+        // see "Accepted risks" in docs/security/SECURITY-POLICY.md.
         if (isStagingAccessAllowed(token)) {
             return NextResponse.next();
         }
@@ -99,9 +122,7 @@ export async function middleware(req: NextRequest) {
         // completes Google login lands on /access-denied then — with a token, so this
         // branch doesn't retry and there is no loop.
         if (!token) {
-            const signInUrl = new URL('/signin', req.url);
-            signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search);
-            return NextResponse.redirect(signInUrl);
+            return signInRedirect(req);
         }
         return NextResponse.redirect(new URL('/access-denied', req.url));
     }
@@ -115,9 +136,7 @@ export async function middleware(req: NextRequest) {
         return NextResponse.next();
     }
 
-    const signInUrl = new URL('/signin', req.url);
-    signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search);
-    return NextResponse.redirect(signInUrl);
+    return signInRedirect(req);
 }
 
 export const config = {
@@ -128,8 +147,8 @@ export const config = {
     //  - signin      — the custom sign-in screen itself, or anonymous visitors would loop forever.
     //  - _next/*, favicon — framework internals.
     //  - any path with a file extension (`.*\..*`) — public static assets under /public (the brand
-    //    logo/mark, svgs, the import template). They must stay reachable on the dev instance, and
+    //    logo/mark, svgs). They must stay reachable on the dev instance, and
     //    next/image optimizes via an origin fetch of its source — so a gated /brand/*.webp source
-    //    makes /_next/image return 400 (the broken dev-instance logo).
+    //    makes /_next/image return 400 and the logo fail to render.
     matcher: ['/((?!api|signin|_next/static|_next/image|favicon.ico|.*\\..*).*)', '/api/(.*)'],
 };

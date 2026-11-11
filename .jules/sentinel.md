@@ -17,7 +17,7 @@
 ## 2024-05-24 - Dev Auth Exposure in Production
 **Vulnerability:** The application was using the feature flag `NEXT_PUBLIC_DEV_AUTH` to enable development-only personas and login mechanisms. If this flag were accidentally set to `true` in a production environment (e.g. through misconfiguration in Vercel), it would expose mock administrative users and allow unauthorized login without a password.
 **Learning:** Development feature flags that bypass authentication or authorization are dangerous. They must never be trusted solely by their value in environment variables.
-**Prevention:** Always pair development-only feature flags (like `NEXT_PUBLIC_DEV_AUTH`) with a strict environment assertion: `process.env.NODE_ENV !== 'production'`. This provides defense-in-depth, guaranteeing that even if a flag is misconfigured, the potentially dangerous feature cannot be enabled in the production build.
+**Prevention:** Gate development-only auth on `CHECKIN_ENV` through the `config` predicates (`config.isDevInstance()`, which fails safe to prod when unset), never on a standalone flag or `NODE_ENV`. Every deployed instance runs the production image, so `NODE_ENV` is `production` on cloud-dev too and cannot tell environments apart; lint bans reading it in `src`.
 
 ## 2026-05-18 - Sensitive Data Exposure in Email Logs
 **Vulnerability:** The application was logging the raw `html` body of emails to the console when `RESEND_API_KEY` was missing in production (e.g., in `src/lib/email.ts`).

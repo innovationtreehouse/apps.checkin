@@ -1,12 +1,12 @@
 /**
  * Watchdog configuration — the service registry.
  *
- * Detection is registry-driven (PRD §6 / Option A): the watchdog is handed an explicit
+ * Detection is registry-driven: the watchdog is handed an explicit
  * list of monitored services, one entry per service. This is the EXPECTED set — "who
  * should be reporting" — so a service that goes silent (never pushes a heartbeat) is still
  * detected as stale.
  *
- * NOTE (F7, pull→push inversion): the registry no longer carries any database URL. The
+ * The registry carries no database URL. The
  * watchdog reads each service's freshness from the dedicated monitoring DB's
  * `service_heartbeat` table (which the services PUSH to), so it holds no credential to any
  * watched service's own financial database. The only DB it connects to is the monitoring DB

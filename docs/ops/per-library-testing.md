@@ -60,9 +60,9 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 
 | Changed file is in | Local tests |
 |---|---|
-| a library package | tsc for checkin and any function workspace that consumes it; that library's vitest unit tier; the area's app tests; the library-boundary check |
+| a library package | tsc for the package, checkin, and each consumer with a `typecheck` script; eslint on the changed files; that library's vitest unit tier; the area's app tests; the library-boundary check |
 | a library's checkin paths | tsc for checkin; eslint on the changed files; the area's app tests |
-| a shared package | vitest unit for the package and its consumers; tsc for checkin and any function workspace among them; the app unit tests related to checkin files that import it |
+| a shared package | eslint on the changed files; vitest unit for the package and its consumers; tsc for the package, checkin, and each consumer with a `typecheck` script; the app unit tests related to checkin files that import it |
 | security or boundary files (`src/security/`, `src/middleware.ts`, `prisma/schema.prisma`, `tests/security/`) | everything the area needs, plus the whole security unit tier |
 | checkin core | tsc for checkin; eslint on the changed files; app unit tests related to the changed files, found by jest's related-tests search |
 | docs, CI, deploy, root scripts | nothing |
@@ -85,10 +85,12 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 ## Light tier (default)
 
 1. `prisma generate` for checkin, if the worktree has no generated client yet.
-2. `tsc --noEmit` for each affected workspace that CI type-checks: checkin and
-   the `*-function` workspaces. CI does not type-check `packages/*`, so neither
-   does this; a package type error goes unreported by both.
-3. eslint, with no warnings allowed, on the changed checkin files.
+2. `tsc --noEmit` for checkin and each affected workspace with a `typecheck`
+   script, which covers the `packages/*` and `*-function` workspaces that CI
+   type-checks.
+3. eslint, with no warnings allowed, on the changed checkin files and the
+   changed `packages/*` files. Package files use the root config, as CI's
+   `lint:packages` does.
 4. The library-boundary check, if a library or the test harness changed.
 5. `vitest run` for each affected workspace, with `PG_TEST_HARNESS=off` and every
    `*DATABASE_URL` variable removed. The harness starts no container and each
@@ -146,9 +148,38 @@ for `prisma generate` and about 13 s for a cold checkin tsc.
   `checkin-app/libraries.json` changes.
 - Each flow file logs in through the seeded personas and assumes a fresh seed.
   One file alone on a fresh stack passes.
-- The stack's compose project is named after its directory, `deploy`, so two
-  worktrees running it at once share containers. Set `COMPOSE_PROJECT_NAME` to
-  something unique to the worktree. The app always binds host port 4000.
+- The standalone scripts name the compose project `flow-<worktree directory>`
+  unless `COMPOSE_PROJECT_NAME` is already set, so `down -v` removes only that
+  worktree's stack and volumes. On failure they print
+  the app's logs first. The app always binds host port 4000, so only one stack can
+  run at a time; a second `up` fails on the port and leaves the first running.
 - **Measured** (catalog, 2026-10-17): `catalog.flow.test.ts` ran its 10 tests
   in 6 s. The whole standalone step, start-up and `down -v` included, took
   362 s, so start-up is about six minutes for seconds of test.
+
+## Browser e2e tests
+
+`test:affected` does not run the browser tier, and PR CI doesn't either.
+`.github/workflows/e2e-tests.yml` runs it nightly on `main`, on the same
+dev-server stack as `--flow`, and skips when `main` hasn't moved since the last
+green nightly run. To test a branch, start the workflow by hand on that ref
+(Actions → Browser e2e tests → Run workflow). A failing nightly run opens or
+updates the issue "Nightly browser tests failing", and the next green run closes
+it. Run the tier locally only when your coordinator or user says yes, as with
+any Docker-backed tier.
+
+- `npm run test:e2e:standalone` (from `checkin-app/`) brings up
+  `deploy/docker-compose.flow.yml`, installs Chromium in the app container,
+  runs `playwright test` there, and takes the stack down with `down -v`. Set
+  `E2E_ARGS` to pass arguments through, for example a spec file or `--grep`.
+- With a seeded dev server already up (`CHECKIN_ENV=local`), `npm run test:e2e`
+  runs against `FLOW_BASE_URL` (default `http://localhost:4000`). Install a
+  browser first with `npx playwright install chromium`.
+- Start-up costs the same as `--flow`. Each spec logs in through the seeded
+  personas and assumes a fresh seed.
+- Each run uploads the HTML report, the JSON results and the traces as the
+  `playwright-report` artifact. Open a trace with
+  `npx playwright show-trace <trace.zip>`.
+- Locally, delete `checkin-app/.next` before `test:e2e:standalone`. The repo is
+  bind-mounted into the container, so a stale Turbopack cache from an earlier
+  revision makes `next dev` Fast-Refresh-reload pages in a loop.

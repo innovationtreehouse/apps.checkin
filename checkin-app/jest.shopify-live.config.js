@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const nextJest = require('next/jest');
+const { customJestConfig } = require('./jest.config');
 
 const createJestConfig = nextJest({ dir: './' });
 
@@ -21,7 +22,7 @@ module.exports = createJestConfig({
     // matches every *.test.ts under rootDir — the .test-free suffix makes the
     // live suite structurally invisible to every other jest invocation.
     testMatch: ['<rootDir>/shopify-live/**/*.shopify-live.[jt]s'],
-    moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1' },
+    moduleNameMapper: customJestConfig.moduleNameMapper,
     modulePathIgnorePatterns: ['<rootDir>/.next/'],
     maxWorkers: 1,
     testTimeout: 90_000,

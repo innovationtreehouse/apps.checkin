@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the bulk-donation classifications (#1280 §4). Tiers are
+ * Boundary coverage for the bulk-donation classifications. Tiers are
  * per field: gift amounts are `internal`, donor identity is `pii`. A view that
  * grants `internal` but not `pii` is the de-identified view — amounts with no
  * names — and the FINANCE/BOARD view (pii + internal) sees both.
@@ -72,19 +72,12 @@ describe('bulk-donation field-stripping (Transaction)', () => {
     });
 });
 
-describe('bulk-donation field-stripping (comment rules and QB candidates)', () => {
+describe('bulk-donation field-stripping (comment rules)', () => {
     it('an internal-only view strips the comment-rule text', () => {
         const rule = { id: 1, comment: 'for the robotics team', ownerId: 3 };
         const out = stripValue('TransactionCommentRule', rule, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
         expect(out.ownerId).toBe(3);
         expect(out.comment).toBeUndefined();
-    });
-
-    it('an internal-only view keeps the candidate amount and strips the memo', () => {
-        const candidate = { id: 'qb-7', type: 'Deposit', date: '2026-10-01', amountCents: 5000, memo: 'Pat Doe gift' };
-        const out = stripValue('DonationQbCandidateView', candidate, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
-        expect(out.amountCents).toBe(5000);
-        expect(out.memo).toBeUndefined();
     });
 
     it('nav counts are public', () => {
@@ -144,7 +137,9 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
             expenseBooking: 'unbooked',
             withdrawalSettledAt: null,
             donationDate: '2026-10-01',
-            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 60000, suggestedValueCents: 50000 }],
+            qbState: 'unmatched',
+            qbNote: 'no clearing-account entry on 2026-10-01',
+            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 60000, suggestedValueCents: 50000, quickBooksAccountId: '84' }],
         };
         const row = {
             ...accept,
@@ -152,5 +147,25 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
             lines: [{ ...accept.lines[0], donorLastName: 'Doe' }],
         };
         expect(stripValue('InKindQueueItemView', row, FINANCE_VIEW, ctx())).toEqual(accept);
+    });
+
+    it('an in-kind gift page shows the donor to finance, strips it from the internal-only view, and drops unclassified fields', () => {
+        const page = {
+            id: 3,
+            source: 'receipt',
+            receiptId: 'r-3',
+            receiptTotalCents: 2500,
+            outcome: null,
+            state: 'decision',
+            waitingOn: ['decision'],
+            inventorySourceKey: null,
+            inventoryLoadFailureReason: null,
+            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null, quickBooksAccountId: null }],
+            events: [{ id: 8, eventType: 'IN_KIND_MONEY_RECEIVED', actorUsername: null, occurredAt: '2026-10-02T00:00:00.000Z', payload: null }],
+        };
+        const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
+        const row = { ...page, ...donor, orgId: 'treehouse', uploadedByUserId: 9, events: [{ ...page.events[0], actorUserId: 9 }] };
+        expect(stripValue('InKindGiftDetailView', row, FINANCE_VIEW, ctx())).toEqual({ ...page, ...donor });
+        expect(stripValue('InKindGiftDetailView', row, INTERNAL_ONLY, ctx())).toEqual(page);
     });
 });

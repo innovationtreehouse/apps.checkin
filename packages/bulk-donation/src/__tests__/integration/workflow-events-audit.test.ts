@@ -1,8 +1,8 @@
 /**
  * Audit / workflow-history store (workflow_events).
  *
- * Proves the lifecycle is reconstructable (C3) and every state-changing action
- * records who / when / what / why (H7): owner assignment is actor-attributed,
+ * Proves the lifecycle is reconstructable and every state-changing action
+ * records who / when / what / why: owner assignment is actor-attributed,
  * holds are recorded created and resolved, and completion is logged with its
  * payload — all atomically with the business writes.
  */

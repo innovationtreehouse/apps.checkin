@@ -3,8 +3,8 @@
  *
  * Exercises runAccountDetermination (via the actor) for amounts that the
  * happy-path tests don't touch: large values, high-precision decimals,
- * negative amounts (refunds / clawbacks), decimal fee aggregation (rounded to
- * cents by round2 in the processor), and the all-zero transaction.
+ * negative amounts (refunds / clawbacks), fees summed and netted into the
+ * gift, a row with only fees, and the all-zero transaction.
  */
 import { it, expect, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
@@ -69,30 +69,19 @@ describeDb("negative amounts (refund / clawback)", () => {
   });
 });
 
-describeDb("fee aggregation (exact integer cents)", () => {
-  it("sums the three fee components exactly", async () => {
+describeDb("fees net into the gift (exact integer cents)", () => {
+  it("sums the three fee components and nets them into the donation, with no fee item", async () => {
     const disbursementId = "money-fees-int";
     await makeTransaction(orgId, fileId, {
-      disbursementId, ownerId: 1,
+      disbursementId, ownerId: 1, donationAmountCents: 10000,
       causeSupportFeeCents: 500, merchantFeeCents: 300, checkFeeCents: 200,
     });
 
     const items = await processAndRead(disbursementId);
-    expect(items.find((i) => i.type === "fees")!.amountCents).toBe(1000);
+    expect(items.map((i) => [i.type, i.amountCents])).toEqual([["donation", 9000]]);
   });
 
-  it("sums sub-dollar fees exactly with no float artifacts (10 + 20 = 30)", async () => {
-    const disbursementId = "money-fees-frac";
-    await makeTransaction(orgId, fileId, {
-      disbursementId, ownerId: 1,
-      causeSupportFeeCents: 10, merchantFeeCents: 20, checkFeeCents: 0,
-    });
-
-    const items = await processAndRead(disbursementId);
-    expect(items.find((i) => i.type === "fees")!.amountCents).toBe(30);
-  });
-
-  it("sums three sub-dollar fees exactly (10 + 10 + 10 = 30)", async () => {
+  it("nets sub-dollar fees exactly with no float artifacts (100 - (10 + 10 + 10) = 70)", async () => {
     const disbursementId = "money-fees-three-frac";
     await makeTransaction(orgId, fileId, {
       disbursementId, ownerId: 1,
@@ -100,7 +89,28 @@ describeDb("fee aggregation (exact integer cents)", () => {
     });
 
     const items = await processAndRead(disbursementId);
-    expect(items.find((i) => i.type === "fees")!.amountCents).toBe(30);
+    expect(items.map((i) => [i.type, i.amountCents])).toEqual([["donation", 70]]);
+  });
+
+  it("splits a row's fee across its donation and match by amount", async () => {
+    const disbursementId = "money-fees-split";
+    await makeTransaction(orgId, fileId, {
+      disbursementId, ownerId: 1, donationAmountCents: 500, matchAmountCents: 9500, causeSupportFeeCents: 250,
+    });
+
+    const items = await processAndRead(disbursementId);
+    expect(items.map((i) => [i.type, i.amountCents])).toEqual([["donation", 488], ["match", 9262]]);
+  });
+
+  it("holds a row with fees and no amount, and finishes nothing", async () => {
+    const disbursementId = "money-fees-only";
+    await makeTransaction(orgId, fileId, {
+      disbursementId, ownerId: 1, donationAmountCents: 0, matchAmountCents: 0, causeSupportFeeCents: 250,
+    });
+
+    expect(await processAndRead(disbursementId)).toEqual([]);
+    const holds = await db.disbursementHold.findMany({ where: { orgId, disbursementId } });
+    expect(holds.map((h) => h.reason)).toEqual(["FEES_ONLY"]);
   });
 });
 

@@ -46,9 +46,9 @@ export function stepperActiveIndex(status: OrgMembershipProcessStatus | null): n
 
 /**
  * Statuses where an INITIAL application is still open (work remains). The list
- * itself is now defined ONCE in lib/membership/lifecycle (`IN_FLIGHT_INITIAL`,
- * fix #2) — the single source the `membership_one_inflight_initial` partial index
- * is verified against. This is a back-compat mutable alias for existing consumers
+ * itself is defined ONCE in lib/membership/lifecycle (`IN_FLIGHT_INITIAL`)
+ * — the single source the `membership_one_inflight_initial` partial index
+ * is verified against. This is a mutable alias for consumers
  * (intake.ts, the intakeConcurrency suite) that pass it straight to Prisma's `in`.
  */
 export const IN_FLIGHT_INITIAL_STATUSES: OrgMembershipProcessStatus[] = [...IN_FLIGHT_INITIAL];

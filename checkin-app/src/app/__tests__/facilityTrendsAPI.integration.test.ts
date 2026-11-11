@@ -92,9 +92,9 @@ describe('Facility trends API', () => {
         });
         youthId = youth.id;
 
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
         programId = program.id;
-        const otherProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Other ${TAG}` } });
+        const otherProgram = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Other ${TAG}` } });
         otherProgramId = otherProgram.id;
         const event = await prisma.event.create({
             data: { programId, name: `Event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
@@ -135,7 +135,7 @@ describe('Facility trends API', () => {
         // assertions can scope by programId and be exact instead of leaning on the
         // shared month bucket. Four visits hang off it, one per person so that any
         // one of them leaking into the totals is individually visible.
-        const untaggedProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Untagged ${TAG}` } });
+        const untaggedProgram = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Untagged ${TAG}` } });
         untaggedProgramId = untaggedProgram.id;
         const untaggedEvent = await prisma.event.create({
             data: { programId: untaggedProgramId, name: `Untagged event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
@@ -224,7 +224,7 @@ describe('Facility trends API', () => {
         expect(data.totals.totalVolunteerHours).toBe(8);
     });
 
-    // Issue #1676: bySource decomposes HOURS by arrivedVia, never people. This
+    // bySource decomposes HOURS by arrivedVia, never people. This
     // program's bucket is the case that matters — `volunteerId` carries both a
     // LEAD_MARKED (3h) and a TYPED (3h) visit here, so a per-source person count
     // would double-count them, but uniqueVolunteers must not.
@@ -267,7 +267,7 @@ describe('Facility trends API', () => {
         expect(scoped.totals.totalVolunteerHours).toBe(8);
     });
 
-    // What the route still excludes, now that source no longer gates anything:
+    // Source gates nothing; what the route excludes is:
     // an open visit has no duration to sum, and a deleted visit did not happen.
     it('still excludes open and soft-deleted visits', async () => {
         const res = await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${untaggedProgramId}`);
@@ -290,7 +290,7 @@ describe('Facility trends API', () => {
     // A board member fixing a badge time re-times the visit; it never removes it,
     // and the corrected duration is what the hours show.
     it('keeps a corrected scanner visit in the hours after a staff PATCH', async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Corrected ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Corrected ${TAG}` } });
         const event = await prisma.event.create({
             data: { programId: program.id, name: `Corrected event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
         });
@@ -332,11 +332,10 @@ describe('Facility trends API', () => {
         await prisma.program.delete({ where: { id: program.id } });
     });
 
-    // #1624: staff walk-in insert stamps TYPED (typed clocks, actor on the
-    // audit row). Hours count either way; the stamp is what must not regress
-    // to WEB or LEAD_MARKED (window, no clock).
+    // Staff walk-in insert stamps TYPED (typed clocks, actor on the audit row). Hours
+    // count either way; the stamp must stay off WEB and LEAD_MARKED (window, no clock).
     it('counts a real staff walk-in insert in trends hours', async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `StaffEntry ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `StaffEntry ${TAG}` } });
         const insertArrival = new Date(Date.now() - 4 * 3600000);
         const insertDeparture = new Date(Date.now() - 2 * 3600000);
         const event = await prisma.event.create({
@@ -398,7 +397,7 @@ describe('Facility trends API', () => {
     // original LEAD_MARKED observation. bySource attributes the corrected hours
     // to TYPED accordingly; the hours themselves count either way.
     it('keeps a self-corrected visit counted, and restamps its source to TYPED', async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `SelfCorrectedLM ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `SelfCorrectedLM ${TAG}` } });
         const event = await prisma.event.create({
             data: { programId: program.id, name: `SelfCorrectedLM event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
         });
@@ -445,7 +444,7 @@ describe('Facility trends API', () => {
     // left TYPED so the next correction weighs a self-report (TYPED=1). It still
     // applies and still counts.
     it('restamps a self-corrected SCANNER visit to TYPED after the manual PATCH route', async () => {
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `SelfCorrectedScanner ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `SelfCorrectedScanner ${TAG}` } });
         const event = await prisma.event.create({
             data: { programId: program.id, name: `SelfCorrectedScanner event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
         });

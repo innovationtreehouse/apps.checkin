@@ -43,9 +43,11 @@ export const classifications = {
     totalCents: "internal",
     depositToAccount: "internal",
   },
-  // A variant the mirror has seen, with the injected org's bucket mapping.
-  // `decision` is "bucket" | "general" | "undecided"; `bucketIssue` says why the
-  // chosen bucket can't book (archived, no Class, Class inactive), else null.
+  // A variant the mirror has seen, with the injected org's bucket and QuickBooks
+  // account mapping. `decision` is "bucket" | "general" | "undecided";
+  // `bucketIssue` says why the chosen bucket can't book (archived, no Class,
+  // Class inactive), else null. `quickBooksAccountId` is null until finance picks
+  // one.
   IncomeItemView: {
     variantId: "internal",
     title: "internal",
@@ -54,6 +56,7 @@ export const classifications = {
     budgetOwnerName: "internal",
     decision: "internal",
     bucketIssue: "internal",
+    quickBooksAccountId: "internal",
   },
   // `total` for GET .../reconciliation/count; the rest is a run's outcome.
   IncomeReconciliationCount: {
@@ -66,3 +69,10 @@ export const classifications = {
 } as const;
 
 export const relations = {} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  IncomePayoutView: ["netCents"],
+  IncomeBalanceTxnView: ["amountCents", "feeCents", "netCents"],
+  IncomeQbDepositView: ["totalCents"],
+} as const;

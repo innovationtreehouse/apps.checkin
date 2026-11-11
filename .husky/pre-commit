@@ -1,5 +1,6 @@
 # Fast pre-commit: stays under ~10s so committing is cheap. Only lints the
-# staged files. Everything heavier that used to run here — prisma generate +
-# the security/generated staleness check, the full Jest suite, and a whole-app
-# tsc --noEmit — is enforced by CI (ci.yml), which blocks merge on all of them.
-npx lint-staged
+# staged files. Everything heavier — prisma generate + the security/generated
+# staleness check, the full Jest suite, and a whole-app tsc --noEmit — is
+# enforced by CI (ci.yml), which blocks merge on all of them.
+# LINT_STAGED_FLAGS is a machine-local opt-in (e.g. from ~/.config/husky/init.sh); unset means no flags.
+npx lint-staged $LINT_STAGED_FLAGS

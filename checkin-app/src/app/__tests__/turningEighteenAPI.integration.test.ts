@@ -69,7 +69,7 @@ describe('GET /api/membership-audit/turning-18', () => {
 
         const household = await prisma.household.create({ data: { name: `${TAG} household` } });
         householdId = household.id;
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, phase: 'RUNNING' } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, phase: 'RUNNING' } });
         programId = program.id;
 
         const board = await prisma.person.create({

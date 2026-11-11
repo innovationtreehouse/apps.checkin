@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const createMock = vi.hoisted(() => vi.fn());
 const ctorArgs = vi.hoisted(() => [] as unknown[]);
 
-vi.mock("@anthropic-ai/sdk", () => ({
+vi.mock("@anthropic-ai/sdk", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@anthropic-ai/sdk")>()),
   default: class {
     beta = { messages: { create: createMock } };
     constructor(opts: unknown) {
@@ -12,7 +13,8 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { createAnthropicOcr, fixtureOcr, mapRawToOcrData, parseMoney } from "../../lib/ocr";
+import { APIConnectionError, APIConnectionTimeoutError, APIError } from "@anthropic-ai/sdk";
+import { createAnthropicOcr, EXTRACT_SCHEMA, fixtureOcr, mapRawToOcrData, parseMoney } from "../../lib/ocr";
 
 const VALID_INPUT = {
   retailer: "Acme Hardware",
@@ -44,7 +46,7 @@ beforeEach(() => {
 describe("createAnthropicOcr — configuration", () => {
   it("fails closed without a key and never calls the API", async () => {
     const res = await createAnthropicOcr(undefined).extract(TXT, "text/plain");
-    expect(res).toEqual({ success: false, error: "OCR is not configured" });
+    expect(res).toEqual({ success: false, kind: "settings", error: "OCR is not configured" });
     expect(createMock).not.toHaveBeenCalled();
   });
 
@@ -115,25 +117,117 @@ describe("createAnthropicOcr — results", () => {
   it("treats a final refusal as an OCR failure", async () => {
     createMock.mockResolvedValue({ stop_reason: "refusal", content: [] });
     const res = await ocr.extract(TXT, "text/plain");
-    expect(res).toEqual({ success: false, error: "OCR refused the document" });
+    expect(res).toEqual({ success: false, kind: "data", error: "the reader refused it" });
   });
 
   it("rejects unparseable output", async () => {
     createMock.mockResolvedValue({ stop_reason: "end_turn", content: [{ type: "text", text: "not json" }] });
-    const res = await ocr.extract(TXT, "text/plain");
-    expect(res.success).toBe(false);
+    expect(await ocr.extract(TXT, "text/plain")).toEqual({ success: false, kind: "data", error: "the reader's answer could not be understood" });
   });
 
-  it("rejects incomplete data (missing retailer or no lines)", async () => {
-    createMock.mockResolvedValue(jsonResponse({ ...VALID_INPUT, retailer: "" }));
-    expect((await ocr.extract(TXT, "text/plain")).success).toBe(false);
+  it("rejects a reading with no lines", async () => {
     createMock.mockResolvedValue(jsonResponse({ ...VALID_INPUT, lineItems: [] }));
-    expect((await ocr.extract(TXT, "text/plain")).success).toBe(false);
+    expect(await ocr.extract(TXT, "text/plain")).toEqual({ success: false, kind: "data", error: "no line items were found" });
   });
 
-  it("wraps SDK errors instead of throwing", async () => {
-    createMock.mockRejectedValue(new Error("rate limited"));
-    expect(await ocr.extract(TXT, "text/plain")).toEqual({ success: false, error: "OCR API error: rate limited" });
+  it("keeps a reading without its retailer, date or total, for the submitter to fill in", async () => {
+    const noTotal: Record<string, unknown> = { ...VALID_INPUT };
+    delete noTotal.receiptTotal;
+    createMock.mockResolvedValue(jsonResponse({ ...noTotal, retailer: "", receiptDate: "" }));
+    const res = await ocr.extract(TXT, "text/plain");
+    expect(res.success && res.data).toMatchObject({ retailer: "", receiptDate: "", receiptTotal: null });
+  });
+
+  it("does not ask the model to invent a total", () => {
+    expect(EXTRACT_SCHEMA.required).not.toContain("receiptTotal");
+  });
+
+});
+
+describe("createAnthropicOcr — failure kinds, from the SDK's error classes", () => {
+  const headers = new Headers({ "request-id": "req_123" });
+  // The SDK's own status-to-class mapping, as a failed call raises it.
+  const status = (code: number) => APIError.generate(code, { type: "error" }, "secret detail from the API", headers);
+
+  it.each([
+    ["a refused key", status(401), "connection"],
+    ["a refused permission", status(403), "connection"],
+    ["a rate limit after the SDK's retries", status(429), "system"],
+    ["a server error", status(500), "system"],
+    ["an overload", status(529), "system"],
+    ["a connection error", new APIConnectionError({ message: "socket hang up" }), "system"],
+    ["a timeout", new APIConnectionTimeoutError(), "system"],
+    ["a bad request about the file", status(400), "data"],
+    [
+      "a used-up credit balance",
+      APIError.generate(
+        400,
+        { type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } },
+        undefined,
+        headers,
+      ),
+      "connection",
+    ],
+    [
+      "a used-up credit balance, as the API sends it",
+      APIError.generate(
+        400,
+        {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+          },
+          request_id: "req_011CSHoEeqs5C35K2UUqR7Fy",
+        },
+        undefined,
+        headers,
+      ),
+      "connection",
+    ],
+    [
+      "a billing error, in any words",
+      APIError.generate(
+        400,
+        { type: "error", error: { type: "billing_error", message: "This organization cannot make requests right now." }, request_id: "req_2" },
+        undefined,
+        headers,
+      ),
+      "connection",
+    ],
+    [
+      "a billing error sent as a 402",
+      APIError.generate(402, { type: "error", error: { type: "billing_error", message: "Payment required." }, request_id: "req_3" }, undefined, headers),
+      "connection",
+    ],
+    [
+      "a bad request in the API's own words",
+      APIError.generate(
+        400,
+        { type: "error", error: { type: "invalid_request_error", message: "messages.0.content.0.image.source.base64: image exceeds 5 MB maximum" }, request_id: "req_1" },
+        undefined,
+        headers,
+      ),
+      "data",
+    ],
+    ["a file too large", status(413), "data"],
+    ["a request the API cannot process", status(422), "data"],
+    ["a model that is not found", status(404), "bug"],
+    ["anything else", new TypeError("x is undefined"), "bug"],
+  ])("sorts %s", async (_name, err, kind) => {
+    createMock.mockRejectedValue(err);
+    const res = await ocr.extract(TXT, "text/plain");
+    expect(res).toMatchObject({ success: false, kind });
+  });
+
+  it("logs the request id, never the API's message, and keeps the message out of the result", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    createMock.mockRejectedValue(status(500));
+    const res = await ocr.extract(TXT, "text/plain");
+    expect(JSON.stringify(res)).not.toContain("secret detail");
+    expect(JSON.stringify(logged.mock.calls)).toContain("req_123");
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("secret detail");
+    logged.mockRestore();
   });
 });
 
@@ -145,8 +239,14 @@ describe("pure helpers", () => {
 
   it("mapRawToOcrData defaults omitted fields", () => {
     const d = mapRawToOcrData({ retailer: "A", receiptDate: "2026-05-01", lineItems: [{ description: "x" }] });
-    expect(d).toMatchObject({ currency: "USD", shipping: 0, tax: 0, discount: 0 });
+    expect(d).toMatchObject({ currency: "USD", shipping: 0, tax: 0, discount: 0, receiptTotal: null });
     expect(d.lineItems[0]).toMatchObject({ quantity: 1, unitPrice: 0, isDelayed: false });
+    expect(d.lineItems[0].totalPrice).toBeUndefined();
+  });
+
+  it("mapRawToOcrData keeps a line's printed total", () => {
+    const d = mapRawToOcrData({ retailer: "A", receiptDate: "2026-05-01", lineItems: [{ description: "Hinge", quantity: 3, unitPrice: 3.33, totalPrice: 10 }] });
+    expect(d.lineItems[0]).toMatchObject({ quantity: 3, unitPrice: 3.33, totalPrice: 10 });
   });
 
   it("fixtureOcr answers deterministically without a network", async () => {

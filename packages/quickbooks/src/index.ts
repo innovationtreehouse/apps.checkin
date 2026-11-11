@@ -3,3 +3,6 @@ export * from "./client";
 export * from "./match";
 export * from "./write";
 export * from "./guard";
+export * from "./booksMap";
+export * from "./drain";
+export * from "./accountTypes";

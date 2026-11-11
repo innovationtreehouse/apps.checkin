@@ -6,7 +6,6 @@ export type EntityType =
   | "account_map"
   | "uploaded_file"
   | "comment_rule"
-  | "qb_exclusion"
   | "in_kind"
   | "manual_in_kind"
   | "donation_org_settings";
@@ -38,58 +37,5 @@ export async function recordEvent(handle: DbOrTx, e: WorkflowEventInput): Promis
       payload: e.payload !== undefined ? JSON.stringify(e.payload) : null,
       occurredAt: new Date(),
     },
-  });
-}
-
-/** Who read donor data, through which route. The payload never carries a donor field. */
-export interface DonorReadContext {
-  actorUserId: number;
-  actorUsername?: string | null;
-  correlationId?: string | null;
-  route: string;
-}
-
-/** Audit one read that returned donor `pii`: ids or the filter used, and the row count. */
-export async function recordDonorDataRead(
-  handle: DbOrTx,
-  orgId: string,
-  entityType: EntityType,
-  reader: DonorReadContext,
-  read: { ids?: number[]; filter?: Record<string, unknown>; count: number },
-): Promise<void> {
-  await recordEvent(handle, {
-    orgId,
-    entityType,
-    eventType: "DONOR_DATA_READ",
-    actorUserId: reader.actorUserId,
-    actorUsername: reader.actorUsername,
-    correlationId: reader.correlationId,
-    payload: { route: reader.route, ...read },
-  });
-}
-
-/** Audit donor names shown on individual records: one DONOR_DATA_READ row per record, written in one batch. */
-export async function recordDonorDataReads(
-  handle: DbOrTx,
-  orgId: string,
-  entityType: EntityType,
-  reader: DonorReadContext,
-  entityIds: string[],
-): Promise<void> {
-  if (entityIds.length === 0) return;
-  const occurredAt = new Date();
-  const payload = JSON.stringify({ route: reader.route });
-  await handle.workflowEvent.createMany({
-    data: entityIds.map((entityId) => ({
-      orgId,
-      entityType,
-      entityId,
-      eventType: "DONOR_DATA_READ",
-      actorUserId: reader.actorUserId,
-      actorUsername: reader.actorUsername ?? null,
-      correlationId: reader.correlationId ?? null,
-      payload,
-      occurredAt,
-    })),
   });
 }

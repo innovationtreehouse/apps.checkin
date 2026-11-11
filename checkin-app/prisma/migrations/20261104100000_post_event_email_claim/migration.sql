@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE "Event" ADD COLUMN "postEventEmailClaimedAt" TIMESTAMP(3),
+ADD COLUMN "postEventEmailAttempts" INTEGER NOT NULL DEFAULT 0;
+
+COMMIT;

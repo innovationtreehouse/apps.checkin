@@ -7,6 +7,7 @@ import { Alert, Badge, Button, Card, Checkbox, Divider, Group, SimpleGrid, Stack
 import { notifications } from '@mantine/notifications';
 import { formatDateOnly } from '@/lib/time';
 import { PageContainer } from '@/components/ui/PageContainer';
+import type { EnrollmentClosedBy } from '@/lib/programs/saleState';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type ProgramSummary = {
@@ -17,6 +18,8 @@ type ProgramSummary = {
   orgMemberOnly: boolean;
   phase: string;
   enrollmentStatus: string;
+  // Server-derived: why a new claim would be refused, null when open.
+  enrollmentClosedBy: EnrollmentClosedBy | null;
   leadMentorId: number | null;
   maxParticipants: number | null;
   _count?: {
@@ -97,9 +100,11 @@ export default function PublicProgramsDirectory() {
               checked={activeOnly}
               onChange={(e) => setActiveOnly(e.currentTarget.checked)}
             />
-            <Button component={Link} href="/program-ops/new" variant="light">
-              + New Program
-            </Button>
+            {session?.user?.isBoardMember && (
+              <Button component={Link} href="/program-ops/new" variant="light">
+                + New Program
+              </Button>
+            )}
           </Group>
         )}
       </Group>
@@ -123,7 +128,7 @@ export default function PublicProgramsDirectory() {
                     {isOwner && <Badge>Yours</Badge>}
                     {program.orgMemberOnly && <Badge color="grape" variant="light">Treehouse Members Only</Badge>}
                     {program.phase === 'PLANNING' && <Badge color="yellow" variant="light">Planning</Badge>}
-                    {program.enrollmentStatus === 'CLOSED' && <Badge color="red" variant="light">Closed</Badge>}
+                    {program.enrollmentClosedBy && <Badge color="red" variant="light">Closed</Badge>}
                   </Group>
                 </Group>
 

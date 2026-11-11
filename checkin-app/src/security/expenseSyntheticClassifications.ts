@@ -7,7 +7,9 @@
  * stripper drops any bag key that isn't a known model. Who is reimbursed is `pii`
  * wherever it appears: a candidate's `vendorRef` (on a Bill the vendor is the
  * reimbursee), a QuickBooks Vendor's name, and the reimbursee's id and name.
- * Everything else is `internal`. No shape names a signer.
+ * Stored error text (a queue reason's detail, a failed intake's reason) is
+ * `personal`. Everything else is `internal`. No shape names a signer, and
+ * what a caller may do on a line describes that caller only.
  *
  * Hand-authored, not generated: it describes API responses, not tables. This is a
  * security-boundary artifact — changes ship in a boundary PR.
@@ -22,11 +24,14 @@ export const classifications = {
     capital_review: "internal",
     set_depreciation_cycle: "internal",
     qb_pending: "internal",
-    expense_holds: "internal",
   },
   // `total` for a list's .../count endpoint (numbered pagination).
   ExpenseListCount: {
     total: "internal",
+  },
+  // Beside a response's catalog names: true when the catalog couldn't be read, so names are missing.
+  ExpenseCatalogNames: {
+    unavailable: "internal",
   },
   // A budget-owner bucket from the injected OwnerDirectory.
   ExpenseBucketView: {
@@ -34,12 +39,18 @@ export const classifications = {
     name: "internal",
     archivedAt: "internal",
   },
-  // Per line: seats filled, missing and blocked (seat names only, no signer).
+  // Per line: seats filled, missing and blocked (seat names only, no signer),
+  // the acts the caller may take there and the open steps waiting on others.
+  // `actions`, `awaiting` and `mayRecordBoardAuthorization` describe the caller
+  // only and name no one else.
   ExpenseLineSignoffStatus: {
     lineItemId: "internal",
     filled: "internal",
     missing: "internal",
     blocked: "internal",
+    actions: "internal",
+    awaiting: "internal",
+    mayRecordBoardAuthorization: "internal",
   },
   // POST /api/capital-assets/seed outcome.
   ExpenseCapitalSeedResult: {
@@ -88,10 +99,57 @@ export const classifications = {
     reviewedByUserId: "pii",
     reviewedAt: "internal",
   },
+  // GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board.
+  // The row's reasons hold codes, fixed text and links. A failed intake's row also
+  // carries the stored error text, `personal` like the ReceivedExpensePayload
+  // column it comes from, because it can name a person.
+  FinanceQueueRow: {
+    expenseId: "internal",
+    receiptId: "internal",
+    vendorName: "internal",
+    date: "internal",
+    amountCents: "internal",
+    currency: "internal",
+    reasons: "internal",
+    waitingSince: "internal",
+    failureReason: "personal",
+  },
+  // GET /api/expense/finance-queue/counts: per tab, `{ actionable, total, byReason }`, never a person.
+  FinanceQueueCounts: {
+    expenses: "internal",
+    toSign: "internal",
+    accountHolds: "internal",
+    quickbooks: "internal",
+    board: "internal",
+  },
+  // GET /api/expense/expenses/[id]: one open queue reason on the expense, for the
+  // viewer. `detail` can carry QuickBooks' last error text, so it is `personal`,
+  // matching the flag detail it comes from.
+  ExpenseQueueReason: {
+    code: "internal",
+    tab: "internal",
+    actionable: "internal",
+    amountCents: "internal",
+    count: "internal",
+    detail: "personal",
+  },
+  // Expense list, queue and detail: the server's label for what an expense with an open hold waits on.
+  ExpenseWaitingOn: {
+    expenseId: "internal",
+    label: "internal",
+  },
 } as const;
 
 export const relations = {
   ExpenseCapitalSeedResult: {
     results: { model: "ExpenseCapitalSeedRow", isList: true },
   },
+} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  ExpenseQbCandidateView: ["totalCents"],
+  DonatedCapitalLineView: ["costCents"],
+  FinanceQueueRow: ["vendorName", "amountCents"],
+  ExpenseQueueReason: ["amountCents"],
 } as const;

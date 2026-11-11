@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { changeProgramStockWith, StockNotRecordedError } from "@/lib/shopify/stock";
-import { fromWhere } from "@/lib/programs/enrollmentState";
+import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
@@ -98,11 +98,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("This enrollment is not awaiting payment", 409);
         }
 
-        // Hold-ledger (product decision 2026-07-06): APPLICATION takes a seat out
+        // Hold ledger: APPLICATION takes a seat out
         // of Shopify's pool (-1), stamping inventoryHeldAt so every later release
         // path (withdrawal / payment / grace-expiry) or approval knows there's a
         // hold to account for. Guard is on inventoryHeldAt, NOT isPaymentPlanRequested:
-        // a denied re-applicant still holds the seat (refuse no longer releases
+        // a denied re-applicant still holds the seat (refuse does not release
         // it — see the refuse route), so re-applying must NOT decrement twice.
         // Branch 1 (inventoryHeldAt null -> now): the seat is genuinely free —
         // fires -1. Branch 2 (inventoryHeldAt already set): re-application while
@@ -122,53 +122,48 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         try {
             await changeProgramStockWith(participant.program, "scholarship-hold", async (tx) => {
                 outcome.flipped = (await tx.programParticipant.updateMany({
-                    // From PENDING_UNPAID or PENDING_HELD_DENIED; their status clause is shared.
-                    where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), isPaymentPlanRequested: false },
-                    data: { isPaymentPlanRequested: true },
+                    where: { programId, personId: participantId, ...ENROLLMENT_WRITES.requestFlag.where },
+                    data: ENROLLMENT_WRITES.requestFlag.data(),
                 })).count;
                 outcome.held = (await tx.programParticipant.updateMany({
-                    // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
-                    where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
-                    data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, ...kindData },
+                    where: { programId, personId: participantId, ...ENROLLMENT_WRITES.takeHold.where },
+                    data: { ...ENROLLMENT_WRITES.takeHold.data(new Date()), ...kindData },
                 })).count;
                 if (outcome.held === 0) {
                     outcome.re = (await tx.programParticipant.updateMany({
-                        // T3 re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
-                        where: { programId, personId: participantId, ...fromWhere('PENDING_HELD_DENIED'), inventoryHeldAt: { not: null } },
-                        data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null, ...kindData },
+                        where: { programId, personId: participantId, ...ENROLLMENT_WRITES.reapply.where },
+                        data: { ...ENROLLMENT_WRITES.reapply.data(), ...kindData },
                     })).count;
                 }
                 return { result: null, delta: outcome.held > 0 ? -1 : 0 };
             }, { inRequest: true });
         } catch (error) {
-            // Only a failed -1 falls back; any other error is a 500, as before.
+            // Only a failed -1 falls back; any other error is a 500.
             if (!(error instanceof StockNotRecordedError)) throw error;
             outcome.held = 0;
             outcome.re = 0;
             // The -1 could not be recorded (the stock writer has alerted the board), so neither
-            // was the hold. A fresh request (T3f) stands without one: PENDING_HOLD_FAILED
+            // was the hold. A fresh request stands without one: PENDING_HOLD_FAILED
             // { status: PENDING, inventoryHeldAt: null, isPaymentPlanRequested: true,
             // paymentPlanDeniedAt: null } — a legitimate state, NOT a bug: the board finishes
             // placing the hold (Shopify Hold Reconciliation queue → Confirm manual hold), and
             // the 7-day non-payment sweep (which filters isPaymentPlanRequested:false) never
             // auto-kicks it. inventoryHeldAt: null keeps a held row (denied or not) untouched.
-            const unheld = { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null };
             outcome.flipped = (await prisma.programParticipant.updateMany({
-                where: { ...unheld, isPaymentPlanRequested: false },
-                data: { isPaymentPlanRequested: true, ...kindData },
+                where: { programId, personId: participantId, ...ENROLLMENT_WRITES.requestWithoutHold.where },
+                data: { ...ENROLLMENT_WRITES.requestWithoutHold.data(), ...kindData },
             })).count;
             // A hold-failed retry: the request is already recorded; a stated kind still overwrites.
             const retried = outcome.flipped > 0 || (await prisma.programParticipant.updateMany({
-                where: { ...unheld, isPaymentPlanRequested: true },
-                data: { isPaymentPlanRequested: true, ...kindData },
+                where: { programId, personId: participantId, ...ENROLLMENT_WRITES.retryWithoutHold.where },
+                data: { ...ENROLLMENT_WRITES.retryWithoutHold.data(), ...kindData },
             })).count > 0;
             if (!retried) throw error;
             // Applicant-facing: never tell them to retry — the request is
             // recorded and the board finalizes it. Nothing is required of them.
             warning = "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.";
         }
-        // fromWhere only narrows on `status` (PENDING) — both branches' where also match an
-        // already-PENDING_HELD no-op re-POST, so a bare count>0 check would over-notify. Key
+        // The re-apply write also matches an already-PENDING_HELD no-op re-POST, so a bare count>0 check would over-notify. Key
         // on the flip instead: true for exactly the two real transitions (fresh hold, re-request
         // after denial), false for both non-transitions (no-op re-POST, hold-failed retry whose
         // request was already recorded) and for the losing half of a double-submit.

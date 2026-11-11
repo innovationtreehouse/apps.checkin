@@ -1,10 +1,10 @@
 /**
- * Receipts (#1265): the route + auth matrix (submitter vs FINANCE vs BOARD vs a non-viewer vs
+ * Receipts: the route + auth matrix (submitter vs FINANCE vs BOARD vs a non-viewer vs
  * anonymous), the file route's delivery headers, and the submitter journey on the local OCR
  * mock: an auto upload stops for its uploader to confirm, then finalizes and shows in "My
  * receipts"; an owed receipt reads "not yet
  * paid" and stays when completed ones are hidden. Real HTTP against the running dev server and
- * the empty receipt DB (docker-compose.flow.yml). The S1 push into workflow-mapping (X6) is
+ * the empty receipt DB (docker-compose.flow.yml). The S1 push into workflow-mapping is
  * covered by receipt-pipeline.flow.test.ts.
  */
 import { api, BASE, loginAs, type Session } from "./helpers";
@@ -89,13 +89,27 @@ describe("receipts — route auth", () => {
 
   it("server-renders the receipt pages (proves the library tsx transpiles)", async () => {
     const finance = await loginAs(FINANCE);
-    for (const path of ["/receipts", "/receipts/upload", "/receipts/review", "/receipts/settings"]) {
+    for (const path of ["/receipts", "/receipts/upload", "/finance/review", "/receipts/settings"]) {
       expect([path, (await api(finance, path)).status]).toEqual([path, 200]);
     }
   });
 });
 
 describe("receipts — submitter journey", () => {
+  // The dev server compiles a route on its first hit; hitting the journey's new routes together
+  // compiles them in parallel instead of one after another inside the test.
+  beforeAll(async () => {
+    const submitter = await loginAs(SUBMITTER);
+    const id = "00000000-0000-0000-0000-000000000000";
+    await Promise.all([
+      api(submitter, `/api/receipts/${id}`),
+      api(submitter, `/api/receipts/${id}/file`),
+      api(submitter, `/api/receipts/${id}/audit-logs`),
+      post(submitter, `/api/receipts/${id}/submitter-confirm`),
+      post(submitter, `/api/receipts/${id}/push-to-inventory`),
+    ]);
+  });
+
   it("auto-reads an upload, finalizes it on confirm, and lists it with the owed one, which stays when completed are hidden", async () => {
     const submitter = await loginAs(SUBMITTER);
 
@@ -171,10 +185,10 @@ describe("receipts — finance review", () => {
     const queue = (await api<Receipt[]>(finance, "/api/receipts?state=financial_review")).json;
     expect(queue.map((r) => r.id)).toEqual(expect.arrayContaining([theirs.json.id, own.json.id]));
 
-    expect((await post(finance, `/api/receipts/${own.json.id}/approve`, { note: "mine" })).status).toBe(403);
+    expect((await post(finance, `/api/receipts/${own.json.id}/approve`, {})).status).toBe(403);
     expect((await post(board, `/api/receipts/${theirs.json.id}/approve`, {})).status).toBe(403);
     expect((await post(submitter, `/api/receipts/${theirs.json.id}/approve`, {})).status).toBe(403);
-    const approved = await post(finance, `/api/receipts/${theirs.json.id}/approve`, { note: "Backlog receipt" });
+    const approved = await post(finance, `/api/receipts/${theirs.json.id}/approve`, {});
     expect(approved.status).toBe(200);
     expect(approved.json.state).toBe("receipt_finalized");
 

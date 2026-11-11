@@ -1,35 +1,57 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Alert, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
+import { useState } from "react";
+import { Alert, Badge, Button, Card, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { api, useLoad } from "@/lib/api";
+import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
+import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
 
 interface Settings {
   emailFromAddress: string | null;
   emailReplyToAddress: string | null;
   scholarshipNotifyEmail: string | null;
+  alertEmailAddress: string | null;
+  boardEmailAddress: string | null;
+  financeContactEmail: string | null;
   scholarshipAckSubject: string | null;
   scholarshipAckMembershipBody: string | null;
   scholarshipAckProgramBody: string | null;
 }
 
 const HEADER_ERROR = 'Enter an email address or "Name <addr@domain>".';
+const ADDRESS_ERROR = "Enter one email address.";
 const REPLY_TO_ERROR = 'Enter one or more comma-separated addresses, each an email address or "Name <addr@domain>".';
+
+type FieldErrors = { from?: string; replyTo?: string; scholarshipNotify?: string; alertAddress?: string; boardAddress?: string; financeContact?: string };
+
+/** A label with a "Not set" pill while the saved value is empty. */
+function labelWithPill(text: string, saved: string | undefined) {
+  return (
+    <>
+      {text}
+      {!saved && <Badge ml="xs" size="sm" color="red" variant="light">Not set</Badge>}
+    </>
+  );
+}
 
 export default function EmailSettingsPage() {
   // The sender identity is editable by board + sysadmin (same as the /settings layout
   // admits). Gate the page client-side and redirect anyone else, rather than letting them
   // load the form and only discover the 403 on save.
-  const { authorized, ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { authorized, ready, loading: authLoading } = useRequireRole(SETTINGS_ADMIN_ROLES);
 
   const [emailFrom, setEmailFrom] = useState("");
   const [emailReplyTo, setEmailReplyTo] = useState("");
   const [scholarshipNotify, setScholarshipNotify] = useState("");
+  const [alertAddress, setAlertAddress] = useState("");
+  const [boardAddress, setBoardAddress] = useState("");
+  const [financeContact, setFinanceContact] = useState("");
   const [ackSubject, setAckSubject] = useState("");
   const [ackMembershipBody, setAckMembershipBody] = useState("");
   const [ackProgramBody, setAckProgramBody] = useState("");
@@ -39,92 +61,94 @@ export default function EmailSettingsPage() {
   const [unlocked, setUnlocked] = useState(false);
 
   const [initial, setInitial] = useState<Record<string, string> | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<{ from?: string; replyTo?: string; scholarshipNotify?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
-  const load = useCallback(() => fetch("/api/settings/email")
-    .then(async (res) => {
-      if (res.ok) {
-        const { settings } = (await res.json()) as { settings: Settings };
-        const snap = {
-          emailFrom: settings.emailFromAddress ?? "",
-          emailReplyTo: settings.emailReplyToAddress ?? "",
-          scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
-          ackSubject: settings.scholarshipAckSubject ?? "",
-          ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
-          ackProgramBody: settings.scholarshipAckProgramBody ?? "",
-        };
-        setEmailFrom(snap.emailFrom);
-        setEmailReplyTo(snap.emailReplyTo);
-        setScholarshipNotify(snap.scholarshipNotify);
-        setAckSubject(snap.ackSubject);
-        setAckMembershipBody(snap.ackMembershipBody);
-        setAckProgramBody(snap.ackProgramBody);
-        setInitial(snap);
-      }
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => { if (ready) load(); }, [ready, load]);
+  const { data, error, reload } = useLoad<{ settings: Settings }>(ready ? "/api/settings/email" : null);
 
   const wasSet = !!(initial?.emailFrom || initial?.emailReplyTo);
   const locked = wasSet && !unlocked;
 
   const save = async () => {
-    setSaveNotice(null);
     // Belt-and-suspenders: the page is role-gated and the route re-checks, but never fire
     // a mutation the user isn't allowed to make.
-    if (!authorized) { setSaveNotice({ text: "You do not have permission to change these settings.", err: true }); return; }
+    if (!authorized) { showError("You do not have permission to change these settings."); return; }
     // Validate client-side with the same rule the route enforces (imported, not
     // duplicated) so a typo is caught inline instead of surfacing as a raw API error.
     const from = emailFrom.trim();
     const replyTo = emailReplyTo.trim();
     const notify = scholarshipNotify.trim();
-    const fe: { from?: string; replyTo?: string; scholarshipNotify?: string } = {};
+    const alert = alertAddress.trim();
+    const board = boardAddress.trim();
+    const contact = financeContact.trim();
+    const fe: FieldErrors = {};
     if (from && !isValidEmailHeader(from)) fe.from = HEADER_ERROR;
     if (replyTo && !parseEmailHeaderList(replyTo)) fe.replyTo = REPLY_TO_ERROR;
     if (notify && !parseEmailHeaderList(notify)) fe.scholarshipNotify = REPLY_TO_ERROR;
-    if (fe.from || fe.replyTo || fe.scholarshipNotify) { setFieldErrors(fe); return; }
+    if (alert && !isValidEmail(alert)) fe.alertAddress = ADDRESS_ERROR;
+    if (board && !isValidEmail(board)) fe.boardAddress = ADDRESS_ERROR;
+    if (contact && !isValidEmail(contact)) fe.financeContact = ADDRESS_ERROR;
+    if (Object.keys(fe).length > 0) { setFieldErrors(fe); return; }
     setFieldErrors({});
     setSaving(true);
     try {
-      const res = await fetch("/api/settings/email", {
+      await api("/api/settings/email", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           emailFromAddress: emailFrom.trim() || null,
           emailReplyToAddress: emailReplyTo.trim() || null,
           scholarshipNotifyEmail: notify || null,
+          alertEmailAddress: alert || null,
+          boardEmailAddress: board || null,
+          financeContactEmail: contact || null,
           scholarshipAckSubject: ackSubject.trim() || null,
           scholarshipAckMembershipBody: ackMembershipBody.trim() || null,
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
         }),
       });
-      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); setLoading(true); await load(); }
-      else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      showSuccess("Email settings saved.");
+      setUnlocked(false);
+      setInitial(current);
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
-  const isDirty = !!initial && !shallowEqual(initial, {
-    emailFrom, emailReplyTo, scholarshipNotify, ackSubject, ackMembershipBody, ackProgramBody,
-  });
+  const current = { emailFrom, emailReplyTo, scholarshipNotify, alertAddress, boardAddress, financeContact, ackSubject, ackMembershipBody, ackProgramBody };
+  const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
+  useSeedForm(data, isDirty, ({ settings }) => {
+    const snap = {
+      emailFrom: settings.emailFromAddress ?? "",
+      emailReplyTo: settings.emailReplyToAddress ?? "",
+      scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
+      alertAddress: settings.alertEmailAddress ?? "",
+      boardAddress: settings.boardEmailAddress ?? "",
+      financeContact: settings.financeContactEmail ?? "",
+      ackSubject: settings.scholarshipAckSubject ?? "",
+      ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
+      ackProgramBody: settings.scholarshipAckProgramBody ?? "",
+    };
+    setEmailFrom(snap.emailFrom);
+    setEmailReplyTo(snap.emailReplyTo);
+    setScholarshipNotify(snap.scholarshipNotify);
+    setAlertAddress(snap.alertAddress);
+    setBoardAddress(snap.boardAddress);
+    setFinanceContact(snap.financeContact);
+    setAckSubject(snap.ackSubject);
+    setAckMembershipBody(snap.ackMembershipBody);
+    setAckProgramBody(snap.ackProgramBody);
+    setInitial(snap);
+  });
 
   if (authLoading) return <Center mih="60vh"><Loader /></Center>;
   if (!ready) return null; // redirect to / is in flight
 
   return (
     <Stack>
-      <SettingsTabs active="email" />
+      {error && <LoadError what="the email settings" message={error} onRetry={reload} />}
 
-      {loading ? (
-        <Center py="xl"><Loader /></Center>
+      {!data ? (
+        !error && <Center py="xl"><Loader /></Center>
       ) : (
         <Card withBorder radius="md" padding="lg">
           <Title order={3} mb="xs">Email sender identity</Title>
@@ -162,7 +186,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="From address"
               description={'Bare address or "Name <addr@domain>". Blank = the environment sender.'}
-              placeholder="Innovation Treehouse <noreply@updates.innovationtreehouse.org>"
+              placeholder="Example Org <noreply@updates.example.com>"
               w={440}
               value={emailFrom}
               error={fieldErrors.from}
@@ -172,7 +196,7 @@ export default function EmailSettingsPage() {
             <TextInput
               label="Reply-To address"
               description="Where replies go. Comma-separated for multiple addresses. Blank = replies go to the From address."
-              placeholder="info@innovationtreehouse.org, ops@innovationtreehouse.org"
+              placeholder="info@example.com, ops@example.com"
               w={440}
               value={emailReplyTo}
               error={fieldErrors.replyTo}
@@ -182,11 +206,41 @@ export default function EmailSettingsPage() {
             <TextInput
               label="Scholarship review notifications"
               description="Comma-separated for multiple addresses. Blank = the whole board is notified of new scholarship / payment-plan requests."
-              placeholder="finance@innovationtreehouse.org"
+              placeholder="scholarships@example.com"
               w={440}
               value={scholarshipNotify}
               error={fieldErrors.scholarshipNotify}
               onChange={(e) => { setScholarshipNotify(e.currentTarget.value); setFieldErrors((f) => ({ ...f, scholarshipNotify: undefined })); }}
+              disabled={locked}
+            />
+            <TextInput
+              label={labelWithPill("Alert address", initial?.alertAddress)}
+              description="A group address for finance and QuickBooks alerts."
+              placeholder="alerts@example.com"
+              w={440}
+              value={alertAddress}
+              error={fieldErrors.alertAddress}
+              onChange={(e) => { setAlertAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, alertAddress: undefined })); }}
+              disabled={locked}
+            />
+            <TextInput
+              label={labelWithPill("Board address", initial?.boardAddress)}
+              description="The Board's group address."
+              placeholder="board@example.com"
+              w={440}
+              value={boardAddress}
+              error={fieldErrors.boardAddress}
+              onChange={(e) => { setBoardAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, boardAddress: undefined })); }}
+              disabled={locked}
+            />
+            <TextInput
+              label={labelWithPill("Finance contact address", initial?.financeContact)}
+              description="The address members see for finance questions."
+              placeholder="finance@example.com"
+              w={440}
+              value={financeContact}
+              error={fieldErrors.financeContact}
+              onChange={(e) => { setFinanceContact(e.currentTarget.value); setFieldErrors((f) => ({ ...f, financeContact: undefined })); }}
               disabled={locked}
             />
             <TextInput
@@ -219,12 +273,6 @@ export default function EmailSettingsPage() {
               disabled={locked}
             />
           </Stack>
-
-          {saveNotice && (
-            <Alert mt="lg" color={saveNotice.err ? "red" : "treehouseGreen"} variant="light">
-              {saveNotice.text}
-            </Alert>
-          )}
 
           <Button mt="lg" disabled={saving || locked} loading={saving} onClick={save} style={{ alignSelf: "flex-start" }}>
             Save settings

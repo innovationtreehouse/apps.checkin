@@ -83,11 +83,11 @@ describe("EventAdminPage", () => {
         expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it("shows a not-found card when the event fetch fails", async () => {
+    it("shows the load failure with a way back when the event fetch fails", async () => {
         setSession({ id: 1, isSysadmin: true });
         mockFetchJson({});
         renderPage(params);
-        expect(await screen.findByText("Failed to load event.")).toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load the event")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "Go Back" }));
         expect(router.back).toHaveBeenCalled();
     });
@@ -213,8 +213,8 @@ describe("EventAdminPage", () => {
         const statusInput = screen.getByRole("textbox", { name: "Status" });
         expect(statusInput).toHaveValue("Present");
         expect(screen.getByLabelText("Arrived Time")).toBeInTheDocument();
-        expect(screen.getByLabelText("Departed Time (Optional)")).toBeInTheDocument();
-        expect(screen.getByText("Check them out first to mark Absent.")).toBeInTheDocument();
+        expect(screen.getByLabelText("Departed Time")).toBeInTheDocument();
+        expect(screen.getByText(/Still checked in: they badge out at the kiosk/)).toBeInTheDocument();
 
         // The Absent option is present but disabled; clicking it does not switch status.
         fireEvent.click(statusInput);
@@ -239,7 +239,7 @@ describe("EventAdminPage", () => {
         expect(statusInput).toHaveValue("Present");
         expect(screen.queryByText("Check them out first to mark Absent.")).not.toBeInTheDocument();
         fireEvent.change(screen.getByLabelText("Arrived Time"), { target: { value: "2020-01-01T18:10" } });
-        fireEvent.change(screen.getByLabelText("Departed Time (Optional)"), { target: { value: "2020-01-01T19:10" } });
+        fireEvent.change(screen.getByLabelText("Departed Time"), { target: { value: "2020-01-01T19:10" } });
 
         fireEvent.click(statusInput);
         fireEvent.click(screen.getByText("Absent", { selector: '[role="option"] span' }));

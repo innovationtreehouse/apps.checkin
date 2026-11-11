@@ -33,12 +33,30 @@ describeDb("S2 producer", () => {
     expect(line).toMatchObject({ gtin13: "0000000000123", isProvisional: true, provisionalName: line.description });
   });
 
+  it("names a provisional part by its proposed name on both legs", async () => {
+    const r = await makeReceipt({ state: "applying" });
+    await makeLineStatus(r.id, { recognitionStatus: "provisional", provisionalItemGtin13: "0000000000123", proposedName: "X" });
+    expect(await executePushAndSettle(r.id, r, 1)).toEqual({ state: "resolved" });
+    expect(sinks.calls.expense[0].lineItems[0].description).not.toBe("X");
+    expect(sinks.calls.expense[0].lineItems[0]).toMatchObject({ isProvisional: true, provisionalName: "X" });
+    expect(sinks.calls.inventory[0].lineItems[0]).toMatchObject({ isProvisional: true, provisionalName: "X" });
+  });
+
   it("always pushes the money side, even when no line resolves to a GTIN", async () => {
     const r = await makeReceipt({ state: "applying" });
     await makeLineStatus(r.id, { recognitionStatus: "non_inventory" });
     expect(await executePushAndSettle(r.id, r, 1)).toEqual({ state: "resolved" });
     expect(sinks.calls.expense).toHaveLength(1);
     expect(sinks.calls.inventory).toHaveLength(0);
+  });
+
+  it("marks a non-inventory line nonInventory, with no GTIN", async () => {
+    const r = await makeReceipt({ state: "applying" });
+    await makeLineStatus(r.id, { recognitionStatus: "non_inventory" });
+    await executePushAndSettle(r.id, r, 1);
+    const line = CompletedReceiptSchema.parse(sinks.calls.expense[0]).lineItems[0];
+    expect(line.nonInventory).toBe(true);
+    expect(line.gtin13 ?? null).toBeNull();
   });
 });
 

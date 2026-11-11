@@ -1,7 +1,7 @@
 /**
  * Local entry point — `npm run run:once`. Runs one watchdog pass: reads the
  * `service_heartbeat` rows in the MONITORING_DATABASE_URL DB for the services listed in
- * MONITORING_SERVICES. It no longer connects to any watched service's own database (F7).
+ * MONITORING_SERVICES. It connects to no watched service's own database.
  */
 import { handler } from "./handler.js";
 

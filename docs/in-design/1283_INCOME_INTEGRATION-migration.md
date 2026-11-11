@@ -34,8 +34,7 @@ marketplace sales tax and advances are dropped.
    `inject` has no production guard, actor or reason. The load runs only after the
    fix that marks hand-loaded rows in the live `shop_*` tables and guards
    `inject` ("Mark and guard hand-loaded Shopify mirror rows", owned outside the
-   port) is deployed to the target environment. Income reads that mark (§2 of the
-   design).
+   port) is deployed to the target environment. Income reads that mark.
 1. **Trim every export to dates before s-read's `CUTOVER_DATE`.** Rows from the
    cutover on already came from the API under the same Shopify ids. Loading them
    would overwrite those rows with the less detailed CSV values.

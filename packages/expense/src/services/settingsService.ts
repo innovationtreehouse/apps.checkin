@@ -1,5 +1,5 @@
-// The org's money thresholds. FINANCE or the board edits them; every change is recorded.
-// The Everyday limits are the Board's alone.
+// The org's money thresholds and QuickBooks posting limits. FINANCE or the board edits them; every
+// change is recorded. The Everyday limits are the Board's alone.
 import { z } from "zod";
 import { db } from "../db";
 import type { Db } from "../db";
@@ -7,69 +7,50 @@ import type { ExpensePrincipal, ExpenseSettings } from "../contract";
 import { assertOrg } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { ServiceError } from "@checkin/component-kit";
+import { MATCH_WINDOW_DAYS, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_MATCH_WINDOW_DAYS } from "@checkin/quickbooks";
+import { boardOnlyChanges } from "../lib/threshold-rules";
+
+export { THRESHOLD_RULES, boardOnlyChanges } from "../lib/threshold-rules";
 
 /** The column defaults; a missing row reads as these. */
 export const DEFAULT_EXPENSE_SETTINGS: ExpenseSettings = {
   capitalTotalThresholdCents: 0,
   capitalLineItemThresholdCents: 0,
-  capitalEquipmentUnitCents: 50_000,
   boardReviewTotalCents: 200_000,
   everydayTotalLimitCents: 50_000,
   everydayItemLimitCents: 25_000,
+  qbMatchWindowDays: MATCH_WINDOW_DAYS,
+  qbMaxCreatesPerRun: MAX_CREATES_PER_RUN,
+  qbMaxCreatesPerDay: MAX_CREATES_PER_DAY,
 };
 
 /** A sanity ceiling on every threshold ($1,000,000), for everyone. */
 export const MAX_THRESHOLD_CENTS = 100_000_000;
 const cents = z.number().int().max(MAX_THRESHOLD_CENTS);
+/** A sanity ceiling on the QuickBooks create limits, for everyone. */
+export const MAX_QB_CREATES = 1_000;
+const qbCreates = z.number().int().min(1).max(MAX_QB_CREATES);
 
 export const ExpenseSettingsPatchSchema = z.object({
   capitalTotalThresholdCents: cents.nonnegative(),
   capitalLineItemThresholdCents: cents.nonnegative(),
-  capitalEquipmentUnitCents: cents.positive(),
   boardReviewTotalCents: cents.positive(),
   everydayTotalLimitCents: cents.positive(),
   everydayItemLimitCents: cents.positive(),
+  qbMatchWindowDays: z.number().int().min(1).max(MAX_MATCH_WINDOW_DAYS),
+  qbMaxCreatesPerRun: qbCreates,
+  qbMaxCreatesPerDay: qbCreates,
 }).partial().strict();
-
-/**
- * Which change to each threshold loosens a control. "up": a higher value. "up-or-off": a higher
- * non-zero value, or switching it off (non-zero → 0); switching it on (0 → non-zero) tightens.
- * FINANCE may tighten freely, and loosen only up to the policy value; past that, or for a
- * threshold with no policy value, loosening is the Board's. A `boardOnly` threshold is the
- * Board's to change in either direction. Every field must be listed here.
- */
-export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up" | "up-or-off"; policyCents?: number; boardOnly?: true }> = {
-  capitalEquipmentUnitCents: { loosens: "up", policyCents: 50_000 },
-  boardReviewTotalCents: { loosens: "up", policyCents: 200_000 },
-  everydayTotalLimitCents: { loosens: "up", policyCents: 50_000, boardOnly: true },
-  everydayItemLimitCents: { loosens: "up", policyCents: 25_000, boardOnly: true },
-  capitalTotalThresholdCents: { loosens: "up-or-off" },
-  capitalLineItemThresholdCents: { loosens: "up-or-off" },
-};
-
-function loosens(field: keyof ExpenseSettings, from: number, to: number): boolean {
-  if (THRESHOLD_RULES[field].loosens === "up-or-off" && (from === 0 || to === 0)) return from !== 0 && to === 0;
-  return to > from;
-}
-
-/** Fields in the change that only the Board may make. */
-export function boardOnlyChanges(current: ExpenseSettings, changes: Partial<ExpenseSettings>): (keyof ExpenseSettings)[] {
-  return (Object.keys(changes) as (keyof ExpenseSettings)[]).filter((field) => {
-    const to = changes[field]!;
-    if (THRESHOLD_RULES[field].boardOnly) return to !== current[field];
-    if (!loosens(field, current[field], to)) return false;
-    const { policyCents } = THRESHOLD_RULES[field];
-    return policyCents === undefined || to > policyCents;
-  });
-}
 
 const SELECT = {
   capitalTotalThresholdCents: true,
   capitalLineItemThresholdCents: true,
-  capitalEquipmentUnitCents: true,
   boardReviewTotalCents: true,
   everydayTotalLimitCents: true,
   everydayItemLimitCents: true,
+  qbMatchWindowDays: true,
+  qbMaxCreatesPerRun: true,
+  qbMaxCreatesPerDay: true,
 } as const;
 
 /** Reads without an org assertion, for in-library callers that already hold a row's orgId. */
@@ -99,6 +80,10 @@ export async function updateExpenseSettings(
     const boardOnly = boardOnlyChanges(current, changes);
     if (boardOnly.length > 0 && !principal.isBoard) {
       throw new ServiceError(403, `Only the Board can make this change to ${boardOnly.join(", ")}`);
+    }
+    const merged = { ...current, ...changes };
+    if (merged.qbMaxCreatesPerRun > merged.qbMaxCreatesPerDay) {
+      throw new ServiceError(400, "The QuickBooks limit per run cannot be above the limit per day");
     }
     const pick = (s: Partial<ExpenseSettings>) => Object.fromEntries(keys.map((k) => [k, s[k]]));
     const next = await tx.expenseOrgSettings.upsert({

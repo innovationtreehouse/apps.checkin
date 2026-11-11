@@ -4,15 +4,28 @@ import { Alert, Button, Group, Modal, Paper, Stack, Table, Text, TextInput, Titl
 import { notifications } from "@mantine/notifications";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, send, useLoad } from "../components/api";
-import { releaseAll } from "../components/releaseAll";
+import { releaseAll, releaseOne } from "../components/releaseAll";
 
 interface MailItem {
   id: number;
   receivedAt: string;
   senderAddress: string;
   status: string;
+  holdReason: string | null;
+  dmarcVerdict: string | null;
   mimeType: string;
 }
+
+const HOLD_REASONS: Record<string, string> = {
+  unverified_sender: "Sender could not be verified: the mail may not be from this address",
+  not_a_submitter: "Verified sender, but no one who may submit receipts uses this address",
+};
+
+const DMARC_VERDICTS: Record<string, string> = {
+  pass: "Sender check: passed",
+  fail: "Sender check: failed",
+  none: "Sender check: the sender's domain publishes no DMARC record",
+};
 
 interface IgnoredFile {
   id: number;
@@ -20,13 +33,6 @@ interface IgnoredFile {
   reason: string;
   createdAt: string;
 }
-
-const releaseOne = (id: number) =>
-  fetch(`${BASE}/mail-items/${id}/assign`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ release: true }),
-  });
 
 /** A button that releases every given deferred item, one at a time, after a confirm showing the count. */
 function ReleaseAllButton({ ids, label, onDone }: { ids: number[]; label: string; onDone: () => void }) {
@@ -40,7 +46,7 @@ function ReleaseAllButton({ ids, label, onDone }: { ids: number[]; label: string
     const summary = `Released ${out.released}, skipped ${out.skipped}`;
     notifications.show(
       out.error
-        ? { color: "red", message: `${summary}. Stopped: ${out.error}. ${out.notReached} not tried.` }
+        ? { color: "red", autoClose: false, message: `${summary}. Stopped: ${out.error}. ${out.notReached} not tried.` }
         : { color: "green", message: `${summary}.` },
     );
     onDone();
@@ -70,8 +76,8 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
   const [email, setEmail] = useState("");
   const [reason, setReason] = useState("");
   const path = `/mail-items/${item.id}`;
-  const act = async (verb: string, body: unknown, success: string) => {
-    if (await send(`${path}/${verb}`, "POST", body, success)) onDone();
+  const act = async (verb: string, body: unknown, success: string, failed: string) => {
+    if (await send(`${path}/${verb}`, "POST", body, success, failed)) onDone();
   };
   return (
     <Paper withBorder p="md">
@@ -80,24 +86,26 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
           <Text fw={500}>{item.senderAddress || "Unknown sender"}</Text>
           <Text c="dimmed">{new Date(item.receivedAt).toLocaleString()}</Text>
         </Group>
+        {item.status === "held" && <Text size="sm">{HOLD_REASONS[item.holdReason ?? ""] ?? "Reason not recorded"}</Text>}
+        <Text size="sm">{DMARC_VERDICTS[item.dmarcVerdict ?? ""] ?? "Sender check: not recorded"}</Text>
         <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
         {item.status === "deferred" && (
           <Group>
-            <Button onClick={() => act("assign", { release: true }, "Released")}>Release now as the sender</Button>
+            <Button onClick={() => act("assign", { release: true }, "Released", "Couldn't release this mail")}>Release now as the sender</Button>
           </Group>
         )}
         <Group align="end">
           <TextInput label="Assign to (sign-in email)" value={email} onChange={(e) => setEmail(e.currentTarget.value)} style={{ flex: 1 }} />
-          <Button disabled={!email.trim()} onClick={() => act("assign", { email }, "Receipt created")}>Assign</Button>
+          <Button disabled={!email.trim()} onClick={() => act("assign", { email }, "Receipt created", "Couldn't assign this mail")}>Assign</Button>
         </Group>
         <Group align="end">
           <TextInput label="Discard reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: 1 }} />
-          <Button color="red" variant="light" disabled={!reason.trim()} onClick={() => act("discard", { reason }, "Discarded")}>Discard</Button>
+          <Button color="red" variant="light" disabled={!reason.trim()} onClick={() => act("discard", { reason }, "Discarded", "Couldn't discard this mail")}>Discard</Button>
           <Button
             color="red"
             variant="subtle"
             disabled={!reason.trim()}
-            onClick={() => act("discard", { reason, ignoreFile: true }, "Discarded; this file is ignored from now on")}
+            onClick={() => act("discard", { reason, ignoreFile: true }, "Discarded; this file is ignored from now on", "Couldn't discard and ignore this file")}
           >
             Discard and ignore this file from now on
           </Button>
@@ -111,7 +119,7 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
 function IgnoredFiles({ entries, onDone }: { entries: IgnoredFile[]; onDone: () => void }) {
   if (entries.length === 0) return null;
   const remove = async (id: number) => {
-    if (await send(`/ignored-files/${id}`, "DELETE", undefined, "Removed from the ignore list")) onDone();
+    if (await send(`/ignored-files/${id}`, "DELETE", undefined, "Removed from the ignore list", "Couldn't remove the file from the ignore list")) onDone();
   };
   return (
     <Stack mt="xl">

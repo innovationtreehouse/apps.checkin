@@ -13,6 +13,12 @@
  * a program's parked stock change, its owed carry, when it went unconfirmed and
  * Shopify's current `available`. Board bookkeeping, so every field is `internal`.
  *
+ * ProgramPaymentPlanDecision / MembershipPaymentPlanDecision — one decided
+ * payment-plan request on the Past views (GET /api/finance-ops/payment-plans/past
+ * and GET /api/finance-ops/membership-payment-plans/past). The outcome and its
+ * date say a request existed, so they carry the request's `hardship` tier; the
+ * decider is staff-action metadata, `internal`.
+ *
  * Hand-authored, not generated: this describes an API response, not a table.
  * This is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -36,6 +42,34 @@ export const classifications = {
     amount: "internal",
     carry: "internal",
   },
+  ProgramPaymentPlanDecision: {
+    id: "public",
+    programId: "public",
+    personId: "public",
+    personName: "public",
+    personEmail: "pii",
+    programName: "public",
+    outcome: "hardship",
+    decidedAt: "hardship",
+    decidedById: "internal",
+    decidedByName: "internal",
+  },
+  MembershipPaymentPlanDecision: {
+    id: "public",
+    processId: "public",
+    householdId: "public",
+    householdName: "public",
+    outcome: "hardship",
+    decidedAt: "hardship",
+    decidedById: "internal",
+    decidedByName: "internal",
+  },
 } as const;
 
 export const relations = {} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  ProgramPaymentPlanDecision: ["outcome", "decidedAt"],
+  MembershipPaymentPlanDecision: ["outcome", "decidedAt"],
+} as const;

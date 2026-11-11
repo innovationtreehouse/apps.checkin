@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Card, Center, Checkbox, Group, Loader, Stack, Table, Text, TextInput } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 type OneTimeEvent = {
   id: number;
@@ -19,24 +21,15 @@ const fmt = (iso: string) =>
   });
 
 export default function OneTimeEventsList() {
-  const [events, setEvents] = useState<OneTimeEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: events, error, reload } = useLoad<OneTimeEvent[]>("/api/events");
   const [search, setSearch] = useState("");
   const [futureOnly, setFutureOnly] = useState(true);
   // Snapshot "now" once on mount — Date.now() is impure and can't run during render.
   const [now] = useState(() => Date.now());
 
-  useEffect(() => {
-    fetch("/api/events")
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setEvents(Array.isArray(data) ? data : []))
-      .catch((err) => console.error("Failed to load events:", err))
-      .finally(() => setLoading(false));
-  }, []);
-
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return events.filter((e) => {
+    return (events ?? []).filter((e) => {
       if (futureOnly && new Date(e.endAt).getTime() < now) return false;
       if (!q) return true;
       // Search across name, description, and the displayed date strings.
@@ -65,7 +58,9 @@ export default function OneTimeEventsList() {
         />
       </Group>
 
-      {loading ? (
+      {error ? (
+        <LoadError what="one-time events" message={error} onRetry={reload} />
+      ) : !events ? (
         <Center py="xl"><Loader /></Center>
       ) : rows.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">

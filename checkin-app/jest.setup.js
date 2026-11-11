@@ -11,6 +11,11 @@ if (process.env.INTEGRATION_DB && process.env.TEST_BASE_URL && process.env.TEST_
   u.pathname = `/checkin_test_${process.env.TEST_RUN_ID}_${process.env.JEST_WORKER_ID || '1'}`;
   process.env.DATABASE_URL = u.toString();
 
+  // The same worker DB, connected as the role row security binds.
+  const dml = new URL(process.env.TEST_DML_BASE_URL);
+  dml.pathname = u.pathname;
+  process.env.DML_DATABASE_URL = dml.toString();
+
   // Each integration file builds its own prisma pool (fresh module registry per
   // file). Close it when the file finishes, or pools accumulate across the
   // worker's files and exhaust the shared Postgres server's max_connections.
@@ -33,26 +38,14 @@ if (process.env.INTEGRATION_DB && process.env.TEST_BASE_URL && process.env.TEST_
 // credential login (both local-only) off, just as NODE_ENV=test did.
 process.env.CHECKIN_ENV = 'dev';
 
-// The scan concurrency suite must exercise the advisory lock, not the
-// single-connection serialization that a pool of 1 gives for free. Give just
-// that suite a pool of 2 so its two scan transactions run on separate
-// connections — then the per-participant advisory lock is the only thing that
-// serializes them (as in production), and dropping the lock makes the suite
-// fail. testPath is populated before setup runs (the prisma mock below relies
-// on it too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
+// A suite that races transactions needs a pool of 2: on one connection they take
+// turns, so the test passes with the lock removed. Name a racing suite
+// *Concurrency.integration.test.ts to get the pool; the list holds racing suites
+// named otherwise. testPath is populated before setup runs (the prisma mock below
+// relies on it too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
 {
   const { testPath } = expect.getState();
-  // Same reasoning for the program-capacity concurrency suites: they need a
-  // pool of >= 2 so their two enroll transactions run on separate connections,
-  // making the program-row FOR UPDATE lock (not pool-1 serialization) the thing
-  // that serializes them — matching production.
-  // mintId is the same shape again: its two mints must run on separate
-  // connections so the IdCounter row lock is what serializes them.
-  // scanFlushRace commits a racing visit from a second connection mid-scan.
-  // cronNightlyLock holds a departure open on one connection while the sweep runs on another.
-  // programStockLockConcurrency runs two stock writers on separate connections.
-  // certificationsConcurrency holds a level change open on one connection while a certifier writes on another.
-  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  if (testPath && /(Concurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programRefundRace|membershipRefundGate|membershipPaymentPlanRace)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }
@@ -86,6 +79,22 @@ jest.mock('next/server', () => {
     },
   };
 });
+
+// Package pages read the viewer from the host's provider; page tests render them bare and set roles through the next-auth mock.
+jest.mock('@checkin/component-ui', () => ({
+  ...jest.requireActual('@checkin/component-ui'),
+  useViewer: () => require('@/components/AuthProvider').viewerFromSession(require('next-auth/react').useSession().data),
+}));
+
+// The load cache lives for the test file, so each test gets its own answers. Pages unmount first, or the clear refetches them.
+if (typeof document !== 'undefined') {
+  const { cleanup } = require('@testing-library/react');
+  const { clearLoads } = require('@checkin/component-ui/loadCache');
+  afterEach(() => {
+    cleanup();
+    clearLoads();
+  });
+}
 
 // Mock next-auth to prevent instantiation errors in App Router imports
 jest.mock('next-auth', () => {
@@ -173,11 +182,10 @@ jest.mock('@/lib/prisma', () => {
 // ---------------------------------------------------------------------------
 // Fail any test that logs an UNEXPECTED console.error.
 //
-// Jest only fails on a failed assertion or an uncaught throw, so before this a
-// new error could stack-trace into the log and every check still passed green.
-// jest-fail-on-console flips that: an unallowlisted console.error throws and
-// turns the test red. Runs for BOTH tiers (setupFilesAfterEnv covers unit and
-// integration).
+// Jest only fails on a failed assertion or an uncaught throw, so a logged error
+// alone would leave every check green. With jest-fail-on-console, an
+// unallowlisted console.error throws and turns the test red. Runs for BOTH tiers
+// (setupFilesAfterEnv covers unit and integration).
 //
 // KNOWN_INTENTIONAL is the allowlist: console.error messages that fire on
 // purpose — catch-block/service logs whose negative path a test deliberately
@@ -191,10 +199,9 @@ jest.mock('@/lib/prisma', () => {
 //   2. Match a stable, specific prefix. Never a broad `.*` that would swallow
 //      unrelated future errors.
 //   3. If a flagged error is actually a REAL bug (something logging where it
-//      shouldn't), FIX it — do not allowlist it. (The runPaced mock-drift found
-//      while building this list was fixed, not allowlisted.)
-// The 9 suites that jest.spyOn(console,...) still suppress their own messages
-// before they reach this guard — left as-is on purpose.
+//      shouldn't), FIX it — do not allowlist it.
+// Suites that jest.spyOn(console,...) suppress their own messages before they
+// reach this guard.
 const KNOWN_INTENTIONAL = [
   // React / jsdom test-environment noise (emitted via console.error).
   /Not implemented: navigation/,          // jsdom: window.location navigation
@@ -202,6 +209,7 @@ const KNOWN_INTENTIONAL = [
   /In HTML, .+ cannot be a (child|descendant) of/, // React DOM-nesting validation
   /cannot contain a nested/,               // React DOM-nesting validation (alt phrasing)
   // Bracketed service log namespaces (incidental negative-path logs).
+  /^\[Email Template\]/,                    // sendTemplated falls back to the default under a prisma mock with no emailTemplate
   /^\[Shopify/,                            // [Shopify], [Shopify Error], [Shopify API Error]
   /^\[s-read diagnose\]/,                  // shopify-read diagnostics probes
   /^\[enroll\]/,                           // program enroll compensation logs

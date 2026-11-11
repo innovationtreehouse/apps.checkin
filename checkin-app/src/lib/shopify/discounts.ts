@@ -1,5 +1,6 @@
 // Shopify discount codes: the per-checkout member discount minter.
 
+import { centsToDecimalString, formatCents } from "@checkin/money";
 import crypto from "crypto";
 import { logIntegrationError } from "@/lib/logger";
 import { config } from "@/lib/config";
@@ -54,7 +55,7 @@ export async function mintMemberDiscountCode(
 
     // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
     if (config.shopifyMockActive()) {
-        console.log(`[SHOPIFY] (mock) Would mint discount code ${code} for program ${programId} (-$${(amountOffCents / 100).toFixed(2)})`);
+        console.log(`[SHOPIFY] (mock) Would mint discount code ${code} for program ${programId} (-${formatCents(amountOffCents)})`);
         return code;
     }
 
@@ -103,7 +104,7 @@ export async function mintMemberDiscountCode(
                             customerSelection: { all: true },
                             customerGets: {
                                 // appliesOnEachItem: the 'each' semantics (see doc comment).
-                                value: { discountAmount: { amount: (amountOffCents / 100).toFixed(2), appliesOnEachItem: true } },
+                                value: { discountAmount: { amount: centsToDecimalString(amountOffCents), appliesOnEachItem: true } },
                                 items: { products: { productVariantsToAdd: [`gid://shopify/ProductVariant/${checkoutVariantId(sentProgram)}`] } },
                             },
                         },
@@ -120,7 +121,7 @@ export async function mintMemberDiscountCode(
         if (result?.userErrors?.length) throw new Error(`Shopify discount create userErrors: ${JSON.stringify(result.userErrors)}`);
         if (!result?.codeDiscountNode?.id) throw new Error("Shopify discount create response missing codeDiscountNode id");
 
-        console.log(`[SHOPIFY] Minted single-use discount code ${code} for program ${programId} (-$${(amountOffCents / 100).toFixed(2)}, expires ${endsAt.toISOString()})`);
+        console.log(`[SHOPIFY] Minted single-use discount code ${code} for program ${programId} (-${formatCents(amountOffCents)}, expires ${endsAt.toISOString()})`);
         return code;
     } catch (error) {
         console.error("[Shopify Error] Failed to mint member discount code:", error);

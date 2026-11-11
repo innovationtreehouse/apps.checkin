@@ -110,8 +110,7 @@ describe('Person.email write-time normalization', () => {
     });
 
     // normalizeEmail's contract is trim-then-lowercase, but every case above only
-    // exercises the lowercase half. This was previously proven only indirectly, via
-    // the contacts route's integration test — pin it here too, at the actual choke
+    // exercises the lowercase half. Pin the trim at the actual choke
     // point, so a future change to normalizeEmail can't drop the trim unnoticed.
     it('create trims a whitespace-padded email', async () => {
         const p = await prisma.person.create({

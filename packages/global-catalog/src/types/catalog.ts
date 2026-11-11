@@ -1,12 +1,8 @@
 export type GlobalRole = "admin" | "global_manager";
 
-export const USAGE_BEHAVIORS = [
-  "Single Use",
-  "Short Life Consumable",
-  "Long Life Consumable",
-  "Durable",
-] as const;
-export type UsageBehavior = (typeof USAGE_BEHAVIORS)[number];
+import type { UsageBehavior } from "@checkin/receipt-types";
+
+export { USAGE_BEHAVIORS, type UsageBehavior } from "@checkin/receipt-types";
 
 export interface Category {
   id: number;

@@ -274,6 +274,36 @@ describe('inventory field-stripping (InventoryProvisionalItem free text)', () =>
     });
 });
 
+describe('stock and receiving reads return provisional parts for their names', () => {
+    const row = () => ({
+        id: 1,
+        provisionalGtin13: '0009998887776',
+        name: 'Widget',
+        proposedByUserId: 7,
+        orgId: 'treehouse',
+        status: 'pending',
+        rejectionReason: null,
+    });
+
+    it.each([
+        'GET /api/inventory/org-items',
+        'GET /api/inventory/org-items/[gtin13]',
+        'GET /api/inventory/receive-queue',
+    ])('%s declares InventoryProvisionalItem', (endpoint) => {
+        expect(getRoute(endpoint)!.returns).toContain('InventoryProvisionalItem');
+    });
+
+    it('an org-items viewer sees the provisional name but not the proposer or org', () => {
+        const tokens = tokensFor('GET /api/inventory/org-items', 'authenticated');
+        const out = stripValue('InventoryProvisionalItem', row(), tokens, ctx()) as Record<string, unknown>;
+        expect(out.provisionalGtin13).toBe('0009998887776');
+        expect(out.name).toBe('Widget');
+        expect(out.proposedByUserId).toBeUndefined();
+        expect(out.orgId).toBeUndefined();
+        expect(out.rejectionReason).toBeUndefined();
+    });
+});
+
 describe('classification merge keeps inventory and catalog provisional models disjoint', () => {
     it('both models exist with their own field sets', () => {
         // Inventory's provisional model has its own name so it does not collide

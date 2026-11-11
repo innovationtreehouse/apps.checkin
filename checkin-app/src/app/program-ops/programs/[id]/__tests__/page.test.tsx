@@ -4,8 +4,9 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import ProgramDetailsPage from "../page";
 
@@ -167,24 +168,16 @@ describe("ProgramDetailsPage", () => {
     expect(router.push).toHaveBeenCalledWith("/program-ops/programs");
   });
 
-  it("shows a generic failure message on a non-404 load error", async () => {
+  it("shows a load error with a retry on a non-404 load failure", async () => {
     setSession({ id: 1, isSysadmin: true });
-    routedFetch([{ url: "/api/programs/1", method: "GET", result: { ok: false, status: 500 } }]);
+    let failed = true;
+    routedFetch([{ url: "/api/programs/1", method: "GET", result: () => (failed ? { ok: false, status: 403, body: { error: "Forbidden" } } : { ok: true, body: programData }) }]);
     renderPage();
 
-    expect(await screen.findByText("Failed to load program.")).toBeInTheDocument();
-  });
-
-  it("shows a network error message when loading throws", async () => {
-    setSession({ id: 1, isSysadmin: true });
-    routedFetch([{ url: "/api/programs/1", method: "GET", result: { throws: true } }]);
-    renderPage();
-
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error.", autoClose: false }),
-      ),
-    );
+    expect(await screen.findByText("Couldn't load the program")).toBeInTheDocument();
+    failed = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "Robotics Club", level: 1 })).toBeInTheDocument();
   });
 
   it("shows a forbidden message for a user without authorization", async () => {
@@ -254,7 +247,7 @@ describe("ProgramDetailsPage", () => {
   });
 
   it("switches to editing the program leader, selects a new one, then cancels back", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({
       "/api/programs/1/eligible-participants": {},
       "/api/people/search": { people: [{ id: 9, name: "Andy Adult", email: "andy@example.com" }] },
@@ -284,7 +277,7 @@ describe("ProgramDetailsPage", () => {
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
 
     expect(screen.getByText("No Program Leader Assigned")).toBeInTheDocument();
-    expect(screen.getByText("*Only Administrators/Board Members can change the Program Leader.")).toBeInTheDocument();
+    expect(screen.getByText("*Only the Board can change the Program Leader.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
@@ -523,22 +516,25 @@ describe("ProgramDetailsPage", () => {
     // Volunteers card renders first (1 volunteer), then active participants (401, 402), then pending (403).
     fireEvent.click(removeButtons[1]);
     const modal1 = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal1).getByRole("button", { name: "Remove" }));
+    // An active place defaults to a withdrawal that keeps history.
+    expect(within(modal1).getByRole("button", { name: "Withdrew: keep history" })).toHaveAttribute("data-variant", "filled");
+    fireEvent.click(within(modal1).getByRole("button", { name: "Withdrew: keep history" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 401 }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 401, mode: "withdraw" }) }),
       ),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[3]);
     const modal2 = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal2).getByRole("button", { name: "Remove" }));
+    expect(within(modal2).getByRole("button", { name: "Never took part: remove" })).toHaveAttribute("data-variant", "filled");
+    fireEvent.click(within(modal2).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 403 }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 403, mode: "remove" }) }),
       ),
     );
   });
@@ -570,7 +566,7 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    const confirm = within(modal).getByRole("button", { name: "Remove" });
+    const confirm = within(modal).getByRole("button", { name: "Withdrew: keep history" });
     expect(confirm).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: " Family moved away " } });
     expect(confirm).toBeEnabled();
@@ -578,7 +574,7 @@ describe("ProgramDetailsPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Family moved away" }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, mode: "withdraw", reason: "Family moved away" }) }),
       ),
     );
   });
@@ -595,13 +591,13 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    expect(within(modal).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(modal).getByRole("button", { name: "Never took part: remove" })).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: "Paid before the price was zeroed" } });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, reason: "Paid before the price was zeroed" }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 101, mode: "remove", reason: "Paid before the price was zeroed" }) }),
       ),
     );
   });
@@ -623,12 +619,12 @@ describe("ProgramDetailsPage", () => {
     // Volunteer (201), active participant (101), then the pending one (102).
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 102 }) }),
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 102, mode: "remove" }) }),
       ),
     );
     await waitFor(() =>
@@ -653,7 +649,7 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
-    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
@@ -704,14 +700,14 @@ describe("ProgramDetailsPage", () => {
 
     // 1st remove -> notice (blue)
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "blue", message: "Seat freed. Add +1 in Shopify." })),
     );
 
     // 2nd remove -> warning (yellow)
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: "Shopify inventory release failed." })),
     );
@@ -719,7 +715,7 @@ describe("ProgramDetailsPage", () => {
     // 3rd remove -> bare success, no further notification
     const before = (notifications.show as jest.Mock).mock.calls.length;
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
     expect((notifications.show as jest.Mock).mock.calls.length).toBe(before);
   });
@@ -770,7 +766,7 @@ describe("ProgramDetailsPage", () => {
     const setup = () => {
       setSession({ id: 1, isBoardMember: true });
       return routedFetch([
-        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/settings/membership", result: { ok: true, body: { settings: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" }, MembershipYearVariant: [] } } } },
         { url: "/api/programs/1", method: "GET", result: { ok: true, body: crossingProgram } },
         { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
       ]);
@@ -811,7 +807,7 @@ describe("ProgramDetailsPage", () => {
     it("does not pre-select a derived year when single-year dates are moved across the boundary", async () => {
       setSession({ id: 1, isBoardMember: true });
       routedFetch([
-        { url: "/api/settings/membership", result: { ok: true, body: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" } } } },
+        { url: "/api/settings/membership", result: { ok: true, body: { settings: { BoardSettings: { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" }, MembershipYearVariant: [] } } } },
         { url: "/api/programs/1", method: "GET", result: { ok: true, body: { ...crossingProgram, endAt: "2026-08-15T00:00:00.000Z" } } },
       ]);
       renderPage();
@@ -834,5 +830,80 @@ describe("ProgramDetailsPage", () => {
       expect(confirm).not.toHaveBeenCalled();
       confirm.mockRestore();
     });
+  });
+});
+
+describe("a load that lands while the Board is editing", () => {
+  const patchBody = (fetchMock: jest.Mock) => {
+    const call = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "PATCH");
+    return call ? JSON.parse(String((call[1] as RequestInit).body)) : undefined;
+  };
+
+  it("keeps a typed Off-Sale date when a re-read answers after it, and saves it", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    let reads = 0;
+    const fetchMock = routedFetch([
+      { url: "/api/programs/1/eligible-participants", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
+      { url: "/api/programs/1/volunteers", method: "POST", result: { ok: true, body: {} } },
+      { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
+      { url: "/api/programs/1", method: "GET", result: () => { reads += 1; return { ok: true, body: programData }; } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.change(screen.getByLabelText("Off-Sale Date"), { target: { value: "2026-01-03" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[0], { target: { value: "Wendy" } });
+    fireEvent.click(await screen.findByText("Wendy West"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
+    await waitFor(() => expect(reads).toBe(2));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    fireEvent.click(screen.getByRole("tab", { name: "General" }));
+    expect(screen.getByLabelText("Off-Sale Date")).toHaveValue("2026-01-03");
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(patchBody(fetchMock)).toEqual(expect.objectContaining({ offSaleAt: "2026-01-03" })));
+  });
+
+  it("keeps the newer read when an older one answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const notCore = { ...programData, volunteers: [{ ...programData.volunteers[0], isCore: false }] };
+    let reads = 0;
+    let finishOlder: () => void = () => {};
+    const answer = (body: unknown, status = 200) => ({ ok: status < 400, status, ...jsonBody(body) }) as Response;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") return answer({});
+      if (!String(input).endsWith("/api/programs/1")) return answer({}, 404);
+      reads += 1;
+      if (reads === 2) return new Promise<Response>((resolve) => { finishOlder = () => resolve(answer(programData)); });
+      return answer(reads === 3 ? notCore : programData);
+    }) as unknown as typeof fetch;
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+
+    fireEvent.click(await screen.findByLabelText("Core Volunteer"));
+    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(screen.getByLabelText("Core Volunteer")).toBeEnabled());
+    fireEvent.click(screen.getByLabelText("Core Volunteer"));
+    await waitFor(() => expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked());
+
+    await act(async () => { finishOlder(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked();
+  });
+
+  it("reseeds the form from the read that follows a save", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    let saved = false;
+    routedFetch([
+      { url: "/api/programs/1", method: "PATCH", result: () => { saved = true; return { ok: true, body: {} }; } },
+      { url: "/api/programs/1", method: "GET", result: () => ({ ok: true, body: saved ? { ...programData, maxParticipants: 25 } : programData }) },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+    fireEvent.change(screen.getByLabelText("Max Participants (Optional)"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() => expect(screen.getByLabelText("Max Participants (Optional)")).toHaveValue("25"));
   });
 });

@@ -2,46 +2,50 @@
  * @jest-environment node
  */
 /**
- * GET /api/cron/reconcile-shopify: the library catch-up, program-stock heal and donor re-send steps are
- * isolated, so no one step's failure fails checkin's reconcile. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
+ * GET /api/cron/reconcile-shopify: every step is isolated, so no one step's failure stops the others,
+ * and the run records every crashed step and failed row. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
  */
 import { runExpenseCatchUp } from '@checkin/expense';
 import { catchUpOrgEvents as catchUpInventoryEvents } from '@checkin/local-inventory';
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from '@checkin/workflow-mapping';
 import { runReconcile as runIncomeReconcile } from '@checkin/income';
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from '@checkin/receipt';
+import { readMailbox, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from '@checkin/receipt';
 import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { healProgramStock } from '@/lib/shopify/stock';
 import prisma from '@/lib/prisma';
+import { reportTo } from '@/lib/finishRun';
+import { evaluateRun } from '@/lib/runIncidents';
 import { GET } from '../route';
 
 jest.mock('@/lib/finance/reconcile', () => ({ runReconcile: jest.fn() }));
+// The incident engine has its own tests; here a run only reaches it.
+jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseCatchUp: jest.fn() }));
 jest.mock('@checkin/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@checkin/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
 jest.mock('@checkin/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn(), sweepStuckApplying: jest.fn() }));
-jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn(), readMailbox: jest.fn() }));
+jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), sweepStuckUploaded: jest.fn(), readMailbox: jest.fn(), sweepOutcomeNotices: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify/stock', () => ({ healProgramStock: jest.fn() }));
-jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
+jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 
 const SECRET = 'cron-secret-under-test';
 const RECONCILED = { configured: true, ordersScanned: 2, reversalsRaised: 0, failed: 0 };
 const SALE_SWEEP = { salesEnded: 0, productsHidden: 0, unpaidNotified: 0 };
 const INCOME = { status: 'unbound' as const };
 const PROGRAM_STOCK = { checked: 0, settled: 0 };
-const INVENTORY_EVENTS = { processed: 1, duplicate: 0, failed: 0, skipped: 0, reconciled: 0 };
-const WORKFLOW_EVENTS = { applied: 1, failed: 0 };
+const INVENTORY_EVENTS = { processed: 1, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0, unprocessed: 0, unreadable: false };
+const WORKFLOW_EVENTS = { applied: 1, failed: 0, unprocessed: 0, unreadable: false };
 const RECEIVING_APPLY = { resolved: 1, failed: 0, applying: 0, skipped: 0, errored: 0 };
-const RECEIPT = { swept: 2 };
-const RECEIPT_PUSH = { pushed: 2, failed: 0, skipped: 1 };
-const DONOR_SYNC = { resent: 1, failed: 0 };
+const RECEIPT = { swept: 2, failed: 0 };
+const RECEIPT_STUCK = { swept: 1, failed: 0 };
 const RECEIPT_MAIL = { status: 'unbound' as const };
+const RECEIPT_OUTCOMES = { sent: 1, failed: 0 };
 // The one expense result every case uses; a new catch-up step adds its key here.
 const EXPENSE: Awaited<ReturnType<typeof runExpenseCatchUp>> = {
     intake: { applied: 0, failed: 0 },
-    catalogEvents: { processed: 0, duplicate: 0, failed: 0 },
+    catalogEvents: { processed: 0, duplicate: 0, failed: 0, unprocessed: 0, unreadable: false },
 };
 const req = () =>
     new Request('http://localhost/api/cron/reconcile-shopify', { headers: { authorization: `Bearer ${SECRET}` } });
@@ -63,9 +67,9 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         jest.mocked(catchUpWorkflowEvents).mockResolvedValue(WORKFLOW_EVENTS);
         jest.mocked(sweepStuckApplying).mockResolvedValue(RECEIVING_APPLY);
         jest.mocked(sweepInterruptedOcr).mockResolvedValue(RECEIPT);
-        jest.mocked(repushUnpushed).mockResolvedValue(RECEIPT_PUSH);
-        jest.mocked(resendDonorSync).mockResolvedValue(DONOR_SYNC);
+        jest.mocked(sweepStuckUploaded).mockResolvedValue(RECEIPT_STUCK);
         jest.mocked(readMailbox).mockResolvedValue(RECEIPT_MAIL);
+        jest.mocked(sweepOutcomeNotices).mockResolvedValue(RECEIPT_OUTCOMES);
     });
 
     afterAll(() => {
@@ -78,8 +82,59 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         const body = await res.json();
-        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
+        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: RECEIPT_STUCK, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake']);
+    });
+
+    it("hands a held receipt's connection failure and a crashed step to the engine", async () => {
+        jest.mocked(runExpenseCatchUp).mockImplementation(async () => {
+            reportTo('expense')({ lane: 'intake', kind: 'connection', detail: 'receipt 5' });
+            return EXPENSE;
+        });
+        jest.mocked(healProgramStock).mockRejectedValue(new Error('stock db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay']);
+        expect(run.failures).toEqual([
+            { lane: 'expense intake', cause: 'intake', kind: 'connection', code: 'connection', count: 1, stopped: false },
+            { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1, stopped: false },
+        ]);
+        logged.mockRestore();
+    });
+
+    it('files a crashed step under the lane it runs and leaves that lane uncovered, so its incident stays open', async () => {
+        jest.mocked(runExpenseCatchUp).mockRejectedValue(new Error('expense db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toEqual(['reconcile-shopify']);
+        expect(run.failures).toEqual([
+            { lane: 'expense intake', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1, stopped: false },
+            { lane: 'expense intake-replay', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1, stopped: false },
+        ]);
+        logged.mockRestore();
+    });
+
+    it('runs every step in order when each one throws, logging each and reporting it as an error', async () => {
+        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
+        for (const step of steps) step.mockRejectedValue(new Error('step down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        const failed = { status: 'error' };
+        expect(body).toEqual({ success: true, ...RECONCILED, failed: steps.length, saleSweep: SALE_SWEEP, income: failed, expense: failed, programStock: failed, inventoryEvents: failed, workflowEvents: failed, receivingApply: failed, receipt: failed, receiptStuck: failed, receiptMail: failed, receiptOutcomes: failed });
+        const order = steps.map((step) => step.mock.invocationCallOrder[0]);
+        expect(order).toEqual([...order].sort((a, b) => a - b));
+        expect(logged).toHaveBeenCalledTimes(steps.length);
+        logged.mockRestore();
     });
 
     it('a throwing expense step still answers 200 with the reconcile result', async () => {
@@ -90,7 +145,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         expect(runReconcile).toHaveBeenCalledTimes(1);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: RECEIPT_STUCK, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(logged).toHaveBeenCalledWith('[reconcile] expense catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
@@ -138,32 +193,20 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: { status: 'error' }, receiptStuck: RECEIPT_STUCK, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
 
-    it('a throwing receipt re-push still answers 200 with every other step', async () => {
-        jest.mocked(repushUnpushed).mockRejectedValue(new Error('receipt db down'));
+    it('a throwing stuck-upload sweep still answers 200 with every other step', async () => {
+        jest.mocked(sweepStuckUploaded).mockRejectedValue(new Error('receipt db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toMatchObject({ success: true, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptPush: { status: 'error' } });
-        expect(logged).toHaveBeenCalledWith('[reconcile] receipt re-push failed:', expect.any(Error));
-        logged.mockRestore();
-    });
-
-    it('a throwing donor re-send still answers 200 with the reconcile result', async () => {
-        jest.mocked(resendDonorSync).mockRejectedValue(new Error('receipt db down'));
-        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        const res = await GET(req());
-
-        expect(res.status).toBe(200);
-        expect((await res.json()).donorSync).toEqual({ status: 'error' });
-        expect(logged).toHaveBeenCalledWith('[reconcile] receipt donor re-send failed:', expect.any(Error));
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, failed: 1, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receivingApply: RECEIVING_APPLY, receipt: RECEIPT, receiptStuck: { status: 'error' }, receiptMail: RECEIPT_MAIL, receiptOutcomes: RECEIPT_OUTCOMES });
+        expect(logged).toHaveBeenCalledWith('[reconcile] receipt stuck-upload sweep failed:', expect.any(Error));
         logged.mockRestore();
     });
 
@@ -174,8 +217,123 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toMatchObject({ success: true, donorSync: DONOR_SYNC, receiptMail: { status: 'error' } });
+        expect(await res.json()).toMatchObject({ success: true, receiptMail: { status: 'error' } });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt mail intake failed:', expect.any(Error));
         logged.mockRestore();
+    });
+
+    it('a throwing receipt outcome sweep still answers 200 with the other steps', async () => {
+        jest.mocked(sweepOutcomeNotices).mockRejectedValue(new Error('receipt db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ success: true, receiptMail: RECEIPT_MAIL, receiptOutcomes: { status: 'error' } });
+        expect(logged).toHaveBeenCalledWith('[reconcile] receipt outcome emails failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('records the cron run as failed when mail intake throws', async () => {
+        jest.mocked(readMailbox).mockRejectedValue(new Error('gmail down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+        logged.mockRestore();
+    });
+
+    it('records the cron run as failed when the mailbox could not be listed, on top of reconcile failures', async () => {
+        jest.mocked(runReconcile).mockResolvedValue({ ...RECONCILED, failed: 2 });
+        jest.mocked(readMailbox).mockResolvedValue({ status: 'listing_failed', messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0, replied: 1, replyFailed: 0 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 3, receiptMail: { status: 'listing_failed', replied: 1 } });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '3 item(s) failed' }) });
+    });
+
+    it('records the cron run as failed for provisionals the inventory catch-up could not reconcile', async () => {
+        jest.mocked(catchUpInventoryEvents).mockResolvedValue({ ...INVENTORY_EVENTS, reconcileFailed: 2 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 2 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '2 item(s) failed' }) });
+    });
+
+    it('records the cron run as failed for receipt rows the sweeps could not move', async () => {
+        jest.mocked(sweepInterruptedOcr).mockResolvedValue({ swept: 0, failed: 1 });
+        jest.mocked(sweepStuckUploaded).mockResolvedValue({ swept: 0, failed: 2 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 3 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '3 item(s) failed' }) });
+    });
+
+    it('a throwing Shopify reconcile still runs every other step and records the run as failed', async () => {
+        jest.mocked(runReconcile).mockRejectedValue(new Error('mirror down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ success: true, failed: 1, reconcile: { status: 'error' }, saleSweep: SALE_SWEEP, receiptOutcomes: RECEIPT_OUTCOMES });
+        expect(sweepOutcomeNotices).toHaveBeenCalledTimes(1);
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+        expect(logged).toHaveBeenCalledWith('[reconcile] Shopify reconcile failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('records the cron run as failed when the sale sweep reports its own error', async () => {
+        jest.mocked(runSaleSweep).mockResolvedValue({ error: 'shopify down' });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1, saleSweep: { error: 'shopify down' } });
+    });
+
+    it('records the cron run as failed for an expense catch-up part that failed', async () => {
+        jest.mocked(runExpenseCatchUp).mockResolvedValue({ ...EXPENSE, intake: { error: true } });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+    });
+
+    it('records the cron run as failed for outcome email failures', async () => {
+        jest.mocked(sweepOutcomeNotices).mockResolvedValue({ ...RECEIPT_OUTCOMES, failed: 3 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 3 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '3 item(s) failed' }) });
+    });
+
+    it('leaves receipts the stuck-apply sweep left stuck to the Problems list, not the cron run', async () => {
+        jest.mocked(sweepStuckApplying).mockResolvedValue({ ...RECEIVING_APPLY, failed: 1, errored: 2 });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 0 });
+    });
+
+    it("records the cron run as failed when workflow-mapping could not read the catalog's events", async () => {
+        jest.mocked(catchUpWorkflowEvents).mockResolvedValue({ ...WORKFLOW_EVENTS, unreadable: true });
+
+        const body = await (await GET(req())).json();
+
+        expect(body).toMatchObject({ success: true, failed: 1 });
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: '1 item(s) failed' }) });
+    });
+
+    it('records a clean run when the mailbox was read', async () => {
+        await GET(req());
+
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: null }) });
     });
 });

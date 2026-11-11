@@ -12,10 +12,10 @@
  *     so verifyKioskSignature actually executes against the route.
  *   - Session path: the already-globally-mocked next-auth/next getServerSession
  *     (the EXTERNAL dependency, not our auth wiring) returns a crafted session
- *     user, so route.ts's session/household-lead authz (lines 37-71) runs for real.
+ *     user, which the route refuses.
  *
- * The point is to prove route.ts verifies kiosk signatures and enforces
- * who-can-scan-whom — not to re-test the signature primitive (see
+ * The point is to prove route.ts verifies kiosk signatures and that only a kiosk
+ * scans — not to re-test the signature primitive (see
  * verifyKioskSignature.test.ts) or the scan state machine (see scanCheckin).
  */
 import crypto from 'crypto';
@@ -230,116 +230,28 @@ describe('POST /api/scan — REAL auth wiring (no @/lib/auth mock)', () => {
     });
 
     // ────────────────────────────────────────────────────────────────────
-    // B. SESSION / HOUSEHOLD-LEAD AUTHZ (route.ts:37-71)
+    // B. A SESSION NEVER SCANS
     // ────────────────────────────────────────────────────────────────────
-    describe('B. session / household-lead authz', () => {
-        let pSelf: number, hSelf: number;
-        let pSameHH: number, hLead: number;
-        let pOtherHH: number, hOther: number;
-        let pStranger: number, hStranger: number;
-        let pKeyholder: number, hKeyholder: number;
-
-        const LEAD_USER_ID = 999_000_001; // session-only identity; not scanned, never looked up
-
-        beforeAll(async () => {
-            // No kiosk key in this suite → forces the session branch (dev is non-local,
-            // so the keyless-kiosk fallback stays off and authenticateRequest goes to session).
+    describe('B. session caller', () => {
+        it('a signed-in person is refused with 403, and nothing is recorded', async () => {
+            process.env.CHECKIN_ENV = 'dev'; // non-local: no keyless-kiosk fallback
             delete process.env.KIOSK_PUBLIC_KEY;
-
-            const mk = async (name: string, extra: object = {}) => {
-                const p = await prisma.person.create({
-                    data: {
-                        name,
-                        email: `${name.replace(/\s+/g, '-').toLowerCase()}-${TAG}@example.com`,
-                        household: { create: { name: "Test HH" } },
-                        ...extra,
-                    },
-                });
-                return { id: p.id, householdId: p.householdId };
-            };
-
-            ({ id: pSelf, householdId: hSelf } = await mk('Self Member'));
-            ({ id: pSameHH, householdId: hLead } = await mk('Same Household Member'));
-            ({ id: pOtherHH, householdId: hOther } = await mk('Other Household Member'));
-            ({ id: pStranger, householdId: hStranger } = await mk('Stranger'));
-            ({ id: pKeyholder, householdId: hKeyholder } = await mk('Open Facility Keyholder', { isKeyholder: true }));
-        });
-
-        afterEach(async () => {
-            const ids = [pSelf, pSameHH, pOtherHH, pStranger, pKeyholder];
-            await prisma.visit.deleteMany({ where: { personId: { in: ids } } });
-            await prisma.rawBadgeLog.deleteMany({ where: { personId: { in: ids } } });
-        });
-
-        afterAll(async () => {
-            const ids = [pSelf, pSameHH, pOtherHH, pStranger, pKeyholder];
-            const hs = [hSelf, hLead, hOther, hStranger, hKeyholder];
-            await prisma.visit.deleteMany({ where: { personId: { in: ids } } });
-            await prisma.rawBadgeLog.deleteMany({ where: { personId: { in: ids } } });
-            await prisma.person.deleteMany({ where: { id: { in: ids } } });
-            await prisma.household.deleteMany({ where: { id: { in: hs } } });
-        });
-
-        /** Open the facility so a non-isKeyholder check-in can reach 200. */
-        async function openFacility() {
-            await prisma.visit.create({ data: { personId: pKeyholder, arrivedAt: new Date() } });
-        }
-
-        it('non-admin scanning self in prod → 403 (self-check-in gate, must use kiosk)', async () => {
-            process.env.CHECKIN_ENV = 'prod';
-            mockSession.mockResolvedValue({ user: sessionUser({ id: pSelf, householdId: hSelf }) });
-
-            const res = await POST(scanReq(JSON.stringify({ participantId: pSelf })));
-
-            expect(res.status).toBe(403);
-            const json = await res.json();
-            expect(json.error).toMatch(/kiosk badge scanner/i);
-            // Gate fires before any state change.
-            expect(await prisma.visit.count({ where: { personId: pSelf } })).toBe(0);
-        });
-
-        it('household lead scanning another member of their OWN household → 200', async () => {
-            await openFacility();
-            mockSession.mockResolvedValue({
-                user: sessionUser({ id: LEAD_USER_ID, householdId: hLead, householdLead: true }),
+            const p = await prisma.person.create({
+                data: { name: 'Session Caller', email: `session-${TAG}@example.com`, isKeyholder: true, household: { create: { name: 'Test HH' } } },
             });
+            try {
+                mockSession.mockResolvedValue({ user: sessionUser({ id: p.id, householdId: p.householdId, isKeyholder: true }) });
 
-            const res = await POST(scanReq(JSON.stringify({ participantId: pSameHH })));
+                const res = await POST(scanReq(JSON.stringify({ participantId: p.id })));
 
-            expect(res.status).toBe(200);
-            const json = await res.json();
-            expect(json.type).toBe('checkin');
-            const visit = await prisma.visit.findFirst({ where: { personId: pSameHH, departedAt: null } });
-            expect(visit).not.toBeNull();
-        });
-
-        it('household lead scanning a member of a DIFFERENT household → 403', async () => {
-            await openFacility(); // facility open: prove the 403 is authz, not the facility gate
-            mockSession.mockResolvedValue({
-                user: sessionUser({ id: LEAD_USER_ID, householdId: hLead, householdLead: true }),
-            });
-
-            const res = await POST(scanReq(JSON.stringify({ participantId: pOtherHH })));
-
-            expect(res.status).toBe(403);
-            const json = await res.json();
-            expect(json.error).toMatch(/not authorized/i);
-            expect(await prisma.visit.count({ where: { personId: pOtherHH } })).toBe(0);
-        });
-
-        it('non-admin non-lead scanning an arbitrary stranger → 403', async () => {
-            await openFacility();
-            // Plain member: has a household but is NOT its lead.
-            mockSession.mockResolvedValue({
-                user: sessionUser({ id: LEAD_USER_ID, householdId: hLead, householdLead: false }),
-            });
-
-            const res = await POST(scanReq(JSON.stringify({ participantId: pStranger })));
-
-            expect(res.status).toBe(403);
-            const json = await res.json();
-            expect(json.error).toMatch(/not authorized/i);
-            expect(await prisma.visit.count({ where: { personId: pStranger } })).toBe(0);
+                expect(res.status).toBe(403);
+                expect((await res.json()).error).toBe('Check in at the kiosk.');
+                expect(await prisma.visit.count({ where: { personId: p.id } })).toBe(0);
+                expect(await prisma.rawBadgeLog.count({ where: { personId: p.id } })).toBe(0);
+            } finally {
+                await prisma.person.delete({ where: { id: p.id } });
+                await prisma.household.delete({ where: { id: p.householdId } });
+            }
         });
     });
 

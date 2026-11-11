@@ -26,7 +26,7 @@ hand. Client components read the environment through `EnvProvider`.
 |---|---|---|
 | `prod` | production | nothing below |
 | `dev` | the shared cloud dev instance | whole site behind org login; persona-mint; the dev dashboard; the Zoho and background-check mocks; the real *dev* Shopify store |
-| `local` | a developer laptop | all of the above, plus offline sign-in, the Shopify mock, and the keyless kiosk |
+| `local` | a developer laptop | all of the above, plus offline sign-in, the Shopify mock, stand-in QuickBooks Classes on /budgets, and the keyless kiosk |
 
 **`NODE_ENV` is `production` on every deployed instance, cloud-dev included** —
 the standalone server is a production build artifact, so `NODE_ENV` cannot tell

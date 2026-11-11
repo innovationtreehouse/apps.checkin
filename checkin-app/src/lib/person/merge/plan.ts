@@ -1,7 +1,6 @@
 import type { Person, PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import type { AuthenticatedUser } from "@/types/auth";
 import { KIND_TO_MIRROR } from "@/lib/roles";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock, roleMergeBlock } from "./guard";
 
 // Fields eligible for a per-field conflict radio: both sides non-null and different.
@@ -46,9 +45,7 @@ export const MERGE_INCLUDE = {
     ...SUBJECT_INCLUDE,
     household: {
         include: {
-            // The lead guard asks "would this leave live members leaderless" —
-            // tombstones are not members.
-            householdMembers: { where: LIVE_PERSON },
+            householdMembers: true,
             orgMembership: true,
         },
     },
@@ -76,7 +73,7 @@ export function hasIdentity(p: { email: string | null; googleId: string | null }
 /**
  * Pre-image of every field a merge can rewrite on EITHER side — the tombstone's
  * mangled identity and the keeper's overwritten name/email/DOB alike. Captured
- * before the transaction, because afterwards neither is readable.
+ * before the updates run, because afterwards neither is readable.
  *
  * The four legacy role mirrors are in here because the merge rewrites them on
  * both sides too (zeroed on the tombstone, re-derived on the keeper). Nothing is
@@ -110,7 +107,7 @@ export function personPreImage(p: Person) {
  * The `PersonMerge.snapshot` payload: identity as it stood at merge time, for the
  * readers that outlive the tombstone Person row. Narrower than `personPreImage`,
  * which is forensic and lands in AuditLog; this is a live data source —
- * compliance §6 reads name/lastBackgroundCheck, audit names read email.
+ * compliance reads name/lastBackgroundCheck, audit names read email.
  *
  * NO dateOfBirth: a Json blob is classified as one field, so it would re-tier
  * the column from `pii` to `personal` for no reader. Dates are ISO strings
@@ -186,26 +183,31 @@ export function resolveKeeperUpdate(keep: MergeFields, merge: MergeFields, choic
     // Compliance dates: always take the newer one. Same human — an older check
     // is never the right survivor. Never a radio.
     for (const field of ['lastBackgroundCheck', 'lastWaiverSign'] as const) {
-        const keepVal = keep[field];
-        const mergeVal = merge[field];
-        if (mergeVal != null && (keepVal == null || mergeVal.getTime() > keepVal.getTime())) {
-            data[field] = mergeVal;
-        }
+        const carried = carriedComplianceDate(keep[field], merge[field]);
+        if (carried) data[field] = carried;
     }
 
     return data;
 }
 
+/** The merge side's compliance date when the keeper would adopt it, else null. */
+export function carriedComplianceDate(keepVal: Date | null, mergeVal: Date | null): Date | null {
+    return mergeVal != null && (keepVal == null || mergeVal.getTime() > keepVal.getTime()) ? mergeVal : null;
+}
+
 /** The household-lead, membership and role refusals, in that order, or null. */
 export function subjectRefusal(keep: KeepSubject, merge: MergeSubject, actor: AuthenticatedUser | null): MergeRefusal | null {
+    // Row security returns an archived household as null, which would read as no membership and no lead.
+    if (!keep.household || !merge.household) {
+        return { status: 400, error: "Cannot merge: a participant's household is archived. Unarchive it first." };
+    }
     const householdOthersCount = merge.household?.householdMembers.filter(p => p.id !== merge.id).length || 0;
 
     if (merge.isHouseholdLead && householdOthersCount > 0) {
         return { status: 400, error: "Cannot merge: the to-be-deleted participant is the lead of a household with other members." };
     }
 
-    // householdMembers is LIVE_PERSON-filtered, so this is the count of people
-    // who would still be left to use the household's membership.
+    // The count of people who would still be left to use the household's membership.
     const membershipBlock = membershipMergeBlock(
         { status: householdMembershipStatus(keep.household) },
         { status: householdMembershipStatus(merge.household), liveOthers: householdOthersCount },

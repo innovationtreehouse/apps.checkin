@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Anchor, Badge, Button, Checkbox, Group, Stack, Text, Tooltip } from "@mantine/core";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
@@ -49,6 +50,7 @@ export default function AdminProgramsIndex() {
   const [activeOnly, setActiveOnly] = useState(false);
   const [publicOnly, setPublicOnly] = useState(false);
   const router = useRouter();
+  const { data: session } = useSession();
 
   useEffect(() => {
     fetch('/api/programs')
@@ -145,9 +147,11 @@ export default function AdminProgramsIndex() {
     <Stack>
       <Group justify="space-between" align="flex-start" wrap="wrap">
         <Text c="dimmed">Manage recurring programs and curriculum tracks.</Text>
-        <Button onClick={() => router.push('/program-ops/new')}>
-          + New Program
-        </Button>
+        {session?.user?.isBoardMember && (
+          <Button onClick={() => router.push('/program-ops/new')}>
+            + New Program
+          </Button>
+        )}
       </Group>
 
       <Group gap="lg">

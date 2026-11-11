@@ -122,10 +122,16 @@ Things the app takes as true because they are handled outside it.
   sysadmin path for adding someone to any household is unaffected.  [Decision]
 
 - Nobody is moved into or out of a denied household, by the board's household
-  move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+  move. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
 
 - The board and sysadmin path adds nobody to a denied household, and nobody,
   a lead included, makes anyone its lead. The attempt is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+
+- Finance, operations or the board may add a non-member adult by name alone,
+  when naming who a receipt reimburses. The person gets a household of their own,
+  with no membership, and leads it. Whoever adds them declares them an adult, and
+  the app records that declaration in place of a date of birth. No email is
+  taken. Finance confirms who the person is before paying them, outside the app.  [Decision — owner]
 
 - Only the board or a sysadmin moves an existing person out to a new household of
   their own. The person becomes its lead, so a youth cannot be moved into one, and the new
@@ -138,15 +144,24 @@ Things the app takes as true because they are handled outside it.
   both. The declaration stands in for a date nobody has, so a date on file
   displaces it. Neither present is a surfaced gap.  [Decision]
 
+- A lead may declare a non-lead adult in their household as over 25. A save that
+  blanks a date of birth showing someone is under 18 and declares them over 25 is
+  refused.  [Decision — owner]
+
+- That refusal looks at a single save. A date of birth is not verified against
+  ID, and a save is not compared with earlier ones.  [Decision — deliberate limit]
+
 - Date of birth is not retained past 25; the declaration replaces it
-  automatically as members age out. Twenty-five holds three things at once: we
-  keep nothing we do not need, by then nobody's own age restricts what they may
-  do here, and it is young enough that someone of 25 is very unlikely to be the
-  parent of anyone in our programs.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
+  automatically as members age out. Twenty-five holds two things at once: we
+  keep nothing we do not need, and by then nobody's own age restricts what they
+  may do here.  [Decision — *Policy: Records Policy, Art. VI §VI.2*]
+
+- Change history can keep a date of birth past 25. A history record copies the
+  date when a person's details are saved, and nothing removes that copy later.
+  This is an acknowledged gap, accepted for now.  [Short of policy — *Policy: Records Policy, Art. VI §VI.2*; Board ruling B21]
 
 - Date of birth is the only field with an ageing-out rule. Broader retention is
-  deliberately not automated while the organisation is young and little has
-  accumulated; the general obligation is met by hand until that stops being true.  [Decision — deliberate limit]
+  not automated; the general obligation is met by hand.  [Decision — deliberate limit]
 
 - A youth cannot edit their own profile. As with leadership, an unknown date of
   birth reads as adult.  [Decision — deliberate limit]
@@ -157,11 +172,28 @@ Things the app takes as true because they are handled outside it.
 
 - Email identity is case-insensitive.  [Decision]
 
+- A person may be identified by extra addresses for receipt mail only. Finance
+  or the Board records them, never for their own household, and each is unique
+  across every person's sign-in address and every other extra address. Setting a
+  sign-in email to such an address removes it.  [Decision — owner]
+
 - Where someone signs in through the outside sign-in service, the address they
   sign in with is the address they are contacted at. There is no second one to diverge from it.  [Decision]
 
+- A person in a position of trust holds any granted role (sysadmin, board, finance,
+  operations, inventory manager, keyholder, background-check reviewer), owns a bucket
+  or is its treasurer, leads a program, or may certify others on a tool. One list serves
+  every rule that names them.  [Decision — Board ruling B1/B2]
+
+- A trusted person's sign-in email changes only by a board member's action, with a
+  written reason the record keeps. A merge counts: it needs the same when the trusted
+  person is the merged-away side, or a trusted keeper takes the other side's identity
+  or its linked sign-in accounts. Keeping a trusted person's record and identity, with
+  no account coming across, needs neither. A sign-in account with
+  a different address cannot be linked to them.  [Decision — Board ruling B1/B2]
+
 - A member's email is not edited from the household card, by them or by a lead,
-  once they have signed in or hold anything the board granted: a role, a program
+  once they have signed in, are in a position of trust, or hold anything the board granted: a role, a program
   they lead or volunteer on, or a background check on file. The board changes it,
   and the refusal says how to ask. A member with neither stays editable, and
   resending the unchanged address is not a change.  [Decision]
@@ -177,6 +209,23 @@ Things the app takes as true because they are handled outside it.
 - A first sign-in through the sign-in service links to the person whose email
   matches, or creates a new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
 
+- An adult whose email a household added is asked at first sign-in whether to join it,
+  and nothing else opens until they answer. They are asked when someone else in that
+  household has already signed in; someone in a household where nobody has signed in
+  claims their record unasked. The question names the household and shows nothing of
+  the record.  [Decision — Board ruling B1/B2]
+
+- A yes leaves them in the household. A no leaves the household's record where it is,
+  with everything on it and without the address, and gives the person a new empty record
+  in a household of their own, because nobody knows they are who the household meant.
+  Nothing from the old record reaches them, including any role it holds, and this is
+  the one change to a trusted person's sign-in email made without the Board. Neither answer
+  lands while the household is denied.  [Decision — Board ruling B1/B2]
+
+- A youth stays in the household that added them, with no question, and cannot answer one. A youth
+  never adds themselves to a household. Age here is what the record says at
+  first sign-in.  [Decision — Board ruling B1/B2]
+
 - Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
 - A person's identifier is opaque, and its only job is to be unique and to stay
@@ -186,23 +235,29 @@ Things the app takes as true because they are handled outside it.
   the second at the kiosk. Numbers are issued in order from a count the database
   keeps, which a pause cannot skip ahead and a deletion cannot wind back.  [Decision]
 
-- A person is never lost. A merged record is kept and marked as merged rather
-  than removed, and drops out of every live list, count and roster. A record of
-  what happened still names them, because hiding a since-merged identity there
-  would falsify the history rather than protect anyone.  [Decision — *Principle: decisions are reversible*]
+- A person is never lost. A merge deletes the merged-away record and keeps an
+  archive of it, which names the surviving record. The merged-away person drops
+  out of every live list, count and roster. A record of what happened still names
+  them, from the archive, because hiding a since-merged identity there would
+  falsify the history rather than protect anyone. An older merged record that
+  something still refers to stays as a hidden row until that is cleared.  [Decision — *Principle: decisions are reversible*]
 
 - A merge moves email, sign-in identity and verification together as one unit,
   never split across the two records.  [Decision]
 
-- A merged person's pre-merge state is recorded, so a merge of the wrong two
+- A merged person's pre-merge state is held in the archive, so a merge of the wrong two
   people can be investigated and the person reconstructed. There is no un-merge:
   what the record does not carry is which rows moved, so putting a bad merge right
   is hand work, not a button.  [Decision — *Principle: decisions are reversible*]
 
 - A person's membership standing belongs to their household, and merging two
-  records never alters it as a side effect. A merge that would move a person
-  across a denied-or-revoked boundary, or abandon an active membership, is refused
-  until the household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
+  records never alters it as a side effect, with one exception: after a merge both
+  households are settled on their people's background checks, so a carried-in
+  still-valid check can complete an application waiting only on it. A merge that
+  would change a disputed person's check facts is refused (`membership.md`,
+  Application and review). A merge that would move a person across a
+  denied-or-revoked boundary, or abandon an active membership, is refused until the
+  household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
 
 ### Roles
 
@@ -217,9 +272,7 @@ Things the app takes as true because they are handled outside it.
 
 - A merge moves the merged-away record's roles under the same checks as a hand
   grant. It is refused when either record is in the actor's household, or when
-  the merged-away record holds the board role and the actor is not on the board.
-  An import that updates an existing person is refused for the actor's own
-  household in the same way.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+  the merged-away record holds the board role and the actor is not on the board.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 - Only a board member removes someone's board role, and the last board member
   cannot be removed. A sysadmin may add a board member but not remove one.  [Decision]
@@ -236,6 +289,15 @@ Things the app takes as true because they are handled outside it.
 - Keyholders hold the board's email and phone as the front desk's emergency
   reference. It is a grant made on purpose, not an over-share to be narrowed.  [Decision]
 
+- A badge or the kiosk shows a person by the name they go by: the nickname set for
+  them, else their given name. Their surname appears only when someone shown with
+  them goes by the same name, and then only shortened: the badge takes as many
+  letters as telling the two apart needs, the kiosk at most two. A shortened
+  surname keeps its particles whole ("van der B.", "Ní B."). A name written in
+  Chinese, Japanese or Korean script shows whole, and so does a surname in a script
+  with no initials — except on the kiosk, which leaves such a surname off rather
+  than show all of it.  [Decision]
+
 ### Emergency contacts
 
 - An emergency contact is someone outside the household; one matching a member
@@ -246,6 +308,9 @@ Things the app takes as true because they are handled outside it.
 
 - An emergency contact's relationship to the household is optional free text,
   with no picklist of types.  [Decision — deliberate limit]
+
+- Only the household lead reads the household's emergency contacts; other
+  members of the household do not.  [Decision]
 
 - A household names at least one emergency contact at intake, and its last valid
   contact cannot be removed.  [Decision]
@@ -276,8 +341,28 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
+- A board override that denies a change leaves the earlier approval standing.  [Decision]
+
+- Force-approve refuses an adult the household withdrew, and refuses when the
+  family's household or the adult's own household is denied.  [Decision]
+
+- A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
+  and the family resubmits.  [Decision]
+
+- Denying a household's membership revokes, at once and in the same act, every
+  review not already revoked or denied — approved, open or expired — on the
+  household's own trusted adults, and on any other household's trusted adult who
+  is a member of the denied household. A review the board already denied stays
+  denied. Each revocation is audited
+  with the person who denied and the reason "household denied". Restoring the
+  household brings none back. Revoking a household's membership revokes no
+  trusted adult.  [Decision]
+
 - An approval lasts a year. The family is warned a month out and resubmits
   without re-entering what the board already holds.  [Decision]
+
+- An approval past its review date no longer authorises, whether or not the expiry
+  job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]
 
 - A withdrawn trusted adult can be hidden from the household's own view, and the
   household cannot bring it back. The record is kept, but no board surface lists

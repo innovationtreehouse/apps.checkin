@@ -27,33 +27,33 @@ describe('sendNotification return contract', () => {
 
     it('returns true and sends nothing when email is disabled (no forever-retry)', async () => {
         mockFindUnique.mockResolvedValue({ email: 'a@b.com', name: 'A', notificationSettings: { email: false } });
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(true);
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
 
     it('returns sendEmail boolean when enabled', async () => {
         mockFindUnique.mockResolvedValue({ email: 'a@b.com', name: 'A', notificationSettings: {} });
         mockSendEmail.mockResolvedValue(true);
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(true);
 
         mockSendEmail.mockResolvedValue(false);
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(false);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(false);
     });
 
     it('returns false when sendEmail throws (retryable)', async () => {
         mockFindUnique.mockResolvedValue({ email: 'a@b.com', name: 'A', notificationSettings: {} });
         mockSendEmail.mockRejectedValue(new Error('boom'));
         jest.spyOn(console, 'error').mockImplementation(() => {});
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(false);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(false);
     });
 
     it('returns true when user not found (nothing to ever send)', async () => {
         mockFindUnique.mockResolvedValue(null);
-        await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
+        await expect(sendNotification(1, 'PROGRAM_ENROLLMENT', { programName: 'Robotics' })).resolves.toBe(true);
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
 
-    it('PROGRAM_ASSIGNMENT sends the welcome email with a manage link, not the generic "System Action" copy (#1220)', async () => {
+    it('PROGRAM_ASSIGNMENT sends the welcome email with a manage link, not the generic "System Action" copy', async () => {
         mockFindUnique.mockResolvedValue({ email: 'lead@b.com', name: 'Lead', notificationSettings: {} });
         mockSendEmail.mockResolvedValue(true);
 
@@ -82,7 +82,7 @@ describe('notifyNewProgramAnnounced opt-in filtering', () => {
         mockSendEmail.mockResolvedValue(true);
     });
 
-    const program = { name: 'Robotics', endAt: new Date('2026-12-01'), appliesToYear: null };
+    const program = { name: 'Robotics', endAt: new Date('2026-12-01'), appliesToYear: 2026 };
 
     it('emails only prefs-passing users, defaulting ON, when coverage passes for all', async () => {
         mockFindMany.mockResolvedValue([
@@ -102,7 +102,7 @@ describe('notifyNewProgramAnnounced opt-in filtering', () => {
         expect(recipients).toEqual(['in@b.com', 'def@b.com', 'null@b.com']);
     });
 
-    it('excludes a prefs-passing person whose coverage does not extend through the program (the #1061 gate)', async () => {
+    it('excludes a prefs-passing person whose coverage does not extend through the program', async () => {
         mockFindMany.mockResolvedValue([
             { id: 1, email: 'covered@b.com', name: 'Covered', notificationSettings: {} },
             { id: 2, email: 'uncovered@b.com', name: 'Uncovered', notificationSettings: {} },

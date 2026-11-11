@@ -54,7 +54,7 @@ const PAID_PENDING_HOUSEHOLD_STATUSES: OrgMembershipStatus[] = ["NONE", "REVOKED
  * ({@link membershipFeeSettledAwaitingBg}). Such a household has paid in full and is
  * waiting on the board, so for programs it gets the member rate and sees
  * members-only programs, rather than being held at the non-member tier for the
- * review's duration (#1397).
+ * review's duration.
  *
  * PROGRAMS ONLY. Do NOT reuse this for "is this a member": member-only mailing
  * audiences, outreach variants, the shop org-members list and every other
@@ -108,8 +108,8 @@ export function orgMembershipStatusBlocksLogin(
  * no horizon can be computed (membership fee not settled, or the board hasn't set
  * {@link BoardSettings.orgMembershipYearBoundary}). A membership always runs
  * boundary-to-boundary. A household settled for the live membership year
- * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL stamped since the
- * year's renewal window opened) is covered to the boundary that closes the year;
+ * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL that records that
+ * year) is covered to the boundary that closes the year;
  * one that did not settle is covered only to the boundary that opened it, so off
  * season it reads as lapsed. Coverage is what was bought: a membership with no
  * fee-paid process (a bare manual grant, an import) has bought nothing the app
@@ -145,7 +145,7 @@ export async function membershipValidThrough(householdId: number, now = new Date
 
     const cycle = membershipYearCycle(settings.orgMembershipYearBoundary, now);
     const settled = (await prisma.orgMembershipProcess.findFirst({
-        where: { orgMembershipId: membership.id, ...settledThisCycleWhere(cycle.settledSince) },
+        where: { orgMembershipId: membership.id, ...settledThisCycleWhere(cycle.cycleStart.getUTCFullYear()) },
         select: { id: true },
     })) !== null;
 
@@ -181,8 +181,7 @@ export async function isActiveOrgMemberThrough(personId: number, through: Date |
  * Is this Person's membership fee settled through a program running to `through`? Same
  * duration rule as {@link isActiveOrgMemberThrough}, over the wider
  * {@link MEMBERSHIP_FEE_SETTLED_PERSON_WHERE} population. This is the member-PRICING
- * question; the members-only visibility gate is status-only ({@link isMembershipFeeSettled}),
- * matching what it replaced.
+ * question; the members-only visibility gate is status-only ({@link isMembershipFeeSettled}).
  */
 export async function isMembershipFeeSettledThrough(personId: number, through: Date | null): Promise<boolean> {
     return (await isMembershipFeeSettled(personId)) && coversThrough(personId, through);
@@ -190,11 +189,10 @@ export async function isMembershipFeeSettledThrough(personId: number, through: D
 
 /**
  * The date a program's member pricing must be valid through: the boundary that
- * closes the program's stated membership year. Falls back to the end date when no
- * year is stated or the board hasn't set the boundary.
+ * closes the program's stated membership year, or the end date when the board
+ * hasn't set the boundary.
  */
-export async function programCoverageDate(p: { endAt: Date; appliesToYear: number | null }): Promise<Date> {
-    if (p.appliesToYear == null) return p.endAt;
+export async function programCoverageDate(p: { endAt: Date; appliesToYear: number }): Promise<Date> {
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
         select: { orgMembershipYearBoundary: true },

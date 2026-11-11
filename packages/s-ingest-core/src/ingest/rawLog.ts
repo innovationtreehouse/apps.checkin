@@ -42,6 +42,34 @@ function hashPayload(node: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(node)).digest("hex");
 }
 
+function lockGid(tx: DbClient, storeId: string, objectType: ObjectType, shopifyGid: string) {
+  const lockKey = `raw_event:${storeId} ${objectType} ${shopifyGid}`;
+  // $executeRaw, not $queryRaw: pg_advisory_xact_lock returns void, and Prisma 7's
+  // Rust-free client cannot deserialize a `void` result column (the v6 query engine
+  // tolerated it). We don't read a result here — we only need the lock acquired.
+  return tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+}
+
+/**
+ * Whether the log holds a later fetch of this gid than `rawEventId`. Holds the gid's lock
+ * until the caller's transaction ends, so a projection that goes ahead can't overwrite a
+ * newer event logged after this check: that event's own projection waits for the lock.
+ */
+export async function isSupersededRawEvent(
+  tx: DbClient,
+  storeId: string,
+  objectType: ObjectType,
+  shopifyGid: string,
+  rawEventId: bigint,
+): Promise<boolean> {
+  await lockGid(tx, storeId, objectType, shopifyGid);
+  const newer = await tx.shopifyRawEvent.findFirst({
+    where: { storeId, objectType, shopifyGid, id: { gt: rawEventId } },
+    select: { id: true },
+  });
+  return newer !== null;
+}
+
 export async function appendRawEvent(
   prisma: PrismaClient,
   args: AppendRawEventArgs,
@@ -54,11 +82,7 @@ export async function appendRawEvent(
     // below and the insert are atomic. A transaction-scoped advisory lock auto-releases
     // on commit/rollback; occasional hash collisions on the key only over-serialize, never
     // under-serialize. (Lock keying preserves the "identical to latest" semantics exactly.)
-    const lockKey = `raw_event:${args.storeId} ${args.objectType} ${meta.shopifyGid}`;
-    // $executeRaw, not $queryRaw: pg_advisory_xact_lock returns void, and Prisma 7's
-    // Rust-free client cannot deserialize a `void` result column (the v6 query engine
-    // tolerated it). We don't read a result here — we only need the lock acquired.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    await lockGid(tx, args.storeId, args.objectType, meta.shopifyGid);
 
     const latest = await tx.shopifyRawEvent.findFirst({
       where: { storeId: args.storeId, objectType: args.objectType, shopifyGid: meta.shopifyGid },
