@@ -41,6 +41,7 @@ BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
+REQUEST_BAR = 0.8
 # Calibrated on Jev: clean verify reviews scored 0.31-0.39 and a failed one 0.06.
 # Recalibrate from the decision log after a model swap.
 COMPLETE_THRESHOLD = 0.2
@@ -306,6 +307,9 @@ def rerun_gate(probs, higher, p):
 def route_selftest():
     ask = lambda *t: tier_request({"untrusted_human_text": list(t)})
     assert ask("use Opus") and ask("the high lane please") and ask("rerun this on Argon") and ask("a", "Please run the Argon lane")
+    assert not ask("lane is its first real run") and not ask("I want to free up time") and not ask("run the high-priority tests")
+    kept = human_texts([("T1", "old " + "x" * 2000), ("T2", "new")], 1000)
+    assert kept == ["new"] and human_texts([("T2", "b"), ("T1", "a")], 100) == ["a", "b"]
     assert not ask("Run the integration tier locally") and not ask("test tiers") and not ask("rename the argon variable", "LGTM") and not ask("")
     assert pick({"free": 0.02, "mid": 0.6, "high": 0.38}, ORDER) == "free"
     assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
@@ -533,7 +537,9 @@ def first_round(pr, repo):
 
 # A request is a verb near a rung or model name, either order. Gate and log only; the model judges it.
 _V = r"(?:use|run|ask(?:ing)? for|want|please|request\w*|rerun|re-run)"
-_N = r"(?:free|low|mid|high|top|argon|opus|claude|deepseek|nemotron|flint|gemini|lane)(?![\w-])"
+_N = r"(?:mid|high|top|argon|opus|claude|deepseek|gemini)(?![\w-])"
+# Bytes of PR text the decision model sees, well under the smallest DECISION_STATE_MAX.
+HUMAN_TEXT_MAX = 12_000
 REQUEST_RE = re.compile(rf"\b{_V}\b[^.\n]{{0,40}}\b{_N}|\b{_N}[^.\n]{{0,40}}\b{_V}\b", re.I)
 
 
@@ -541,16 +547,29 @@ def request_state(pr, repo):
     """PR text that may carry a tier request, from trusted authors only. Route-only: the judge never sees it."""
     try:
         meta = json.loads(gh("api", f"repos/{repo}/pulls/{pr}"))
-        texts = [(meta.get("created_at"), meta.get("body"))] if meta.get("author_association") in TRUSTED_ASSOC else []
+        body = [_clean(meta.get("body"), 4000)] if meta.get("author_association") in TRUSTED_ASSOC and meta.get("body") else []
+        texts = []
         for p in ("issues", "pulls"):
             texts += [(c["created_at"], c["body"]) for c in api(repo, f"{p}/{pr}/comments?per_page=100")
-                      if _trusted(c) and c["user"]["login"] != BOT]
+                      if _trusted(c) and c["user"]["login"] != BOT and c.get("body")]
         texts += [(r["submitted_at"], r["body"]) for r in api(repo, f"pulls/{pr}/reviews?per_page=100")
                   if _trusted(r) and r["user"]["login"] != BOT and r.get("body") and r.get("submitted_at")]
-        return {"untrusted_human_text": [_clean(t, 4000) for _, t in sorted(texts, key=lambda x: x[0] or "")[-20:] if t]}
+        return {"untrusted_human_text": body + human_texts(texts, HUMAN_TEXT_MAX - len(json.dumps(body).encode()))}
     except Exception as e:
         print(f"::warning::could not read PR text ({e}); deciding without it", file=sys.stderr)
         return {"untrusted_human_text": []}
+
+
+def human_texts(texts, room):
+    """Newest comments first, each cut to 1500 characters, while they fit `room` JSON bytes; returned oldest first."""
+    kept = []
+    for _, t in sorted(texts, key=lambda x: x[0] or "", reverse=True):
+        t = _clean(t, 1500)
+        room -= len(json.dumps(t).encode()) + 2
+        if room < 0:
+            break
+        kept.append(t)
+    return kept[::-1]
 
 
 def tier_request(state):
@@ -597,19 +616,22 @@ def route():
                              "criteria": rung_choice(ORDER)},
                 "requested": {"type": "choice",
                               "instructions": "Which reviewer tier, if any, does the PR description or a human comment ask for?",
-                              "criteria": dict(rung_choice(ORDER), none="No request for a specific or higher reviewer tier.")},
+                              "criteria": dict({n: RUNG[n][1] for n in ORDER}, none="No request for a specific or higher reviewer tier.")},
                 "grant": {"type": "noul",
                           "instructions": "Grant the requested reviewer tier? Default to yes. Answer no only when the request is absurd for this change.",
                           "criteria": {"true": "Grant the request, or there is no request.", "false": "The request is absurd for the change."}}})
             grant = a['grant']['noul']
             asked_tier = a["requested"]["choice"]
+            asked_p = a["requested"]["probabilities"].get(asked_tier, 0)
             a = a["reviewer"]
             tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
             tier = pick(a["probabilities"], ORDER)
             t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
-            # A granted request is a floor: pick()'s bars must not undo it.
-            if asked_tier in RUNG and ORDER.index(asked_tier) > ORDER.index(tier) and grant >= 0.5:
-                t_by += f"; request {asked_tier} granted (p={grant:.2f}), raised from {tier}"
+            # A granted request is a floor that pick()'s bars cannot undo. It needs a phrase in trusted
+            # text and a confident read, so the untrusted title or diff cannot raise the tier alone.
+            if (asked and asked_tier in RUNG and ORDER.index(asked_tier) > ORDER.index(tier)
+                    and asked_p >= REQUEST_BAR and grant >= 0.5):
+                t_by += f"; request {asked_tier} (p={asked_p:.2f}) granted (p={grant:.2f}), raised from {tier}"
                 tier = asked_tier
         except Exception as e:
             print(f"::warning::Decision-model tier call failed ({e}); using the fixed ladder", file=sys.stderr)
