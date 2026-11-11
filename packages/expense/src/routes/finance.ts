@@ -1,54 +1,65 @@
 /**
  * FINANCE and Board surfaces: holds, account mapping, QuickBooks accounts, bucket ownership,
- * ledgers, settings, flags, the capital seed and QuickBooks matching. The registry gates each
+ * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
-import { httpError, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { catalogSettingsMessage, httpError, isNotWired, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
+import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
+import { isQuickBooksId } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "../db";
-import type { ExpenseRouteHandler } from "../contract";
-import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
+import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
+import { getExpenseRuntime, getOrgId } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
+import { LISTED_TYPES, bookableTypes, refuseWrongType } from "../lib/account-types";
 import { writeOrgAudit } from "../lib/audit";
+import { getActiveItem, getItemNames } from "../lib/catalog";
 import { actorOf } from "../lib/caller";
+import { logError } from "../lib/logger";
+import { withLiveParties, withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
+import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
+import { financeQueueCounts as queueCounts, financeQueueRows } from "../services/financeQueueService";
+import { financeQueueTab } from "../financeQueue";
 import { resubmitHeldExpense, setHeldLineAccount } from "../services/holdService";
-import { excludeQbTxn, matchExpenseToQb, qbCandidates } from "../services/qbMatchService";
+import { excludeQbTxn, matchExpenseToQb, qbCandidates, skipExpenseQb } from "../services/qbMatchService";
 import { getExpenseSettings, updateExpenseSettings } from "../services/settingsService";
 import { pageArgs } from "./_shared";
 
-/** Runs `fn` for a FINANCE principal; the registry gate already admitted only FINANCE. */
-async function asFinance() {
-  const principal = await getPrincipal();
+/** The principal, refused unless FINANCE; the registry gate already admitted only FINANCE. */
+async function asFinance(principal: ExpensePrincipal) {
   await mapServiceErrors(async () => requireFinance(principal));
   return principal;
 }
 
+/** A QuickBooks account id, as the posters accept it. */
+const qbAccountId = z.string().trim().refine(isQuickBooksId, "qbAccount must be a QuickBooks id (digits only)");
+
 // ── Holds ─────────────────────────────────────────────────────────────────────
 
-export const holds: ExpenseRouteHandler = async ({ req }) => ({
-  ExpenseHold: await db.expenseHold.findMany({
+export const holds: ExpenseRouteHandler = async ({ req }) => {
+  const rows = await db.expenseHold.findMany({
     where: { orgId: await getOrgId(), status: "PENDING" },
     orderBy: [{ expenseId: "asc" }, { id: "asc" }],
     ...pageArgs(query(req)),
     include: { lineItem: true, expense: true },
-  }),
-});
+  });
+  const expenses = await withLiveParties(rows.map((row) => row.expense));
+  return { ExpenseHold: rows.map((row, i) => ({ ...row, expense: expenses[i] })) };
+};
 
-export const holdLineAccount: ExpenseRouteHandler = async ({ req, params }) => {
+export const holdLineAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");
-  const { qbAccount } = await parseBody(req, z.object({ qbAccount: z.string().trim().min(1, "qbAccount is required") }));
-  const principal = await getPrincipal();
+  const { qbAccount } = await parseBody(req, z.object({ qbAccount: qbAccountId }));
   await mapServiceErrors(() => setHeldLineAccount(principal, params.expenseId, lineItemId, qbAccount));
   return { ExpenseLineItem: await db.expenseLineItem.findFirst({ where: { id: lineItemId } }) };
 };
 
-export const holdResubmit: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const holdResubmit: ExpenseRouteHandler = async ({ params, principal }) => {
   await mapServiceErrors(() => resubmitHeldExpense(principal, params.expenseId));
-  return { Expense: await db.expense.findFirst({ where: { id: params.expenseId } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.expenseId } })) };
 };
 
 // ── Account mapping + QuickBooks accounts ─────────────────────────────────────
@@ -60,17 +71,28 @@ const mappingSchema = z.object({
   partNumber: z.string().min(1),
   isDelayed: triBool,
   isCapital: triBool,
-  qbAccount: z.string().min(1),
+  qbAccount: qbAccountId,
 });
-const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: z.string().trim().min(1) });
+/** A rule's part is `*` or a GTIN-13: the processor matches it against the line's catalog GTIN. */
+function checkRulePart(partNumber: string): void {
+  if (partNumber !== "*" && !isValidGtin13(partNumber)) throw httpError(400, "A rule's part must be * or a 13-digit GTIN with a valid check digit");
+}
+const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: qbAccountId });
+
+/** A rule marked capital books to a Fixed Asset account; any other rule to an expense type. */
+const refuseRuleType = (data: { qbAccount: string; isCapital: boolean | null }) =>
+  mapServiceErrors(() => refuseWrongType(data.qbAccount, bookableTypes(data.isCapital), data.isCapital ? "A capital rule's account" : "A rule's account"));
+const refuseListType = (qbAccount: string) => mapServiceErrors(() => refuseWrongType(qbAccount, LISTED_TYPES, "An expense account"));
 
 export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
   AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),
 });
 
-export const createAccountMapping: ExpenseRouteHandler = async ({ req }) => {
+export const createAccountMapping: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, mappingSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
+  checkRulePart(data.partNumber);
+  await refuseRuleType(data);
   const orgId = await getOrgId();
   return {
     AccountMapping: await db.$transaction(async (tx) => {
@@ -87,12 +109,14 @@ async function ownedRow<T>(find: () => Promise<T | null>): Promise<T> {
   return row;
 }
 
-export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params }) => {
+export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, mappingSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
+  if (data.partNumber !== before.partNumber) checkRulePart(data.partNumber);
+  await refuseRuleType(data);
   return {
     AccountMapping: await db.$transaction(async (tx) => {
       const row = await tx.accountMapping.update({ where: { id }, data });
@@ -102,9 +126,9 @@ export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params })
   };
 };
 
-export const deleteAccountMapping: ExpenseRouteHandler = async ({ params }) => {
+export const deleteAccountMapping: ExpenseRouteHandler = async ({ params, principal }) => {
   const id = parseId(params.id);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
   await db.$transaction(async (tx) => {
@@ -114,10 +138,20 @@ export const deleteAccountMapping: ExpenseRouteHandler = async ({ params }) => {
   return {};
 };
 
-/** Catalog category and subcategory names, through the CatalogReader port (empty until bound). */
+/** Throws the 503 a person reads when the catalog needs fixing: no catalog bound, or its database missing. */
+function refuseCatalogSettings(err: unknown): void {
+  const message = catalogSettingsMessage(err);
+  if (message) throw httpError(503, message);
+}
+
+/** Catalog category and subcategory names, through the CatalogReader port; 503 while the catalog is unbound, missing or down. */
 export const mappingCatalog: ExpenseRouteHandler = async () => {
   const catalog = getExpenseRuntime().catalog;
-  const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]);
+  const [categories, subcategories] = await Promise.all([catalog.listCategories(), catalog.listSubcategories()]).catch((err: unknown) => {
+    refuseCatalogSettings(err);
+    if (kindOf(err) === "system") throw httpError(503, "Catalog categories are unavailable; try again");
+    throw err;
+  });
   return { Category: categories, Subcategory: subcategories };
 };
 
@@ -125,9 +159,10 @@ export const qbAccounts: ExpenseRouteHandler = async () => ({
   ExpenseQbAccount: await db.expenseQbAccount.findMany({ where: { orgId: await getOrgId() }, orderBy: { name: "asc" } }),
 });
 
-export const createQbAccount: ExpenseRouteHandler = async ({ req }) => {
+export const createQbAccount: ExpenseRouteHandler = async ({ req, principal }) => {
   const data = await parseBody(req, qbAccountSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
+  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   return {
     ExpenseQbAccount: await db.$transaction(async (tx) => {
@@ -138,10 +173,11 @@ export const createQbAccount: ExpenseRouteHandler = async ({ req }) => {
   };
 };
 
-export const updateQbAccount: ExpenseRouteHandler = async ({ req, params }) => {
+export const updateQbAccount: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
+  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
   return {
@@ -153,9 +189,9 @@ export const updateQbAccount: ExpenseRouteHandler = async ({ req, params }) => {
   };
 };
 
-export const deleteQbAccount: ExpenseRouteHandler = async ({ params }) => {
+export const deleteQbAccount: ExpenseRouteHandler = async ({ params, principal }) => {
   const id = parseId(params.id);
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   const orgId = await getOrgId();
   const before = await db.expenseQbAccount.findFirst({ where: { id, orgId } });
   if (before) {
@@ -173,19 +209,59 @@ const buckets = () => getExpenseRuntime().budgetOwners.list();
 
 export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView: await buckets() });
 
-export const ownershipMap: ExpenseRouteHandler = async ({ req }) => ({
-  PartOwnerMap: await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) }),
-  ExpenseBucketView: await buckets(),
-});
+export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
+  const rows = await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) });
+  // An unbound catalog shows the map without names; an unreachable one also flags the names unavailable.
+  const names = await getItemNames(rows.map((r) => r.gtin13)).then(
+    (items) => ({ items, unavailable: false }),
+    (err: unknown) => {
+      if (isNotWired(err)) return { items: [], unavailable: false };
+      refuseCatalogSettings(err);
+      if (kindOf(err) !== "system") throw err;
+      logError("catalog_names_unavailable", { route: "ownership-map" }, err);
+      return { items: [], unavailable: true };
+    },
+  );
+  return {
+    PartOwnerMap: rows,
+    Item: names.items,
+    ExpenseBucketView: await buckets(),
+    ...(names.unavailable && { ExpenseCatalogNames: { unavailable: true } }),
+  };
+};
 
-export const setOwnership: ExpenseRouteHandler = async ({ req }) => {
+/**
+ * Why a new write may not name this part, or null for an active catalog item or a pending
+ * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
+ */
+async function partRefusal(orgId: string, gtin13: string): Promise<string | null> {
+  const provisional = await db.provisionalItemMap.findFirst({ where: { orgId, provisionalGtin13: gtin13 }, select: { status: true, resolvedToGtin13: true } });
+  const id = formatGtinDisplay(gtin13);
+  if (provisional?.status === "pending") return null;
+  if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
+  if (provisional) return `${id} was rejected by the catalog`;
+  const active = await getActiveItem(gtin13).catch((err: unknown) => {
+    refuseCatalogSettings(err);
+    console.error("[expense] catalog check failed", err);
+    throw httpError(502, "The catalog couldn't be reached; try again");
+  });
+  return active ? null : `No active catalog item or pending provisional part has Part ID ${id}`;
+}
+
+export const setOwnership: ExpenseRouteHandler = async ({ req, principal }) => {
   const { gtin13, ownerId } = await parseBody(
     req,
-    z.object({ gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"), ownerId: z.number().int().positive() }),
+    z.object({
+      gtin13: z.string().refine(isValidGtin13, "gtin13 must be 13 digits with a valid check digit"),
+      ownerId: z.number().int().positive(),
+    }),
   );
-  const actor = actorOf(await asFinance());
+  const actor = actorOf(await asFinance(principal));
   if (!(await buckets()).some((b) => b.id === ownerId && !b.archivedAt)) throw httpError(400, "Unknown or archived bucket");
   const orgId = await getOrgId();
+  const mapped = await db.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { id: true } });
+  const refusal = mapped ? null : await partRefusal(orgId, gtin13);
+  if (refusal) throw httpError(400, refusal);
   await db.$transaction(async (tx) => {
     const before = await tx.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { ownerId: true } });
     await createPartOwnerRepository(tx).updateItemOwner(orgId, gtin13, ownerId);
@@ -240,9 +316,8 @@ export const qbExclusions: ExpenseRouteHandler = async ({ req }) => ({
   }),
 });
 
-export const createQbExclusion: ExpenseRouteHandler = async ({ req }) => {
+export const createQbExclusion: ExpenseRouteHandler = async ({ req, principal }) => {
   const { qbTxnId, reason } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1), reason: z.string() }));
-  const principal = await getPrincipal();
   await mapServiceErrors(() => excludeQbTxn(principal, qbTxnId, reason));
   return { ExpenseQbMatchExclusion: await db.expenseQbMatchExclusion.findFirst({ where: { orgId: await getOrgId(), qbTxnId } }) };
 };
@@ -254,40 +329,67 @@ export const settings: ExpenseRouteHandler = async () => {
   return { ExpenseOrgSettings: { orgId, ...(await getExpenseSettings(orgId)) } };
 };
 
-export const updateSettings: ExpenseRouteHandler = async ({ req }) => {
+export const updateSettings: ExpenseRouteHandler = async ({ req, principal }) => {
   const patch = await parseBody(req, z.unknown());
-  const principal = await getPrincipal();
   const orgId = await getOrgId();
   const next = await mapServiceErrors(() => updateExpenseSettings(orgId, patch, principal));
   return { ExpenseOrgSettings: { orgId, ...next } };
 };
 
-export const flags: ExpenseRouteHandler = async () => ({ ExpenseFlag: await listOpenFlags(await getPrincipal()) });
+export const flags: ExpenseRouteHandler = async ({ principal }) => ({ ExpenseFlag: await listOpenFlags(principal) });
 
-export const checkOff: ExpenseRouteHandler = async ({ req, params }) => {
+export const checkOff: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const id = parseId(params.id);
-  const { notes } = await parseBody(req, z.object({ notes: z.string().nullish() }));
-  const principal = await getPrincipal();
-  await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null));
+  const { notes, shown } = await parseBody(
+    req,
+    z.object({ notes: z.string().nullish(), shown: z.object({ detail: z.string().nullable(), observed: z.string().nullable() }) }),
+  );
+  await mapServiceErrors(() => checkOffFlag(principal, id, notes?.trim() || null, shown));
   return { ExpenseFlag: await db.expenseFlag.findFirst({ where: { id } }) };
 };
 
+// ── Finance queue ─────────────────────────────────────────────────────────────
+
+/** One expense tab of the finance queue; `?tab=` is the tab's queue value (expenses, to_sign, holds, qb, board). */
+export const financeQueue: ExpenseRouteHandler = async ({ req, principal }) => {
+  const tab = financeQueueTab(query(req).get("tab"));
+  if (!tab) throw httpError(400, "tab must be one of: expenses, to_sign, holds, qb, board");
+  return { FinanceQueueRow: await financeQueueRows(principal, tab.key) };
+};
+
+export const financeQueueCounts: ExpenseRouteHandler = async ({ principal }) => ({ FinanceQueueCounts: await queueCounts(principal) });
+
 // ── Capital seed + QuickBooks matching ────────────────────────────────────────
 
-export const capitalSeed: ExpenseRouteHandler = async ({ req }) => {
+export const capitalSeed: ExpenseRouteHandler = async ({ req, principal }) => {
   const rows = await parseBody(req, CapitalSeedSchema);
-  const principal = await getPrincipal();
   return { ExpenseCapitalSeedResult: await mapServiceErrors(() => seedCapitalAssets(principal, rows)) };
 };
 
-export const candidates: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const donatedCapital: ExpenseRouteHandler = async ({ principal }) => {
+  return { DonatedCapitalLineView: await mapServiceErrors(() => listDonatedCapital(principal)) };
+};
+
+export const reviewDonatedCapital: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const id = parseId(params.id);
+  const body = await parseBody(req, DonatedCapitalReviewSchema);
+  return { DonatedCapitalLineView: await mapServiceErrors(() => reviewDonatedLine(principal, id, body)) };
+};
+
+export const candidates: ExpenseRouteHandler = async ({ params, principal }) => {
   return { ExpenseQbCandidateView: await mapServiceErrors(() => qbCandidates(principal, params.id)) };
 };
 
-export const match: ExpenseRouteHandler = async ({ req, params }) => {
+export const match: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { qbTxnId } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1) }));
-  const principal = await getPrincipal();
   await mapServiceErrors(() => matchExpenseToQb(principal, params.id, qbTxnId));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
+};
+
+const QbResolveSchema = z.object({ action: z.literal("skip"), reason: z.string().trim().min(1, "A reason is required to skip").max(500) }).strict();
+
+export const qbResolve: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const { reason } = await parseBody(req, QbResolveSchema);
+  await mapServiceErrors(() => skipExpenseQb(principal, params.id, reason));
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
 };

@@ -15,11 +15,14 @@
  *      scopes vs the caller, then per field check `fieldVisible(tier,
  *      tokens, scopes)`. The stripper lives in ./stripper so it can be
  *      unit-tested in isolation.
- *   7. Wrap in envelope, emit.
+ *   7. On a GET, when the stripped bag carries a marked field on a row that is
+ *      not the caller's own, record the view (./financeView). A failed write is
+ *      an opaque 500: fail closed.
+ *   8. Wrap in envelope, emit.
  *
  * Errors thrown from the user fn are caught:
- *   - `ApiResponseError` → mapped to its declared status & message.
- *   - any other error    → opaque 500 (closes #127/#122 class).
+ *   - `ApiResponseError` → mapped to its declared status, message, optional code & field names.
+ *   - any other error    → opaque 500, so its message never reaches the client.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -30,14 +33,38 @@ import type { AuthResult } from '@/types/auth';
 import { getRoute, type Role, type Token } from './core';
 import { buildCallerContext, callerHoldsRole, resolveAccess } from './access-resolvers';
 import { stripBag } from './stripper';
+import { pageViewFoldErrors, recordView, viewedRecords } from './financeView';
 // Side-effect import to register routes/outbounds before handler() is invoked.
 import './registry';
 
+const foldErrors = pageViewFoldErrors();
+if (foldErrors.length > 0) throw new Error(`Bad page-view allowlist:\n  ${foldErrors.join('\n  ')}`);
+
 export class ApiResponseError extends Error {
-    constructor(public readonly status: number, message: string) {
+    constructor(
+        public readonly status: number,
+        message: string,
+        public readonly code?: string,
+        /** Names of the refused inputs, never their submitted values. */
+        public readonly fields?: readonly string[],
+    ) {
         super(message);
         this.name = 'ApiResponseError';
     }
+}
+
+/** The error body: `{ error }`, plus `code` and `fields` only when the thrower set them. */
+export function renderApiResponseError(err: ApiResponseError): NextResponse {
+    const hasFields = Boolean(err.fields?.length);
+    if (err.code === undefined && !hasFields) return apiError(err.message, err.status);
+    return NextResponse.json(
+        {
+            error: err.message,
+            ...(err.code === undefined ? {} : { code: err.code }),
+            ...(hasFields ? { fields: err.fields } : {}),
+        },
+        { status: err.status },
+    );
 }
 
 export const notFound = (message = 'Not found') => new ApiResponseError(404, message);
@@ -72,7 +99,8 @@ export function handler<P extends Record<string, string> = Record<string, string
         }
 
         const params = (ctx?.params ? await ctx.params : ({} as P)) ?? ({} as P);
-        const auth = await authenticateRequest(req);
+        const { allowJoinPending } = spec;
+        const auth = await authenticateRequest(req, undefined, { allowJoinPending });
         const callerCtx = await buildCallerContext(auth, spec.ctxNeeds);
 
         const { allowed } = await resolveAccess(spec.authorize, {
@@ -80,6 +108,7 @@ export function handler<P extends Record<string, string> = Record<string, string
             params,
             callerContext: callerCtx,
             authorization: req.headers.get('authorization'),
+            allowJoinPending,
         });
         if (!allowed) {
             return apiError(
@@ -91,7 +120,7 @@ export function handler<P extends Record<string, string> = Record<string, string
         let chosenRole: Role | undefined;
         let viewTokens: readonly Token[] = [];
         for (const [role, tokens] of spec.orderedView) {
-            if (callerHoldsRole(role, auth, params, callerCtx)) {
+            if (callerHoldsRole(role, auth, params, callerCtx, { allowJoinPending })) {
                 chosenRole = role;
                 viewTokens = tokens;
                 break;
@@ -108,12 +137,22 @@ export function handler<P extends Record<string, string> = Record<string, string
         try {
             bag = await fn({ req, auth, params, role: chosenRole });
         } catch (err) {
-            if (err instanceof ApiResponseError) return apiError(err.message, err.status);
+            if (err instanceof ApiResponseError) return renderApiResponseError(err);
             console.error(`[${endpoint}] handler error:`, err);
             return apiError('Internal Server Error', 500);
         }
 
         const stripped = stripBag(bag, viewTokens, callerCtx);
+
+        if (endpoint.startsWith('GET ')) {
+            const records = viewedRecords(stripped, spec.financeView, callerCtx, params);
+            if (
+                records.length > 0 &&
+                !(await recordView({ endpoint, req, auth, role: chosenRole, records, spec: spec.financeView }))
+            ) {
+                return apiError('Internal Server Error', 500);
+            }
+        }
 
         let body: unknown;
         if (spec.envelope === null) {

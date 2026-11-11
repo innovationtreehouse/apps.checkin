@@ -1,4 +1,5 @@
-import { handler, ApiResponseError, badRequest, forbidden, notFound, unauthorized } from "@/security/handler";
+import { handler, ApiResponseError, badRequest, unauthorized } from "@/security/handler";
+import { REVIEW_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { ReviewError } from "@/lib/membership/review";
 import { recordRefund } from "@/lib/membership/refund";
 
@@ -6,8 +7,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/membership-ops/applications/refund — board records a membership refund
- * already made in Shopify. Body: { processId, reason }. A paid application waiting on
- * its background check returns to PENDING_PAYMENT; a paid BLOCKED one stays BLOCKED.
+ * already made in Shopify. Body: { processId, reason }. The application lands in the
+ * step `REFUND_LANDS_IN` names (lib/membership/lifecycle.ts), unpaid.
  * Responds with the application's id and new status only.
  */
 export const POST = handler("POST /api/membership-ops/applications/refund", async ({ req, auth }) => {
@@ -27,9 +28,7 @@ export const POST = handler("POST /api/membership-ops/applications/refund", asyn
         return { OrgMembershipProcess: { id: body.processId, status } };
     } catch (error) {
         if (error instanceof ReviewError) {
-            if (error.code === "not_found") throw notFound(error.message);
-            if (error.code === "same_household_applicant") throw forbidden(error.message);
-            throw new ApiResponseError(409, error.message);
+            throw new ApiResponseError(REVIEW_ERROR_STATUS[error.code], error.message);
         }
         throw error;
     }

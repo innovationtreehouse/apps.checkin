@@ -108,8 +108,8 @@ describe('Nav todo-counts API', () => {
 
         // Two pending program enrollments for household members. One has a payment
         // plan requested (the board's approval queue), one does not.
-        const program1 = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog1 ${TAG}` } });
-        const program2 = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog2 ${TAG}` } });
+        const program1 = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog1 ${TAG}` } });
+        const program2 = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog2 ${TAG}` } });
         program1Id = program1.id;
         program2Id = program2.id;
         await prisma.programParticipant.create({ data: { programId: program1Id, personId: leadId, status: 'PENDING' } });
@@ -120,7 +120,7 @@ describe('Nav todo-counts API', () => {
         // The lead also *runs* a program (leadMentorId). Three events: one ended
         // and unconfirmed (the inbox item), one ended but already confirmed, one
         // still in the future. Only the first should surface in the lead bucket.
-        const ledProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Led ${TAG}`, leadMentorId: leadId } });
+        const ledProgram = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Led ${TAG}`, leadMentorId: leadId } });
         ledProgramId = ledProgram.id;
         const pendingEvent = await prisma.event.create({
             data: { programId: ledProgramId, name: `Pending ${TAG}`, startAt: daysFromNow(-1), endAt: daysFromNow(-1) },
@@ -209,7 +209,7 @@ describe('Nav todo-counts API', () => {
         }
     });
 
-    // Regression (#1618): a household that renewed a trusted adult early carries a stale
+    // A household that renewed a trusted adult early carries a stale
     // in-window approval PLUS a live renewal that outlives it. "Expiring" is per adult on
     // the current authorization, so this adds NO "Renew an expiring trusted adult" todo —
     // the household kept its 5, not 6.
@@ -311,7 +311,7 @@ describe('Nav todo-counts API', () => {
         expect(data.admin).toBeDefined();
         // Global queues may hold other rows; assert our injected items are included.
         // membership = BLOCKED only (see delta test below); the seeded PENDING_BG_REVIEW
-        // is reviewer work and no longer counts, so just assert it's a number.
+        // is reviewer work and does not count, so just assert it's a number.
         expect(typeof data.admin.membership).toBe('number');
         expect(data.admin.paymentPlanPending).toBeGreaterThanOrEqual(1); // payment-plan requested
         expect(data.admin.trustedAdults).toBeGreaterThanOrEqual(1); // the PENDING_BOARD_REVIEW review
@@ -338,7 +338,7 @@ describe('Nav todo-counts API', () => {
 
         // Reviewer (RBAC) work — surfaced by the reviewer notifications badge, not the
         // board badge. Adding these must NOT move the board count. Anchored to a fresh
-        // membership (householdB's, previously membership-less) rather than the shared
+        // membership (householdB's first) rather than the shared
         // `orgMembershipId` — that one already holds an in-flight INITIAL and an in-flight
         // RENEWAL process from beforeAll, and membership_one_inflight_initial /
         // membership_one_inflight_renewal each allow only one per membership.
@@ -437,6 +437,48 @@ describe('Nav todo-counts API', () => {
             const data = await res.json();
             expect(data.configHealth).toBeUndefined();
             expect(await unhealthyCount(board())).toBeGreaterThanOrEqual(1);
+        });
+    });
+
+    // The pill counts an outage once: an open incident adds one, and a stopped job
+    // whose own incident is open is not counted again as an unhealthy cron job.
+    describe('open incidents', () => {
+        const JOB = `nav-incident-${TAG}`;
+        const KEY = `cron:${JOB}:stale`;
+        const board = () => ({ id: boardId, householdId: householdBId, isBoardMember: true });
+        const counts = async () => (await (await callAs(board())).json()).configHealth as { unhealthyCronJobs: number; openIncidents: number };
+        const long = () => new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
+
+        afterEach(async () => {
+            await prisma.cronRunLog.deleteMany({ where: { job: JOB } });
+            await prisma.opsIncident.deleteMany({ where: { key: { contains: TAG } } });
+        });
+
+        it('a watching incident stays off the pill; an open one counts once', async () => {
+            const before = await counts();
+            const row = await prisma.opsIncident.create({
+                data: { key: `quickbooks:${TAG}`, openKey: `quickbooks:${TAG}`, cause: 'quickbooks', kind: 'system', lanes: ['expenses'] },
+            });
+            expect((await counts()).openIncidents).toBe(before.openIncidents);
+
+            await prisma.opsIncident.update({ where: { id: row.id }, data: { notifiedAt: new Date() } });
+            expect((await counts()).openIncidents).toBe(before.openIncidents + 1);
+
+            await prisma.opsIncident.update({ where: { id: row.id }, data: { openKey: null, closedAt: new Date() } });
+            expect((await counts()).openIncidents).toBe(before.openIncidents);
+        });
+
+        it('a stopped job with an open stopped-job incident counts as the incident, not twice', async () => {
+            const before = await counts();
+            await prisma.cronRunLog.create({ data: { job: JOB, startedAt: long(), finishedAt: long(), success: true } });
+            const row = await prisma.opsIncident.create({
+                data: { key: KEY, openKey: KEY, cause: 'cron', kind: 'system', lanes: [JOB] },
+            });
+            // Watching: no notice yet, so the stopped job still shows as a cron job.
+            expect(await counts()).toEqual({ ...before, unhealthyCronJobs: before.unhealthyCronJobs + 1 });
+
+            await prisma.opsIncident.update({ where: { id: row.id }, data: { notifiedAt: new Date() } });
+            expect(await counts()).toEqual({ ...before, openIncidents: before.openIncidents + 1 });
         });
     });
 });

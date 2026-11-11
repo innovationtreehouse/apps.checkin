@@ -1,22 +1,8 @@
 import { defineConfig } from "vitest/config";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolveJsToTs } from "@checkin/pg-test-harness/vitest-plugin";
 
-/** Rewrite relative `.js` import specifiers to their `.ts` sibling (NodeNext source). */
 export default defineConfig({
-  plugins: [
-    {
-      name: "resolve-js-to-ts",
-      enforce: "pre",
-      resolveId(source, importer) {
-        if (importer && source.startsWith(".") && source.endsWith(".js")) {
-          const tsPath = resolve(dirname(importer), source.replace(/\.js$/, ".ts"));
-          if (existsSync(tsPath)) return tsPath;
-        }
-        return null;
-      },
-    },
-  ],
+  plugins: [resolveJsToTs()],
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",

@@ -83,7 +83,7 @@ describe("retryAfterMs", () => {
     expect(retryAfterMs("0.5")).toBe(500);
   });
 
-  it("clamps to the cap (fixes the previously-uncapped Retry-After path)", () => {
+  it("clamps to the cap", () => {
     expect(retryAfterMs("300")).toBe(MAX_DELAY_MS); // 300s would otherwise be 5 minutes
   });
 

@@ -131,14 +131,26 @@ intake (owner decision). Nothing in the source does this, so it is designed here
 at an address in the organization's own domain (owner decision; the name is a
 deploy-time value, `RECEIPT_MAILBOX_ADDRESS`) and one OAuth grant with the `gmail.readonly` scope only: the app never
 labels, moves or deletes mail. An operator runs the consent once from a CLI;
-the resulting refresh token is seeded into a secret only an **Infra-owned
-refresher Lambda** can read and write. The app invokes that Lambda, as it does the
+the resulting refresh token is seeded into a per-environment secret only the
+**refresher Lambda** (`gmail-refresher-function/`; Infra provisions it, this repo
+deploys its code) can read. The app invokes that Lambda, as it does the
 QuickBooks refresher, and gets back a short-lived access token with its expiry and
 the mailbox it belongs to; the app refuses a token for any other mailbox and never
-refreshes. No OAuth route in the app, no token in Postgres. Static client
-credentials are Infra env for the refresher and consent tool, not the app. The
+refreshes. No OAuth route in the app, no token in Postgres. The OAuth client id and
+secret are one secret shared across environments, readable only by the refresher;
+neither the app nor the Lambda's env holds them. The
 step is bound only on a deployed instance with both `GMAIL_REFRESHER_FN` and
 `RECEIPT_MAILBOX_ADDRESS` set; otherwise it reports "unbound" and does nothing.
+
+**Test and staging instances read a test mailbox** (owner ruling). The owner
+creates a separate test mailbox in Google Workspace, and Infra points the dev
+instance at it: `RECEIPT_MAILBOX_ADDRESS` names the test mailbox,
+`GMAIL_REFRESHER_FN` names a refresher holding that mailbox's grant, and
+`RECEIPT_PROD_MAILBOX_ADDRESS` names the real mailbox. On any instance other
+than prod (dev, and ops-stg, which otherwise reads as prod) the step stays
+unbound unless `RECEIPT_PROD_MAILBOX_ADDRESS` is set and differs from
+`RECEIPT_MAILBOX_ADDRESS`, so a missing or copied setting fails closed and
+mailed receipts from real people never reach a test instance or its OCR.
 
 **Trigger: a step inside the existing daily `/api/cron/reconcile-shopify`
 handler, not Pub/Sub push.**
@@ -174,6 +186,12 @@ case of a body receipt:
   marked `inline`) **and** every inline part of an accepted non-text type (§2:
   JPEG, PNG, GIF, WebP, PDF), with or without a filename. Parts inside a
   forwarded message are still never read.
+- **A message forwarded as an attachment is not opened** (`[Decision —
+  deliberate limit]`). Gmail's "Forward as attachment" attaches the whole
+  original message; the step reads neither its headers nor its files nor its
+  body, and counts it under `ignored`, so the run shows it arrived. A member
+  forwards a receipt the ordinary way (inline), which is Gmail's default.
+  Opening attached messages is the upgrade if members are found doing this.
 - **The body is a receipt unless it is trivial or proven to repeat an
   attachment** (owner ruling 2026-10-16). Dropping a body unread is how a
   receipt gets lost without anyone noticing, so the step reads every body and
@@ -289,9 +307,29 @@ messages than a run can fetch in its time budget can (the `ponytail:` note on
 - Each run starts no new message after 2 minutes; the rest wait for the next run.
 - A file over 10 MB, the manual upload limit, is refused before download.
 
-Mail the mailbox sent itself is not read.
-`ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
-receipts in one window; widen the window or the cap if either happens.
+Mail the mailbox sent itself is not read. **Spam is not read either**
+(`[Decision — deliberate limit]`): the list uses Gmail's default search, which
+skips Spam and Trash. Google's spam filter is the first defence against a flood
+of held mail; a member's own signed mail rarely lands there, and finance can
+check the folder in Gmail itself.
+
+**Mail about to leave the window** (`[Decision]`). The run reads mail oldest
+first, so mail it puts off (a cap or budget spent, the time budget reached, or
+a message whose reading failed) is read next run. Mail received more than two
+days ago will be out of the 3-day window by then, so finance gets one alert
+naming how many such messages there are and when the oldest arrived. Each such
+message is stored when the run leaves it, and removed once a later run reads it
+clean. The alert goes out on any run that finds one stored past that age, so a
+crashed run, a missed day or a failed send only delays it, and it is marked sent
+only after it is sent, so it is not repeated. A message that cannot be fetched
+has no known age, so it alerts on the first run that fails to fetch it.
+
+**Mailbox that cannot be listed** (`[Decision]`). The run alerts finance on every
+run the listing fails, still sends the acknowledgements owed, and the cron run
+records a failure, so System Status shows it. `ponytail:` ceiling is a cron that
+does not run at all for longer than 3 days, which System Status shows as not
+running, or more than 30 mailed receipts in one window; widen the window or the
+cap if either happens.
 
 **Message to receipt.**
 
@@ -304,14 +342,17 @@ receipts in one window; widen the window or the cap if either happens.
     header's authserv-id is `mx.google.com`; every other `Authentication-Results`
     header (lower in the message, or from any other server) is ignored, since a
     sender can write those;
-  - that header carries `dmarc=pass`, so SPF or DKIM passed **aligned** with the
-    `From` domain;
+  - that header carries `dmarc=pass` for the `From` domain **and** a
+    `dkim=pass` whose signing domain is exactly the `From` domain (owner
+    ruling). A DMARC pass on SPF alone is not enough: SPF vouches for the
+    server that sent the mail, not for the address in `From`;
   - the message has exactly one `From` header containing exactly one addr-spec;
     that address is matched, never the display name;
   - headers inside a forwarded or attached message (`message/rfc822` parts, quoted
     "From:" lines in the body) are never read for identity.
-- **Sender to person:** the authenticated `From` address must match a `Person`
-  email, and that person must be in the submitter audience (§6). Then the
+- **Sender to person:** the authenticated `From` address must equal a `Person`'s
+  sign-in email exactly (lowercased), and that person must be in the submitter
+  audience (§6). The Treehouse-account claim is granted only on that match. Then the
   attachment enters the **same upload pipeline** in auto mode (the daily upload
   limits, OCR on the sender's daily allowance, the duplicate check including the
   §2 lock) with that person as uploader. One over the OCR allowance lands in
@@ -349,6 +390,11 @@ receipts in one window; widen the window or the cap if either happens.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
   sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.
+  Each held item records why it was held, shown on the mail queue: the sender
+  could not be verified (no single `From` address, or the check above failed),
+  or the verified address belongs to nobody who may submit receipts (including
+  a deferred sender who is no longer a submitter). Items held before the reason
+  was recorded show "reason not recorded".
 - **Fields email cannot carry:** reimbursement, in-kind mark, donor. A mailed
   receipt therefore always stops at `submitter_review` (guard extended from
   "needs reimbursement and not reviewed" to "came by email or needs reimbursement,
@@ -468,8 +514,8 @@ an endpoint today; the e2e plan's "no REJECT endpoint" finding is stale.
 **Push outcome is recorded.** New `Receipt.pushedAt`, stamped when S1 returns. A
 failed push leaves it null with an audit row; the daily catch-up step re-pushes
 every finalized, unpushed receipt, and the manual `push-to-inventory` button does
-one at once. Catch-up skips a receipt after five of its own failures in a row, until
-a manual push of that receipt or any delivery in the org. Safe because S1 is idempotent on `receiptId` (§7).
+one at once. Catch-up skips a receipt after five bug failures in a row, until a
+manual push of that receipt; an outage is never charged to the receipt. Safe because S1 is idempotent on `receiptId` (§7).
 
 **Catch-up steps: no database at boot, no new schedules** (plan rule 5). The
 library reads nothing at app start. Every sweep is a `try/catch` step inside the
@@ -550,10 +596,9 @@ reimbursement is never hidden by mistake.
 
 **Tax exceptions (FR4).** `ReceiptOrgSettings` keeps the tax-exempt and age-limit
 flags; tax on a tax-exempt org, a receipt past the age limit, or a future date
-sends it to `financial_review` with reasons shown. Delta: **approve takes a note,
-required when a reason is tax**, stored on the audit row. The source approves
-silently, so nothing records why tax was accepted; that note is FR4's "tax
-explanation". QB-linked backfill keeps its waivers (no submitter step, no age gate).
+sends it to `financial_review` with reasons shown. As in the source, approve
+takes no note, and reject takes an optional reason, stored on the audit row.
+QB-linked backfill keeps its waivers (no submitter step, no age gate).
 
 **Self-decision is refused.** A `FINANCE` person makes no finance decision on a
 receipt they, or anyone in their household, uploaded or are reimbursed for:
@@ -698,7 +743,7 @@ test lands with X6.
 ### X13: in-kind donor → donations
 
 The bulk-donation design (§2.4) owns the callee; agreed signature:
-`recordInKindDonor(receiptId: string, donor: InKindDonor): Promise<void>`,
+`recordInKindDonor(receiptId: string, donor: InKindDonor, seq: number): Promise<void>`,
 `InKindDonor = { firstName: string; lastName: string; companyName: string | null }`.
 `receiptId` is the receipt's UUID string.
 
@@ -708,7 +753,7 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
   `receiptId`, in either arrival order.
 - "I am the donor" fills the names from the uploader's `Person` before the call;
   donations needs no separate flag.
-- **`withdrawInKind(receiptId: string): Promise<void>`**, sent when the in-kind
+- **`withdrawInKind(receiptId: string, seq: number): Promise<void>`**, sent when the in-kind
   mark is cleared: donations deletes the waiting donor record and any queue entry
   for that receipt. Idempotent; a no-op for a receipt donations never saw. Without
   it donations would keep `pii` for a receipt that became a purchase, with no money
@@ -717,6 +762,11 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
   operation: in-kind sends `recordInKindDonor` with the current donor, not in-kind
   sends `withdrawInKind`. One state field covers both, and a never-in-kind
   receipt stays `none`, so it never sends anything.
+- Each call carries the receipt's `donorSyncSeq`, raised by every mark or donor
+  change; donations ignores a call older than one it has seen. A finalized
+  receipt is not pushed while `donorSync` is `pending` (the push first tries the
+  send), and `setInKind` re-checks the state under the detail row's lock, so the
+  mark is fixed from finalize on.
 - A throw means not delivered: `donorSync` stays `pending`, and the daily catch-up
   step or the next edit re-sends. **Inert at S:** throws `not wired`, so nothing is lost
   while donations is not live.
@@ -752,7 +802,7 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
 
 The source's vitest suites port with the library (Anthropic client mocked). New:
 caps; auto-OCR success, failure and refusal; the catch-up steps (counts only); X13 state: a never-in-kind receipt never sends `withdrawInKind`, a failed first send stays `pending` and is retried;
-tax note required; self-approval refused; the reimbursement view against a stub
+self-approval refused; the reimbursement view against a stub
 port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
 `needsReimbursement` rejected; a text file rendered as escaped text and served only as an attachment; an image served inline under `sandbox` and a PDF served inline without it; an audit row per file view or download and mail-queue
@@ -779,7 +829,7 @@ All PRs are based on `main`; none stacks.
 | **B** boundary | `@sensitivity` on the receipt schema (file columns `pii`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
 | **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` in Infra, `ANTHROPIC_API_KEY` in dev (prod only after Q5), flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
-| **F** files to S3 | four PRs (infra, library behind a flag, backfill, removal of `bytea` reads); `1265_RECEIPT_FILES_S3.md` §8. After G's mail queue (#2239). |
+| **F** files to S3 | five PRs (infra, library behind a flag, backfill, removal of `bytea` reads, retention and held-mail auto-discard); `1265_RECEIPT_FILES_S3.md` §9. After G's mail queue (#2239). |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
 | **X13** | bind `DonorSink` to donations' `recordInKindDonor` and `withdrawInKind`. After L6 W and L8 W. |
 | **X7** | promote `receipt-types`, delete temporary shims. After X6. |
@@ -819,7 +869,7 @@ system of record for reimbursement and the app never authors a reimbursement fac
 a duplicate upload is flagged for a person, never rejected, and the file hash is
 deliberately not unique (`[Decision — deliberate limit]`); OCR results are never
 partially kept. The S1 contract, OCR call shape and secret model go to
-`docs/designs/RECEIPT.md`, beside the `EXPENSE_QB.md` reference #1272 §14 plans.
+`docs/architecture/RECEIPT.md`, beside the `EXPENSE_QB.md` reference #1272 §14 plans.
 The rest is mechanism and is deleted.
 
 ---

@@ -5,37 +5,53 @@ import {
   type CompletedReceiptLineItem,
 } from "@checkin/receipt-types";
 import { db } from "../db";
-import type { ReceivedReceipt } from "../db/schema";
-import { getOrg, ports } from "../runtime";
+import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
+import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
 
 export type ApplyResult =
   | { state: "resolved" }
   | { state: "apply_failed"; error: string }
-  // Inventory committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
+  // A leg committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
   | { state: "applying"; error: string };
 
 /** How long a push's claim holds before another caller may take it over (a crashed push). */
 export const APPLY_CLAIM_TTL_MS = 5 * 60_000;
 
-interface ResolvedGtin13 {
-  gtin13: string;
-  isProvisional?: boolean;
+export type LineResolution = { gtin13: string; isProvisional?: boolean; provisionalName?: string | null } | { nonInventory: true };
+
+type LineStatusFields = Pick<ReceivedReceiptLineStatusRow, "recognitionStatus" | "assignedGtin13" | "provisionalItemGtin13" | "proposedName">;
+
+/** A provisional part's name: the proposed name, else the receipt line's description. */
+function provisionalName(proposedName: string | null | undefined, li: CompletedReceiptLineItem): string {
+  return proposedName ?? li.description;
 }
 
-/** Stitch each resolved line's GTIN onto the receipt sent as its money side (S2 / X9). */
+/** What receiving decided for a line, as the money side carries it; undefined while unresolved. */
+export function lineResolution(ls: LineStatusFields | undefined): LineResolution | undefined {
+  if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
+    return { gtin13: ls.provisionalItemGtin13, isProvisional: true, provisionalName: ls.proposedName };
+  }
+  if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) return { gtin13: ls.assignedGtin13 };
+  if (ls?.recognitionStatus === "non_inventory") return { nonInventory: true };
+  return undefined;
+}
+
+/** Stitch each resolved line's GTIN, or its non-inventory mark, onto the receipt sent as its money side (S2 / X9). */
 export function buildExpenseReceipt(
   receipt: CompletedReceipt,
-  resolve: (lineItem: CompletedReceiptLineItem) => ResolvedGtin13 | undefined,
+  resolve: (lineItem: CompletedReceiptLineItem) => LineResolution | undefined,
 ): CompletedReceipt {
   return {
     ...receipt,
     lineItems: receipt.lineItems.map((li) => {
       const resolved = resolve(li);
       if (!resolved) return li;
+      // A non-inventory line is no catalog part, so any GTIN the receipt arrived with is dropped.
+      if ("nonInventory" in resolved) return { ...li, gtin13: null, isProvisional: undefined, provisionalName: undefined, nonInventory: true };
       return resolved.isProvisional
-        ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: li.description }
+        ? { ...li, gtin13: resolved.gtin13, isProvisional: true, provisionalName: provisionalName(resolved.provisionalName, li) }
         : { ...li, gtin13: resolved.gtin13 };
     }),
   };
@@ -54,7 +70,8 @@ export function buildExpenseReceipt(
  * Claims the receipt with a lease (`applyClaimedAt`) by conditional update, so
  * of concurrent callers only one pushes, and no transaction stays open across
  * the sinks. Returns null when another push holds a live claim or the receipt
- * is no longer `applying`. The claim is released when the push settles.
+ * is no longer `applying`. The claim is released when the push settles. A push that fails or
+ * throws leaves the receipt stuck with its error and first failure time, for a person's Retry.
  */
 export async function executePushAndSettle(
   receiptId: number,
@@ -74,6 +91,9 @@ export async function executePushAndSettle(
   if (count !== 1) return null;
   try {
     return await pushAndSettle(receiptId, received, actorUserId, actorUsername);
+  } catch (err) {
+    await recordFailure(receiptId, err instanceof Error ? err.message : String(err)).catch(() => {});
+    throw err;
   } finally {
     // Only our own claim: a caller that took over a stale one keeps its lease.
     await db.receivedReceipt.updateMany({
@@ -86,18 +106,29 @@ export async function executePushAndSettle(
 /** Most stuck receipts one sweep pushes; the rest wait for the next run. */
 export const STUCK_APPLY_SWEEP_CAP = 50;
 
+const unclaimedSince = (now: number) => ({
+  OR: [{ applyClaimedAt: null }, { applyClaimedAt: { lt: new Date(now - APPLY_CLAIM_TTL_MS) } }],
+});
+
 /**
- * Cron backstop for receipts left `applying` with no live push: a request that died before or
- * during its push, or an inventory stamp that was lost. Pushes each unclaimed or stale-claimed
- * receipt oldest first, up to the cap, through the same lease as every other caller. Leaves
- * `apply_failed` alone; that needs a person. Returns counts only.
+ * Cron backstop for receipts a crash left `applying` with no live push and no recorded failure.
+ * Pushes each unclaimed or stale-claimed one once, oldest first, up to the cap, through the same
+ * lease as every other caller. A push that fails is stuck and left for a person's Retry. Returns
+ * counts only.
  */
-export async function sweepStuckApplying(): Promise<{ resolved: number; failed: number; applying: number; skipped: number; errored: number }> {
+export async function sweepStuckApplying(): Promise<{
+  resolved: number;
+  failed: number;
+  applying: number;
+  skipped: number;
+  errored: number;
+}> {
   const rows = await db.receivedReceipt.findMany({
     where: {
-      orgId: (await getOrg()).id,
+      orgId: await getOrgId(),
       state: "applying",
-      OR: [{ applyClaimedAt: null }, { applyClaimedAt: { lt: new Date(Date.now() - APPLY_CLAIM_TTL_MS) } }],
+      applyFirstFailedAt: null,
+      ...unclaimedSince(Date.now()),
     },
     select: { id: true, orgId: true, receiptJson: true },
     orderBy: { id: "asc" },
@@ -106,14 +137,24 @@ export async function sweepStuckApplying(): Promise<{ resolved: number; failed: 
   const counts = { resolved: 0, failed: 0, applying: 0, skipped: 0, errored: 0 };
   for (const row of rows) {
     // One receipt's database error must not stop the rest of the sweep.
-    const result = await executePushAndSettle(row.id, row).catch(() => "errored" as const);
-    if (result === "errored") counts.errored++;
-    else if (!result) counts.skipped++;
-    else if (result.state === "resolved") counts.resolved++;
+    const result = await executePushAndSettle(row.id, row).catch(() => ({ state: "errored" as const }));
+    if (!result) counts.skipped++;
     else if (result.state === "apply_failed") counts.failed++;
-    else counts.applying++;
+    else counts[result.state]++;
   }
   return counts;
+}
+
+/** Records a push's latest error, and its first failure time while none is set. */
+async function recordFailure(receiptId: number, error: string, data: { state?: "apply_failed"; inventoryUnconfirmedAt?: Date } = {}): Promise<void> {
+  await db.receivedReceipt.update({ where: { id: receiptId }, data: { ...data, validationNotes: error } });
+  await db.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
+}
+
+/** A line the inventory leg carries. */
+function isInventoryLine(ls: LineStatusFields): boolean {
+  if (ls.recognitionStatus === "provisional") return !!ls.provisionalItemGtin13;
+  return ls.recognitionStatus === "recognized" && ls.assignedGtin13 != null;
 }
 
 async function pushAndSettle(
@@ -143,9 +184,7 @@ async function pushAndSettle(
   const applyItems = receipt.lineItems
     .filter((li) => {
       const ls = statusMap.get(li.receiptLineItemId);
-      const status = ls?.recognitionStatus ?? "unrecognized";
-      if (status === "provisional") return !!ls?.provisionalItemGtin13;
-      return status === "recognized" && ls?.assignedGtin13 != null;
+      return !!ls && isInventoryLine(ls);
     })
     .map((li) => {
       const ls = statusMap.get(li.receiptLineItemId)!;
@@ -158,20 +197,11 @@ async function pushAndSettle(
         isDelayed: li.isDelayed,
         conversionFactor: ls.conversionFactor,
         conversionVersion: ls.conversionVersion,
-        ...(isProvisional ? { isProvisional: true, provisionalName: li.description } : {}),
+        ...(isProvisional ? { isProvisional: true, provisionalName: provisionalName(ls.proposedName, li) } : {}),
       };
     });
 
-  const moneyReceipt = buildExpenseReceipt(receipt, (li) => {
-    const ls = statusMap.get(li.receiptLineItemId);
-    if (ls?.recognitionStatus === "provisional" && ls.provisionalItemGtin13) {
-      return { gtin13: ls.provisionalItemGtin13, isProvisional: true };
-    }
-    if (ls?.recognitionStatus === "recognized" && ls.assignedGtin13) {
-      return { gtin13: ls.assignedGtin13 };
-    }
-    return undefined;
-  });
+  const moneyReceipt = buildExpenseReceipt(receipt, (li) => lineResolution(statusMap.get(li.receiptLineItemId)));
 
   const { expenseSink, donationSink, inventorySink } = ports();
   // A leg that already applied on an earlier attempt is not pushed again.
@@ -182,23 +212,32 @@ async function pushAndSettle(
   const stamp = (data: { inventoryAppliedAt?: Date; expenseAppliedAt?: Date; donationAppliedAt?: Date }) =>
     db.receivedReceipt.update({ where: { id: receiptId }, data });
 
-  const pushes: Array<() => Promise<void>> = [];
+  const pushes: Array<{ leg: string; push: () => Promise<void> }> = [];
   let inventoryUnstamped = false;
+  let moneyUnstamped = false;
+  const stampMoney = async (data: { expenseAppliedAt?: Date; donationAppliedAt?: Date }) => {
+    try {
+      await stamp(data);
+    } catch (err) {
+      moneyUnstamped = true;
+      throw err;
+    }
+  };
   // An in-kind receipt's money side goes to donations, never to expense.
   if (receipt.isInKind ? !legs.donationAppliedAt : !legs.expenseAppliedAt) {
-    pushes.push(async () => {
+    pushes.push({ leg: receipt.isInKind ? "Donation" : "Expense", push: async () => {
       const validated = CompletedReceiptSchema.parse(moneyReceipt);
       if (receipt.isInKind) {
         await donationSink.ingestInKind(validated);
-        await stamp({ donationAppliedAt: new Date() });
+        await stampMoney({ donationAppliedAt: new Date() });
       } else {
         await expenseSink.pushReceipt(validated);
-        await stamp({ expenseAppliedAt: new Date() });
+        await stampMoney({ expenseAppliedAt: new Date() });
       }
-    });
+    } });
   }
   if (applyItems.length > 0 && !legs.inventoryAppliedAt) {
-    pushes.push(async () => {
+    pushes.push({ leg: "Inventory", push: async () => {
       await inventorySink.applyDelta(
         ResolvedInventoryDeltaSchema.parse({
           receiptId: receipt.receiptId,
@@ -213,24 +252,25 @@ async function pushAndSettle(
         inventoryUnstamped = true;
         throw err;
       }
-    });
+    } });
   }
 
   // allSettled, so every leg's applied stamp is written before the receipt settles.
-  const failed = (await Promise.allSettled(pushes.map((push) => push()))).find(
-    (r): r is PromiseRejectedResult => r.status === "rejected",
+  const results = await Promise.allSettled(pushes.map(({ push }) => push()));
+  // Each failure names its leg, so the reason says which part of the receipt didn't apply.
+  const failures = results.flatMap((r, i) =>
+    r.status === "rejected" ? [`${pushes[i].leg}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`] : [],
   );
-  if (failed) {
-    const err: unknown = failed.reason;
-    const error = err instanceof Error ? err.message : String(err);
-    // Inventory took the delta but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same delta.
-    if (inventoryUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error);
+  if (failures.length > 0) {
+    const error = failures.join("; ");
+    // A sink took its leg but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same payload, which the sinks dedupe.
+    if (inventoryUnstamped || moneyUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped });
     return settleFailed(receiptId, received.orgId, actor, error);
   }
 
   await db.receivedReceipt.update({
     where: { id: receiptId },
-    data: { state: "resolved", validationNotes: null },
+    data: { state: "resolved", validationNotes: null, applyFirstFailedAt: null },
   });
   await insertAuditEvent(db, {
     orgId: received.orgId,
@@ -248,8 +288,9 @@ async function settleUnstamped(
   orgId: string,
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
+  unstamped: { inventoryUnstamped: boolean; moneyUnstamped: boolean },
 ): Promise<ApplyResult> {
-  await db.receivedReceipt.update({ where: { id: receiptId }, data: { validationNotes: error } });
+  await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {});
   await insertAuditEvent(db, {
     orgId,
     ...actor,
@@ -257,7 +298,7 @@ async function settleUnstamped(
     receivedReceiptId: receiptId,
     fromState: "applying",
     toState: "applying",
-    details: JSON.stringify({ error, inventoryUnstamped: true }),
+    details: JSON.stringify({ error, ...unstamped }),
   });
   return { state: "applying", error };
 }
@@ -268,10 +309,7 @@ async function settleFailed(
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
 ): Promise<ApplyResult> {
-  await db.receivedReceipt.update({
-    where: { id: receiptId },
-    data: { state: "apply_failed", validationNotes: error },
-  });
+  await recordFailure(receiptId, error, { state: "apply_failed" });
   await insertAuditEvent(db, {
     orgId,
     ...actor,

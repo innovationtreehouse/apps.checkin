@@ -1,10 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { methodsFor, type QuantityMethod } from "../lib/mergeConflictMethods";
+import { api, errorMessage, notifyNavCounts, useLoad } from "../components/api";
+import { LoadError } from "@checkin/component-ui";
 
 interface ConflictRow {
   id: number;
@@ -18,30 +19,49 @@ interface ConflictRow {
   resolution?: string | null;
 }
 
-type Method = "use_provisional" | "use_existing" | "sum";
-const METHODS: { value: Method; label: string }[] = [
-  { value: "use_existing", label: "Keep existing" },
-  { value: "use_provisional", label: "Use provisional" },
-  { value: "sum", label: "Sum both" },
-];
+/**
+ * On-hand count of each provisional in `rows` still open, 0 when it has no org item. A GTIN whose
+ * read failed is left out, so its options stay offered and the server decides.
+ */
+function useProvisionalStock(rows: ConflictRow[] | null): ReadonlyMap<string, number> {
+  const [stock, setStock] = useState<ReadonlyMap<string, number>>(new Map());
+  useEffect(() => {
+    const gtins = [...new Set((rows ?? []).filter((c) => c.status === "pending").map((c) => c.provisionalGtin13))];
+    let live = true;
+    Promise.all(
+      gtins.map((g) =>
+        api<{ OrgItem: { gtin13: string; existingQuantity: number }[] }>(`/org-items?q=${g}`).then(
+          ({ OrgItem: items }) => [g, items.find((i) => i.gtin13 === g)?.existingQuantity ?? 0] as const,
+          () => null,
+        ),
+      ),
+    ).then((pairs) => {
+      if (live) setStock(new Map(pairs.filter((p) => p !== null)));
+    });
+    return () => { live = false; };
+  }, [rows]);
+  return stock;
+}
 
 /**
  * /inventory/merge-conflicts — provisional stock whose unit of measure differs
  * from the catalog item it resolved to. The counts are not summable as-is, so a
- * manager picks the quantity to keep.
+ * manager picks the quantity to keep. A provisional with no stock has no count to pick.
  */
 export default function MergeConflictsPage() {
   const conflicts = useLoad<ConflictRow[]>("/inventory-merge-conflicts");
+  const provisionalStock = useProvisionalStock(conflicts.data);
   const [busy, setBusy] = useState<number | null>(null);
 
-  async function resolve(id: number, quantityMethod: Method) {
+  async function resolve(id: number, quantityMethod: QuantityMethod) {
     setBusy(id);
     try {
       await api(`/inventory-merge-conflicts/${id}/resolve`, { method: "PUT", body: JSON.stringify({ quantityMethod }) });
+      notifyNavCounts();
       notifications.show({ message: "Conflict resolved", color: "green" });
       conflicts.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(null);
     }
@@ -74,7 +94,7 @@ export default function MergeConflictsPage() {
                   <Table.Td>
                     {c.status === "pending" ? (
                       <Group gap={4} wrap="nowrap">
-                        {METHODS.map((m) => (
+                        {methodsFor(provisionalStock.get(c.provisionalGtin13) ?? 1).map((m) => (
                           <Button key={m.value} size="xs" variant="light" loading={busy === c.id} onClick={() => resolve(c.id, m.value)}>{m.label}</Button>
                         ))}
                       </Group>

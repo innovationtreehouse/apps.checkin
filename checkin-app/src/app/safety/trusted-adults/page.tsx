@@ -20,6 +20,8 @@ import { notifications } from "@mantine/notifications";
 import { AlertBanner, type AlertTone } from "@/components/admin/AlertBanner";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
+import { TRUSTED_ADULTS_ROLES } from "@/lib/nav/sections/safety";
 import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 
@@ -97,7 +99,7 @@ const daysBetween = (aIso: string, bIso: string) =>
     Math.round((new Date(aIso).getTime() - new Date(bIso).getTime()) / 86400000);
 
 export default function AdminTrustedAdultsPage() {
-    const { ready, loading: authLoading, user } = useRequireRole(["isSysadmin", "isBoardMember"]);
+    const { ready, loading: authLoading, user } = useRequireRole(TRUSTED_ADULTS_ROLES);
     const [items, setItems] = useState<TrustedAdult[]>([]);
     const [loading, setLoading] = useState(true);
     const [busyId, setBusyId] = useState<number | null>(null);
@@ -152,7 +154,7 @@ export default function AdminTrustedAdultsPage() {
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
                 if (body.code === "wrong_phase") {
-                    notifications.show({ color: "red", message: body.error ?? "This review is no longer awaiting board review.", autoClose: 4000 });
+                    notifications.show({ color: "red", message: body.error ?? "This review is no longer awaiting board review.", autoClose: false });
                     await load();
                 } else {
                     setNotices((n) => ({ ...n, [reviewId]: { text: body.error ?? "Decision failed.", tone: "error" } }));
@@ -267,10 +269,10 @@ export default function AdminTrustedAdultsPage() {
                     taTrustedAdultPersonId: ta.trustedAdultPerson?.id,
                 });
                 // A live approval exists underneath this pending review (mirrors
-                // /operational: any APPROVED review = still authorized). Then denying is
+                // /operational: an unexpired approval = still authorized). Then denying is
                 // ambiguous — reject just this submission, or the adult outright — so the
                 // board gets both "Deny" (approval stands) and "Deny & Revoke".
-                const hasLivePriorApproval = ta.reviews.some((r) => r.status === "APPROVED");
+                const hasLivePriorApproval = ta.reviews.some((r) => isAuthorizedApproval(r, new Date()));
                 return (
                     <Card key={ta.id} withBorder radius="md" padding="md">
                         <Group gap="xs">
@@ -409,11 +411,13 @@ export default function AdminTrustedAdultsPage() {
                                 >
                                     Force approve
                                 </Button>
-                                <Button size="xs" fz={15} variant="subtle" color="red" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "deny")}>
-                                    Force deny
-                                </Button>
+                                {status !== "DENIED" && (
+                                    <Button size="xs" fz={15} variant="subtle" color="red" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "deny")}>
+                                        Force deny
+                                    </Button>
+                                )}
                                 <Button size="xs" fz={15} variant="subtle" color="gray" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "revoke")}>
-                                    Revoke
+                                    {status === "DENIED" && hasLivePriorApproval ? "Revoke approval" : "Revoke"}
                                 </Button>
                             </Group>
                         )}

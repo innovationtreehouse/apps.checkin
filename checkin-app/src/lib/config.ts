@@ -140,13 +140,13 @@ export const DEV_MOCK_WEBHOOK_SECRET = 'dev-zoho-mock-webhook-secret';
  * the mock, regardless of whether creds happen to be set.
  *
  * Gated on the explicit env, NOT on cred presence — and on CHECKIN_ENV ALONE.
- * NODE_ENV was deliberately ELIMINATED as a second "build-level fuse" across this
- * file (#951 review): every deployed instance runs the same production image
- * (Dockerfile sets NODE_ENV=production), so the clause could never distinguish a
- * misconfigured prod box from a legitimate deployment — it only broke dev-instance
- * features (the Debug-nav 404 class) while "protecting" against exactly one thing:
- * a human explicitly setting CHECKIN_ENV=local on prod infra. That misconfig class
- * belongs to CHECKIN_ENV itself, which fails safe to prod for any unset or
+ * NODE_ENV is deliberately not a second "build-level fuse" anywhere in this file:
+ * every deployed instance runs the same production image (Dockerfile sets
+ * NODE_ENV=production), so such a clause can't distinguish a misconfigured prod box
+ * from a legitimate deployment — it only breaks dev-instance features (the Debug-nav
+ * 404 class) while "protecting" against exactly one thing: a human explicitly setting
+ * CHECKIN_ENV=local on prod infra. That misconfig class belongs to CHECKIN_ENV
+ * itself, which fails safe to prod for any unset or
  * unrecognized value (readCheckinEnv). One fuse, honestly owned.
  */
 function shopifyMockActiveEnv(): boolean {
@@ -159,7 +159,7 @@ function shopifyMockActiveEnv(): boolean {
  * Unlike a real dev store (which signs with Shopify's own per-store secret we
  * don't choose), the mock generates the payload locally, so a fixed constant is
  * enough for verifyShopifyHmac's real timing-safe compare — same rationale as
- * DEV_MOCK_WEBHOOK_SECRET. See §4 of the design: fixed ⇔ self-fired mock.
+ * DEV_MOCK_WEBHOOK_SECRET. Fixed ⇔ self-fired mock.
  *
  * Exported so tests that assert the mock's self-signed webhook verifies can
  * import it instead of duplicating the literal: the tests exercise the fallback
@@ -174,8 +174,8 @@ export const DEV_MOCK_SHOPIFY_WEBHOOK_SECRET = 'dev-shopify-mock-webhook-secret'
  * but the membership variant is manual BoardSettings config that a local seed never
  * populates — so with no fallback the mock orders/paid webhook can't match a membership
  * order (webhooks/shopify/route.ts) and the dev fire tool 409s. Both the mock firer and
- * the inbound handler fall back to this id when shopifyMockActive(), so local membership
- * the membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
+ * the inbound handler fall back to this id when shopifyMockActive(), so a local
+ * membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
  */
 export const DEV_MOCK_MEMBERSHIP_VARIANT_ID = 'dev-mock-variant-membership';
 
@@ -203,6 +203,9 @@ export const config = {
     nextAuthSecret: () => requireEnv('NEXTAUTH_SECRET'),
     googleClientId: () => requireEnv('GOOGLE_CLIENT_ID'),
     googleClientSecret: () => requireEnv('GOOGLE_CLIENT_SECRET'),
+
+    // Receipt OCR
+    anthropicApiKey: (): string | null => process.env.ANTHROPIC_API_KEY || null,
 
     // Kiosk
     kioskPublicKey: (): string | null => process.env.KIOSK_PUBLIC_KEY || null,
@@ -241,6 +244,9 @@ export const config = {
     // unavailable (503), the same failure as a missing object. The key has a
     // default so only the bucket must be wired per-env.
     agreementPdfBucket: (): string | null => process.env.AGREEMENT_PDF_S3_BUCKET || null,
+    // Receipt files: the private bucket, and the flag sending new files to it.
+    receiptFilesBucket: (): string | null => process.env.RECEIPT_FILES_S3_BUCKET || null,
+    receiptFilesS3: (): boolean => process.env.RECEIPT_FILES_S3 === 'true',
     agreementPdfKey: (): string => process.env.AGREEMENT_PDF_S3_KEY || 'membership-agreement.pdf',
 
     // Zoho Sign — membership-agreement e-signing. The three OAuth secrets are
@@ -258,8 +264,8 @@ export const config = {
     // interstitial + its webhook endpoint. Always false in prod. See zohoMockActiveEnv.
     zohoMockActive: (): boolean => zohoMockActiveEnv(),
     // Sign flow is usable when real Zoho is configured OR the dev mock is active.
-    // Gates getOrCreateContractSigningUrl + syncContractStatus (replaces the bare
-    // zohoConfigured() checks so the mock can drive them in dev).
+    // Gates getOrCreateContractSigningUrl + syncContractStatus, rather than bare
+    // zohoConfigured() checks, so the mock can drive them in dev.
     zohoAvailable: (): boolean => zohoConfiguredEnv() || zohoMockActiveEnv(),
 
     // Cron — shared secret gating the session-less cron routes (see cronAuth.ts).
@@ -317,6 +323,9 @@ export const config = {
     // True ONLY on CHECKIN_ENV=local (see shopifyMockActiveEnv). Gates /api/dev/shopify/*
     // + the dev tool + the synthetic dev-mock variant fallbacks. Always false on dev and prod.
     shopifyMockActive: (): boolean => shopifyMockActiveEnv(),
+    // True ONLY on CHECKIN_ENV=local, where no QuickBooks company is reachable: the
+    // bucket form's Class picker lists fixed stand-in Classes. Always false on dev and prod.
+    quickBooksMockActive: (): boolean => readCheckinEnv() === 'local',
 
     // True when the dev/local background-check mock stands in for Averity (consent URL
     // unset, non-prod). Selects the mock provider (in-app consent link) and gates
@@ -336,9 +345,6 @@ export const config = {
     // unset/unrecognized value; cloud-dev pages are additionally behind the
     // org-member login gate.
     devToolsActive: (): boolean => readCheckinEnv() !== 'prod',
-    // Optional CSV participant import module (page + API). Off unless CSV_IMPORT_ENABLED=true;
-    // when off the page and its routes 404.
-    csvImportEnabled: (): boolean => process.env.CSV_IMPORT_ENABLED === 'true',
     // True only on a developer laptop. Gates offline credential login + keyless kiosk.
     isLocal: (): boolean => readCheckinEnv() === 'local',
     // True on ops-stg (CHECKIN_ENV=stg; see isStagingEnv) — gates the access

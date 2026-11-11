@@ -4,18 +4,6 @@ export * from "./lib/db";
 export * from "./lib/gtin";
 export * from "./lib/db/schema";
 
-export * from "./lib/repositories/inventoryRepository";
-export * from "./lib/repositories/locationRepository";
-export * from "./lib/repositories/orgEventsRepository";
-export * from "./lib/repositories/provisionalItemRepository";
-export * from "./lib/repositories/provisionalResolutionRepository";
-export * from "./lib/repositories/receiveQueueRepository";
-
-export * from "./lib/services/inventoryService";
-export * from "./lib/services/locationService";
-export * from "./lib/services/provisionalItemService";
-export * from "./lib/services/receiptService";
-export * from "./lib/services/receiveQueueService";
 export * from "./lib/services/orgEventConsumer";
 
 export * from "./workflows/index";
@@ -26,8 +14,10 @@ export * as routes from "./routes";
 export {
   configureLocalInventory,
   getPrincipal,
-  getOrg,
   getOrgId,
+  getNavCounts,
+  inventoryApply,
+  openBackordersByReceipt,
 } from "./runtime";
 export type {
   InventoryPrincipal,
@@ -40,3 +30,5 @@ export type {
   OrgEventRecord,
   CatalogEventSource,
 } from "./contract";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

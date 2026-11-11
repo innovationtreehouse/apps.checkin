@@ -93,8 +93,8 @@ closing year is always one more, so the label is formatted, never stored. An int
 rather than a date keeps the value honest: a stored date would be a second copy of
 the board's boundary setting.
 
-Programs use the same integer under the same field name, `appliesToYear`
-(`PROGRAM_MEMBERSHIP_YEAR.md`), so a family reads one `2026-2027` for a program's
+Programs use the same integer under the same field name, `Program.appliesToYear`,
+so a family reads one `2026-2027` for a program's
 year and for the year their dues cover.
 
 Two pure helpers carry the arithmetic: the membership year a date falls in, and the
@@ -344,6 +344,5 @@ year from a different timestamp.
 
 Issue [#1655](https://github.com/innovationtreehouse/checkin/issues/1655), the
 `KNOWN LIMIT` recorded on `settledThisCycleWhere`. Shares its representation with
-[#1484](https://github.com/innovationtreehouse/checkin/issues/1484), designed in
-`PROGRAM_MEMBERSHIP_YEAR.md`. Builds on the coverage model of #1812 and the grant
+[#1484](https://github.com/innovationtreehouse/checkin/issues/1484). Builds on the coverage model of #1812 and the grant
 path of #2003. The variant reconcilers it touches are those of #625, #1293 and #1349.

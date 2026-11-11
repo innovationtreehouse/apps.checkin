@@ -3,16 +3,13 @@
  */
 /**
  * Unit tests for renewal.ts edge logic (prisma mocked, no DB):
- *   - householdBgIsFresh: the unset-policy short-circuits (recheckMonths<=0, null
- *     boundary), and the `gte` threshold boundary (a background check exactly at
- *     the threshold counts as fresh).
  *   - beginRenewal: a process not in PENDING_RENEWAL → RenewalError wrong_phase;
  *     a DENIED household (raised) or one with a BLOCKED application is refused;
  *     every other path lands at PENDING_EXTERNAL_ACTION (a fresh agreement is
- *     signed each cycle), only a still-valid background check pre-stamps
- *     bgClearedAt, and the external advance is re-run.
+ *     signed each cycle), then the household is settled on its people's checks
+ *     and the external advance is re-run.
  */
-import { householdBgIsFresh, beginRenewal, isRenewalSeason, RenewalError, bgValidUntilBoundary, membershipYearCycle, membershipYearCycleForLabel, coveredThrough, runRenewalSweep } from '@/lib/membership/renewal';
+import { beginRenewal, grantableYears, RenewalError, bgValidUntilBoundary, membershipYearCycle, membershipYearCycleForLabel, coveredThrough, runRenewalSweep } from '@/lib/membership/renewal';
 import { IN_FLIGHT_RENEWAL, handledThisCycleWhere } from '@/lib/membership/lifecycle';
 
 const mockTx = {
@@ -24,7 +21,6 @@ const mockTx = {
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
-        person: { findFirst: jest.fn() },
         orgMembershipProcess: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
         orgMembership: { findUnique: jest.fn(), findMany: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
@@ -34,6 +30,8 @@ jest.mock('@/lib/prisma', () => ({
 
 jest.mock('@/lib/membership/external', () => ({ advanceExternalIfComplete: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({ raiseDeniedHouseholdActivity: jest.fn() }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
 
 jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
@@ -48,6 +46,10 @@ const { notifyReviewers, applyVolunteerFamilyStatus } = require('@/lib/membershi
 const { advanceExternalIfComplete } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { logBackendError } = require('@/lib/logger');
 
 // Mirrors the module-private monthsBefore in renewal.ts.
 function monthsBefore(date: Date, months: number): Date {
@@ -57,53 +59,6 @@ function monthsBefore(date: Date, months: number): Date {
 }
 
 beforeEach(() => jest.clearAllMocks());
-
-describe('householdBgIsFresh', () => {
-    const boundary = new Date(Date.UTC(2026, 8, 1)); // 2026-09-01
-
-    it('recheckMonths = 0 → not fresh, and never queries (policy unset)', async () => {
-        // Even a recent background check on file must not count when the board hasn't set the policy.
-        prisma.person.findFirst.mockResolvedValue({ id: 1 });
-
-        const result = await householdBgIsFresh(42, boundary, 0);
-
-        expect(result).toBe(false);
-        expect(prisma.person.findFirst).not.toHaveBeenCalled();
-    });
-
-    it('no boundary → not fresh, and never queries (membership year unset)', async () => {
-        // An unset boundary must not become "now": that would measure freshness against
-        // a boundary the board never configured and hand out the shortcut.
-        prisma.person.findFirst.mockResolvedValue({ id: 1 });
-
-        const result = await householdBgIsFresh(42, null, 12);
-
-        expect(result).toBe(false);
-        expect(prisma.person.findFirst).not.toHaveBeenCalled();
-    });
-
-    it('a lead with a background check at exactly the threshold → fresh (gte boundary)', async () => {
-        prisma.person.findFirst.mockResolvedValue({ id: 1 });
-
-        const result = await householdBgIsFresh(42, boundary, 12);
-
-        expect(result).toBe(true);
-        // The boundary is inclusive (gte), and the threshold is boundary - recheckMonths.
-        expect(prisma.person.findFirst).toHaveBeenCalledWith(
-            expect.objectContaining({
-                where: expect.objectContaining({
-                    householdId: 42,
-                    lastBackgroundCheck: { gte: monthsBefore(boundary, 12) },
-                }),
-            }),
-        );
-    });
-
-    it('no lead with a fresh-enough background check → not fresh', async () => {
-        prisma.person.findFirst.mockResolvedValue(null);
-        expect(await householdBgIsFresh(42, boundary, 12)).toBe(false);
-    });
-});
 
 describe('bgValidUntilBoundary', () => {
     const boundary = new Date(Date.UTC(2000, 7, 1)); // Aug 1 (year ignored — month/day only)
@@ -214,25 +169,25 @@ describe('membershipYearCycleForLabel', () => {
     });
 });
 
-describe('isRenewalSeason', () => {
+describe('grantableYears', () => {
     // Boundary month/day = Sep 1; lead window is 2 months → season opens Jul 1.
-    const boundaryConfig = new Date(Date.UTC(2020, 8, 1)); // year is ignored (month/day only)
+    const boundaryConfig = new Date(Date.UTC(2020, 8, 1));
+    const inProgress2026 = { year: 2026, label: '2026-2027' };
+    const coming2027 = { year: 2027, label: '2027-2028' };
 
-    it('no boundary configured → not renewal season', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
-        expect(await isRenewalSeason(new Date(Date.UTC(2026, 7, 15)))).toBe(false);
+    it.each([
+        ['off season', Date.UTC(2027, 2, 15), [inProgress2026]],
+        ['the day before the window opens', Date.UTC(2027, 5, 30), [inProgress2026]],
+        ['the day the window opens', Date.UTC(2027, 6, 1), [inProgress2026, coming2027]],
+        ['the day before the boundary', Date.UTC(2027, 7, 31), [inProgress2026, coming2027]],
+        ['the boundary day', Date.UTC(2027, 8, 1), [coming2027]],
+        ['the day after the boundary', Date.UTC(2027, 8, 2), [coming2027]],
+    ])('%s', (_label, now, expected) => {
+        expect(grantableYears(boundaryConfig, new Date(now))).toEqual(expected);
     });
 
-    it('inside the 2-month lead window → renewal season', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundaryConfig });
-        // 2026-08-01 is within [2026-07-01, 2026-09-01).
-        expect(await isRenewalSeason(new Date(Date.UTC(2026, 7, 1)))).toBe(true);
-    });
-
-    it('before the lead window opens → not renewal season', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundaryConfig });
-        // 2026-06-30 is one day before the window opens.
-        expect(await isRenewalSeason(new Date(Date.UTC(2026, 5, 30)))).toBe(false);
+    it('offers no year with no boundary set', () => {
+        expect(grantableYears(null, new Date(Date.UTC(2027, 2, 15)))).toEqual([]);
     });
 });
 
@@ -266,54 +221,38 @@ describe('beginRenewal', () => {
             prisma.orgMembershipProcess.findUniqueOrThrow.mockResolvedValue({ ...pending, status: 'PENDING_PAYMENT' });
         });
 
-        it('valid background check → PENDING_EXTERNAL_ACTION with bgClearedAt stamped: only the signature is left', async () => {
-            prisma.person.findFirst.mockResolvedValue({ id: 1 }); // a lead with a valid background check
-
+        it('lands at PENDING_EXTERNAL_ACTION without stamping, then settles the household on its people\'s checks', async () => {
             await beginRenewal(5, 42);
 
-            expect(mockTx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-                where: { id: 5, status: 'PENDING_RENEWAL' },
-                data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', bgClearedAt: expect.any(Date) }),
-            });
-            // The advance's PENDING_PAYMENT transition matches the volunteer
-            // allowlist (#874) and pings reviewers — beginRenewal does neither.
-            expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
-            expect(notifyReviewers).not.toHaveBeenCalled();
-        });
-
-        it('expired background check → PENDING_EXTERNAL_ACTION without bgClearedAt: sign + request a new background check', async () => {
-            prisma.person.findFirst.mockResolvedValue(null); // no valid background check on file
-            prisma.orgMembershipProcess.findUniqueOrThrow.mockResolvedValue({ ...pending, status: 'PENDING_EXTERNAL_ACTION' });
-
-            await beginRenewal(5, 42);
-
-            expect(mockTx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-                where: { id: 5, status: 'PENDING_RENEWAL' },
-                data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION' }),
-            });
             expect(mockTx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
                 where: { id: 5, status: 'PENDING_RENEWAL' },
                 data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
             });
+            // Settle stamps a qualifying household, and blocks one whose adult is disputed.
+            expect(settleHouseholdBg).toHaveBeenCalledWith(7);
             expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
-            // Nothing to review until the member consents on Averity — the
-            // advance (advanceExternalIfComplete) pings, same as INITIAL.
             expect(notifyReviewers).not.toHaveBeenCalled();
         });
 
+        it('a failed settle is logged and the committed renewal still returns', async () => {
+            settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
+
+            await expect(beginRenewal(5, 42)).resolves.toEqual({ ...pending, status: 'PENDING_PAYMENT' });
+            expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 5 });
+        });
+
         it('double-submit loser (count 0) → no audit, no allowlist match, no ping', async () => {
-            prisma.person.findFirst.mockResolvedValue({ id: 1 });
             mockTx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
 
             await beginRenewal(5, 42);
 
             expect(mockTx.auditLog.create).not.toHaveBeenCalled();
+            expect(settleHouseholdBg).not.toHaveBeenCalled();
             expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
         });
 
         it('re-runs the external advance and returns its result when the gate is already met (F-26)', async () => {
-            prisma.person.findFirst.mockResolvedValue({ id: 1 });
             advanceExternalIfComplete.mockResolvedValue({ ...pending, status: 'PENDING_PAYMENT' });
 
             await expect(beginRenewal(5, 42)).resolves.toEqual({ ...pending, status: 'PENDING_PAYMENT' });
@@ -321,7 +260,6 @@ describe('beginRenewal', () => {
         });
 
         it('a DENIED household is refused, nothing written, and raised to the board', async () => {
-            prisma.person.findFirst.mockResolvedValue(null);
             mockTx.$queryRaw.mockResolvedValue([{ status: 'DENIED' }]);
 
             await expect(beginRenewal(5, 42)).rejects.toMatchObject({ code: 'denied' });
@@ -330,7 +268,6 @@ describe('beginRenewal', () => {
         });
 
         it('a household with a BLOCKED application is refused (F-30)', async () => {
-            prisma.person.findFirst.mockResolvedValue(null);
             mockTx.orgMembershipProcess.findFirst.mockResolvedValue({ id: 3 });
 
             await expect(beginRenewal(5, 42)).rejects.toMatchObject({ code: 'blocked' });
@@ -356,7 +293,7 @@ describe('runRenewalSweep skip-probe shape', () => {
         expect(arg.select.processes.where).toEqual({
             OR: [
                 { kind: 'RENEWAL', status: { in: [...IN_FLIGHT_RENEWAL] } },
-                handledThisCycleWhere(windowStart),
+                handledThisCycleWhere(2026, windowStart),
             ],
         });
     });

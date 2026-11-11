@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Alert, Button, Card, Checkbox, Container, Group, Radio, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
+import { useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
-import { clearingApprovals, establishedSubject } from "@/lib/membership/approvals";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 interface Person {
@@ -16,15 +17,13 @@ interface Person {
     email: string | null;
 }
 // Shape returned by GET /api/membership/reviews (security-stripped model rows).
-// A household review returns the leads (parents); a PERSON_BG review returns the
-// subject person (name + household context) instead. Children are never sent.
+// Every item is a check review. One with a person returns them (name + household);
+// one a household asked for also returns that household and its leads, the people
+// its first reviewer names from. Children are never sent.
 interface QueueItem {
   id: number;
   subjectPerson: { id: number; name: string | null; householdId: number | null; household: { name: string | null } | null } | null;
-  orgMembership: { household: { name: string | null; intakeNotes: string | null; householdMembers: Person[] } | null } | null;
-  // Subject ids only — enough to count approvals per lead, and it says nothing
-  // about WHO approved (see the route comment).
-  attestations: { subjectPersonId: number | null }[];
+  requestedForHousehold: { name: string | null; intakeNotes: string | null; householdMembers: Person[] } | null;
   _count: { attestations: number };
 }
 
@@ -32,62 +31,85 @@ export default function MembershipReviewPage() {
   const { data: session, status: sessionStatus } = useSession();
   const canReset = !!session?.user?.isBoardMember;
   // No h1 here: this page always renders inside the Membership Ops layout, whose
-  // tab bar already labels it (the standalone /membership/review route is gone).
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [forbidden, setForbidden] = useState(false);
+  // tab bar already labels it.
+  const { data, error: loadError, status: loadStatus, reload } = useLoad<{ queue?: QueueItem[] }>(
+    sessionStatus === "authenticated" ? "/api/membership/reviews" : null,
+  );
+  const queue = data?.queue ?? [];
   const [busyId, setBusyId] = useState<number | null>(null);
   const [volunteer, setVolunteer] = useState<Record<number, boolean>>({});
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
-  // processId -> the lead this reviewer picked, before anyone has settled the subject.
+  // processId -> the lead this reviewer picked on a review that names nobody yet.
   const [subjects, setSubjects] = useState<Record<number, number>>({});
   // Tagged with the acting row's processId so the result renders in that card, not off-screen at page top.
   const [message, setMessage] = useState<{ processId: number; text: string; tone: AlertTone } | undefined>();
   const [showMine, setShowMine] = useState(false);
   // Reviews this reviewer already approved that have not cleared.
-  const [mine, setMine] = useState<QueueItem[]>([]);
+  const { data: mineAnswer, error: mineError, reload: reloadMine } = useLoad<{ queue?: QueueItem[] }>(showMine ? "/api/membership/reviews?mine=1" : null);
+  const mine = mineAnswer?.queue ?? [];
+  const [showRejected, setShowRejected] = useState(false);
+  // Blocked reviews whose rejection is this reviewer's.
+  const { data: rejectedAnswer, error: rejectedError, reload: reloadRejected } = useLoad<{ queue?: QueueItem[] }>(showRejected ? "/api/membership/reviews?rejected=1" : null);
+  const rejected = rejectedAnswer?.queue ?? [];
 
-  const fetchQueue = useCallback(() =>
-    fetch("/api/membership/reviews")
-      .then(async (res) => {
-        if (res.status === 403) setForbidden(true);
-        else if (res.ok) setQueue((await res.json()).queue || []);
-      })
-      .finally(() => setLoading(false)), []);
-
-  const load = () => {
-    setLoading(true);
-    return fetchQueue();
+  const changeToApprove = async (processId: number) => {
+    setBusyId(processId);
+    try {
+      const res = await fetch("/api/membership/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, result: "APPROVE" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Your answer is now an approval. The review needs one more reviewer to clear." });
+        notifyNavRefresh();
+      } else {
+        notifications.show({ color: "red", message: data.error || "Could not change your answer.", autoClose: false });
+      }
+      reload();
+      reloadRejected();
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const loadMine = useCallback(() =>
-    fetch("/api/membership/reviews?mine=1")
-      .then(async (res) => { if (res.ok) setMine((await res.json()).queue || []); }), []);
+  // Changing a rejection starts the review over: every earlier decision is discarded
+  // and this approval is the first of the two it needs again.
+  const confirmChangeToApprove = (item: QueueItem) =>
+    modals.openConfirmModal({
+      title: "Change your rejection to an approval?",
+      children: (
+        <Text size="sm">
+          This discards every decision recorded on <strong>{applicantLabel(item)}</strong>&apos;s review,
+          your rejection included, and records your approval as the first of two. Another
+          independent reviewer must still approve before the check clears.
+        </Text>
+      ),
+      labels: { confirm: "Change to approve", cancel: "Cancel" },
+      confirmProps: { color: "orange" },
+      onConfirm: () => changeToApprove(item.id),
+    });
 
-  useEffect(() => {
-    if (sessionStatus === "authenticated") fetchQueue();
-  }, [sessionStatus, fetchQueue]);
-
-  useEffect(() => {
-    if (showMine) loadMine();
-  }, [showMine, loadMine]);
-
-  const resetReview = async (processId: number) => {
+  const resetReview = async (processId: number, reason: string, wrongPerson: boolean) => {
     setBusyId(processId);
     try {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action: "reset" }),
+        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Review started over — reviewers have been notified." });
-        await Promise.all([load(), loadMine()]);
+        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
+        await Promise.all([reload(), reloadMine()]);
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: 4000 });
-        await loadMine();
+        notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: false });
+        reloadMine();
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -96,20 +118,40 @@ export default function MembershipReviewPage() {
     }
   };
 
-  const confirmReset = (item: QueueItem) =>
-    modals.openConfirmModal({
+  const confirmReset = (item: QueueItem) => {
+    let reason = "";
+    let wrongPerson = false;
+    const modalId = modals.openConfirmModal({
       title: "Start this background-check review over?",
       children: (
-        <Text size="sm">
-          This discards all {item._count.attestations} approval(s) recorded for{" "}
-          <strong>{applicantLabel(item)}</strong> — yours included — and asks the reviewers to start
-          again. The check has not cleared, so nothing else changes.
-        </Text>
+        <Stack gap="xs">
+          <Text size="sm">
+            This discards all {item._count.attestations} approval(s) recorded for{" "}
+            <strong>{applicantLabel(item)}</strong> — yours included — and asks the reviewers to start
+            again. The check has not cleared, so nothing else changes.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+          {item.requestedForHousehold && item.subjectPerson && (
+            <Checkbox
+              label="The review names the wrong person — the next reviewer names again"
+              onChange={(e) => { wrongPerson = e.currentTarget.checked; }}
+            />
+          )}
+        </Stack>
       ),
       labels: { confirm: "Start over", cancel: "Cancel" },
       confirmProps: { color: "orange" },
-      onConfirm: () => resetReview(item.id),
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to start a review over.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        resetReview(item.id, reason.trim(), wrongPerson);
+      },
     });
+  };
 
   const undoApproval = async (processId: number, reason: string) => {
     setBusyId(processId);
@@ -124,9 +166,10 @@ export default function MembershipReviewPage() {
         notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: false });
       }
-      await Promise.all([load(), loadMine()]);
+      reload();
+      reloadMine();
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
     } finally {
@@ -142,7 +185,7 @@ export default function MembershipReviewPage() {
         <Stack gap="xs">
           <Text size="sm">
             This withdraws your approval of <strong>{applicantLabel(item)}</strong>. The review goes back
-            to waiting for two approvals, and anyone it named is cleared with it.
+            to waiting for two approvals. The person it names stays named.
           </Text>
           <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
         </Stack>
@@ -152,7 +195,7 @@ export default function MembershipReviewPage() {
       closeOnConfirm: false,
       onConfirm: () => {
         if (!reason.trim()) {
-          notifications.show({ color: "red", message: "A reason is required to undo an approval.", autoClose: 4000 });
+          notifications.show({ color: "red", message: "A reason is required to undo an approval.", autoClose: false });
           return;
         }
         modals.close(modalId);
@@ -175,11 +218,11 @@ export default function MembershipReviewPage() {
       if (res.ok) {
         notifications.show({ message: result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified." });
         setSubjects((s) => { const next = { ...s }; delete next[processId]; return next; });
-        await load();
+        reload();
         notifyNavRefresh();
       } else if (data.code === "already_attested") {
-        notifications.show({ color: "red", message: data.error || "Already attested.", autoClose: 4000 });
-        await load();
+        notifications.show({ color: "red", message: data.error || "Already attested.", autoClose: false });
+        reload();
       } else {
         setMessage({ processId, text: data.error || "Could not record your attestation.", tone: "error" });
       }
@@ -190,38 +233,31 @@ export default function MembershipReviewPage() {
     }
   };
 
-  // Who this review is about — the PERSON_BG subject, else the applicant household.
+  // Who this review is about — its person, else the household that asked for it.
   const applicantLabel = (item: QueueItem) =>
     item.subjectPerson
       ? item.subjectPerson.name || `Person #${item.subjectPerson.id}`
-      : item.orgMembership?.household?.name || `Household (application #${item.id})`;
+      : item.requestedForHousehold?.name || `Household (review #${item.id})`;
 
-  // Who this review is about, once someone has approved. A review covers ONE adult:
-  // the first approval fixes the subject, so a later reviewer confirms that person
-  // rather than choosing again.
-  const settledSubject = (item: QueueItem) => establishedSubject(item.attestations);
+  // A queue review only ever holds approvals.
+  const approvalsSoFar = (item: QueueItem) => item._count.attestations;
 
-  // Approvals that count toward clearing — a household's unnamed or other-adult
-  // approvals are recorded but don't, so this can sit below the attestation count.
-  const approvalsSoFar = (item: QueueItem) => clearingApprovals(item.attestations, !!item.subjectPerson);
-
-  // The subject this reviewer is about to attest — the settled one if there is one,
-  // else whichever lead they picked.
-  const chosenSubject = (item: QueueItem) => settledSubject(item) ?? subjects[item.id] ?? null;
+  // The person this reviewer is deciding on — the named one, else the lead they picked.
+  const chosenSubject = (item: QueueItem) => item.subjectPerson?.id ?? subjects[item.id] ?? null;
 
   const pickSubject = (processId: number, personId: number) =>
     setSubjects((s) => ({ ...s, [processId]: personId }));
 
-  // The wire carries a list; a household review names exactly one adult, and a
-  // PERSON_BG or a rejection names nobody.
+  // A review with no person yet takes the picked lead on approve and reject alike.
   const subjectIdsFor = (processId: number) => {
     const item = queue.find((q) => q.id === processId);
-    const chosen = item && !item.subjectPerson ? chosenSubject(item) : null;
-    return chosen === null ? [] : [chosen];
+    const picked = item && !item.subjectPerson ? subjects[processId] : undefined;
+    return picked === undefined ? [] : [picked];
   };
 
-  const leadName = (item: QueueItem, personId: number) => {
-    const p = (item.orgMembership?.household?.householdMembers ?? []).find((m) => m.id === personId);
+  const personName = (item: QueueItem, personId: number) => {
+    if (item.subjectPerson?.id === personId) return item.subjectPerson.name || `Person #${personId}`;
+    const p = (item.requestedForHousehold?.householdMembers ?? []).find((m) => m.id === personId);
     return p?.name || p?.email || `Person #${personId}`;
   };
 
@@ -239,21 +275,21 @@ export default function MembershipReviewPage() {
         <Text size="sm">
           {result === "REJECT" ? (
             <>
-              This blocks <strong>{who}</strong>&apos;s membership and notifies the board. The
+              This records a rejection of {personName(item, chosenSubject(item)!)}&apos;s background check,
+              which holds <strong>{who}</strong>&apos;s membership and notifies the board. The
               applicant is not told the reason.
             </>
           ) : clearing ? (
             <>
-              You are the second reviewer for <strong>{who}</strong>. Attesting completes the clearance,
-              records it against {item.subjectPerson ? "the subject" : leadName(item, chosenSubject(item)!)},
-              opens payment (or activates the membership if the fee is already paid), and emails the
-              family. It cannot be undone.
+              You are the second reviewer for <strong>{who}</strong>. Attesting completes the clearance and
+              records it against {personName(item, chosenSubject(item)!)}. If their household is waiting
+              on this check, payment opens (or the membership activates if the fee is already paid) and the
+              family is emailed. It cannot be undone.
             </>
           ) : (
             <>
-              This records your approval of <strong>{who}</strong>&apos;s background check
-              {item.subjectPerson ? "" : ` for ${leadName(item, chosenSubject(item)!)}`}. A second
-              reviewer must also approve the same person before the clearance completes.
+              This records your approval of {personName(item, chosenSubject(item)!)}&apos;s background check.
+              A second reviewer must also approve the same person before the clearance completes.
             </>
           )}
         </Text>
@@ -264,11 +300,11 @@ export default function MembershipReviewPage() {
     });
   };
 
-  if (sessionStatus === "loading" || (loading && sessionStatus === "authenticated")) {
+  if (sessionStatus === "loading" || (sessionStatus === "authenticated" && data === null && !loadError && loadStatus !== 403)) {
     return <PageLoader />;
   }
 
-  if (forbidden || sessionStatus === "unauthenticated") {
+  if (loadStatus === 403 || sessionStatus === "unauthenticated") {
     return (
       <Container size="xs" py="xl">
         <Card withBorder radius="md" padding="xl" ta="center">
@@ -282,11 +318,12 @@ export default function MembershipReviewPage() {
   return (
     <Container size="md" pb="md">
       <Text c="dimmed">
-        Review each applicant&apos;s background check on Averity, then attest below. A review covers
-        one adult — name the person whose report you read, and the check is recorded against them and
-        nobody else. Two independent reviewers must approve the same person. If anything is
-        concerning, choose <strong>Reject</strong> — the board is notified and the applicant is not
-        told the reason.
+        Review each background check on Averity, then decide below. A review covers one adult. When a
+        household asked for the check, the first reviewer names the person whose report they read, on
+        an approval or a rejection, and the check is recorded against them and nobody else. Two
+        independent reviewers must approve. If anything is concerning, choose <strong>Reject</strong> —
+        the board is notified and the applicant is not told the reason. If the named person is wrong,
+        ask the board to start the review over.
       </Text>
 
       <Checkbox
@@ -296,45 +333,63 @@ export default function MembershipReviewPage() {
         label="Show incomplete reviews I've already approved"
       />
 
-      {showMine && (
+      <Checkbox
+        mt="xs"
+        checked={showRejected}
+        onChange={(e) => setShowRejected(e.currentTarget.checked)}
+        label="Show blocked reviews I rejected"
+      />
+
+      {showRejected && (
         <Stack mt="md">
-          {mine.length === 0 ? (
-            <Text size="sm" c="dimmed">None — every review you approved has cleared.</Text>
-          ) : mine.map((item) => {
-            const settled = settledSubject(item);
-            // Only a household review names its subject; an unnamed approval there counts toward nobody.
-            const unnamed = !item.subjectPerson && item.attestations.some((a) => a.subjectPersonId === null);
-            return (
-              <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
-                <Text fw={700}>{applicantLabel(item)}</Text>
-                <Text size="xs" c="dimmed" mt={4}>
-                  You approved this. {approvalsSoFar(item)}/2 approvals so far
-                  {settled !== null ? ` · for ${leadName(item, settled)}` : ""}.
-                </Text>
-                {unnamed && (
-                  <Text size="sm" c="orange" mt={4}>
-                    An approval here names nobody, so it can never count toward clearance. Start the review over.
-                  </Text>
-                )}
-                <Group mt="sm">
-                  <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmUndo(item)}>
-                    Undo my approval
-                  </Button>
-                  {canReset ? (
-                    <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
-                      Start review over
-                    </Button>
-                  ) : (
-                    <Text size="xs" c="dimmed">A board member can start this review over.</Text>
-                  )}
-                </Group>
-              </Card>
-            );
-          })}
+          {rejectedError && <LoadError what="the reviews you rejected" message={rejectedError} onRetry={reloadRejected} />}
+          {rejectedAnswer === null ? null : rejected.length === 0 ? (
+            <Text size="sm" c="dimmed">None — no blocked review carries your rejection.</Text>
+          ) : rejected.map((item) => (
+            <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
+              <Text fw={700}>{applicantLabel(item)}</Text>
+              <Text size="xs" c="dimmed" mt={4}>You rejected this, so it is blocked.</Text>
+              <Group mt="sm">
+                <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmChangeToApprove(item)}>
+                  Change to approve
+                </Button>
+              </Group>
+            </Card>
+          ))}
         </Stack>
       )}
 
-      {queue.length === 0 ? (
+      {showMine && (
+        <Stack mt="md">
+          {mineError && <LoadError what="the reviews you approved" message={mineError} onRetry={reloadMine} />}
+          {mineAnswer === null ? null : mine.length === 0 ? (
+            <Text size="sm" c="dimmed">None — every review you approved has cleared.</Text>
+          ) : mine.map((item) => (
+            <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
+              <Text fw={700}>{applicantLabel(item)}</Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                You approved this. {approvalsSoFar(item)}/2 approvals so far.
+              </Text>
+              <Group mt="sm">
+                <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmUndo(item)}>
+                  Undo my approval
+                </Button>
+                {canReset ? (
+                  <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
+                    Start review over
+                  </Button>
+                ) : (
+                  <Text size="xs" c="dimmed">A board member can start this review over.</Text>
+                )}
+              </Group>
+            </Card>
+          ))}
+        </Stack>
+      )}
+
+      {loadError && <Stack mt="md"><LoadError what="the review queue" message={loadError} onRetry={reload} /></Stack>}
+
+      {data === null ? null : queue.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center" mt="md">
           <Text c="dimmed">Nothing awaiting your review right now.</Text>
         </Card>
@@ -342,46 +397,28 @@ export default function MembershipReviewPage() {
         <Stack mt="md">
           {queue.map((item) => {
             const subject = item.subjectPerson;
-            const parents = item.orgMembership?.household?.householdMembers ?? [];
-            const notes = item.orgMembership?.household?.intakeNotes?.trim();
+            const requested = item.requestedForHousehold;
+            const leads = requested?.householdMembers ?? [];
+            const notes = requested?.intakeNotes?.trim();
             return (
             <Card key={item.id} withBorder radius="md" padding="lg">
-              {subject ? (
-                <>
-                  <Text fw={700} fz="lg">{applicantLabel(item)}</Text>
-                  <Text size="sm" c="dimmed" mt={4}>
-                    Background check for an individual · {subject.household?.name ? `Household: ${subject.household.name}` : "No household on file"}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text fw={700} fz="lg">{applicantLabel(item)}</Text>
-                  <Text size="sm" c="dimmed" mt={4}>
-                    {parents.length > 0
-                      ? parents.map((p) => `${p.name || "—"}${p.email ? ` <${p.email}>` : ""}`).join(", ")
-                      : "No parent contact on file."}
-                  </Text>
-                </>
-              )}
+              <Text fw={700} fz="lg">{applicantLabel(item)}</Text>
+              <Text size="sm" c="dimmed" mt={4}>
+                {subject
+                  ? `Background check for ${subject.name || `Person #${subject.id}`} · ${subject.household?.name ? `Household: ${subject.household.name}` : "No household on file"}`
+                  : leads.length > 0
+                    ? leads.map((p) => `${p.name || "—"}${p.email ? ` <${p.email}>` : ""}`).join(", ")
+                    : "No household lead on file."}
+              </Text>
               <Text size="xs" c="dimmed" mt={4}>{approvalsSoFar(item)}/2 approvals so far.</Text>
 
-              {/* Whose report did you read? The Averity report names its subject, and
-                  that name is the only record of who a household's check covered — so
-                  approving without one is refused by the server. Once someone has
-                  approved, the subject is settled and a later reviewer confirms that
-                  person; disagreeing means rejecting, not naming someone else. */}
+              {/* Whose report did you read? A review a household asked for names nobody
+                  until its first decision, approve or reject; the server refuses one
+                  without a name. Once named, a later reviewer decides on that person. */}
               {!subject && (
                 <Stack gap={4} mt="md">
-                  {settledSubject(item) !== null ? (
-                    <>
-                      <Text size="sm" fw={600}>This review is for {leadName(item, settledSubject(item)!)}</Text>
-                      <Text size="sm" c="dimmed">
-                        Named by the first reviewer. Approve only if the report you read is theirs —
-                        if it names someone else, reject so the board can sort it out.
-                      </Text>
-                    </>
-                  ) : parents.length === 0 ? (
-                    <Text size="sm" c="dimmed">No household leads on file — this application cannot be attested.</Text>
+                  {leads.length === 0 ? (
+                    <Text size="sm" c="dimmed">No household leads on file — this review cannot be decided.</Text>
                   ) : (
                     <Radio.Group
                       label="Whose check did you review?"
@@ -390,7 +427,7 @@ export default function MembershipReviewPage() {
                       onChange={(v) => pickSubject(item.id, Number(v))}
                     >
                       <Stack gap={4} mt={4}>
-                        {parents.map((p) => (
+                        {leads.map((p) => (
                           <Radio key={p.id} value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
                         ))}
                       </Stack>
@@ -399,15 +436,14 @@ export default function MembershipReviewPage() {
                 </Stack>
               )}
 
-              {/* Household-application concepts (intake note + volunteer-only mark)
-                  don't apply to a per-person BG check. */}
-              {!subject && notes && (
+              {/* The intake note and the volunteer-only mark belong to the household that asked for the check. */}
+              {requested && notes && (
                 <Alert color="yellow" variant="light" mt="md" title="From the applicant — “Anything else we should know?”">
                   <Text style={{ whiteSpace: "pre-wrap" }}>{notes}</Text>
                 </Alert>
               )}
 
-              {!subject && (
+              {requested && (
                 <Checkbox
                   my="md"
                   checked={!!volunteer[item.id]}
@@ -434,7 +470,7 @@ export default function MembershipReviewPage() {
                 >
                   Attest — approve this person
                 </Button>
-                <Button color="red" variant="light" disabled={busyId === item.id || !reviewNotes[item.id]?.trim()} onClick={() => confirmSubmit(item, "REJECT")}>
+                <Button color="red" variant="light" disabled={busyId === item.id || !reviewNotes[item.id]?.trim() || chosenSubject(item) === null} onClick={() => confirmSubmit(item, "REJECT")}>
                   Reject
                 </Button>
               </Group>

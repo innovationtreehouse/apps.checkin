@@ -1,9 +1,10 @@
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { screen, fireEvent, act } from "@testing-library/react";
 import { ModalsProvider } from "@mantine/modals";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import CompliancePage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so the confirmed action
@@ -49,14 +50,12 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText(/Everyone is in compliance/)).toBeInTheDocument();
   });
 
-  it("renders the network-error alert when the fetch rejects", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+  it("shows the failure and a retry when the load is refused", async () => {
+    global.fetch = jest.fn(async () => ({ ok: false, status: 403, ...jsonBody({ error: "Forbidden" }) }) as Response) as unknown as typeof fetch;
     renderPage();
 
-    expect(await screen.findByText("Network error loading compliance data.")).toBeInTheDocument();
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.anything());
-    spy.mockRestore();
+    expect(await screen.findByText("Couldn't load compliance data")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("labels the likely subject of a blanket-stamped household and never pre-selects one", async () => {
@@ -66,8 +65,8 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText("Rivera Household")).toBeInTheDocument();
     expect(screen.getByText(/Submitted their own consent/)).toBeInTheDocument();
     expect(screen.getByText(/No evidence either way/)).toBeInTheDocument();
-    // Both leads get a button — the evidence is a label, not a decision.
-    expect(screen.getAllByRole("button", { name: "Remove this date" })).toHaveLength(2);
+    // Board ruling B5/B25: the date is never changed in the app, so the list only labels evidence.
+    expect(screen.queryByRole("button", { name: "Remove this date" })).not.toBeInTheDocument();
     // The board's confirmed cutoff is the default, so the list starts narrowed.
     // Unfiltered on load: a list that already hides everything before the cutoff
     // cannot be used to confirm the cutoff.
@@ -85,27 +84,6 @@ describe("membership-audit/compliance page", () => {
     expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/api/membership-audit/compliance?bgClearedSince=2026-07-01");
   });
 
-  it("clears one lead's date through the existing board-gated PUT", async () => {
-    const fetchMock = mockFetchJson({
-      "/api/membership-audit/compliance": { blanketStamped },
-      "/api/membership-ops/participants/12": { ok: true },
-    });
-    renderPage();
-    await screen.findByText("Rivera Household");
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove this date" })[1]);
-    expect(await screen.findByText("Remove this background-check date?")).toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove the date" }));
-
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/membership-ops/participants/12",
-        expect.objectContaining({ method: "PUT", body: JSON.stringify({ lastBackgroundCheck: null }) }),
-      ),
-    );
-    expect(await screen.findByText("Date cleared")).toBeInTheDocument();
-  });
-
   it("shows merge-inherited dates as a separate, permanent list", async () => {
     mockFetchJson({
       "/api/membership-audit/compliance": {
@@ -119,5 +97,68 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText("Jo Chen")).toBeInTheDocument();
     expect(screen.getByText(/from Jo Chen \(duplicate\)/)).toBeInTheDocument();
     expect(screen.getByText("Unverified provenance")).toBeInTheDocument();
+  });
+
+  it("lists people with a disputed check, and the list alone is not the empty state", async () => {
+    mockFetchJson({
+      "/api/membership-audit/compliance": {
+        peopleWithDisputedCheck: [{ personId: 30, name: "Pat Lee", householdId: 5, programId: null, programName: null, reason: "BG_DISPUTED" }],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Background check disputed" })).toBeInTheDocument();
+    expect(screen.getByText("Pat Lee")).toBeInTheDocument();
+    expect(screen.queryByText(/Everyone is in compliance/)).not.toBeInTheDocument();
+  });
+});
+
+describe("the Cleared since filter while the list reloads", () => {
+  const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+  const household = (name: string) => [{ ...blanketStamped[0], householdName: name }];
+
+  it("stays mounted and focused while the filtered list loads", async () => {
+    let finish: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("bgClearedSince")) {
+        return new Promise<Response>((resolve) => { finish = () => resolve(answer({ blanketStamped: household("Narrowed Household") })); });
+      }
+      return answer({ blanketStamped });
+    }) as unknown as typeof fetch;
+    renderPage();
+    await screen.findByText("Rivera Household");
+
+    const input = screen.getByLabelText("Cleared since");
+    input.focus();
+    fireEvent.change(input, { target: { value: "2026-07-01" } });
+
+    expect(screen.getByLabelText("Cleared since")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    await act(async () => { finish(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(await screen.findByText("Narrowed Household")).toBeInTheDocument();
+    expect(screen.getByLabelText("Cleared since")).toBe(input);
+  });
+
+  it("keeps the latest date's rows when an earlier date answers last", async () => {
+    let finishEarlier: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const since = new URL(String(input), "http://localhost").searchParams.get("bgClearedSince");
+      if (since === "2026-06-01") {
+        return new Promise<Response>((resolve) => { finishEarlier = () => resolve(answer({ blanketStamped: household("June Household") })); });
+      }
+      if (since === "2026-07-01") return answer({ blanketStamped: household("July Household") });
+      return answer({ blanketStamped });
+    }) as unknown as typeof fetch;
+    renderPage();
+    await screen.findByText("Rivera Household");
+
+    const input = screen.getByLabelText("Cleared since");
+    fireEvent.change(input, { target: { value: "2026-06-01" } });
+    fireEvent.change(input, { target: { value: "2026-07-01" } });
+    expect(await screen.findByText("July Household")).toBeInTheDocument();
+
+    await act(async () => { finishEarlier(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.queryByText("June Household")).not.toBeInTheDocument();
+    expect(screen.getByText("July Household")).toBeInTheDocument();
   });
 });

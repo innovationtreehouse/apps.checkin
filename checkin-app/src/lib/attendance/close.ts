@@ -10,8 +10,8 @@ import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
 import { specTrace } from "@/lib/specTrace";
 import type { ScanOutcome } from "@/lib/attendance/scan";
 
-/** The last recorded keyholder's kiosk leave, audited like a web leave; the kiosk
- *  has no pick-list, so the handover is not named. */
+/** The last recorded keyholder's kiosk leave; the kiosk has no pick-list, so the
+ *  handover is not named. */
 export async function auditKioskLeave(db: DbClient, personId: number, visitId: number, isReplay: boolean, othersInside: number) {
     await db.auditLog.create({
         data: {
@@ -20,7 +20,7 @@ export async function auditKioskLeave(db: DbClient, personId: number, visitId: n
             tableName: "Visit",
             affectedEntityId: visitId,
             secondaryAffectedEntity: personId,
-            newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia("kiosk", isReplay), handoverToId: null, othersInside },
+            newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia(isReplay), handoverToId: null, othersInside },
         },
     });
 }
@@ -95,7 +95,7 @@ export async function processCloseRequest(
         return { kind: "checkout", person: participant, visit, closed: false, closeOffer: { reason: "unseen_checkins", unseen } };
     }
 
-    const closeId = await recordClose(db, { closedById: participant.id, via: closeVia("kiosk", isReplay) }, closedAt, clientEventId);
+    const closeId = await recordClose(db, { closedById: participant.id, via: closeVia(isReplay) }, closedAt, clientEventId);
     if (unseen.length > 0) {
         // The kiosk's roster predates these check-ins: the close may have swept
         // out someone still inside. Raised for review, never held.
@@ -121,13 +121,11 @@ export async function processCloseRequest(
     return { kind: "checkout", person: participant, visit, closed: true };
 }
 
-/** Who closed the facility, and through which path. `ownCheckout` is false
- *  when the closer ended someone else's visit, so no visit of theirs is the close. */
-export type FacilityCloser = { closedById: number; via: FacilityCloseVia; ownCheckout?: boolean };
+/** Who closed the facility, and through which path. */
+export type FacilityCloser = { closedById: number; via: FacilityCloseVia };
 
 /** The path a scan-route close came through. */
-export function closeVia(authType: string, isReplay: boolean): FacilityCloseVia {
-    if (authType !== "kiosk") return "WEB_CHECKOUT";
+export function closeVia(isReplay: boolean): FacilityCloseVia {
     // A replay reached the server from the kiosk's offline queue.
     return isReplay ? "KIOSK_OFFLINE" : "KIOSK";
 }
@@ -145,7 +143,7 @@ export async function recordClose(db: DbClient, closer: FacilityCloser, closeTim
     // The closer's own visit the close ends: their latest departure at or before
     // it, with no time bound (a late kiosk confirm can come long after the leave),
     // or one the overnight sweep departed after it.
-    const closerVisit = closer.ownCheckout === false ? null : await db.visit.findFirst({
+    const closerVisit = await db.visit.findFirst({
         where: {
             personId: closer.closedById,
             deletedAt: null,
@@ -178,10 +176,14 @@ export type DepartureChange = {
     oldDepartedVia: string | null;
     departedAt: Date;
     departedVia: string;
+    /** The close whose departure this one replaced, on a pull-back. */
+    supersededCloseId?: number | null;
 };
 
 /** Log each departure a facility close set, or a correction of it moved, with
- *  its before and after, against the close record. */
+ *  its before and after, against the close record. The log is history and is
+ *  never edited: which close ended a visit is the visit's own facilityCloseId,
+ *  and a pull-back's row names the close it replaced. */
 export async function logCloseDepartures(
     db: DbClient,
     facilityCloseId: number,
@@ -199,7 +201,7 @@ export async function logCloseDepartures(
             affectedEntityId: facilityCloseId,
             secondaryAffectedEntity: c.id,
             oldData: { visitId: c.previousVisitId ?? c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
-            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...note },
+            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...(c.supersededCloseId ? { supersededCloseId: c.supersededCloseId } : {}), ...note },
         })),
     });
 }
@@ -233,7 +235,7 @@ const liveBadgeArrival = Prisma.sql`(v."arrivedVia" IS NOT DISTINCT FROM 'SCANNE
  *
  *  An arrival up to {@link LATE_CLOSE_SKEW_MS} after the close is a kiosk clock
  *  disagreeing with the close's, so it departs too, unless the server stamped it
- *  (a live badge, a web check-in) after it recorded the close: that arrival came
+ *  (a live badge) after it recorded the close: that arrival came
  *  after the close. Further past the close is someone who came in after lock-up. */
 const closeSweeps = Prisma.sql`v."deletedAt" IS NULL
     AND (v."arrivedAt" <= t.close_at
@@ -269,7 +271,7 @@ async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; 
     // one this statement overwrites.
     const changes = await db.$queryRaw<DepartureChange[]>`
         WITH ${closeMoment(close.id, close.closedAt)}, old AS (
-            SELECT v.id, v."departedAt", v."departedVia"
+            SELECT v.id, v."departedAt", v."departedVia", v."facilityCloseId"
             FROM "Visit" v, t
             WHERE ${closeSweeps}
             FOR UPDATE OF v
@@ -284,7 +286,7 @@ async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; 
         FROM t, old
         WHERE v.id = old.id
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
-                  v."departedAt", v."departedVia"::text AS "departedVia"`;
+                  v."departedAt", v."departedVia"::text AS "departedVia", old."facilityCloseId" AS "supersededCloseId"`;
     specTrace("CloseExecuted", { closeId: close.id, closedAt: close.closedAt.getTime(), via: close.via, swept: changes.map(c => c.personId) });
     const actor = close.closedById != null ? personActor(close.closedById) : systemActor("system:facility-close");
     await logCloseDepartures(db, close.id, actor, changes, close.via);
@@ -373,7 +375,7 @@ const closeRetryAt = new Map<number, number>();
 
 /**
  * Carry out every recorded close that has not run, oldest close time first.
- * Called after every scan, after a web close and by the nightly cron, so a close
+ * Called after every scan and by the nightly cron, so a close
  * whose sweep was cut off (crash, lock timeout) runs at the next of those. Never
  * throws: the close is already durable, and a later re-drive retries it. A
  * failing close does not hold up the ones after it: closes apply in close-time

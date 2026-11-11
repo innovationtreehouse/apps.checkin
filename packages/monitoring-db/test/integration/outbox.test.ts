@@ -79,7 +79,7 @@ runIfDb("outbox lifecycle (integration)", () => {
     const persisted = await prisma.outbox.findUniqueOrThrow({ where: { id: row.id } });
     expect(persisted.status).toBe(OutboxStatus.DEAD);
     expect(persisted.deadAt).toBeInstanceOf(Date);
-    expect(await claimPending(prisma, 50)).toHaveLength(0); // a poison row no longer wedges the drain
+    expect(await claimPending(prisma, 50)).toHaveLength(0); // a poison row does not wedge the drain
   });
 
   it("exhausting the attempt budget dead-letters the row, and countDead/requeueDead recover it", async () => {

@@ -81,7 +81,7 @@ describe('Trusted Adults API', () => {
         outsiderId = (await prisma.person.create({ data: { name: 'Out', householdId: outsiderHh } })).id;
 
         // Program led by programLeadId with the family's child enrolled.
-        const prog = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}`, leadMentorId: programLeadId } });
+        const prog = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}`, leadMentorId: programLeadId } });
         programId = prog.id;
         await prisma.programParticipant.create({ data: { programId, personId: childId, status: 'ACTIVE' } });
     });

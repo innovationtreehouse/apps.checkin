@@ -47,15 +47,15 @@ describe('Enroll into a priced-but-unsellable program is rejected', () => {
         });
         adminId = admin.id;
         const broken = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Broken ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), nonOrgMemberPriceCents: 5000, shopifyVariantId: null },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Broken ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), nonOrgMemberPriceCents: 5000, shopifyVariantId: null },
         });
         brokenProgramId = broken.id;
         const sellable = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Sellable ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), nonOrgMemberPriceCents: 5000, shopifyVariantId: 'gid://shopify/ProductVariant/1' },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Sellable ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), nonOrgMemberPriceCents: 5000, shopifyVariantId: 'gid://shopify/ProductVariant/1' },
         });
         sellableProgramId = sellable.id;
         const zeroPriced = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Zero ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), orgMemberPriceCents: 0, nonOrgMemberPriceCents: 0, shopifyVariantId: null },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Zero ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), orgMemberPriceCents: 0, nonOrgMemberPriceCents: 0, shopifyVariantId: null },
         });
         zeroPricedProgramId = zeroPriced.id;
     });

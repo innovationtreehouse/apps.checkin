@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { householdLeadship } from "@/lib/household/leads";
 import { ensurePaymentLinkForUser, PaymentError } from "@/lib/membership/payment";
 import { apiError } from "@/lib/api-response";
+import { paymentErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export const GET = withAuth({}, async (_req, auth) => {
         return NextResponse.json(await ensurePaymentLinkForUser(auth.user.id));
     } catch (error) {
         if (error instanceof PaymentError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : 409 });
+            return paymentErrorResponse(error);
         }
         logger.error("Payment link error:", error);
         return apiError("Internal Server Error", 500);

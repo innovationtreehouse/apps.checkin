@@ -12,7 +12,7 @@
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { handler } from '@/security/handler';
-import { allFileRoutes, allRoutes, VALID_ROLES, type Authorize, type Role } from '@/security/core';
+import { allFileRoutes, allRoutes, CRON_SECRET_ENV, ROLES, type Authorize, type CronSecretName, type Role } from '@/security/core';
 import { callerHoldsRole, resolveAccess, type CallerContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
 import '@/security/registry';
@@ -83,7 +83,7 @@ describe('id-less session', () => {
     });
 
     const OPEN_ROLES: Role[] = ['anyone', 'unauthenticated'];
-    test.each([...VALID_ROLES].filter(r => !OPEN_ROLES.includes(r)))('view role %s does not select it', (role) => {
+    test.each(ROLES.filter(r => !OPEN_ROLES.includes(r)))('view role %s does not select it', (role) => {
         expect(callerHoldsRole(role, idless, { id: '1' }, callerContext)).toBe(false);
     });
 
@@ -95,6 +95,48 @@ describe('id-less session', () => {
 
     test('it selects the unauthenticated view', () => {
         expect(callerHoldsRole('unauthenticated', idless, {}, callerContext)).toBe(true);
+    });
+});
+
+describe('denied session reaching the resolvers directly', () => {
+    const denied: AuthResult = { type: 'session', user: { ...everything, denied: true } };
+
+    test.each(gated)('%s denies it', async (_endpoint, route) => {
+        for (const params of PARAMS) {
+            expect((await resolveAccess(route.authorize, { auth: denied, params, callerContext })).allowed).toBe(false);
+        }
+    });
+
+    test('public still admits it, and a not-denied caller keeps its gates', async () => {
+        expect((await resolveAccess('public', { auth: denied, params: {}, callerContext })).allowed).toBe(true);
+        const notDenied: AuthResult = { type: 'session', user: { ...everything, denied: false } };
+        expect((await resolveAccess('finance', { auth: notDenied, params: {}, callerContext })).allowed).toBe(true);
+        expect(callerHoldsRole('isFinance', notDenied, {}, callerContext)).toBe(true);
+    });
+
+    const OPEN_ROLES: Role[] = ['anyone', 'unauthenticated'];
+    test.each(ROLES.filter(r => !OPEN_ROLES.includes(r)))('view role %s does not select it', (role) => {
+        expect(callerHoldsRole(role, denied, { id: '1' }, callerContext)).toBe(false);
+    });
+
+    test.each(OPEN_ROLES)('view role %s selects it', (role) => {
+        expect(callerHoldsRole(role, denied, {}, callerContext)).toBe(true);
+    });
+
+    test('a cron route answers on the secret alone', async () => {
+        const name = 'CRON_SECRET_FOR_TEST';
+        const entry = Object.entries(CRON_SECRET_ENV)[0] as [CronSecretName, string];
+        const original = process.env[entry[1]];
+        process.env[entry[1]] = name;
+        try {
+            const { allowed } = await resolveAccess({ cronSecret: entry[0] }, {
+                auth: denied, params: {}, callerContext, authorization: `Bearer ${name}`,
+            });
+            expect(allowed).toBe(true);
+        } finally {
+            if (original === undefined) delete process.env[entry[1]];
+            else process.env[entry[1]] = original;
+        }
     });
 });
 

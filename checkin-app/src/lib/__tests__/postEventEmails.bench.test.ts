@@ -10,12 +10,14 @@ describe('Performance benchmark for processPostEventEmails', () => {
     let origFindUnique: typeof prisma.person.findUnique;
     let origParticipantFindMany: typeof prisma.person.findMany;
     let origEventUpdate: typeof prisma.event.update;
+    let origEventUpdateMany: typeof prisma.event.updateMany;
 
     beforeAll(() => {
         origFindMany = prisma.event.findMany;
         origFindUnique = prisma.person.findUnique;
         origParticipantFindMany = prisma.person.findMany;
         origEventUpdate = prisma.event.update;
+        origEventUpdateMany = prisma.event.updateMany;
     });
 
     afterAll(() => {
@@ -23,6 +25,7 @@ describe('Performance benchmark for processPostEventEmails', () => {
         prisma.person.findUnique = origFindUnique;
         prisma.person.findMany = origParticipantFindMany;
         prisma.event.update = origEventUpdate;
+        prisma.event.updateMany = origEventUpdateMany;
     });
 
     it('benchmarks processPostEventEmails', async () => {
@@ -49,6 +52,7 @@ describe('Performance benchmark for processPostEventEmails', () => {
         });
 
         prisma.event.update = jest.fn().mockImplementation(async () => { return {} as unknown as never; });
+        prisma.event.updateMany = jest.fn().mockResolvedValue({ count: 1 });
 
         let uniqueCalls = 0;
         prisma.person.findUnique = jest.fn().mockImplementation(async ({ where }: { where: { id: number } }) => {

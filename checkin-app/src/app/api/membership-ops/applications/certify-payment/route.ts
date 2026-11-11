@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { apiError } from "@/lib/api-response";
+import { paymentErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,7 @@ export const POST = withAuth({ roles: ["isBoardMember"] }, async (req, auth) => 
         return NextResponse.json({ process });
     } catch (error) {
         if (error instanceof PaymentError) {
-            const status = error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 409;
-            return NextResponse.json({ error: error.message, code: error.code }, { status });
+            return paymentErrorResponse(error);
         }
         logger.error("Certify payment error:", error);
         return apiError("Internal Server Error", 500);

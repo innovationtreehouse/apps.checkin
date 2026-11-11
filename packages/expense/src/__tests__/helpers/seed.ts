@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../db";
 import { configureExpense } from "../../runtime";
-import type { ExpensePrincipal, Outbound, OwnerDirectory, SignoffDirectory } from "../../contract";
+import { inertSignoffDirectory, type ExpensePrincipal, type Outbound, type OwnerDirectory, type SignoffDirectory } from "../../contract";
 
 export const ORG = "org-1";
 
@@ -12,6 +12,9 @@ export const TEST_BUCKETS: OwnerDirectory = {
     { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01"), quickBooksClassId: "9999" },
   ],
 };
+
+/** Inert, except that every id names itself: a test's people exist unless its directory says otherwise. */
+export const selfNamingDirectory: SignoffDirectory = { ...inertSignoffDirectory, liveIds: async (ids) => new Map(ids.map((id) => [id, id])) };
 
 /** A gateway that passes rows through unstripped; checkin-app's tests run the real one's tiers. */
 export const passthroughOutbound: Outbound = (_surface, bag, send) => send(bag);
@@ -43,6 +46,7 @@ export async function seedExpense(opts?: {
   needsReimbursement?: boolean;
   backfill?: boolean;
   reimburseePersonId?: number;
+  submittedAt?: Date;
 }): Promise<string> {
   const id = opts?.id ?? randomUUID();
   await db.expense.create({
@@ -59,7 +63,7 @@ export async function seedExpense(opts?: {
       shippingCents: opts?.shippingCents ?? 0,
       discountCents: opts?.discountCents ?? 0,
       receiptTotalCents: opts?.receiptTotalCents ?? 100,
-      submittedAt: new Date(),
+      submittedAt: opts?.submittedAt ?? new Date(),
       state: opts?.state ?? "pending",
     },
   });
@@ -78,6 +82,7 @@ export async function seedLineItem(
     isCapital?: boolean;
     isDelayed?: boolean;
     manualQbAccount?: string | null;
+    nonInventory?: boolean;
   },
 ): Promise<number> {
   const row = await db.expenseLineItem.create({
@@ -94,6 +99,7 @@ export async function seedLineItem(
       isCapital: opts?.isCapital ?? false,
       isDelayed: opts?.isDelayed ?? false,
       manualQbAccount: opts?.manualQbAccount ?? null,
+      nonInventory: opts?.nonInventory ?? false,
     },
   });
   return row.id;
@@ -102,7 +108,7 @@ export async function seedLineItem(
 export async function seedApproval(
   expenseId: string,
   lineItemId: number,
-  opts?: { ownerId?: number | null; status?: string },
+  opts?: { ownerId?: number | null; status?: string; decidedByUserId?: number },
 ): Promise<number> {
   const row = await db.lineItemOwnerApproval.create({
     data: {
@@ -110,6 +116,7 @@ export async function seedApproval(
       lineItemId,
       ownerId: opts?.ownerId ?? null,
       status: opts?.status ?? "pending",
+      decidedByUserId: opts?.decidedByUserId ?? null,
     },
   });
   return row.id;
@@ -152,15 +159,24 @@ export async function seedPartOwner(opts: {
 }
 
 /**
- * Fills the three base sign-off seats on every line of an expense with distinct people and
- * records a Board authorization, so the expense is postable whatever its size.
+ * Fills the submitter and Treasurer seats on every line of an expense with distinct people and
+ * records a Board authorization, so the expense is postable whatever its size once its lines
+ * are approved. A reimbursement also takes the Board seat, which it needs whenever the directory
+ * does not know its reimbursee as a member (the inert one knows nobody).
  */
+/** The submitter seat, as the person reimbursed signs it by confirming the receipt. */
+export async function seedSubmitterSeat(lineItemId: number, signerUserId: number): Promise<void> {
+  const { expenseId } = await db.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { expenseId: true } });
+  await db.expenseLineSignoff.create({ data: { expenseId, lineItemId, seat: "SUBMITTER", signerUserId } });
+}
+
 export async function signAllLines(expenseId: string): Promise<void> {
-  await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
+  const { needsReimbursement } = await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
   const lines = await db.expenseLineItem.findMany({ where: { expenseId }, select: { id: true } });
+  const seats = needsReimbursement ? (["SUBMITTER", "TREASURER", "BOARD"] as const) : (["SUBMITTER", "TREASURER"] as const);
   for (const { id } of lines) {
     await db.expenseLineSignoff.createMany({
-      data: (["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"] as const).map((seat, i) => ({
+      data: seats.map((seat, i) => ({
         expenseId, lineItemId: id, seat, signerUserId: 9000 + i,
       })),
     });
@@ -171,9 +187,17 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
   return { id, name: `person-${id}`, isFinance: roles.isFinance ?? false, isBoard: roles.isBoard ?? false };
 }
 
-/** Rebinds the runtime with test ports (org stays ORG). */
+/** QuickBooks' account list as the integration tiers see it: each account id they save, typed Expense. */
+const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense" }));
+const standInAccounts = async () => STAND_IN_ACCOUNTS;
+
+/** Rebinds the runtime with test ports (org stays ORG); QuickBooks' account list is the stand-in unless a test binds one. */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, ...ports });
+  configureExpense({
+    org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, outbound: passthroughOutbound, signoff: selfNamingDirectory,
+    ...ports,
+    quickbooks: { accounts: standInAccounts, ...ports.quickbooks },
+  });
 }
 
 /**
@@ -188,19 +212,39 @@ export function directory(d: {
   board?: number[];
   households?: number[][];
   nonMembers?: number[];
+  minors?: number[];
   unknownPeople?: number[];
   /** Merged-away person id → the survivor it resolves to. */
   merged?: Record<number, number>;
+  /** Collects the names of non-members added; each gets the id 900 + its index. */
+  added?: string[];
+  /** Collects who added each non-member, in the order of `added`. */
+  addedBy?: number[];
+  /** Adults the name search finds, whatever the query. */
+  adults?: Array<{ personId: number; name: string }>;
 }): SignoffDirectory {
+  const households = d.households ?? [];
+  // A merged-away person stays in their household, but householdOf, like checkin's, returns only live members.
+  const live = (ids: number[]) => ids.filter((id) => d.merged?.[id] === undefined);
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [], owner: d.owners?.[b] ?? null }),
     bucketsApprovedBy: async (p) => Object.entries(d.approvers ?? {}).filter(([, a]) => a.includes(p)).map(([b]) => Number(b)),
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
-    householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),
+    householdOf: async (ids) => live(households.filter((h) => h.some((id) => ids.includes(id))).flat()),
+    householdsOf: async (ids) => new Map(ids.map((id) => [id, live(households.filter((h) => h.includes(id)).flat())])),
+    householdIds: async (id) => households.filter((h) => h.includes(id)).flat(),
     personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
-    livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
+    liveIds: async (ids) => new Map(ids.map((id) => [id, d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id)])),
+    storedIdsOf: async (id) => [id, ...Object.entries(d.merged ?? {}).filter(([, to]) => to === id).map(([from]) => Number(from))],
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
+    isAdult: async (id) => !(d.minors ?? []).includes(id),
+    searchAdults: async (_query, limit) => (d.adults ?? []).slice(0, limit),
+    addNonMemberAdult: async (name, actorId) => {
+      if (!d.added) throw new Error("this directory adds nobody");
+      d.addedBy?.push(actorId);
+      return 900 + d.added.push(name) - 1;
+    },
   };
 }
 
@@ -212,5 +256,7 @@ export function catalogResolving(gtinByItemId: Record<number, string>) {
     lookupItems: async () => Object.entries(gtinByItemId).map(([id, gtin13]) => ({ index: Number(id), gtin13, conversionVersion: 1 })),
     getItem: async (gtin13: string) =>
       Object.values(gtinByItemId).includes(gtin13) ? { gtin13, categoryId: 1, subcategoryId: 10 } : null,
+    getActiveItem: async (gtin13: string) => (Object.values(gtinByItemId).includes(gtin13) ? { gtin13, name: "Part" } : null),
+    getItemNames: async () => [],
   };
 }

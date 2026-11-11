@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Admission and view invariants for the expense routes (#1272 §5/§6). No DB:
+ * Admission and view invariants for the expense routes. No DB:
  * next-auth's getServerSession is the jest.setup.js mock, and the bucket
  * approver lookup is stubbed per test.
  *
@@ -12,7 +12,7 @@
  *    Every expense gate also denies it at resolveAccess on its own.
  * 2. `expense-approver` admits FINANCE, BOARD or an approver of some bucket
  *    (one directory read), never a plain member, a sysadmin alone, or a program
- *    leader who approves no bucket. It gates the nine approver routes.
+ *    leader who approves no bucket. It gates the ten approver routes.
  * 3. Sign-off is `expense-signer`: anyone `receipt-submitter` (the submitter seat)
  *    or `expense-approver` (every other seat) admits. The library picks the seat.
  * 4. No expense route lists isSysadmin in its orderedView, and pii/personal go to
@@ -86,6 +86,7 @@ const APPROVER_ROUTES = [
     'GET /api/expense/expenses/[id]/signoffs',
     'GET /api/expense/expenses/count',
     'GET /api/expense/queue',
+    'POST /api/expense/expenses/[id]/approve-lines',
     'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve',
     'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/raise-exception',
 ];

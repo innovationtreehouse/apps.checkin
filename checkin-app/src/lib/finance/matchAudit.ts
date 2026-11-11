@@ -1,10 +1,10 @@
 import prisma from "@/lib/prisma";
-import { membershipVariantIdSet } from "@/lib/finance/reconcile/membership";
+import { membershipVariantYears } from "@/lib/finance/reconcile/membership";
 import { isPaid, isReversed } from "@/lib/finance/reconcile/orderStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import { normalizeAuditData } from "@/lib/auditPayload";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { programVariantIds } from "@/lib/programs/variants";
+import { personNamesById } from "@/lib/person/archivedPeople";
 
 /**
  * Bidirectional Shopify ↔ activation match audit — the completeness check the
@@ -17,8 +17,7 @@ import { programVariantIds } from "@/lib/programs/variants";
  *   - paid membership/program orders claimed by nothing (money in, no access),
  *   - activations whose order id isn't in the mirror (recorded, unverifiable),
  *   - activations with NO payment basis at all (access, no money) — the
- *     ACTIVE_WITHOUT_PAYMENT case that has had an enum value and board-alert
- *     copy since the reconciler shipped, but which nothing ever computed,
+ *     ACTIVE_WITHOUT_PAYMENT case, which only this audit computes,
  *   - the legitimately-manual class (manually-recorded memberships, approved
  *     scholarships) that an auditor must see separated, not buried.
  *
@@ -45,13 +44,13 @@ export type OrderBucket =
 export interface AuditOrderRow {
     bucket: OrderBucket;
     orderLegacyId: string | null;
-    /** Shopify order name (#1042). */
+    /** Shopify order name. */
     name: string | null;
     customerEmail: string | null;
     financialStatus: string | null;
     totalCents: number;
-    /** Order-level coupon codes (mirror shop_order.discount_codes, #1048). [] when un-couponed
-     *  or pre-#1048. Shown on UNCLAIMED_PAID rows only — a coupon can explain a sub-fee total the
+    /** Order-level coupon codes (mirror shop_order.discount_codes). [] when un-couponed
+     *  or synced before the mirror carried codes. Shown on UNCLAIMED_PAID rows only — a coupon can explain a sub-fee total the
      *  auditor is eyeballing. Absence is NOT "no coupon" (see MirrorOrder.discountCodes). */
     discountCodes: string[];
     /** Which membership/program the variant match points at, e.g. "membership", "program: Robotics". */
@@ -133,7 +132,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     const [settings, programs, variantCoverage] = await Promise.all([
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true },
+            select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true },
         }),
         prisma.program.findMany({
             select: { id: true, name: true, shopifyVariantId: true, claimantShopifyVariantId: true },
@@ -142,8 +141,8 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     ]);
 
     // The same set the reconciler's item gate uses — shared, not copied, so the
-    // two can't drift (#1074 was exactly that drift).
-    const membershipVariants = membershipVariantIdSet(settings ?? null);
+    // two can't drift.
+    const membershipVariants = new Set((await membershipVariantYears(settings ?? null, new Date())).keys());
     const programByVariant = new Map<string, { id: number; name: string }>();
     for (const p of programs) {
         for (const v of programVariantIds(p)) programByVariant.set(v, { id: p.id, name: p.name });
@@ -277,7 +276,6 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
         prisma.programParticipant.findMany({
             where: {
                 status: "ACTIVE",
-                person: LIVE_PERSON,
                 OR: [
                     { shopifyOrderId: { not: null } },
                     { program: { shopifyVariantId: { not: null } } },
@@ -348,13 +346,10 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
         .map((e) => (createByKey.get(`${e.personId}:${e.programId}`)?.status === "ACTIVE" ? compActorId(e) : null))
         .filter((v): v is number => v != null);
     const nameIds = [...new Set([...manualPaymentActorIds, ...comperActorIds])];
-    const people = nameIds.length
-        ? await prisma.person.findMany({ where: { id: { in: nameIds } }, select: { id: true, name: true } })
-        : [];
-    const personName = new Map(people.map((p) => [p.id, p.name]));
+    const personName = await personNamesById(prisma, nameIds);
 
     // ── items 3 & 4: reversal state + the mirror's low-water mark ─────────────
-    // Out of scope (P3, not this pass): no re-validation that a mirrored order's
+    // Out of scope: no re-validation that a mirrored order's
     // lines actually contain the recorded process/enrollment's variant — presence
     // in the mirror is enough for ORDER_MATCHED here.
     const activationOrderIds = [
@@ -363,7 +358,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     ].filter((v): v is string => !!v);
     const uniqueActivationIds = [...new Set(activationOrderIds)];
 
-    // Tracked-exception lookups for the two P3-trackable gap buckets
+    // Tracked-exception lookups for the two trackable gap buckets
     // (NO_PAYMENT_BASIS / ORDER_NOT_IN_MIRROR): batched IN-lists over the swept
     // ids, run in the same round-trip as the mirror presence lookup below.
     const procIds = procs.map((p) => p.id);
@@ -412,8 +407,8 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
             : p.manualPaymentById != null
                 ? "MANUAL_PAYMENT"
                 : "NO_PAYMENT_BASIS";
-        // Override only the two trackable gaps — literal bucket names, so a P2
-        // bucket this PR doesn't know about is never touched (see file header).
+        // Override only the two trackable gaps — literal bucket names, so any
+        // other bucket is never touched.
         const bucket: MembershipBucket =
             (raw === "NO_PAYMENT_BASIS" || raw === "ORDER_NOT_IN_MIRROR") && trackedProcs.has(p.id)
                 ? "TRACKED_EXCEPTION"

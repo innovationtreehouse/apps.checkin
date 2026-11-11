@@ -1,14 +1,14 @@
 /**
  * S5 consumer — consumeCatalogEvent driven with the shared contract fixtures
- * (seam "S5-org-events"), plus the cursor catch-up and both arrival orders of the
+ * (seam "S5-org-events"), plus the catch-up sweep and both arrival orders of the
  * provisional dance (event after ingest, event before ingest).
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, ORG } from "../helpers/seed";
-import { catchUpCatalogEvents, consumeCatalogEvent } from "../../services/catalogEventConsumer";
+import { catchUpCatalogEvents, consumeCatalogEvent, retryCatalogEvent } from "../../services/catalogEventConsumer";
 import { receiveCompletedReceipt } from "../../services/intakeService";
 
 type Ev = { eventType: string; provisionalGtin13: string; realGtin13?: string; rejectionReason?: string };
@@ -77,20 +77,27 @@ describeDb("S5 consumer — fixtures", () => {
   });
 });
 
+/** A source that honours the id cursor and returns at most `pageSize` events, like the catalog. */
+const paged = (events: Array<{ id: number }>, pageSize = 500) => ({
+  eventsSince: async (_orgId: string, after: number) => events.filter((e) => e.id > after).slice(0, pageSize),
+});
+const malformed = (id: number) => ({ ...envelope(approved, id), payload: JSON.stringify({ version: 1, provisionalGtin13: "X", realGtin13: 123, name: "n" }) });
+const CLEAN = { processed: 0, duplicate: 0, failed: 0, unprocessed: 0, unreadable: false };
+
 describeDb("S5 consumer — catch-up sweep", () => {
-  it("replays a failed event and reads past the cursor from the catalog", async () => {
+  it("leaves a failed event for a retry and reads past the cursor from the catalog", async () => {
     const first = envelope(approved, 10);
     await db.expenseReceivedOrgEvent.create({
       data: { id: 10, orgId: ORG, eventType: first.eventType, payload: first.payload, receivedAt: new Date(), status: "failed", failureReason: "x" },
     });
     const later = envelope(rejected, 11);
     let askedAfter = -1;
-    bindPorts({ catalogEvents: { eventsAfter: async (after) => { askedAfter = after; return [later]; } } });
+    bindPorts({ catalogEvents: { eventsSince: async (_orgId, after) => { askedAfter = askedAfter < 0 ? after : askedAfter; return [later].filter((e) => e.id > after); } } });
 
-    expect(await catchUpCatalogEvents()).toEqual({ processed: 2, duplicate: 0, failed: 0 });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 1 });
 
     expect(askedAfter).toBe(0);
-    expect(await db.expenseReceivedOrgEvent.count({ where: { status: "processed" } })).toBe(2);
+    expect(await db.expenseReceivedOrgEvent.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true } })).toEqual([{ id: 10, status: "failed" }, { id: 11, status: "processed" }]);
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {
@@ -99,11 +106,135 @@ describeDb("S5 consumer — catch-up sweep", () => {
     const early = envelope(rejected, 21);
     await track(approved.provisionalGtin13);
     expect(await consumeCatalogEvent(early)).toBe("processed");
-    bindPorts({ catalogEvents: { eventsAfter: async (after) => [late, early].filter((e) => e.id > after) } });
+    bindPorts({ catalogEvents: { eventsSince: async (_orgId, after) => [late, early].filter((e) => e.id > after) } });
 
-    expect(await catchUpCatalogEvents()).toEqual({ processed: 1, duplicate: 0, failed: 0 });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 1 });
 
     expect(await provisional(approved.provisionalGtin13)).toMatchObject({ status: "approved", resolvedToGtin13: approved.realGtin13 });
+  });
+
+  it("consumes an event lost more than 100 ids behind the newest", async () => {
+    await track(approved.provisionalGtin13);
+    const later = Array.from({ length: 150 }, (_, i) => envelope(itemRef, i + 8));
+    for (const ev of later) await consumeCatalogEvent(ev);
+    bindPorts({ catalogEvents: paged([envelope(approved, 7), ...later]) });
+
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 1 });
+
+    expect(await provisional(approved.provisionalGtin13)).toMatchObject({ status: "approved", resolvedToGtin13: approved.realGtin13 });
+  });
+
+  it("reads every page of the catalog, however long its history", async () => {
+    bindPorts({ catalogEvents: paged([1, 2, 3, 4, 5].map((id) => envelope(itemRef, id)), 2) });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 5 });
+  });
+
+  it("a capped run drains over later runs", async () => {
+    bindPorts({ catalogEvents: paged([1, 2, 3].map((id) => envelope(itemRef, id))) });
+
+    expect(await catchUpCatalogEvents(2)).toEqual({ ...CLEAN, processed: 2, unprocessed: 1 });
+    expect(await catchUpCatalogEvents(2)).toEqual({ ...CLEAN, processed: 1 });
+  });
+
+  it("the sweep never retries a failed event", async () => {
+    const bad = [1, 2, 3, 4].map(malformed);
+    for (const ev of bad) await consumeCatalogEvent(ev);
+    bindPorts({ catalogEvents: paged([...bad, envelope(itemRef, 5)]) });
+
+    expect(await catchUpCatalogEvents(4)).toEqual({ ...CLEAN, processed: 1 });
+    expect(await db.expenseReceivedOrgEvent.count({ where: { status: "failed" } })).toBe(4);
+  });
+
+  it("a failed overlap does not overwrite a processed ledger row", async () => {
+    const ev = malformed(30);
+    // The overlapping consumer's success lands after this one read the ledger.
+    const spy = vi.spyOn(db.expenseReceivedOrgEvent, "findFirst").mockImplementationOnce((async () => {
+      await db.expenseReceivedOrgEvent.create({ data: { id: 30, orgId: ORG, eventType: ev.eventType, payload: ev.payload, receivedAt: new Date(), status: "processed" } });
+      return null;
+    }) as unknown as typeof db.expenseReceivedOrgEvent.findFirst);
+    try {
+      expect(await consumeCatalogEvent(ev)).toBe("duplicate");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 30 } })).toMatchObject({ status: "processed", failureReason: null });
+  });
+});
+
+describeDb("S5 consumer — a failed event", () => {
+  it("records that no catalog is connected when the event source is unbound", async () => {
+    bindPorts({});
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, notConnected: true });
+  });
+
+  it("an unreadable catalog leaves a failed event as it is", async () => {
+    await consumeCatalogEvent(malformed(1));
+    bindPorts({ catalogEvents: { eventsSince: async () => { throw new Error("catalog down"); } } });
+
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, unreadable: true });
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed" });
+  });
+
+  it("is stuck with its error and first failure time", async () => {
+    await consumeCatalogEvent(malformed(1));
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed", failureReason: expect.any(String), firstFailedAt: expect.any(Date) });
+  });
+
+  it("a retry that fails again keeps the first failure time", async () => {
+    await consumeCatalogEvent(malformed(1));
+    const { firstFailedAt } = await db.expenseReceivedOrgEvent.findFirstOrThrow({ where: { id: 1 } });
+
+    await expect(retryCatalogEvent(1)).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
+
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed", firstFailedAt });
+  });
+
+  it("a retry applies a failed event once its cause is fixed, and clears the failure", async () => {
+    await track(approved.provisionalGtin13);
+    const ev = envelope(approved, 1);
+    await db.expenseReceivedOrgEvent.create({ data: { id: 1, orgId: ORG, eventType: ev.eventType, payload: ev.payload, receivedAt: new Date(), status: "failed", failureReason: "boom", firstFailedAt: new Date() } });
+
+    await retryCatalogEvent(1);
+
+    expect(await db.expenseReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "processed", failureReason: null, firstFailedAt: null });
+    expect(await provisional(approved.provisionalGtin13)).toMatchObject({ status: "approved" });
+  });
+
+  it("a retry of an event that is not failed answers 404", async () => {
+    await consumeCatalogEvent(envelope(itemRef, 1));
+    await expect(retryCatalogEvent(1)).rejects.toMatchObject({ status: 404 });
+    await expect(retryCatalogEvent(99)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("finishes the sweep when one event can't be recorded", async () => {
+    bindPorts({ catalogEvents: paged([{ ...envelope(itemRef, 1), orgId: "org-other" }, envelope(itemRef, 2)]) });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, failed: 1, processed: 1 });
+  });
+});
+
+describeDb("S5 consumer — first-run replay", () => {
+  it("replaying all history over current state changes nothing", async () => {
+    // The catalog gives each provisional one verdict.
+    const verdicts = [approved, { ...mapped, provisionalGtin13: "0009999900022" }, { ...rejected, provisionalGtin13: "0009999900039" }];
+    const history = [...verdicts.map((v, i) => envelope(v, i + 1)), envelope(itemRef, 4)];
+    for (const v of verdicts) await track(v.provisionalGtin13);
+    await db.partOwnerMap.create({ data: { orgId: ORG, gtin13: approved.provisionalGtin13, ownerId: 42 } });
+    for (const ev of history) await consumeCatalogEvent(ev);
+    // A manager reassigned the real item's bucket after the verdict; a replay must keep that.
+    await db.partOwnerMap.updateMany({ where: { orgId: ORG, gtin13: approved.realGtin13! }, data: { ownerId: 100 } });
+    const snapshot = async () => ({
+      provisionals: await db.provisionalItemMap.findMany({ orderBy: { id: "asc" } }),
+      owners: await db.partOwnerMap.findMany({ orderBy: { gtin13: "asc" } }),
+      // recordedAt is when the fact was last recorded, so a replay refreshes it; nothing reads it.
+      resolutions: (await db.expenseProvisionalResolution.findMany({ orderBy: { id: "asc" } })).map(({ recordedAt: _recordedAt, ...fact }) => fact),
+    });
+    const before = await snapshot();
+
+    await db.expenseReceivedOrgEvent.deleteMany();
+    bindPorts({ catalogEvents: paged(history) });
+    expect(await catchUpCatalogEvents()).toEqual({ ...CLEAN, processed: 4 });
+
+    expect(await snapshot()).toEqual(before);
   });
 });
 

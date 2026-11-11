@@ -581,7 +581,7 @@ describe('parked (unconfirmed) stock writes', () => {
         expect(after()).toMatchObject({ carry: 0, unconfirmed: 0, parked: [] });
     });
 
-    it('two parked writes of opposite sign stay separate and are settled one by one (F5)', async () => {
+    it('two parked writes of opposite sign stay separate and are settled one by one', async () => {
         // A comp's −1 and its withdrawal's +1 each stay unsettled a day.
         await park(pendingWrite({ key: 'program-42-comp-a', delta: -1, owedPart: -1, sentAt: DAY_AGO() }));
         await park(pendingWrite({ key: 'program-42-comp-b', delta: 1, owedPart: 1, sentAt: DAY_AGO() }));
@@ -597,7 +597,7 @@ describe('parked (unconfirmed) stock writes', () => {
         expect(after()).toMatchObject({ carry: 1, parked: [] });
     });
 
-    it('a re-arm sets the store from scratch, which resolves parked writes: a later "not landed" is refused (F7)', async () => {
+    it('a re-arm sets the store from scratch, which resolves parked writes: a later "not landed" is refused', async () => {
         // A withdrawn hold's +1 never landed and was parked.
         await park(pendingWrite({ key: 'program-42-release', delta: 1, owedPart: 1, sentAt: DAY_AGO() }));
         expect(after().parked).toEqual([['program-42-release', 1]]);

@@ -1,12 +1,19 @@
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
- * The ONE definition of "authorized at the front desk right now": the adult has at
- * least one APPROVED review. Renewal leaves the prior approval APPROVED, so a
- * TrustedAdult routinely carries several — authorization is a property of the ADULT,
- * not of a single review. /operational, the deny notice, and the expiry sweep all read it.
+ * The ONE definition of "authorized at the front desk right now": the adult has an
+ * APPROVED review whose reviewBy is still ahead. Authorization is a property of the
+ * ADULT, not of a single review. /operational, the deny notice, and the expiry sweep
+ * all read it; the household and board pages use isAuthorizedApproval on rows they hold.
  */
-export const AUTHORIZED_REVIEW: Prisma.TrustedAdultReviewWhereInput = { status: "APPROVED" };
+export function authorizedReview(now: Date): Prisma.TrustedAdultReviewWhereInput {
+    return { status: "APPROVED", reviewBy: { gt: now } };
+}
+
+/** authorizedReview for a row already loaded, including one serialized to the browser. */
+export function isAuthorizedApproval(review: { status: string; reviewBy: Date | string | null }, now: Date): boolean {
+    return review.status === "APPROVED" && review.reviewBy !== null && new Date(review.reviewBy) > now;
+}
 
 /** The one relevant fact about an APPROVED review for the expiry question. */
 export type ApprovalExpiry = { trustedAdultId: number; reviewBy: Date | null };

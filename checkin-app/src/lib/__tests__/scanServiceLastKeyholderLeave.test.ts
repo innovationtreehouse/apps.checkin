@@ -14,7 +14,7 @@
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { processCheckout, type LegacyKiosk, type ScanOutcome } from "@/lib/attendance/scan";
-import { FORCE_CLOSE_CONFIRM_SECONDS } from "@/lib/attendance/keyholderGuard";
+import { FORCE_CLOSE_CONFIRM_SECONDS } from "@/app/api/scan/scanResponse";
 import { toResponse } from "@/app/api/scan/scanResponse";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 
@@ -56,7 +56,7 @@ function fakeDb(remaining: Array<{ name: string | null; email: string | null }>)
 
 /** processCheckout with only the kiosk generation and replay-ness varied. */
 const badge = (db: DbClient, legacy: LegacyKiosk | null, isReplay = false) =>
-    wire(processCheckout(keyholder, 42, "kiosk", db, new Date(), isReplay, false, legacy));
+    wire(processCheckout(keyholder, 42, db, new Date(), isReplay, legacy));
 
 beforeEach(() => {
     jest.mocked(processVisitCheckout).mockResolvedValue([{ id: 77 }] as never);

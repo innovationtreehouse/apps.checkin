@@ -1,8 +1,10 @@
+import { KindedError, kindOf, type FailureKind } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
-import { QboRequestError, appKeyOf, assertAppKey, qboDate, type QuickBooksClient, type TxnWrite } from "./client";
-import { billCandidate, depositCandidate, findMatch, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
-import { CREATE } from "./internal";
-import { TEST_VENDOR_PREFIX } from "./guard";
+import { QboRequestError, appKeyOf, assertAppKey, qboDate, type JournalEntryFields, type JournalLine, type QuickBooksClient, type TxnWrite } from "./client";
+import { billCandidate, depositCandidate, findMatch, journalCandidate, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
+import { CREATE, CREATE_JOURNAL } from "./internal";
+import { BOOKS_MAP_ROLES, type BooksMapRole } from "./booksMap";
+import { TEST_PREFIX } from "./guard";
 
 /** One lane record to find in QuickBooks, or create when the closed-books gate allows it. */
 export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "claimedIds" | "excludedIds"> {
@@ -16,12 +18,33 @@ export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "clai
   mayCreate: boolean;
 }
 
+/** A failed call as a lane records it: the error's text and kind, plus the fault codes and request id of a QuickBooks refusal. */
+export type PostFailure = {
+  error: string;
+  failure: FailureKind;
+  codes?: readonly string[];
+  requestId?: string | null;
+  /** QuickBooks answered an earlier read in the same call, so it was up when this step failed. */
+  answered?: boolean;
+};
+
+export function postFailure(e: unknown): PostFailure {
+  const base = { error: e instanceof Error ? e.message : String(e), failure: kindOf(e) };
+  return e instanceof QboRequestError ? { ...base, codes: e.codes, requestId: e.requestId } : base;
+}
+
+/** A returned failure as an error a library runtime's `failed` reads: its kind, fault codes and request id. */
+export function postFailureError(f: PostFailure): KindedError {
+  return Object.assign(new KindedError(f.failure, f.error), { codes: f.codes ?? [], ...(f.requestId ? { requestId: f.requestId } : {}) });
+}
+
 export type FindOrCreateResult =
   /** `txnDate` is the matched entry's date, from the read that matched it. */
   | { kind: "found"; id: string; via: "key" | "amount"; txnDate: string }
   | { kind: "ambiguous"; ids: string[] }
   | { kind: "created"; id: string }
-  | { kind: "failed"; error: string }
+  /** `onCreate`: the create itself failed, after every read answered. */
+  | ({ kind: "failed"; onCreate?: true } & PostFailure)
   /** Not found and dated in closed books, or refused by QuickBooks as closed (fault 6210): never created. */
   | { kind: "closed" }
   /** Not found and the lane may not create it on its own: finance books it or skips it. */
@@ -52,55 +75,132 @@ function matchRef(write: TxnWrite): string {
   }
 }
 
+type MatchThenCreate = Pick<MatchRequest, "date" | "amountCents" | "ref" | "key" | "window" | "claimedIds" | "excludedIds"> & {
+  closedThrough: string;
+  mayCreate: boolean;
+};
+
 /**
- * Match before create, stateless. Reads the record's window, then: found → link, post
- * nothing; ambiguous → finance's queue; not found and dated on or before `closedThrough` →
- * closed; not found and `mayCreate` false → needs-finance; otherwise re-read the books closing
- * date, gate on the later of it and `closedThrough`, and create with the key. A create
- * QuickBooks refuses as closed is closed too. The created entry carries the key in its
- * PrivateNote and is dated inside the window, so a crash after QBO accepts it is found by key.
+ * The shared match-before-create and closed-books gate. Found → link, post nothing; ambiguous →
+ * finance's queue; not found and dated on or before `closedThrough` → closed; not found and
+ * `mayCreate` false → needs-finance; otherwise re-read the books closing date, gate on the later
+ * of it and `closedThrough`, and create. A create QuickBooks refuses as closed is closed too.
+ */
+async function matchThenCreate(
+  client: QuickBooksClient,
+  req: MatchThenCreate,
+  read: readonly MatchCandidate[],
+  create: () => Promise<{ Id: string }>,
+): Promise<FindOrCreateResult> {
+  const match = findMatch(read, req);
+  if (match.kind === "found") {
+    const hit = read.find((c) => c.id === match.id);
+    if (!hit) throw new Error(`matched entry ${match.id} is not in the read`);
+    return { ...match, txnDate: hit.date };
+  }
+  if (match.kind === "ambiguous") return match;
+  if (req.date <= req.closedThrough) return { kind: "closed" };
+  if (!req.mayCreate) return { kind: "needs-finance" };
+  // Finance may have closed a period since the caller read the date.
+  const closeDate = await client.bookCloseDate();
+  if (closeDate !== null && req.date <= closeDate) return { kind: "closed" };
+  try {
+    return { kind: "created", id: (await create()).Id };
+  } catch (e) {
+    if (e instanceof QboRequestError && e.codes.includes(CLOSED_PERIOD_FAULT)) return { kind: "closed" };
+    return { kind: "failed", ...postFailure(e), answered: true, onCreate: true };
+  }
+}
+
+function checkDates(date: string, req: { window: { from: string; to: string }; closedThrough: string }): void {
+  qboDate(date);
+  qboDate(req.window.from);
+  qboDate(req.window.to);
+  qboDate(req.closedThrough);
+  if (date < req.window.from || date > req.window.to) {
+    throw new Error(`TxnDate ${date} is outside the match window ${req.window.from}..${req.window.to}`);
+  }
+}
+
+const failed = (e: unknown): FindOrCreateResult => ({ kind: "failed", ...postFailure(e) });
+
+/**
+ * Match before create, stateless, through the shared gate. The created entry carries the key in
+ * its PrivateNote and is dated inside the window, so a crash after QBO accepts it is found by key.
  */
 export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRequest): Promise<FindOrCreateResult> {
+  let answered = false;
   try {
     assertAppKey(req.key);
     const date = req.write.fields.txnDate;
-    qboDate(date);
-    qboDate(req.window.from);
-    qboDate(req.window.to);
-    qboDate(req.closedThrough);
-    if (date < req.window.from || date > req.window.to) {
-      throw new Error(`TxnDate ${date} is outside the match window ${req.window.from}..${req.window.to}`);
-    }
+    checkDates(date, req);
     const read = await candidates(client, req.write, req.window.from, req.window.to);
-    const match = findMatch(read, {
-      date,
-      amountCents: sumCents(...req.write.fields.lines.map((l) => l.amountCents)),
-      ref: matchRef(req.write),
-      key: req.key,
-      window: req.window,
-      claimedIds: req.claimedIds,
-      excludedIds: req.excludedIds,
-    });
-    if (match.kind === "found") {
-      const hit = read.find((c) => c.id === match.id);
-      if (!hit) throw new Error(`matched entry ${match.id} is not in the read`);
-      return { ...match, txnDate: hit.date };
-    }
-    if (match.kind === "ambiguous") return match;
-    if (date <= req.closedThrough) return { kind: "closed" };
-    if (!req.mayCreate) return { kind: "needs-finance" };
-    // Finance may have closed a period since the caller read the date.
-    const closeDate = await client.bookCloseDate();
-    if (closeDate !== null && date <= closeDate) return { kind: "closed" };
-    try {
-      return { kind: "created", id: (await client[CREATE](req.write, req.key)).Id };
-    } catch (e) {
-      if (e instanceof QboRequestError && e.codes.includes(CLOSED_PERIOD_FAULT)) return { kind: "closed" };
-      throw e;
-    }
+    answered = true;
+    const amountCents = sumCents(...req.write.fields.lines.map((l) => l.amountCents));
+    return await matchThenCreate(client, { ...req, date, amountCents, ref: matchRef(req.write) }, read, () => client[CREATE](req.write, req.key));
   } catch (e) {
-    return { kind: "failed", error: e instanceof Error ? e.message : String(e) };
+    return answered ? { kind: "failed", ...postFailure(e), answered } : failed(e);
   }
+}
+
+/** The accounts the books map's roles book to. */
+export function roleAccountIds(accounts: Partial<Record<BooksMapRole, string>>): Set<string> {
+  return new Set(BOOKS_MAP_ROLES.flatMap((r) => (accounts[r] ? [accounts[r]] : [])));
+}
+
+/** One line of an in-kind gift's journal entry, on the QuickBooks account it books to. */
+export interface InKindJournalLine {
+  postingType: "Debit" | "Credit";
+  accountId: string;
+  amountCents: number;
+  classId?: string;
+  description?: string;
+}
+
+export interface InKindJournalRequest extends Pick<MatchRequest, "window" | "claimedIds"> {
+  txnDate: string;
+  lines: InKindJournalLine[];
+  memo?: string;
+  key: string;
+  closedThrough: string;
+  mayCreate: boolean;
+  /** The books map's role → account ids, as read for this run: credits go to in-kind income, and no debit to any role's account. */
+  accounts: Partial<Record<BooksMapRole, string>>;
+}
+
+/**
+ * The only way the app creates a JournalEntry: one in-kind gift. Credits go only to in-kind
+ * income and debits to no books-map role's account, every amount positive and the entry
+ * balanced, or it throws before reading QuickBooks. Matching is by the app's key alone: a hand
+ * entry of the same amount is never taken as the gift's.
+ */
+export async function findOrCreateInKindJournal(client: QuickBooksClient, req: InKindJournalRequest): Promise<FindOrCreateResult> {
+  const fields: JournalEntryFields = { txnDate: req.txnDate, memo: req.memo, lines: req.lines.map((l) => inKindLine(l, req.accounts)) };
+  const total = (side: JournalLine["postingType"]) => sumCents(...fields.lines.filter((l) => l.postingType === side).map((l) => l.amountCents));
+  if (fields.lines.some((l) => !Number.isSafeInteger(l.amountCents) || l.amountCents <= 0)) throw new Error("In-kind journal amounts must be positive whole cents");
+  if (total("Credit") === 0 || total("Debit") !== total("Credit")) throw new Error("In-kind journal entry is not balanced");
+  try {
+    assertAppKey(req.key);
+    checkDates(req.txnDate, req);
+    const read = (await client.journalEntriesBetween(req.window.from, req.window.to)).map((j) => journalCandidate(j, appKeyOf)).filter((c) => c.appKey !== undefined);
+    return await matchThenCreate(
+      client,
+      { ...req, date: req.txnDate, amountCents: total("Debit"), excludedIds: new Set() },
+      read,
+      () => client[CREATE_JOURNAL](fields, req.key),
+    );
+  } catch (e) {
+    return failed(e);
+  }
+}
+
+function inKindLine(l: InKindJournalLine, accounts: InKindJournalRequest["accounts"]): JournalLine {
+  const income = accounts.INKIND_INCOME;
+  if (!income) throw new KindedError("settings", "The books map has no account for INKIND_INCOME");
+  if (l.postingType === "Credit" && l.accountId !== income) throw new Error("An in-kind journal entry may credit only in-kind income");
+  if (l.postingType === "Debit" && roleAccountIds(accounts).has(l.accountId)) throw new Error(`An in-kind journal entry may not debit account ${l.accountId}, a books-map role's`);
+  if (l.postingType !== "Credit" && l.postingType !== "Debit") throw new Error(`An in-kind journal line must be a Debit or a Credit`);
+  return { postingType: l.postingType, amountCents: l.amountCents, accountId: l.accountId, classId: l.classId, description: l.description };
 }
 
 /**
@@ -108,7 +208,7 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
  * An existing Vendor with the resulting name is returned as found via "name" (DisplayName is
  * unique, and this is how a retry after a crash recovers), never created twice. A Vendor
  * carries only its DisplayName, so a name hit is never told apart as the app's own creation.
- * On the sandbox the name carries TEST_VENDOR_PREFIX, added only when missing.
+ * On the sandbox the name carries TEST_PREFIX, added only when missing.
  */
 export async function createVendor(
   client: QuickBooksClient,
@@ -116,7 +216,7 @@ export async function createVendor(
   key: string,
 ): Promise<{ kind: "found"; via: "name"; id: string; displayName: string } | { kind: "created"; id: string; displayName: string }> {
   const bare = name.trim();
-  const trimmed = client.env === "sandbox" && !bare.startsWith(TEST_VENDOR_PREFIX) ? `${TEST_VENDOR_PREFIX}${bare}` : bare;
+  const trimmed = client.env === "sandbox" && !bare.startsWith(TEST_PREFIX) ? `${TEST_PREFIX}${bare}` : bare;
   const displayName = (await client.customerNamed(trimmed)) ? `${trimmed} (Vendor)` : trimmed;
   const existing = await client.vendorNamed(displayName);
   if (existing) return { kind: "found", via: "name", id: existing.Id, displayName };

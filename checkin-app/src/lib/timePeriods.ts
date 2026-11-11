@@ -1,9 +1,8 @@
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
-// Extracted from facility/trends/route.ts (#1423) so facility/corrections can
-// bucket on the same org-timezone logic without a second implementation.
-// formatPeriodLabel/getHoursBetween/getLookbackMonths stay in trends — nothing
-// else needs them yet.
+// Shared by facility/trends and facility/corrections, so both bucket on the same
+// org-timezone logic. formatPeriodLabel/getHoursBetween/getLookbackMonths stay in
+// trends — nothing else needs them.
 export type PeriodType = "week" | "month" | "quarter" | "year";
 
 // Period boundaries are the org's wall clock, not the server's: toZonedTime

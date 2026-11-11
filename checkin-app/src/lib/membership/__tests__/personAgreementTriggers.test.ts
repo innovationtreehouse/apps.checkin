@@ -41,7 +41,7 @@ describe("inAgreementAgeBand — the automatic population", () => {
 
     it("refuses over 25 — a non-lead adult that old is a spouse, not an adult child", () => {
         expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(26), isDeclaredAdult: false }, now)).toBe(false);
-        // The ceiling is explicit, not inherited from #1165's DOB purge: a 30-year-old
+        // The ceiling is explicit, not inherited from the DOB purge: a 30-year-old
         // spouse added with a DOB is refused immediately, not merely by the next purge.
         expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(30), isDeclaredAdult: false }, now)).toBe(false);
     });
@@ -75,7 +75,7 @@ describe("agreementCycleFloor — one agreement per cycle, no double-ask", () =>
     });
 
     it("does not re-ask someone who signed during the run-up to the boundary", () => {
-        // The regression this exists for: sign Aug 20, boundary rolls Sept 1, and a floor
+        // Sign Aug 20, boundary rolls Sept 1, and a floor
         // set AT the boundary would ask them again two weeks later. Backing the floor off
         // by the renewal lead window (as runRenewalSweep does) keeps them covered.
         const signedAt = new Date("2026-08-20");

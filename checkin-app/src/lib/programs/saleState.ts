@@ -68,3 +68,19 @@ export const TRANSITIONS: readonly Transition<SaleLifecycleState>[] = [
     { event: 'program ends', from: 'SALE_ENDED', to: 'FINISHED', actor: 'board/lead', guardSite: 'api/programs/[id] PATCH phase' },
     { event: 'cancelled', from: 'NOT_ON_SALE', to: 'FINISHED', actor: 'board/lead', guardSite: 'api/programs/[id] PATCH phase' },
 ] as const;
+
+export type EnrollmentClosedBy = 'FULL' | 'SALE_ENDED' | 'CLOSED';
+
+/** Why the participants route would refuse any new claim, or null when it would take one.
+ *  Full wins over an ended sale, which wins over enrollment closed by hand.
+ *  An unknown count (undefined) never reads as full; the route still checks under lock. */
+export function enrollmentClosedBy(
+    p: Pick<SaleRow, 'enrollmentStatus' | 'startAt' | 'offSaleAt' | 'saleEndedAt'> & { maxParticipants: number | null },
+    enrolledCount: number | undefined,
+    now: Date = new Date(),
+): EnrollmentClosedBy | null {
+    if (p.maxParticipants != null && enrolledCount != null && enrolledCount >= p.maxParticipants) return 'FULL';
+    if (isSaleEnded(p, now)) return 'SALE_ENDED';
+    if (p.enrollmentStatus === 'CLOSED') return 'CLOSED';
+    return null;
+}

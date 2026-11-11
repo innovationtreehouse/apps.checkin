@@ -15,9 +15,10 @@
  */
 import { render, configure, type RenderOptions } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import type { ReactElement, ReactNode } from "react";
+import { useSyncExternalStore, type ReactElement, type ReactNode } from "react";
 import { EnvProvider } from "@/components/EnvProvider";
 import type { CheckinEnv } from "@/lib/config";
+import type { DevMocks } from "@/lib/nav/sections/devTools";
 
 // RTL's default findBy*/waitFor timeout is 1000ms of real (non-fake) timers.
 // The full coverage run's CI job (290 suites, --coverage instrumentation, no
@@ -59,6 +60,7 @@ if (typeof window !== "undefined") {
 let checkinEnv: CheckinEnv = "prod";
 let shopifyStoreDomain: string | null = null;
 let isStaging = false;
+let devMocks: DevMocks = { shopify: false, bgConsent: false };
 
 /** Set the mocked CHECKIN_ENV seen by useCheckinEnv/useIsLocalInstance. */
 export function setCheckinEnv(env: CheckinEnv) {
@@ -72,36 +74,64 @@ export function setShopifyStoreDomain(domain: string | null) {
 export function setStagingInstance(v: boolean) {
     isStaging = v;
 }
+/** Set the mocked dev-mock flags seen by useDevMocks. */
+export function setDevMocks(v: DevMocks) {
+    devMocks = v;
+}
 
 /** Render `ui` wrapped in the providers a page/component tree needs. */
 export function renderWithProviders(ui: ReactElement, options?: RenderOptions) {
     return render(
         <MantineProvider>
-            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging, csvImportEnabled: false }}>{ui}</EnvProvider>
+            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging, devMocks }}>{ui}</EnvProvider>
         </MantineProvider>,
         options,
     );
 }
 
 // ── next/navigation + next-auth/react mocks ──────────────────────────────────
+let pathname = "/";
+let searchParams = new URLSearchParams();
+const searchListeners = new Set<() => void>();
+function setSearch(sp: URLSearchParams) {
+    searchParams = sp;
+    searchListeners.forEach((listener) => listener());
+}
+// With `followUrl`, a push or replace moves the mocked query, so a screen keeping its state there re-renders.
+let followUrl = false;
+const navigate = (href: string) => {
+    if (followUrl) setSearch(new URL(href, "http://localhost").searchParams);
+};
 export const router = {
-    push: jest.fn(),
-    replace: jest.fn(),
+    push: jest.fn(navigate),
+    replace: jest.fn(navigate),
     refresh: jest.fn(),
     back: jest.fn(),
     forward: jest.fn(),
     prefetch: jest.fn(),
 };
-let pathname = "/";
-let searchParams = new URLSearchParams();
+function useMockSearchParams() {
+    return useSyncExternalStore(
+        (listener) => {
+            searchListeners.add(listener);
+            return () => searchListeners.delete(listener);
+        },
+        () => searchParams,
+    );
+}
 let session: { data: unknown; status: string; update?: jest.Mock } = { data: null, status: "unauthenticated" };
 
-/** Factory for `jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock())`. */
-export function navMock() {
+/**
+ * Factory for `jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock())`.
+ * `followUrl: true` is for a list keeping its page and filters in the URL: the router's writes
+ * then change what `useSearchParams` returns. Off, the query stays as the test set it.
+ */
+export function navMock({ followUrl: follow = false }: { followUrl?: boolean } = {}) {
+    followUrl = follow;
     return {
         useRouter: () => router,
         usePathname: () => pathname,
-        useSearchParams: () => searchParams,
+        useSearchParams: useMockSearchParams,
         useParams: () => ({}),
         redirect: jest.fn(),
         notFound: jest.fn(),
@@ -121,7 +151,7 @@ export function setPathname(p: string) {
     pathname = p;
 }
 export function setSearchParams(sp: URLSearchParams | string) {
-    searchParams = typeof sp === "string" ? new URLSearchParams(sp) : sp;
+    setSearch(typeof sp === "string" ? new URLSearchParams(sp) : sp);
 }
 /** Set the mocked session user (pass null for signed-out). */
 export function setSession(user: Record<string, unknown> | null, status = user ? "authenticated" : "unauthenticated") {
@@ -139,6 +169,7 @@ export function resetRtl() {
     checkinEnv = "prod";
     shopifyStoreDomain = null;
     isStaging = false;
+    devMocks = { shopify: false, bgConsent: false };
 }
 
 // ── fetch stub ───────────────────────────────────────────────────────────────

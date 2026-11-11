@@ -38,14 +38,14 @@ describe('Auto-Association and Checkout Chunking Logic', () => {
         householdId = user.householdId;
 
         // Setup Programs
-        const progA = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program A' } });
+        const progA = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program A' } });
         programAId = progA.id;
-        const progB = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program B' } });
+        const progB = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program B' } });
         programBId = progB.id;
-        const progC = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program C' } });
+        const progC = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program C' } });
         programCId = progC.id;
         const progD = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program D', leadMentorId: participantId }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Program D', leadMentorId: participantId }
         });
         programDId = progD.id;
 
@@ -223,7 +223,7 @@ describe('Auto-Association and Checkout Chunking Logic', () => {
             const checkoutTime = new Date(`${baseDateString}13:00:00Z`); // Leaves during Event B/C time
             const finalVisits = await processVisitCheckout(visit.id, checkoutTime, prisma, "TYPED");
 
-            // Since user is not enrolled in B or C anymore, it should simply extend their stay in A
+            // Since user is not enrolled in B or C, it should simply extend their stay in A
             // until checkout time.
             
             expect(finalVisits.length).toBe(1);

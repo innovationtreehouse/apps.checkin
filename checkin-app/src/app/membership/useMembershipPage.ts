@@ -6,6 +6,8 @@ import { useDisclosure } from "@mantine/hooks";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { useUnsavedGuard } from "@/components/UnsavedChangesProvider";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { useLoad } from "@/lib/api";
 import {
   buildIntakePayload, mapServerFields, useMembershipForm, validateIntake, type IntakePrefill,
 } from "./membershipForm";
@@ -24,6 +26,11 @@ export interface ExternalStatus {
   deepLinkUrl: string | null;
 }
 
+export interface OwnBackgroundCheck {
+  consented: boolean;
+  deepLinkUrl: string | null;
+}
+
 export interface MembershipProcess {
   id: number;
   kind: string;
@@ -39,6 +46,8 @@ export interface IntakeState {
   external: ExternalStatus | null;
   /** The caller's own unsigned individual agreement, independent of the household's. */
   personAgreement: { id: number; started: boolean } | null;
+  /** The caller's own background check awaiting their consent, outside any household application. */
+  ownBackgroundCheck?: OwnBackgroundCheck | null;
   prefill: IntakePrefill;
 }
 
@@ -55,12 +64,23 @@ export const apiError = (data: { error?: string; detail?: string } | null | unde
 
 const networkError = () => notifications.show({ color: "red", message: "Network error.", autoClose: false });
 
+const SAVED_READ_ATTEMPTS = 3;
+
+/** Reads the state after a save, retrying a network failure or a 5xx with useLoad's backoff. Null when every attempt fails. */
+async function readSavedState(): Promise<IntakeState | null> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch("/api/membership").catch(() => null);
+    if (res?.ok) return res.json().catch(() => null);
+    if ((res && res.status < 500) || attempt >= SAVED_READ_ATTEMPTS) return null;
+    await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** (attempt - 1)));
+  }
+}
+
 /** State, data loading and actions for the membership page. */
 export function useMembershipPage() {
   const { data: session, status: sessionStatus } = useSession();
 
   const [state, setState] = useState<IntakeState | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | undefined>();
   // Per-field validation errors, keyed by form field ("address", "emName",
@@ -84,7 +104,7 @@ export function useMembershipPage() {
   const [planRequested, setPlanRequested] = useState(false);
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
-  // Self-report gate for the background-check task (#875): the confirm checkbox
+  // Self-report gate for the background-check task: the confirm checkbox
   // unlocks only after the applicant has opened the Averity consent link this
   // visit, so they can't confirm a form they never saw.
   const [bgLinkOpened, setBgLinkOpened] = useState(false);
@@ -100,12 +120,12 @@ export function useMembershipPage() {
   }, []);
 
   const { reset: resetForm } = form;
-  const hydrate = useCallback((s: IntakeState) => {
+  const applyState = useCallback((s: IntakeState) => {
     setState(s);
     // Restore an in-flight payment holdoff after a tab refresh mid-Shopify-checkout.
-    // Once the process has moved out of PENDING_PAYMENT — the orders/paid webhook
-    // settled it, or (possibly, in the future) an s-read reconciliation did — drop
-    // the holdoff and its sessionStorage record. Deliberately no background
+    // Once the process has moved out of PENDING_PAYMENT, normally because the
+    // orders/paid webhook settled it, drop the holdoff and its sessionStorage
+    // record. Deliberately no background
     // polling: the dev instance scales to zero, and an idle tab must not keep it
     // (and the database) awake. The one exception is below — a visibility refetch
     // while a payment holdoff is active — which is user-driven (a hidden tab fires
@@ -117,19 +137,21 @@ export function useMembershipPage() {
       sessionStorage.removeItem(awaitingPaymentKey(processId));
       setAwaitingPayment(null);
     }
+  }, []);
+  const hydrate = useCallback((s: IntakeState) => {
+    applyState(s);
     resetForm(s.prefill);
-  }, [resetForm]);
+  }, [applyState, resetForm]);
 
-  const fetchState = useCallback(() =>
-    fetch("/api/membership")
-      .then(async (res) => { if (res.ok) hydrate(await res.json()); })
-      .catch(() => { /* shown via empty state */ })
-      .finally(() => setLoading(false)), [hydrate]);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    return fetchState();
-  }, [fetchState]);
+  const { data: loaded, error: loadError, reload: load } = useLoad<IntakeState>(
+    sessionStatus === "authenticated" ? "/api/membership" : null,
+  );
+  const loading = state === null && !loadError;
+  // A background re-read keeps unsaved input.
+  useSeedForm(loaded, false, (s) => {
+    if (form.isDirty) applyState(s);
+    else hydrate(s);
+  });
 
   // Return from embedded signing: Zoho redirects back with ?signed=1 (or
   // ?declined=1). Sync the contract status straight from Zoho rather than waiting
@@ -157,7 +179,7 @@ export function useMembershipPage() {
           } catch {
             /* best-effort — the Zoho webhook is still a backstop */
           }
-          await load();
+          load();
           notifications.show({
             message: signedNow
               ? "Thanks — your signature was received."
@@ -166,12 +188,10 @@ export function useMembershipPage() {
         })();
       }
     }
-    // The page shows the loader until this first load settles, so the decline
+    // The page shows the loader until the first load settles, so the decline
     // message lands with the first visible render.
-    fetchState().then(() => {
-      if (declined) setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
-    });
-  }, [sessionStatus, fetchState, load]);
+    if (declined) setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
+  }, [sessionStatus, load]);
 
   // When awaiting payment, fetch the membership-fee amount and Shopify checkout link. Leads
   // only — the route refuses anyone else, and the card hides the money from them.
@@ -216,7 +236,7 @@ export function useMembershipPage() {
   const onMockPaid = async () => {
     flash("Payment mocked (local) — updating status.");
     notifyNavRefresh();
-    await load();
+    load();
   };
   const onMockFailed = (data: { error?: string; detail?: string } | null) =>
     flash(apiError(data, "Mock payment failed."), true);
@@ -251,9 +271,18 @@ export function useMembershipPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        hydrate(data.state);
+        // A null state means saved but unread; read it so new people get their ids and a
+        // second save updates them rather than creating them again. A failed read leaves
+        // the form as typed. This read is direct, not through useLoad, because only its
+        // own answer may replace the form: a later background reload must not.
+        const saved: IntakeState | null = data.state ?? await readSavedState();
+        if (saved) hydrate(saved);
         flash("Progress saved.");
-        setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
+        const rejections: string[] = (data.rejections ?? []).map((r: { message: string }) => r.message);
+        setWarnings(saved ? rejections : [
+          "The page couldn't refresh after saving. Reload the page before saving again, or people you just added may be added twice.",
+          ...rejections,
+        ]);
       } else flash(apiError(data, "Could not save."), true);
     } catch {
       networkError();
@@ -300,8 +329,8 @@ export function useMembershipPage() {
       } else if (data.code === "no_process") {
         // Race: the process advanced out from under this stale view. Transient
         // toast + re-hydrate; the `incomplete` field-error path below is untouched.
-        notifications.show({ color: "red", message: data.error || "No application is awaiting your information.", autoClose: 4000 });
-        await load();
+        notifications.show({ color: "red", message: data.error || "No application is awaiting your information.", autoClose: false });
+        load();
       } else {
         // The server may flag fields the client can't check locally (e.g. an
         // emergency contact who is a household member) — highlight those too.
@@ -333,6 +362,8 @@ export function useMembershipPage() {
       } else {
         flash(apiError(data, "Couldn't open the signing form. Please try again."), true);
         setSaving(false);
+        // The refusal may mean the signature was just found at Zoho.
+        load();
       }
     } catch {
       networkError();
@@ -385,10 +416,10 @@ export function useMembershipPage() {
     try {
       const res = await fetch("/api/membership/renew", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) { await load(); notifyNavRefresh(); flash("Renewal started."); }
+      if (res.ok) { load(); notifyNavRefresh(); flash("Renewal started."); }
       else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This renewal is no longer awaiting your confirmation.", autoClose: 4000 });
-        await load();
+        notifications.show({ color: "red", message: data.error || "This renewal is no longer awaiting your confirmation.", autoClose: false });
+        load();
       }
       else flash(apiError(data, "Could not start renewal."), true);
     } catch {
@@ -407,7 +438,7 @@ export function useMembershipPage() {
       const res = await fetch("/api/membership/bg-consent", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        await load();
+        load();
         notifyNavRefresh();
       } else {
         setBgConsenting(false);
@@ -422,7 +453,7 @@ export function useMembershipPage() {
   useUnsavedGuard(form.isDirty);
 
   return {
-    session, sessionStatus, state, loading, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
+    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
     load, startApplication, save, submit, startSigning, renew,
     payment: {
       payment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,

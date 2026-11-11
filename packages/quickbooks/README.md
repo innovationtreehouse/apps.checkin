@@ -1,29 +1,35 @@
 # @checkin/quickbooks
 
-QuickBooks Online client (QB-0 to QB-2 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9): windowed
-reads plus one closed-enum, create-only writer.
+QuickBooks Online client: windowed reads plus one closed-enum, create-only writer. How the
+expense lane uses it is in `docs/architecture/EXPENSE_QB.md`; the rules it keeps are under
+*The books are finance's* in `docs/rules/principles.md`.
 No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, refresh).
 
 ## Public API
 
 - `AccessTokenSource { current(): Promise<string> }` — the only way the client gets a token.
-  The app injects a read-only source (Secrets Manager, built in checkin-app); the client
-  never refreshes or saves tokens. An expired token is an error for the caller to retry.
+  checkin-app injects a read-only source that invokes the refresher Lambda
+  (`qbo-refresher-function`); the client never refreshes or saves tokens. An expired token is an error for the caller to retry.
 - `new QuickBooksClient(source, { env, realmId })` — `env` is `sandbox` | `production`.
   The production realm is refused unless `CHECKIN_ENV=prod` (unset fails closed).
   `qboRealmFromEnv()` reads `QBO_ENVIRONMENT` + `QBO_REALM_ID` under the same guard.
 - Windowed readers, `from`/`to` inclusive `YYYY-MM-DD`, at most `MAX_WINDOW_DAYS` (93) wide:
-  `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`.
-  The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase` or `Bill` entries
-  QuickBooks created at or after `since` (`MetaData.CreateTime`), one page of 1,000, with `full: true`
-  when the page is full and more may exist. Creation time survives finance re-dating an entry, so it
+  `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`, `journalEntriesBetween`.
+  The one unwindowed transaction read is `createdSince(entity, since)`: `Deposit`, `Purchase`, `Bill` or `JournalEntry` entries
+  QuickBooks created since `since` (`MetaData.CreateTime`), oldest first. It starts an hour before `since`
+  in case the app's clock runs ahead, so a caller must tolerate older entries. It reads up to 10 pages
+  (10,000 entries), each starting at the last row's `CreateTime`, so a deleted entry or a tie at a page edge
+  skips nothing. `full: true` means more may exist: it reached the cap, or more than a page of entries share
+  one `CreateTime` and it cannot move past them. Creation time survives finance re-dating an entry, so it
   finds an app entry a dated window misses.
 - `bookCloseDate()`: the books closing date (`Preferences.AccountingInfoPrefs.BookCloseDate`), or
   null when finance has set none (absent, null or empty). It throws when the read fails or the date is malformed;
   nothing caches it. It and the reference lists below are the other reads with no date window.
-- Name lookups for bootstrap UIs: `accountNamed` / `classNamed` (by `FullyQualifiedName`,
-  e.g. `Parent:Child`), `vendorNamed` (by `DisplayName`). Mappings store the QuickBooks Id, never a name.
-- Reference lists for the FINANCE bootstrap: `accounts()`, `classes()`, `vendors()` (active entries).
+- Name lookups: `accountNamed` / `classNamed` (by `FullyQualifiedName`, e.g. `Parent:Child`), used by
+  the sandbox checks, and `vendorNamed` (by `DisplayName`), used by `createVendor`. Mappings store the
+  QuickBooks Id, never a name.
+- Reference lists (active entries): `accounts()`, `classes()`, `vendors()`. Finance's books map and bucket
+  screens pick accounts and Classes from them live; nothing copies them into the app.
 - `billsBetween` returns `Balance` and `LinkedTxn`; `billPaymentsByIds(ids)` reads the payments a Bill
   links, so a caller can tell when a Bill was paid.
 - Match-before-create, find half (`match.ts`, pure, no writes): `findMatch(candidates, request)` answers
@@ -33,7 +39,7 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   since QuickBooks dates drift a day or two. A key hit that fails a check, or a matching entry carrying
   another record's key, is `ambiguous`, never `found` or `not-found`. Claimed and excluded ids are skipped. `depositCandidate`, `purchaseCandidate`
   and `billCandidate` adapt reader rows.
-- The one write (QB-2) is package-internal: callers write only through `findOrCreate` and `createVendor`,
+- The one write (QB-2) is package-internal: callers write only through `findOrCreate`, `findOrCreateInKindJournal` and `createVendor`,
   which look the key (or name) up before every create, since QBO's `requestid` dedup window is short.
   It is create-only, for `WRITABLE_ENTITIES`
   (`Purchase`, `Bill`, `Deposit`, `Vendor`). Anything else (BillPayment, Payment, JournalEntry, …), a
@@ -52,11 +58,15 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
 - Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
-- An in-kind pair (clearing Deposit + Purchase) is two `findOrCreate` calls with their own keys
-  (e.g. `qbKey("in-kind", id + ".deposit")`); a crash between them leaves the second for the next run,
-  where the first is found by key.
+- `findOrCreateInKindJournal(client, request)` creates one in-kind gift as one balanced JournalEntry;
+  no other path creates a JournalEntry. Each line names its account: credits go only to in-kind
+  income, debits to no books-map role's account, and an unbalanced entry or a non-positive amount throws
+  before any read. It matches by the app's key alone, so a hand entry of the same amount is never taken
+  for the gift, and a crash after QuickBooks accepts is found by key next run. Finance's own booking of a
+  gift, a Deposit into and a Purchase out of the in-kind clearing account, is matched by the in-kind lane
+  (`packages/bulk-donation`) before it calls this.
 - `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate
-  (`docs/in-design/QB_CLOSED_BOOKS.md`). It reads the record's window, runs `findMatch`, and answers
+  (*Finance's books come first* in `docs/rules/principles.md`). It reads the record's window, runs `findMatch`, and answers
   `found` / `ambiguous` (post nothing, closed period included), `closed` (not found and dated on or
   before `closedThrough`), `needs-finance` (not found and `mayCreate` false), `created`, or `failed`
   (any error; nothing is retried here). Before a create it re-reads `bookCloseDate()` and gates on the
@@ -150,7 +160,9 @@ amount-anchored vendor join.
 `npm run sandbox-checks -w @checkin/quickbooks` confirms, against the sandbox only, what the gate
 relies on: Preferences reads as a one-row array, `BookCloseDate` reads as null with the books open
 and as the date once closed, a create dated in a closed period fails with fault 6210 in "Required
-password" closing mode, and `createdSince` returns an entry just created, by its key. Run it twice:
+password" closing mode, `createdSince` returns an entry just created, by its key, and its query is
+accepted and answers oldest first on `Deposit`, `Purchase`, `Bill` and `JournalEntry`, and an id lookup
+returns every row, which tests the default page size only with more than 100 Deposits. Run it twice:
 first with the sandbox books open, then after closing them (Settings → Account and settings →
 Advanced → Close the books) with a date before today and a password. It needs the consent token
 file and `QBO_ENVIRONMENT=sandbox`. The test deposits go into the bank account named

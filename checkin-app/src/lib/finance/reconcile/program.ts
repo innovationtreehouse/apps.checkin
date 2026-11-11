@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { programVariantIds } from "@/lib/programs/variants";
+import { verifyCheckout } from "@/lib/programs/checkoutSignature";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import { raisePaymentException, type PaymentExceptionKind } from "./exceptions";
@@ -11,7 +12,10 @@ import { isPaid, isReversed } from "./orderStatus";
 /** The order facts a program entitlement is judged on — built from the webhook
  *  payload or the mirror, so both paths judge the same thing. */
 export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents" | "legacyId"> {
-    lines: { variantId: string; quantity: number }[];
+    /** `quantity` is the original count; `currentQuantity` excludes units an edit or refund took off. */
+    lines: { variantId: string; quantity: number; currentQuantity: number }[];
+    /** The order's CheckMeIn_Checkout_Sig cart attribute (lib/programs/checkoutSignature). */
+    checkoutSig: string | null;
 }
 
 /** A paid seat no pending enrollment consumes, raised for the board alongside (or instead of) activation. */
@@ -20,55 +24,67 @@ export interface Surplus {
     personId?: number;
 }
 
-/** ok, or the exception to raise; `kind: null` = nothing to do yet, raise nothing. */
+/**
+ * ok, or the exception to raise; `kind: null` = nothing to do yet, raise nothing.
+ * `spent`: every seat the order carries already paid for an earlier enrollment, so it is a replay.
+ */
 export type Entitlement =
     | { ok: true; surplus?: Surplus }
-    | { ok: false; kind: PaymentExceptionKind | null; personId?: number; nothingAwaiting?: true };
+    | { ok: false; kind: PaymentExceptionKind | null; personId?: number; nothingAwaiting?: true; spent?: true };
 
 /**
  * Does this order pay for activating these people in this program? Paid and not
  * reversed, names people from one household only (else MIXED_HOUSEHOLDS), carries
- * one of the program's variants (public or claimant), and buys at least one seat
- * per person still awaiting payment. A seat shortfall activates nobody: the order
- * cannot say which of the household it was meant for, so the board decides.
+ * one of the program's variants (public or claimant), has a checkout signature that
+ * household's own checkout made for exactly these people (else UNMATCHED_ORDER),
+ * and has at least one unspent seat per person still awaiting payment. A seat the order already activated
+ * someone with is spent, whether that person is still enrolled or has since left.
+ * An order with every seat spent is a replay: it activates nobody and raises
+ * nothing. A shortfall of unspent seats activates nobody: the order cannot say
+ * which of the household it was meant for, so the board decides.
  *
- * Seats beyond those awaiting payment, and not already activated by this same
- * order (a redelivery, or a child it activated whom the board later withdrew),
- * are a surplus for the board: DUPLICATE_PAYMENT when a person named is already
- * enrolled (paid, comped or approved), else
- * UNCLAIMED_SEATS (withdrawn, expired, or extra quantity). Matched per person, so
- * siblings paying on separate orders never trip it. Inventory is never adjusted.
+ * Unspent seats beyond those awaiting payment are a surplus for the board:
+ * DUPLICATE_PAYMENT when a person named is already enrolled (paid, comped or
+ * approved), else UNCLAIMED_SEATS (withdrawn, expired, or extra quantity).
+ * Matched per person, so siblings paying on separate orders never trip it.
+ * Inventory is never adjusted.
  */
 export async function orderEntitlesEnrollment(order: EntitlementOrder, programId: number, personIds: number[]): Promise<Entitlement> {
     const awaiting = await prisma.programParticipant.count({ where: { programId, personId: { in: personIds }, ...fromWhere("PENDING_UNPAID") } });
     if (awaiting === 0 && !isPaid(order)) return { ok: false, kind: null, nothingAwaiting: true };
     if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
     if (!isPaid(order)) return { ok: false, kind: null };
-    if (await spansHouseholds(personIds)) return { ok: false, kind: "MIXED_HOUSEHOLDS" };
+    const households = await householdsOf(personIds);
+    if (households.length > 1) return { ok: false, kind: "MIXED_HOUSEHOLDS" };
 
     const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
     const variantIds = new Set(program ? programVariantIds(program) : []);
-    const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.quantity, 0);
+    const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
+    const unspent = Math.max(0, seats - await seatsSpentBy(order, programId));
     if (awaiting === 0) {
-        const surplus = await surplusSeats(order, programId, personIds, seats);
+        const surplus = await surplusSeats(order, programId, personIds, unspent);
         return { ok: false, kind: surplus?.kind ?? null, personId: surplus?.personId, nothingAwaiting: true };
     }
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
-    if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
-    return { ok: true, surplus: await surplusSeats(order, programId, personIds, seats - awaiting) };
+    if (unspent === 0) return { ok: false, kind: null, spent: true };
+    if (households.length === 0 || !verifyCheckout(programId, personIds, households[0], order.checkoutSig)) {
+        return { ok: false, kind: "UNMATCHED_ORDER" };
+    }
+    if (unspent < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
+    return { ok: true, surplus: await surplusSeats(order, programId, personIds, unspent - awaiting) };
 }
 
-/** One order pays for one household: do the people it names live in more than one? */
-async function spansHouseholds(personIds: number[]): Promise<boolean> {
-    if (new Set(personIds).size < 2) return false;
-    const households = await prisma.person.findMany({
+/** The households the people an order names live in; one order pays for one household. */
+async function householdsOf(personIds: number[]): Promise<number[]> {
+    const rows = await prisma.person.findMany({
         where: { id: { in: personIds } },
         select: { householdId: true },
         distinct: ["householdId"],
     });
-    return households.length > 1;
+    return rows.map((r) => r.householdId);
 }
 
+/** `unspent` is already net of the seats the order spent; what is left beyond those awaiting is surplus. */
 async function surplusSeats(order: EntitlementOrder, programId: number, personIds: number[], unspent: number): Promise<Surplus | undefined> {
     if (unspent <= 0) return undefined;
     const active = await prisma.programParticipant.findMany({
@@ -76,25 +92,39 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
         select: { personId: true, shopifyOrderId: true },
     });
     const otherwisePaid = active.filter((r) => !order.legacyId || r.shopifyOrderId !== order.legacyId);
-    const spentHere = active.length - otherwisePaid.length + await withdrawnAfterActivation(order, programId, personIds);
-    if (unspent - spentHere <= 0) return undefined;
     return otherwisePaid.length > 0 ? { kind: "DUPLICATE_PAYMENT", personId: otherwisePaid[0].personId } : { kind: "UNCLAIMED_SEATS" };
 }
 
-/** People this order activated who have since been withdrawn: their seat was claimed, so it is not unclaimed. */
-async function withdrawnAfterActivation(order: EntitlementOrder, programId: number, personIds: number[]): Promise<number> {
+/**
+ * Distinct people this order activated in this program: those still active on it
+ * and those who have since left (removed or withdrawn). Each spent one of its seats.
+ * Scoped by order, not by the people a caller names, because the seats belong to the order.
+ */
+async function seatsSpentBy(order: EntitlementOrder, programId: number): Promise<number> {
     if (!order.legacyId) return 0;
-    const deleted = await prisma.auditLog.findMany({
+    // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
+    const holders = await prisma.programParticipant.findMany({
+        where: { programId, shopifyOrderId: order.legacyId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
+        select: { personId: true },
+    });
+    const left = await prisma.auditLog.findMany({
         where: {
             tableName: "ProgramParticipant",
-            action: "DELETE",
             secondaryAffectedEntity: programId,
-            affectedEntityId: { in: personIds },
-            oldData: { path: ["shopifyOrderId"], equals: order.legacyId },
+            OR: [
+                { action: "DELETE", oldData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                {
+                    action: "EDIT",
+                    AND: [
+                        { newData: { path: ["status"], equals: "WITHDRAWN" } },
+                        { newData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                    ],
+                },
+            ],
         },
         select: { affectedEntityId: true },
     });
-    return new Set(deleted.map((d) => d.affectedEntityId)).size;
+    return new Set([...holders.map((h) => h.personId), ...left.map((d) => d.affectedEntityId)]).size;
 }
 
 /**
@@ -126,7 +156,8 @@ export async function reconcileForwardProgram(order: MirrorOrder): Promise<boole
     // Fallback for orders without attributes: the purchaser (household lead) and
     // everyone in their household. Claims the order only when it carries a pending
     // program's variant (public or claimant) — anything else (merch, a donation)
-    // passes untouched.
+    // passes untouched. Such an order carries no checkout signature, so the shared
+    // check raises it for the board instead of activating.
     if (!isPaid(order)) return false;
     const email = order.customerEmail?.toLowerCase().trim();
     if (!email) return false;
@@ -155,14 +186,17 @@ export async function reconcileForwardProgram(order: MirrorOrder): Promise<boole
 /** Shared tail for both program-matching paths: judge, then activate through the one choke point. */
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
     const lines = await mirror.orderLines(order.orderGid);
-    const entitlement = await orderEntitlesEnrollment({ ...order, lines }, programId, personIds);
+    const checkoutSig = mirror.orderAttr(order, "CheckMeIn_Checkout_Sig");
+    const entitlement = await orderEntitlesEnrollment({ ...order, lines, checkoutSig }, programId, personIds);
     const { activateProgramEnrollment, refuseReversedActivation } = await import("@/lib/programs/activateEnrollment");
     if (!entitlement.ok && entitlement.kind === "REVERSED_BEFORE_ACTIVATION" && order.legacyId) {
         await refuseReversedActivation(programId, personIds, order.legacyId);
         return true;
     }
     if (!entitlement.ok) {
-        if (entitlement.kind) {
+        if (entitlement.spent) {
+            logger.info(`[reconcile] program order ${order.legacyId} (program ${programId}): order already spent on earlier enrollments — not activated`);
+        } else if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
             await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.personId ?? personIds[0] ?? null });
         }

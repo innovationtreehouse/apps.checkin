@@ -8,23 +8,20 @@ import { db } from "../../db";
 import { parseBenevityCsv } from "../../lib/csv-parser";
 import { uploadedFileService } from "../../services/uploadedFileService";
 import { transactionService } from "../../services/transactionService";
-import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
-import { QB_MATCH_STATE } from "../../lib/qb-match";
 import { ServiceError } from "@checkin/component-kit";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
 const AUDIT = { actorUserId: 1, actorUsername: "testfinance", correlationId: "corr-intake" };
-const READER = { actorUserId: 1, actorUsername: "testfinance", route: "/api/donations/transactions" };
 
 const HEADER =
-  "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment";
+  "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment,Merchant Fee,Check Fee";
 const DONOR_FIELDS = ["Jane", "Doe", "Robotics team", "John", "Smith"];
 const DONOR_KEYS = ["donorFirstName", "donorLastName", "donorComment"];
 
 function csv(rows: string[]): Buffer {
-  return Buffer.from([HEADER, ...rows].join("\n"));
+  return Buffer.from([HEADER, ...rows.map((row) => `${row},0.00,0.00`)].join("\n"));
 }
 
 async function upload(rows: string[]) {
@@ -47,7 +44,6 @@ beforeEach(async () => {
   await db.transaction.deleteMany({});
   await db.uploadedFile.deleteMany({});
   await db.accountMap.deleteMany({});
-  await db.donationQbMatchExclusion.deleteMany({});
   configureTestRuntime();
 });
 
@@ -90,9 +86,7 @@ describeDb("owner assignment", () => {
 
     const t2 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-2" } });
     expect(t2.ownerId).toBe(201);
-    const event = await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
-    expect(event.qbMatchState).toBe(QB_MATCH_STATE.UNMATCHED);
-    expect(event.qbTxnId).toBeNull();
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
     expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
   });
 
@@ -251,62 +245,16 @@ describeDb("upload runs the owner-assigned cycle per new disbursement", () => {
   });
 });
 
-describeDb("donor data reads are audited", () => {
-  it("each pii read writes one DONOR_DATA_READ row with route and count", async () => {
-    await upload(FILE);
-    const rows = await transactionService.listUnassignedTransactions(orgId, READER);
-    expect(rows).toHaveLength(2);
-    const t1 = await transactionService.getTransaction(orgId, rows[0].id, READER);
-    expect(t1?.donorFirstName).toBe("Jane");
-    await transactionService.listTransactions(orgId, READER);
-    await commentRuleService.listCommentRules(orgId, { ...READER, route: "/api/donations/comment-rules" });
-
-    const reads = await db.workflowEvent.findMany({ where: { orgId, eventType: "DONOR_DATA_READ" }, orderBy: { id: "asc" } });
-    expect(reads.map((r) => JSON.parse(r.payload!))).toEqual([
-      { route: READER.route, filter: { unassigned: true }, count: 2 },
-      { route: READER.route, ids: [rows[0].id], count: 1 },
-      { route: READER.route, filter: { assigned: null }, count: 3 },
-      { route: "/api/donations/comment-rules", count: 0 },
-    ]);
-    expect(reads.every((r) => r.actorUserId === 1)).toBe(true);
-  });
-
+describeDb("donor data stays out of the workflow log", () => {
   it("no workflow event payload carries a donor field", async () => {
     await makeAccountMapRule(orgId);
     await upload(FILE);
     const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
     await transactionService.assignOwner(orgId, t1.id, 201, true, AUDIT);
-    await transactionService.listTransactions(orgId, READER);
+    await transactionService.listTransactions(orgId);
 
     const payloads = (await db.workflowEvent.findMany({ where: { orgId } })).map((e) => e.payload ?? "");
     expect(payloads.length).toBeGreaterThan(0);
     for (const p of payloads) for (const f of DONOR_FIELDS) expect(p).not.toContain(f);
   });
-});
-
-describeDb("QuickBooks match pre-seat", () => {
-  const event = (disbursementId: string, date: string, qbMatchState: string, qbTxnId: string | null) =>
-    db.disbursementEvent.create({
-      data: {
-        orgId,
-        disbursementId,
-        qbMatchState,
-        qbTxnId,
-        payload: JSON.stringify({ version: 1, orgId, disbursementId, disbursementDate: date, disbursementFrom: null, items: [] }),
-      },
-    });
-
-  it("a QuickBooks entry is claimed at most once per org", async () => {
-    await event("D-A", "2026-09-01", QB_MATCH_STATE.MATCHED, "qb-1");
-    await expect(event("D-B", "2026-09-02", QB_MATCH_STATE.MATCHED, "qb-1")).rejects.toMatchObject({ code: "P2002" });
-    await event("D-C", "2026-09-03", QB_MATCH_STATE.UNMATCHED, null);
-    await event("D-D", "2026-09-04", QB_MATCH_STATE.UNMATCHED, null);
-  });
-
-  it("an exclusion is unique per org", async () => {
-    const data = { orgId, qbTxnId: "qb-9", reason: "hand-booked grant", excludedByUserId: 1 };
-    await db.donationQbMatchExclusion.create({ data });
-    await expect(db.donationQbMatchExclusion.create({ data })).rejects.toMatchObject({ code: "P2002" });
-  });
-
 });

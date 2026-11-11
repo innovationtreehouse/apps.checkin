@@ -132,6 +132,7 @@ describe('Program Age Bounds Integration Tests', () => {
 
         const program = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: 'Age Bounds Integration Test Program',
                 minAge: 14,
                 maxAge: 18,

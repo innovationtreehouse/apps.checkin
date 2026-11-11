@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Badge, Card, Center, Group, Loader, Stack, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 type LifecycleViolation = {
   model: "ProgramParticipant" | "OrgMembershipProcess";
@@ -17,32 +18,17 @@ type LifecycleViolation = {
  * board sees drift live, without waiting for the cron email.
  */
 export function LifecycleDriftPanel() {
-  const [violations, setViolations] = useState<LifecycleViolation[] | null>(null);
-  const [scanned, setScanned] = useState<number>(0);
-  const [failed, setFailed] = useState(false);
+  const { data, error, reload } = useLoad<{ violations: LifecycleViolation[]; scanned: number }>("/api/system-status/lifecycle");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/system-status/lifecycle");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        setViolations(data.violations);
-        setScanned(data.scanned);
-      } catch {
-        setFailed(true);
-      }
-    })();
-  }, []);
-
-  if (failed) return <Text c="red">Failed to load lifecycle status.</Text>;
-  if (!violations) {
+  if (error) return <LoadError what="lifecycle status" message={error} onRetry={reload} />;
+  if (!data) {
     return (
       <Center mih="30vh">
         <Loader />
       </Center>
     );
   }
+  const { violations, scanned } = data;
 
   if (violations.length === 0) {
     return (

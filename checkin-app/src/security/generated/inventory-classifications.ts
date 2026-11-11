@@ -47,6 +47,7 @@ export const classifications = {
         cancelledAt: 'public',
         cancelledBy: 'internal',
         cancelledByUsername: 'internal',
+        cancelReason: 'internal',
     },
     InventoryProvisionalItem: {
         id: 'public',
@@ -63,6 +64,8 @@ export const classifications = {
         rejectionReason: 'internal',
         resolvedToGtin13: 'public',
         conversionFactor: 'public',
+        reconcileFirstFailedAt: 'public',
+        reconcileLastError: 'internal',
     },
     InventoryMergeConflict: {
         id: 'public',
@@ -97,6 +100,7 @@ export const classifications = {
         receivedAt: 'public',
         status: 'public',
         failureReason: 'internal',
+        firstFailedAt: 'public',
     },
     ProvisionalItemLog: {
         id: 'public',
@@ -119,6 +123,7 @@ export const classifications = {
         status: 'public',
         failureReason: 'internal',
         receivedAt: 'public',
+        firstFailedAt: 'public',
     },
     LocationLog: {
         id: 'public',
@@ -160,6 +165,9 @@ export const relations = {
     },
     LocationLog: {
     },
+} as const;
+
+export const marks = {
 } as const;
 
 export type Models = keyof typeof classifications;

@@ -50,7 +50,7 @@ describe("dispatch backstops (Unsupported object type)", () => {
   it("projectNode throws on an unknown object type before touching the db", async () => {
     // The default branch throws before the (here unused) db client is dereferenced.
     const fakeDb = {} as Parameters<typeof projectNode>[0];
-    await expect(projectNode(fakeDb, "store", "WIDGET" as ObjectType, { id: "x" }, EventSource.TEST_LOADED)).rejects.toThrow(
+    await expect(projectNode(fakeDb, "store", "WIDGET" as ObjectType, { id: "x" }, EventSource.TEST_LOADED, 1n)).rejects.toThrow(
       /Unsupported object type/,
     );
   });

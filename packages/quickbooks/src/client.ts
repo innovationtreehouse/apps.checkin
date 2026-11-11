@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { KindedError, type FailureKind } from "@checkin/component-kit";
 import { centsToDollars } from "@checkin/money";
-import { CREATE } from "./internal";
+import { CREATE, CREATE_JOURNAL } from "./internal";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
 import type {
   AccessTokenSource,
@@ -11,6 +12,7 @@ import type {
   QboCustomer,
   QboDeposit,
   QboEnv,
+  QboJournalEntry,
   QboPreferences,
   QboPurchase,
   QboRealm,
@@ -23,6 +25,9 @@ const PAGE_SIZE = 1000; // QBO's MAXRESULTS ceiling
 /** Widest window a reader accepts, so a reader can never walk QuickBooks history. */
 export const MAX_WINDOW_DAYS = 93;
 const DAY_MS = 86_400_000;
+/** How far ahead of QuickBooks' clock the app's may run before createdSince misses an entry. */
+const CREATED_SINCE_MARGIN_MS = 3_600_000;
+const CREATED_SINCE_MAX_PAGES = 10;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRY_AFTER_S = 10;
 
@@ -36,14 +41,23 @@ async function faultCodes(res: Response): Promise<string[]> {
   }
 }
 
-/** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
-export class QboRequestError extends Error {
-  readonly codes: readonly string[];
+/** A refused login is connection; 403 is too until the logged fault codes show which 403s are settings. */
+function statusKind(status: number): FailureKind {
+  if (status === 401 || status === 403) return "connection";
+  if (status === 429 || status >= 500) return "system";
+  return "data";
+}
 
-  constructor(message: string, codes: readonly string[]) {
-    super(codes.length ? `${message}: codes ${codes.join(",")}` : message);
+/** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
+export class QboRequestError extends KindedError {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly requestId: string | null,
+    readonly codes: readonly string[],
+  ) {
+    super(statusKind(status), codes.length ? `${message}: codes ${codes.join(",")}` : message);
     this.name = "QboRequestError";
-    this.codes = codes;
   }
 }
 
@@ -96,8 +110,9 @@ export function qboDate(value: string): string {
 }
 
 /**
- * The only entities the app may create. A reimbursement is a Bill the app never pays;
- * BillPayment, Payment, JournalEntry and every other entity are refused.
+ * The only entities the generic writer may create. A reimbursement is a Bill the app never pays;
+ * BillPayment, Payment, JournalEntry and every other entity are refused. An in-kind gift's
+ * JournalEntry has its own narrow path, findOrCreateInKindJournal.
  */
 export const WRITABLE_ENTITIES = ["Purchase", "Bill", "Deposit", "Vendor"] as const;
 export type WritableEntity = (typeof WRITABLE_ENTITIES)[number];
@@ -133,6 +148,21 @@ export interface DepositFields {
   txnDate: string;
   depositToAccountId: string;
   lines: WriteLine[];
+  memo?: string;
+}
+
+/** One JournalEntry line: a debit or credit of positive integer cents to an account. */
+export interface JournalLine {
+  postingType: "Debit" | "Credit";
+  amountCents: number;
+  accountId: string;
+  classId?: string;
+  description?: string;
+}
+
+export interface JournalEntryFields {
+  txnDate: string;
+  lines: JournalLine[];
   memo?: string;
 }
 
@@ -192,8 +222,13 @@ function privateNote(memo: string | undefined, key: string, env: QboEnv): string
   return note;
 }
 
+/** QuickBooks ref ids (accounts, Classes, Vendors) are digits only. */
+export function isQuickBooksId(id: string): boolean {
+  return /^\d+$/.test(id);
+}
+
 function ref(id: string): { value: string } {
-  if (!/^\d+$/.test(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
+  if (!isQuickBooksId(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
   return { value: id };
 }
 
@@ -255,11 +290,33 @@ function writeBody(req: WriteRequest, key: string, env: QboEnv): Record<string, 
   }
 }
 
+/** A balanced JournalEntry body: debits equal credits, every amount a positive whole number of cents. */
+function journalBody(f: JournalEntryFields, key: string, env: QboEnv): Record<string, unknown> {
+  parseDate(f.txnDate);
+  const total = (side: JournalLine["postingType"]) => f.lines.filter((l) => l.postingType === side).reduce((sum, l) => sum + l.amountCents, 0);
+  for (const l of f.lines) {
+    if (l.postingType !== "Debit" && l.postingType !== "Credit") throw new Error(`QBO journal PostingType must be Debit or Credit, got "${String(l.postingType)}"`);
+    if (!Number.isSafeInteger(l.amountCents) || l.amountCents <= 0) throw new Error("QBO journal line amounts must be positive whole cents");
+  }
+  if (total("Debit") === 0 || total("Debit") !== total("Credit")) throw new Error("QBO journal entry is not balanced");
+  return {
+    TxnDate: f.txnDate,
+    Line: f.lines.map((l) => ({
+      Amount: centsToDollars(l.amountCents),
+      DetailType: "JournalEntryLineDetail",
+      JournalEntryLineDetail: { PostingType: l.postingType, AccountRef: ref(l.accountId), ...(l.classId !== undefined && { ClassRef: ref(l.classId) }) },
+      ...(l.description !== undefined && { Description: l.description }),
+    })),
+    PrivateNote: privateNote(f.memo, key, env),
+  };
+}
+
 /** The entities the created-since read covers: the ones the app creates transactions in. */
 interface CreatedEntity {
   Deposit: QboDeposit;
   Purchase: QboPurchase;
   Bill: QboBill;
+  JournalEntry: QboJournalEntry;
 }
 
 export class QuickBooksClient {
@@ -327,16 +384,35 @@ export class QuickBooksClient {
     return this.between("Deposit", from, to);
   }
 
+  journalEntriesBetween(from: string, to: string): Promise<QboJournalEntry[]> {
+    return this.between("JournalEntry", from, to);
+  }
+
   /**
-   * Every `entity` QuickBooks created at or after `since`, one page of at most PAGE_SIZE.
-   * `full` means the page is full and more entries may exist. Creation time is kept when
-   * finance edits an entry's date, so this finds an entry a dated window misses.
+   * Every `entity` QuickBooks created since `since`, oldest first and once each. `since` comes from
+   * the app's clock and CreateTime from QuickBooks', so the read starts CREATED_SINCE_MARGIN_MS
+   * earlier, and callers get entries from before `since`. Each page starts at the last row's
+   * CreateTime, inclusive, so a deleted entry or a tie at a page edge skips nothing. `full` means
+   * more entries may exist: the read reached CREATED_SINCE_MAX_PAGES, or a full page gave it no
+   * later CreateTime to start from. Creation time is kept when finance edits an entry's date, so
+   * this finds an entry a dated window misses.
    */
   async createdSince<E extends keyof CreatedEntity>(entity: E, since: Date): Promise<{ entries: CreatedEntity[E][]; full: boolean }> {
     if (Number.isNaN(since.getTime())) throw new Error("QBO createdSince needs a valid time");
-    const at = `${since.toISOString().slice(0, 19)}Z`;
-    const entries = await this.query<CreatedEntity[E]>(`SELECT * FROM ${entity} WHERE MetaData.CreateTime >= '${at}' STARTPOSITION 1 MAXRESULTS ${PAGE_SIZE}`);
-    return { entries, full: entries.length >= PAGE_SIZE };
+    const toSecond = (ms: number) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+    let at = toSecond(since.getTime() - CREATED_SINCE_MARGIN_MS);
+    const byId = new Map<string, CreatedEntity[E]>();
+    for (let page = 0; page < CREATED_SINCE_MAX_PAGES; page++) {
+      const rows = await this.query<CreatedEntity[E]>(
+        `SELECT * FROM ${entity} WHERE MetaData.CreateTime >= '${at}' ORDERBY MetaData.CreateTime STARTPOSITION 1 MAXRESULTS ${PAGE_SIZE}`,
+      );
+      for (const row of rows) byId.set(row.Id, row);
+      if (rows.length < PAGE_SIZE) return { entries: [...byId.values()], full: false };
+      const last = Date.parse(rows[rows.length - 1].MetaData?.CreateTime ?? "");
+      if (Number.isNaN(last) || toSecond(last) <= at) break;
+      at = toSecond(last);
+    }
+    return { entries: [...byId.values()], full: true };
   }
 
   /** The books closing date (YYYY-MM-DD), or null when finance has set none (absent, null or empty). Throws when the read fails. */
@@ -353,7 +429,8 @@ export class QuickBooksClient {
   private async byIds<T>(entity: string, ids: readonly string[]): Promise<T[]> {
     if (ids.length === 0) return [];
     if (ids.length > PAGE_SIZE) throw new Error(`QBO id lookup takes at most ${PAGE_SIZE} ids, got ${ids.length}`);
-    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")})`);
+    // QuickBooks returns 100 rows unless MAXRESULTS says otherwise.
+    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")}) MAXRESULTS ${ids.length}`);
   }
 
   /** The BillPayments a Bill's LinkedTxn names. */
@@ -369,6 +446,14 @@ export class QuickBooksClient {
   /** Purchases by id: a backfilled receipt's hand-booked transaction. */
   purchasesByIds(ids: readonly string[]): Promise<QboPurchase[]> {
     return this.byIds("Purchase", ids);
+  }
+
+  depositsByIds(ids: readonly string[]): Promise<QboDeposit[]> {
+    return this.byIds("Deposit", ids);
+  }
+
+  journalEntriesByIds(ids: readonly string[]): Promise<QboJournalEntry[]> {
+    return this.byIds("JournalEntry", ids);
   }
 
   /** Reference lists (active entries) for the FINANCE bootstrap; not transaction history. */
@@ -426,7 +511,12 @@ export class QuickBooksClient {
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "application/json" };
     if (init.body !== undefined) headers["Content-Type"] = "application/json";
     for (let attempt = 1; ; attempt++) {
-      const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      let res: Response;
+      try {
+        res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      } catch (e) {
+        throw new KindedError("system", `QBO ${what} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+      }
       // intuit_tid is Intuit's per-request trace id — capture it for support/debugging every call.
       this.lastTid = res.headers.get("intuit_tid");
       if (res.status === 429 && attempt === 1) {
@@ -434,7 +524,12 @@ export class QuickBooksClient {
         await new Promise((r) => setTimeout(r, Math.min(Number.isFinite(wait) ? wait : 1, MAX_RETRY_AFTER_S) * 1000));
         continue;
       }
-      if (!res.ok) throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, await faultCodes(res));
+      if (!res.ok) {
+        const codes = await faultCodes(res);
+        const lane = new URL(url).searchParams.get("requestid")?.split(":")[0] ?? null;
+        console.warn("[quickbooks] request failed", { lane, operation: what, status: res.status, codes, requestId: this.lastTid });
+        throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, res.status, this.lastTid, codes);
+      }
       return res.json();
     }
   }
@@ -450,13 +545,24 @@ export class QuickBooksClient {
     }
     assertAppKey(key);
     assertRealmAllowed(this.realm);
-    const body = writeBody(request, key, this.realm.env);
-    assertPayloadMarked(this.realm.env, request.entity, body);
-    const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${request.entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
-    const res = await this.send(`create ${request.entity}`, url, { method: "POST", body: JSON.stringify(body) });
-    const created = (res as Record<string, { Id?: string } | undefined>)[request.entity];
-    if (!created?.Id) throw new Error(`QBO create ${request.entity} returned no Id (intuit_tid=${this.lastTid})`);
+    return this.post(request.entity, writeBody(request, key, this.realm.env), key);
+  }
+
+  /** The one create request: the body is marked for the realm's environment and checked just before it is sent. */
+  private async post(entity: WritableEntity | "JournalEntry", body: Record<string, unknown>, key: string): Promise<{ Id: string }> {
+    assertPayloadMarked(this.realm.env, entity, body);
+    const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
+    const res = await this.send(`create ${entity}`, url, { method: "POST", body: JSON.stringify(body) });
+    const created = (res as Record<string, { Id?: string } | undefined>)[entity];
+    if (!created?.Id) throw new Error(`QBO create ${entity} returned no Id (intuit_tid=${this.lastTid})`);
     return { Id: created.Id };
+  }
+
+  /** Creates one balanced JournalEntry; only findOrCreateInKindJournal calls it, after checking it credits in-kind income and debits no books-map role's account. */
+  async [CREATE_JOURNAL](fields: JournalEntryFields, key: string): Promise<{ Id: string }> {
+    assertAppKey(key);
+    assertRealmAllowed(this.realm);
+    return this.post("JournalEntry", journalBody(fields, key, this.realm.env), key);
   }
 }
 

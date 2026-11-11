@@ -18,8 +18,8 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import type { ShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
 type Receipt = ShopifyWebhookReceipt & { id: number };
@@ -49,7 +49,7 @@ function formatTriggeredAt(value: string): string {
 export default function ShopifyWebhookSettingsPage() {
   // Same gate as the sibling settings pages: board + sysadmin, redirected client-side
   // before any content renders. The status route re-enforces the same roles.
-  const { ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { ready, loading: authLoading } = useRequireRole(SETTINGS_ADMIN_ROLES);
 
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,8 +79,6 @@ export default function ShopifyWebhookSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="shopify-webhook" />
-
       {loading && !status ? (
         <Center py="xl"><Loader /></Center>
       ) : failed && !status ? (

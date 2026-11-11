@@ -1,8 +1,8 @@
 /**
- * The supervising-adult test (#1436 / #1550) — the shared rule behind the
+ * The supervising-adult test — the shared rule behind the
  * departure interrupt and the two-deep compliance banner. Policy's "two deep" is
- * two unrelated cleared volunteers, so every edge here is a way the old
- * count-bare-adults check reported a room compliant when it was not.
+ * two unrelated cleared volunteers, so every edge here is a way a
+ * count-bare-adults check would report a room compliant when it is not.
  */
 const findMany = jest.fn();
 const boardSettingsFindUnique = jest.fn();
@@ -42,9 +42,8 @@ function visit(id: number, householdId: number, person: Record<string, unknown> 
 beforeEach(() => {
     findMany.mockReset();
     boardSettingsFindUnique.mockReset();
-    // No recheck policy configured — the default. Clearance never expires, but a
-    // person still needs one on file.
-    boardSettingsFindUnique.mockResolvedValue({ orgMembershipYearBoundary: null, bgRecheckMonths: 0 });
+    // A recheck policy long enough that the default year-old check stays valid.
+    boardSettingsFindUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)), bgRecheckMonths: 24 });
 });
 
 async function count(rows: ReturnType<typeof visit>[]) {
@@ -65,7 +64,7 @@ describe("who counts as a supervising adult", () => {
         expect(await count([visit(1, 10), visit(2, 20, { dateOfBirth: yearsAgo(15) })])).toBe(1);
     });
 
-    it("excludes an unknown age but keeps a DoB-stripped declared adult (#1165, #300)", async () => {
+    it("excludes an unknown age but keeps a DoB-stripped declared adult", async () => {
         const unknown = visit(1, 10, { dateOfBirth: null });
         const declared = visit(2, 20, { dateOfBirth: null, isDeclaredAdult: true });
         expect(await count([unknown, declared])).toBe(1);
@@ -100,6 +99,21 @@ describe("clearance validity", () => {
     it("keeps an adult whose clearance is inside the recheck window", async () => {
         boardSettingsFindUnique.mockResolvedValue(settings);
         expect(await count([visit(1, 10), visit(2, 20)])).toBe(2);
+    });
+
+    it("counts no one while the board has set no recheck policy", async () => {
+        boardSettingsFindUnique.mockResolvedValue({ ...settings, bgRecheckMonths: 0 });
+        expect(await count([visit(1, 10), visit(2, 20)])).toBe(0);
+    });
+
+    it("counts no one when there is no settings row", async () => {
+        boardSettingsFindUnique.mockResolvedValue(null);
+        expect(await count([visit(1, 10), visit(2, 20)])).toBe(0);
+    });
+
+    it("counts no one while no membership-year boundary is set", async () => {
+        boardSettingsFindUnique.mockResolvedValue({ ...settings, orgMembershipYearBoundary: null });
+        expect(await count([visit(1, 10), visit(2, 20)])).toBe(0);
     });
 });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, lastPage, latestGate } from "../../components/api";
+import { api, lastPage } from "../../components/api";
 
 function stubFetch(status: number, body: string) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status })));
@@ -19,23 +19,13 @@ describe("api()", () => {
   });
 
   it("falls back to the status for a non-JSON error body", async () => {
-    stubFetch(502, "<html>Bad Gateway</html>");
-    await expect(api("/items")).rejects.toThrow("HTTP 502");
+    stubFetch(500, "<html>Internal Server Error</html>");
+    await expect(api("/items")).rejects.toThrow("HTTP 500");
   });
 
   it("rejects a non-JSON success body instead of returning it", async () => {
     stubFetch(200, "<html>sign in</html>");
     await expect(api("/items")).rejects.toThrow("HTTP 200");
-  });
-});
-
-describe("latestGate()", () => {
-  it("only the most recent request stays current", () => {
-    const begin = latestGate();
-    const first = begin();
-    const second = begin();
-    expect(first()).toBe(false);
-    expect(second()).toBe(true);
   });
 });
 

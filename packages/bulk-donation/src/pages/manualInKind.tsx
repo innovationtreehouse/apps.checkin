@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useViewer, useUrlPage } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { act, api, cents, errorMessage, paged, useLoad, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { act, api, errorMessage, isRefusal, loadError, paged, useLoad, when } from "../components/api";
+import { formatGtinDisplay } from "@checkin/gtin";
+import { formatCents } from "@checkin/money";
+import { DONOR_COMPANY_MAX, DONOR_NAME_MAX } from "@checkin/receipt-types";
+import { LoadError, Pager } from "@checkin/component-ui";
 
 interface LineRow { id: number; gtin13: string; description: string | null; quantity: number; valueCents: number | null; suggestedValueCents: number | null }
 interface DonationRow {
@@ -28,13 +30,11 @@ const today = () => new Date().toLocaleDateString("en-CA");
 
 /**
  * Whether the session may record. Mirrors the write routes' gate (FINANCE,
- * OPERATIONS or INVENTORY_MANAGER; BOARD reads only), read through a narrow
- * cast because the library does not type the host's session user.
+ * OPERATIONS or INVENTORY_MANAGER; BOARD reads only).
  */
 function useCanRecord(): boolean {
-  const { data } = useSession();
-  const u = data?.user as { isFinance?: boolean; isOperations?: boolean; isInventoryManager?: boolean } | undefined;
-  return !!u?.isFinance || !!u?.isOperations || !!u?.isInventoryManager;
+  const viewer = useViewer();
+  return !!viewer?.isFinance || !!viewer?.isOperations || !!viewer?.isInventoryManager;
 }
 
 /** Catalog items matching the typed text, from the catalog's own search route. */
@@ -54,11 +54,11 @@ function useCatalogSearch(q: string): CatalogItem[] {
   return items;
 }
 
-/** /inventory/in-kind — goods given without a receipt: record each item and quantity, then load it into stock. Finance sets the value when accepting. */
+/** /donations/in-kind-gifts — goods given without a receipt: record each item and quantity, then load it into stock. Finance sets the value when accepting. */
 export default function ManualInKindPage() {
   const canRecord = useCanRecord();
-  const [page, setPage] = useState(1);
-  const rows = useLoad<DonationRow[]>(paged("/in-kind/manual", page));
+  const [page, setPage] = useUrlPage();
+  const rows = useLoad<DonationRow[]>(paged("/in-kind/manual", page), { keepPrevious: true });
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -68,6 +68,16 @@ export default function ManualInKindPage() {
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const [saving, setSaving] = useState(false);
+  const [refused, setRefused] = useState<ReadonlySet<number>>(new Set());
+
+  function retryLoad(id: number) {
+    const load = () =>
+      api(`/in-kind/manual/${id}/load-inventory`, { method: "POST" }).catch((e: unknown) => {
+        if (isRefusal(e)) setRefused((ids) => new Set(ids).add(id));
+        throw loadError(e);
+      });
+    return act(load, "Loaded into inventory", rows.reload);
+  }
 
   const showDonor = (rows.data ?? []).some((r) => r.donorLastName !== undefined);
   const ready = firstName.trim() !== "" && lastName.trim() !== "" && lines.length > 0 && !!donationDate;
@@ -104,7 +114,7 @@ export default function ManualInKindPage() {
         : { message: "Gift recorded, but loading it into inventory failed. Use Retry load in the list.", color: "yellow" });
       rows.reload();
     } catch (e) {
-      notifications.show({ message: errorMessage(e), color: "red" });
+      notifications.show({ message: errorMessage(e), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }
@@ -121,18 +131,18 @@ export default function ManualInKindPage() {
               it is a suggestion, and finance sets the value when accepting the gift.
             </Text>
             <Group grow align="flex-end">
-              <TextInput label="Donor first name" required value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} />
-              <TextInput label="Donor last name" required value={lastName} onChange={(e) => setLastName(e.currentTarget.value)} />
-              <TextInput label="Company (optional)" value={companyName} onChange={(e) => setCompanyName(e.currentTarget.value)} />
+              <TextInput label="Donor first name" required maxLength={DONOR_NAME_MAX} value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} />
+              <TextInput label="Donor last name" required maxLength={DONOR_NAME_MAX} value={lastName} onChange={(e) => setLastName(e.currentTarget.value)} />
+              <TextInput label="Company (optional)" maxLength={DONOR_COMPANY_MAX} value={companyName} onChange={(e) => setCompanyName(e.currentTarget.value)} />
               <TextInput label="Date given" type="date" required value={donationDate} onChange={(e) => setDonationDate(e.currentTarget.value)} />
             </Group>
             <Select
               label="Add a catalog item"
-              placeholder="Search by name or GTIN"
+              placeholder="Search by name or Part ID"
               searchable
               searchValue={search}
               onSearchChange={setSearch}
-              data={found.map((i) => ({ value: i.gtin13, label: `${i.name} (${i.gtin13})` }))}
+              data={found.map((i) => ({ value: i.gtin13, label: `${i.name} (${formatGtinDisplay(i.gtin13)})` }))}
               value={null}
               onChange={addItem}
               filter={({ options }) => options}
@@ -208,22 +218,19 @@ export default function ManualInKindPage() {
               <Table.Td>{r.lines.reduce((n, l) => n + l.quantity, 0)} across {r.lines.length} line{r.lines.length === 1 ? "" : "s"}</Table.Td>
               <Table.Td>
                 {r.lines.every((l) => l.valueCents !== null)
-                  ? cents(r.lines.reduce((n, l) => n + (l.valueCents ?? 0), 0))
+                  ? formatCents(r.lines.reduce((n, l) => n + (l.valueCents ?? 0), 0))
                   : r.lines.some((l) => l.suggestedValueCents !== null)
-                    ? `${cents(r.lines.reduce((n, l) => n + (l.suggestedValueCents ?? 0), 0))} suggested`
+                    ? `${formatCents(r.lines.reduce((n, l) => n + (l.suggestedValueCents ?? 0), 0))} suggested`
                     : "—"}
               </Table.Td>
               <Table.Td>{when(r.recordedAt)}{r.recordedByUsername ? ` by ${r.recordedByUsername}` : ""}</Table.Td>
               <Table.Td>
                 {r.inventoryLoadedAt ? (
                   <Badge color="green" variant="light">Loaded</Badge>
+                ) : canRecord && refused.has(r.id) ? (
+                  <Button size="xs" variant="light" color="red" disabled>Can&apos;t be loaded: adjust stock by hand</Button>
                 ) : canRecord ? (
-                  <Button
-                    size="xs"
-                    variant="light"
-                    color="red"
-                    onClick={() => act(() => api(`/in-kind/manual/${r.id}/load-inventory`, { method: "POST" }), "Loaded into inventory", rows.reload)}
-                  >
+                  <Button size="xs" variant="light" color="red" onClick={() => void retryLoad(r.id)}>
                     Retry load
                   </Button>
                 ) : (

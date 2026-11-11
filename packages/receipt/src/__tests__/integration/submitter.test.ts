@@ -48,6 +48,7 @@ describeDb("submitter scope", () => {
     actAs(FINANCE);
     for (const v of [await receiptService.get(r.id, "finance"), ...(await receiptService.listForOrg())]) {
       expect(v).not.toHaveProperty("fileBlob");
+      expect(v).not.toHaveProperty("fileKey");
     }
   });
 });
@@ -79,6 +80,19 @@ describeDb("submitter review", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     const after = await receiptService.setReimbursement(r.id, { needsReimbursement: false });
     expect(after).toMatchObject({ needsReimbursement: false, reimburseePersonId: null, reimbursementFor: null });
+    const rows = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: "reimbursement_updated" }, orderBy: { id: "asc" } });
+    expect(rows).toMatchObject([
+      { userId: ALICE.id, fieldChanged: "needsReimbursement", valueBefore: "true", valueAfter: "false" },
+      { userId: ALICE.id, fieldChanged: "reimburseePersonId", valueBefore: String(ALICE.id), valueAfter: null },
+    ]);
+  });
+
+  it("ticking the reimbursement audits the uploader named as reimbursee", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    await receiptService.setReimbursement(r.id, { needsReimbursement: false });
+    await receiptService.setReimbursement(r.id, { needsReimbursement: true });
+    const last = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, fieldChanged: "reimburseePersonId", action: "reimbursement_updated" }, orderBy: { id: "desc" } });
+    expect(last).toMatchObject({ valueBefore: null, valueAfter: String(ALICE.id) });
   });
 });
 
@@ -101,17 +115,35 @@ describeDb("My receipts", () => {
     expect(await receiptService.listMine({ hideCompleted: true })).toEqual([]);
   });
 
-  it("a failing X12 reads 'not yet paid', never an error", async () => {
+  it("a failing X12 reads 'status unavailable', never 'not yet paid' or an error, and keeps the owed receipt listed", async () => {
     const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    await receiptService.submitterConfirm(owed.id);
     configure({
       receiptSink: ports.receiptSink,
       reimbursementStatus: {
         forReceipts: async () => {
-          throw new Error("QuickBooks is down");
+          throw new Error("QuickBooks is not connected");
         },
       },
     });
-    expect((await receiptService.listMine()).find((r) => r.id === owed.id)).toMatchObject({ reimbursement: { paidOn: null } });
+    expect((await receiptService.listMine()).find((r) => r.id === owed.id)).toMatchObject({
+      reimbursement: { paidOn: null, statusUnavailable: true },
+      complete: false,
+    });
+    expect((await receiptService.listMine({ hideCompleted: true })).map((r) => r.id)).toEqual([owed.id]);
+  });
+
+  it("a receipt X12 has no status for reads 'status unavailable' and stays listed", async () => {
+    const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    await receiptService.submitterConfirm(owed.id);
+    configure({
+      receiptSink: ports.receiptSink,
+      reimbursementStatus: { forReceipts: async () => new Map([[owed.id, { paidOn: null, statusUnavailable: true }]]) },
+    });
+    expect((await receiptService.listMine()).find((r) => r.id === owed.id)).toMatchObject({
+      reimbursement: { paidOn: null, statusUnavailable: true },
+      complete: false,
+    });
   });
 
   it("asks X12 only about the caller's own owed receipts", async () => {
@@ -126,5 +158,51 @@ describeDb("My receipts", () => {
     actAs(ALICE);
     await receiptService.listMine();
     expect(asked.at(-1)).toEqual([{ receiptId: mine.id, qbEntity: null, qbTxnId: null }]);
+  });
+});
+
+describeDb("a receipt finance rejected", () => {
+  async function rejected(reason = "Personal purchase") {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(r.id, reason);
+    actAs(ALICE);
+    return r.id;
+  }
+
+  it("counts in its uploader's pill and stays listed under Hide completed, with finance's reason, until they acknowledge it", async () => {
+    const id = await rejected();
+    expect(await receiptService.countAwaitingSubmitter(ALICE.id)).toBe(1);
+    expect((await receiptService.listMine({ hideCompleted: true })).map((r) => r.id)).toEqual([id]);
+    expect((await receiptService.get(id, "submitter"))).toMatchObject({ validationNotes: "Personal purchase", rejectionUnacknowledged: true });
+
+    expect(await receiptService.acknowledgeRejection(id)).toMatchObject({ id, rejectionUnacknowledged: false });
+    expect(await receiptService.countAwaitingSubmitter(ALICE.id)).toBe(0);
+    expect(await receiptService.listMine({ hideCompleted: true })).toEqual([]);
+    expect((await receiptService.listMine()).find((r) => r.id === id)).toMatchObject({ complete: true, validationNotes: "Personal purchase" });
+  });
+
+  it("offers Got it to an uploader who reads the receipt with finance access", async () => {
+    const id = await rejected();
+    expect(await receiptService.get(id, "finance")).toMatchObject({ uploadedByUserId: ALICE.id, rejectionUnacknowledged: true });
+    await receiptService.acknowledgeRejection(id);
+    expect(await receiptService.get(id, "finance")).toMatchObject({ rejectionUnacknowledged: false });
+  });
+
+  it("a repeat acknowledgement does nothing, and only one is audited", async () => {
+    const id = await rejected();
+    await receiptService.acknowledgeRejection(id);
+    await receiptService.acknowledgeRejection(id);
+    expect(await db.receiptAuditLog.count({ where: { receiptId: id, action: "rejection_acknowledged", userId: ALICE.id } })).toBe(1);
+  });
+
+  it("only the uploader acknowledges, and only a rejected receipt", async () => {
+    const id = await rejected();
+    actAs(BOB);
+    await expect(receiptService.acknowledgeRejection(id)).rejects.toMatchObject({ status: 404 });
+    expect(await receiptService.countAwaitingSubmitter(ALICE.id)).toBe(1);
+    actAs(ALICE);
+    const open = await receiptService.upload(textFile("open"), "text/plain", { details: manualDetails({ retailer: "Open", receiptTotal: "1" }) });
+    await expect(receiptService.acknowledgeRejection(open.id)).rejects.toMatchObject({ status: 400 });
   });
 });

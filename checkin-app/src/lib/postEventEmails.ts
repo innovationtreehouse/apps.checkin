@@ -1,9 +1,14 @@
 import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { sendEmail } from "@/lib/email";
 import { config } from "@/lib/config";
-import { postEventTemplate } from "@/lib/email-templates/post-event";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { sendTemplated } from "@/lib/email-templates/send";
+import { logIntegrationError } from "@/lib/logger";
+
+/** Failed sends of one event's email before the runs give up and tell the Board. */
+export const POST_EVENT_EMAIL_MAX_ATTEMPTS = 5;
+
+/** A claim this old belongs to a run that crashed mid-send, so another run may take it over. */
+const CLAIM_STALE_AFTER_MS = 15 * 60_000;
 
 interface ProcessPostEventEmailsOptions {
     /**
@@ -38,6 +43,7 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
         const whereClause: Prisma.EventWhereInput = {
             endAt: { lte: cutoffTime },
             postEventEmailSent: false,
+            postEventEmailAttempts: { lt: POST_EVENT_EMAIL_MAX_ATTEMPTS },
             attendanceConfirmedAt: null,
             programId: { not: null },
             ...(cursorId ? { id: { gt: cursorId } } : {})
@@ -49,7 +55,7 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
                 program: {
                     include: {
                         volunteers: {
-                            where: { isCore: true, person: LIVE_PERSON },
+                            where: { isCore: true },
                             include: { person: true }
                         }
                     }
@@ -78,7 +84,6 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             const leadMentors = await prisma.person.findMany({
                 where: {
                     id: { in: leadMentorIds },
-                    ...LIVE_PERSON,
                 },
                 select: {
                     id: true,
@@ -114,28 +119,64 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
             const attendingRsvps = event.rsvps.filter(r => r.status === 'ATTENDING').length;
             const actualVisits = event.visits.length;
 
+            // Overlapping runs (the crons and facility close) read the same unsent
+            // event; only the run whose conditional write lands may send it.
+            const claimedAt = new Date();
+            const claimable = { id: event.id, postEventEmailSent: false, postEventEmailAttempts: { lt: POST_EVENT_EMAIL_MAX_ATTEMPTS } };
+            const claim = await prisma.event.updateMany({
+                where: { ...claimable, postEventEmailClaimedAt: null },
+                data: { postEventEmailClaimedAt: claimedAt },
+            });
+            const tookOver = claim.count !== 1;
+            if (tookOver) {
+                // A stale claim is a run that died mid-send, possibly after sending:
+                // it counts as a failed attempt so crash re-sends stop at the cap.
+                const takeover = await prisma.event.updateMany({
+                    where: { ...claimable, postEventEmailClaimedAt: { lt: new Date(claimedAt.getTime() - CLAIM_STALE_AFTER_MS) } },
+                    data: { postEventEmailClaimedAt: claimedAt, postEventEmailAttempts: { increment: 1 } },
+                });
+                if (takeover.count !== 1) continue;
+            }
+
             const baseUrl = config.baseUrl();
             const eventLink = `${baseUrl}/program-ops/sessions/${event.id}`;
 
-            const emailHtml = postEventTemplate({
+            const success = await sendTemplated("event.postEvent", recipientEmail, {
                 eventName: event.name,
-                attendingRsvps,
-                actualVisits,
-                eventLink
+                rsvpCount: String(attendingRsvps),
+                checkinCount: String(actualVisits),
+                actionLink: eventLink,
             });
-
-            const success = await sendEmail(
-                recipientEmail,
-                `Action Required: Confirm Attendance for ${event.name}`,
-                emailHtml
-            );
 
             if (success) {
                 await prisma.event.update({
                     where: { id: event.id },
-                    data: { postEventEmailSent: true }
+                    data: { postEventEmailSent: true, postEventEmailClaimedAt: null }
                 });
                 emailsSent++;
+                continue;
+            }
+
+            // Release the claim so the next run retries now, not after the stale window.
+            // A takeover already counted this attempt.
+            const released = await prisma.event.updateMany({
+                where: { id: event.id, postEventEmailClaimedAt: claimedAt },
+                data: { postEventEmailClaimedAt: null, ...(tookOver ? {} : { postEventEmailAttempts: { increment: 1 } }) },
+            });
+            if (released.count !== 1) continue;
+            // Re-read: other runs may have counted failures since this batch was fetched.
+            const current = await prisma.event.findUnique({
+                where: { id: event.id },
+                select: { postEventEmailAttempts: true },
+            });
+            if (!current) continue; // Deleted since the release.
+            const attempts = current.postEventEmailAttempts;
+            if (attempts >= POST_EVENT_EMAIL_MAX_ATTEMPTS) {
+                await logIntegrationError(
+                    "post-event-email",
+                    `Post-event email for "${event.name}" (event ${event.id}) failed ${attempts} times; no more attempts. Remind the program lead to confirm attendance.`,
+                    { eventId: event.id },
+                );
             }
         }
 

@@ -1,10 +1,13 @@
 "use client";
 
-import { use, useState, useEffect, useCallback } from 'react';
+import { use, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Box, Button, Card, Checkbox, Container, Divider, Group, NumberInput, Select, SimpleGrid, Stack, Tabs, Text, TextInput, Title } from '@mantine/core';
-import { AlertBanner } from '@/components/admin/AlertBanner';
+import { LoadError } from '@checkin/component-ui';
+import { shallowEqual } from '@/components/UnsavedChangesProvider';
+import { useSeedForm } from '@/hooks/useSeedForm';
+import { useLoad } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { ScrollableTabsList } from '@/components/ui/ScrollableTabsList';
 import { ProgramRosterTab } from './ProgramRosterTab';
@@ -21,7 +24,7 @@ export type ProgramDetail = {
   name: string;
   startAt: string;
   endAt: string;
-  appliesToYear: number | null;
+  appliesToYear: number;
   offSaleAt: string | null;
   leadMentorId: number | null;
   phase: string;
@@ -79,7 +82,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const { user: sessionUser, loading: authLoading, ready } = useRequireRole([]);
   const router = useRouter();
 
-  const [program, setProgram] = useState<ProgramDetail | null>(null);
+  const { data: program, error: loadError, status: loadStatus, reload } = useLoad<ProgramDetail>(ready ? `/api/programs/${id}` : null);
 
   // Form States
   const [startAt, setStartAt] = useState("");
@@ -107,54 +110,59 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const [mentorSearch, setMentorSearch] = useState("");
   const [isEditingMentor, setIsEditingMentor] = useState(false);
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState<'general' | 'roster' | 'events'>('general');
 
-  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setProgram(data);
-        setStartAt(data.startAt.split('T')[0]);
-        setEndAt(data.endAt.split('T')[0]);
-        setYearChoice(null);
-        setOffSaleAt(data.offSaleAt ? data.offSaleAt.split('T')[0] : "");
-        setMinAge(data.minAge !== null ? String(data.minAge) : "");
-        setMaxAge(data.maxAge !== null ? String(data.maxAge) : "");
-        setMaxParticipants(data.maxParticipants !== null ? String(data.maxParticipants) : "");
-        setPhase(data.phase || "PLANNING");
-        setEnrollmentStatus(data.enrollmentStatus || "CLOSED");
-        setMemberOnly(Boolean(data.orgMemberOnly));
-        setPubliclyVisible(Boolean(data.publiclyVisible));
-        setAnnounceOnOpen(Boolean(data.announceOnOpen));
-        setLeadMentorIdInput(data.leadMentorId !== null ? String(data.leadMentorId) : "");
-        setMemberPrice(data.orgMemberPriceCents !== null ? String(data.orgMemberPriceCents / 100) : "");
-        setNonMemberPrice(data.nonOrgMemberPriceCents !== null ? String(data.nonOrgMemberPriceCents / 100) : "");
-        setMentorSearch(data.leadMentor ? mentorLabel(data.leadMentor.name, data.leadMentor.email) : "");
-        setShopifyProductIdInput(data.shopifyProductId ?? "");
-        setVariantInput(data.shopifyVariantId ?? "");
-        setIsEditingMentor(false);
-      } else if (res.status === 404) {
-        setMessage("Program not found.");
-      } else {
-        setMessage("Failed to load program.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [id]);
+  // Each form reseeds from a read only while it is unedited, so a late read never overwrites typing.
+  const generalForm = { startAt, endAt, yearChoice, offSaleAt, minAge, maxAge, maxParticipants, phase, enrollmentStatus, orgMemberOnly, publiclyVisible, announceOnOpen, leadMentorIdInput };
+  const shopifyForm = { shopifyProductIdInput, variantInput };
+  const [seededGeneral, setSeededGeneral] = useState<typeof generalForm | null>(null);
+  const [seededShopify, setSeededShopify] = useState<typeof shopifyForm | null>(null);
 
-  useEffect(() => {
-    if (ready) fetchProgram();
-  }, [ready, fetchProgram]);
+  useSeedForm(program, !!seededGeneral && !shallowEqual(seededGeneral, generalForm), (data) => {
+    const form = {
+      startAt: data.startAt.split('T')[0],
+      endAt: data.endAt.split('T')[0],
+      yearChoice: null,
+      offSaleAt: data.offSaleAt ? data.offSaleAt.split('T')[0] : "",
+      minAge: data.minAge !== null ? String(data.minAge) : "",
+      maxAge: data.maxAge !== null ? String(data.maxAge) : "",
+      maxParticipants: data.maxParticipants !== null ? String(data.maxParticipants) : "",
+      phase: data.phase || "PLANNING",
+      enrollmentStatus: data.enrollmentStatus || "CLOSED",
+      orgMemberOnly: Boolean(data.orgMemberOnly),
+      publiclyVisible: Boolean(data.publiclyVisible),
+      announceOnOpen: Boolean(data.announceOnOpen),
+      leadMentorIdInput: data.leadMentorId !== null ? String(data.leadMentorId) : "",
+    };
+    setStartAt(form.startAt);
+    setEndAt(form.endAt);
+    setYearChoice(form.yearChoice);
+    setOffSaleAt(form.offSaleAt);
+    setMinAge(form.minAge);
+    setMaxAge(form.maxAge);
+    setMaxParticipants(form.maxParticipants);
+    setPhase(form.phase);
+    setEnrollmentStatus(form.enrollmentStatus);
+    setMemberOnly(form.orgMemberOnly);
+    setPubliclyVisible(form.publiclyVisible);
+    setAnnounceOnOpen(form.announceOnOpen);
+    setLeadMentorIdInput(form.leadMentorIdInput);
+    setSeededGeneral(form);
+    setMemberPrice(data.orgMemberPriceCents !== null ? String(data.orgMemberPriceCents / 100) : "");
+    setNonMemberPrice(data.nonOrgMemberPriceCents !== null ? String(data.nonOrgMemberPriceCents / 100) : "");
+    setMentorSearch(data.leadMentor ? mentorLabel(data.leadMentor.name, data.leadMentor.email) : "");
+    setIsEditingMentor(false);
+  });
+
+  useSeedForm(program, !!seededShopify && !shallowEqual(seededShopify, shopifyForm), (data) => {
+    const form = { shopifyProductIdInput: data.shopifyProductId ?? "", variantInput: data.shopifyVariantId ?? "" };
+    setShopifyProductIdInput(form.shopifyProductIdInput);
+    setVariantInput(form.variantInput);
+    setSeededShopify(form);
+  });
 
   // Lead-mentor picker searches adult members.
   const searchAdults = useCallback(async (query: string): Promise<ParticipantOption[]> => {
@@ -206,7 +214,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       if (res.ok) {
         notifications.show({ message: "Saved." });
         notifyNavRefresh();
-        fetchProgram();
+        setSeededGeneral(generalForm);
+        reload();
       } else {
         const data = await res.json().catch(() => ({}));
         setSaveError(data.error || "Failed to save settings.");
@@ -233,7 +242,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       if (res.ok) {
         notifications.show({ message: "Shopify identifiers saved." });
         notifyNavRefresh();
-        fetchProgram();
+        setSeededShopify(shopifyForm);
+        reload();
       } else {
         notifications.show({ color: "red", message: data.error || "Failed to save.", autoClose: false });
       }
@@ -254,7 +264,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           ? { color: "yellow", message: data.warning, autoClose: false }
           : { message: "Shopify checkout configured." });
         notifyNavRefresh();
-        fetchProgram();
+        reload();
       } else {
         notifications.show({ color: "red", message: data.error || "Failed to sync to Shopify.", autoClose: false });
       }
@@ -265,20 +275,25 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  if (loading || authLoading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
   if (!ready) return null;
 
-  if (!program) return (
-    <Container size="sm" py="xl">
-      <Card withBorder radius="md" padding="xl" ta="center">
-        <Title order={3}>{message || "Not Found"}</Title>
-        <Group justify="center" mt="lg"><Button onClick={() => router.push('/program-ops/programs')}>Back</Button></Group>
-      </Card>
-    </Container>
-  );
+  if (!program) {
+    if (!loadError) return <PageLoader />;
+    return (
+      <Container size="sm" py="xl">
+        <Card withBorder radius="md" padding="xl" ta="center">
+          {loadStatus === 404
+            ? <Title order={3}>Program not found.</Title>
+            : <LoadError what="the program" message={loadError} onRetry={reload} />}
+          <Group justify="center" mt="lg"><Button onClick={() => router.push('/program-ops/programs')}>Back</Button></Group>
+        </Card>
+      </Container>
+    );
+  }
 
   // Ownership gate stays inline — it needs the loaded program (lead-mentor id)
   // to decide, which useRequireRole (a static role gate) can't express.
@@ -324,7 +339,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           <Button variant="default" onClick={() => router.push('/program-ops/programs')}>← Back to Programs</Button>
         </Group>
 
-        <AlertBanner message={message} tone="info" mb="lg" />
+        {loadError && <LoadError what="the program" message={loadError} onRetry={reload} />}
 
         <Tabs value={activeTab} onChange={(v) => setActiveTab((v as typeof activeTab) ?? 'general')}>
           <ScrollableTabsList mb="lg">
@@ -409,7 +424,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               <Stack>
                 <Card withBorder radius="md" padding="md">
                   <Text fw={500} mb="sm">Program Leader</Text>
-                  {isSysAdminOrBoard ? (
+                  {user?.isBoardMember ? (
                     program.leadMentor && !isEditingMentor ? (
                       <Group>
                         <Text c="green">{mentorLabel(program.leadMentor.name, program.leadMentor.email)}</Text>
@@ -437,8 +452,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   ) : (
                     program.leadMentor ? <Text c="green">{mentorLabel(program.leadMentor.name, program.leadMentor.email)}</Text> : <Text c="dimmed">No Program Leader Assigned</Text>
                   )}
-                  <Text size="xs" c={isSysAdminOrBoard ? 'yellow' : 'dimmed'} mt="xs">
-                    {isSysAdminOrBoard ? '*You have permission to reassign this program.' : '*Only Administrators/Board Members can change the Program Leader.'}
+                  <Text size="xs" c={user?.isBoardMember ? 'yellow' : 'dimmed'} mt="xs">
+                    {user?.isBoardMember ? '*You have permission to reassign this program.' : '*Only the Board can change the Program Leader.'}
                   </Text>
                 </Card>
 
@@ -519,7 +534,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
-              fetchProgram={fetchProgram}
+              fetchProgram={reload}
             />
           </Tabs.Panel>
 

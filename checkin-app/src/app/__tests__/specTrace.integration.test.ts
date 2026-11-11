@@ -3,7 +3,7 @@
  */
 /**
  * Scripted check-in scenarios for trace validation of the TLA+ model
- * (CheckinImpl_v3). Each drives the real scan, attendance and close code against
+ * (CheckinImpl_v3). Each drives the real scan and close code against
  * a real DB with the spec trace on, asserts the outcome, and leaves one NDJSON
  * trace per scenario in CHECKIN_TRACE_DIR (a temp dir when unset). The first
  * line of each is the scenario's topology: which person is which model name,
@@ -13,9 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { POST as scanPOST } from '@/app/api/scan/route';
-import { POST as attendancePOST, DELETE as attendanceDELETE } from '@/app/api/attendance/route';
 import prisma from '@/lib/prisma';
-import { getServerSession } from 'next-auth/next';
 import { startSpecTrace } from '@/lib/specTrace';
 import type { Person } from '@/generated/prisma/client';
 
@@ -23,7 +21,6 @@ jest.mock('@/lib/verify-kiosk', () => ({
     getKioskPublicKeys: jest.fn(() => ['test-key']),
     verifyKioskSignature: jest.fn(() => ({ ok: true })),
 }));
-jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({
     sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
     sendNotification: jest.fn().mockResolvedValue(undefined),
@@ -162,12 +159,9 @@ describe('spec trace scenarios (real DB)', () => {
     it('held one-badge close with a lost reply: the resend closes as a late close and sweeps the unseen check-in', async () => {
         const rosterAsOf = Date.now() - 500;
         const file = await begin('held_close_lost_reply', [k1]);
-        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: k1.id, isKeyholder: true, isSysadmin: false, isBoardMember: false } });
 
-        const web = await attendancePOST(new Request('http://localhost/api/attendance', {
-            method: 'POST', body: JSON.stringify({ type: 'MANUAL_CHECKIN', participantId: m1.id }),
-        }) as unknown as NextReq);
-        expect(web.status).toBe(200);
+        const checkin = await kiosk({ participantId: m1.id, clientEventId: cid('m1-in'), scannedAt: iso(Date.now()), intent: 'IN' });
+        expect(checkin.body).toMatchObject({ type: 'checkin' });
 
         const id = cid('k1-alone');
         const scannedAt = iso(Date.now());
@@ -180,7 +174,7 @@ describe('spec trace scenarios (real DB)', () => {
         expect(resent.body).toMatchObject({ facilityClosed: true });
         expect(await openOf(m1)).toBeNull();
         expect(await closesSince()).toEqual([expect.objectContaining({ via: 'KIOSK_OFFLINE' })]);
-        expect(events(file)).toContain('WebCheckin');
+        expect(events(file)).toContain('VisitOpen');
     });
 
     it('queued IN racing a live close: the member ends departed at the close either way', async () => {
@@ -202,16 +196,12 @@ describe('spec trace scenarios (real DB)', () => {
         expect(events(file)).toContain('VisitOpen');
     });
 
-    it('offline kiosk replay after a close: an IN scanned before a web close is fenced at it', async () => {
+    it('offline kiosk replay after a close: an IN scanned before a close is fenced at it', async () => {
         const file = await begin('offline_replay_after_close', [k1]);
         const inAt = Date.now() - 2000;
-        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: k1.id, isKeyholder: true, isSysadmin: false, isBoardMember: false } });
 
-        const kv = await openOf(k1);
-        const web = await attendanceDELETE(new Request('http://localhost/api/attendance', {
-            method: 'DELETE', body: JSON.stringify({ visitId: kv!.id }),
-        }) as unknown as NextReq);
-        expect(await web.json()).toMatchObject({ success: true, facilityClosed: true });
+        const close = await kiosk({ participantId: k1.id, clientEventId: cid('k1-close'), scannedAt: iso(Date.now()), intent: 'OUT', close: 'confirmed', rosterAsOf: iso(Date.now()) });
+        expect(close.body).toMatchObject({ type: 'checkout', facilityClosed: true });
 
         const replayIn = await kiosk({ participantId: m1.id, clientEventId: cid('m1-in'), scannedAt: iso(inAt), replay: true, intent: 'IN' });
         expect(replayIn.body).toMatchObject({ type: 'checkin' });

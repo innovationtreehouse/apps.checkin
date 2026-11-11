@@ -2,11 +2,13 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
-import type { QuickBooksClient } from "@checkin/quickbooks";
+import { NotWiredError, ServiceError } from "@checkin/component-kit";
+import type { QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
   ItemInfoSchema,
+  ItemNameArraySchema,
   LookupResultArraySchema,
 } from "./lib/catalog-schemas";
 
@@ -22,11 +24,6 @@ export interface ExpensePrincipal {
   name: string | null;
   isFinance: boolean;
   isBoard: boolean;
-}
-
-/** The host's session reader. Null when the caller has no integer person id. */
-export interface ExpenseAuth {
-  getPrincipal(): Promise<ExpensePrincipal | null>;
 }
 
 // ── Budget-owner buckets ──────────────────────────────────────────────────────
@@ -67,12 +64,24 @@ export interface SignoffDirectory {
   boardMembers(): Promise<number[]>;
   /** Everyone in the given people's households. */
   householdOf(personIds: number[]): Promise<number[]>;
+  /** Each given person's household, as householdOf([id]) reads it; an unknown id is left out. */
+  householdsOf(personIds: number[]): Promise<Map<number, number[]>>;
+  /** Everyone in the person's household, merged-away people included: the people whose household the person shares. */
+  householdIds(personId: number): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
-  /** The live Person an id resolves to: itself when live, its merge survivor when merged away, else null. */
-  livePersonFor(personId: number): Promise<number | null>;
+  /** The live Person each id resolves to: itself when live, its merge survivor when merged away, else null. */
+  liveIds(personIds: number[]): Promise<Map<number, number | null>>;
+  /** Every id a row may hold for a live person: their own and each id merged into them. */
+  storedIdsOf(personId: number): Promise<number[]>;
   /** Whether the person holds an org membership (reimbursing a non-member takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
+  /** Whether the person is a known adult; only an adult is reimbursed. */
+  isAdult(personId: number): Promise<boolean>;
+  /** Live known adults whose name contains `query`, by name, at most `limit` of them. */
+  searchAdults(query: string, limit: number): Promise<Array<{ personId: number; name: string }>>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`; returns their Person.id. */
+  addNonMemberAdult(name: string, actorId: number): Promise<number>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
@@ -82,9 +91,17 @@ export const inertSignoffDirectory: SignoffDirectory = {
   financeHolders: async () => [],
   boardMembers: async () => [],
   householdOf: async () => [],
+  householdsOf: async () => new Map(),
+  householdIds: async () => [],
   personExists: async () => false,
-  livePersonFor: async () => null,
+  liveIds: async (personIds) => new Map(personIds.map((id) => [id, null])),
+  storedIdsOf: async (personId) => [personId],
   isOrgMember: async () => false,
+  isAdult: async () => false,
+  searchAdults: async () => [],
+  addNonMemberAdult: async () => {
+    throw new Error("No people directory is bound to add a person");
+  },
 };
 
 // ── X3: catalog reads ─────────────────────────────────────────────────────────
@@ -92,6 +109,7 @@ export const inertSignoffDirectory: SignoffDirectory = {
 export type CatalogCategory = z.infer<typeof CatalogCategorySchema>;
 export type CatalogSubcategory = z.infer<typeof CatalogSubcategorySchema>;
 export type ItemInfo = NonNullable<z.infer<typeof ItemInfoSchema>>;
+export type ItemName = z.infer<typeof ItemNameArraySchema>[number];
 export type LookupResult = z.infer<typeof LookupResultArraySchema>[number];
 
 export interface LookupEntry {
@@ -106,15 +124,23 @@ export interface CatalogReader {
   listCategories(): Promise<unknown>;
   listSubcategories(): Promise<unknown>;
   getItem(gtin13: string): Promise<unknown>;
+  getActiveItem(gtin13: string): Promise<unknown>;
+  getItemNames(gtin13s: string[]): Promise<unknown>;
   lookupItems(retailer: string, lookups: LookupEntry[]): Promise<unknown>;
 }
 
-/** An empty catalog: every part-numbered line raises a NO_MATCH hold. */
+const catalogNotWired = (method: string) => async (): Promise<never> => {
+  throw new NotWiredError(`CatalogReader.${method}`);
+};
+
+/** An unbound catalog says so rather than answer "no match"; its callers record "catalog not connected". */
 export const inertCatalogReader: CatalogReader = {
-  listCategories: async () => [],
-  listSubcategories: async () => [],
-  getItem: async () => null,
-  lookupItems: async () => [],
+  listCategories: catalogNotWired("listCategories"),
+  listSubcategories: catalogNotWired("listSubcategories"),
+  getItem: catalogNotWired("getItem"),
+  getActiveItem: catalogNotWired("getActiveItem"),
+  getItemNames: catalogNotWired("getItemNames"),
+  lookupItems: catalogNotWired("lookupItems"),
 };
 
 // ── S5: catalog org events ────────────────────────────────────────────────────
@@ -129,12 +155,17 @@ export const CatalogOrgEventSchema = z.object({
 });
 export type CatalogOrgEvent = z.infer<typeof CatalogOrgEventSchema>;
 
-/** Catalog events after a cursor, oldest first; read by the catch-up sweep. */
+/** A page of the org's catalog events after an id, oldest first; read by the catch-up sweep. */
 export interface CatalogEventSource {
-  eventsAfter(afterId: number): Promise<unknown[]>;
+  eventsSince(orgId: string, afterId: number): Promise<unknown[]>;
 }
 
-export const inertCatalogEventSource: CatalogEventSource = { eventsAfter: async () => [] };
+/** An unbound event source says so rather than answer "no events". */
+export const inertCatalogEventSource: CatalogEventSource = {
+  eventsSince: async () => {
+    throw new NotWiredError("CatalogEventSource.eventsSince");
+  },
+};
 
 // ── QuickBooks (QB-1 readers, QB-2 writer) ────────────────────────────────────
 
@@ -171,13 +202,29 @@ export interface QbReader {
   billPaymentsByIds(ids: string[]): Promise<{ id: string; txnDate: string }[]>;
 }
 
+/**
+ * Thrown by a QbReader while QuickBooks is off, so "not connected" never reads as "no entries".
+ * A 503 ServiceError: routes recognise it by ServiceError's brand, since the reader is bound in
+ * a different chunk from the routes and `instanceof` fails across them.
+ */
+export class QuickBooksNotConnectedError extends ServiceError {
+  constructor() {
+    super(503, "QuickBooks is not connected");
+    this.name = "QuickBooksNotConnectedError";
+  }
+}
+
+const notConnected = async (): Promise<never> => {
+  throw new QuickBooksNotConnectedError();
+};
+
 export const inertQbReader: QbReader = {
-  purchasesBetween: async () => [],
-  billsBetween: async () => [],
-  billPaymentsBetween: async () => [],
-  purchasesByIds: async () => [],
-  billsByIds: async () => [],
-  billPaymentsByIds: async () => [],
+  purchasesBetween: notConnected,
+  billsBetween: notConnected,
+  billPaymentsBetween: notConnected,
+  purchasesByIds: notConnected,
+  billsByIds: notConnected,
+  billPaymentsByIds: notConnected,
 };
 
 /**
@@ -217,6 +264,8 @@ export interface QbVendors {
 
 export const inertQbVendors: QbVendors = { open: async () => null };
 
+export const inertQbAccounts: QboAccountList = notConnected;
+
 /** Display names of checkin people. */
 export interface PeopleDirectory {
   /** A live person's name; null when unknown. */
@@ -246,41 +295,87 @@ export interface ExpensePosting {
   client: QuickBooksClient;
   paymentAccountId: string;
   paymentType: "Cash" | "CreditCard";
-  /**
-   * YYYY-MM-DD: finance booked everything up to here by hand, so only later receipts may be
-   * created. Null posts nothing. A newer hand-booked match moves the line later, never earlier.
-   */
-  takeoverDate: string | null;
-  /** CHECKIN_ENV is prod. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
+  /** The client talks to the production QuickBooks API. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
   prod: boolean;
+  /** Tells finance the daily orphan sweep read a full page, so some entries went unchecked. */
+  sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
 // ── Surfaces expense exports to other libraries (bound by the host into theirs) ─
 
 /** S2 callee: the orchestrator hands a completed receipt's money side to expense. */
 export interface ExpenseIntake {
-  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
+  /** "accepted": stored, but the expense is not built yet; expense owns it from here. */
+  receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }>;
 }
 
+/** Who is reimbursed: a Person on file, or a non-member adult added by name. */
+export type ReimburseeChoice = { personId: number } | { newPerson: { name: string } };
+
 /** FINANCE names the Person owed a reimbursement whose receipt did not carry one. */
-export type SetReimbursee = (orgId: string, expenseId: string, personId: number, principal: ExpensePrincipal) => Promise<void>;
+export type SetReimbursee = (orgId: string, expenseId: string, choice: ReimburseeChoice, principal: ExpensePrincipal) => Promise<void>;
 
 /**
  * X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet.
  * A backfilled receipt names the hand-booked transaction it matched (`qbEntity` + `qbTxnId`).
+ * `statusUnavailable` marks an expense finance skipped: the app holds no entry to read a payment from.
  */
 export interface ReimbursementStatus {
-  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
+  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null; statusUnavailable?: boolean }>>;
+}
+
+/**
+ * Receipt callee: the reimbursement submitter's signature, recorded on the expense from the person
+ * reimbursed's confirmation of the receipt (a Board member's on their behalf when they have no
+ * account), and given again after a finance change clears it.
+ */
+export interface SubmitterConfirmations {
+  awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
+  confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
+  confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
+}
+
+/** Where each receipt's expense stands, as its uploader and reimbursee read it. */
+export type ExpenseOutcomeStatus =
+  | "awaiting_confirmation"
+  | "awaiting_approval"
+  | "exception"
+  | "with_finance"
+  | "line_rejected"
+  | "complete"
+  | "backfill";
+
+/** Receipt callee: each named receipt's expense outcome; a receipt with no expense is left out. */
+export interface ExpenseOutcomes {
+  forReceipts(receiptIds: unknown): Promise<Map<string, { status: ExpenseOutcomeStatus; notes: string[] }>>;
+}
+
+/** An expense outcome the receipt's uploader, and the person reimbursed when different, are each emailed once. */
+export interface OutcomeNotice {
+  receiptId: string;
+  outcome: "expense_line_rejected" | "reimbursement_complete";
+  uploaderPersonId: number;
+  reimburseePersonId: number | null;
+  retailer: string | null;
+  receiptDate: string | null;
+}
+
+/** The host's mail out, for purchase outcomes. */
+export interface OutcomeMail {
+  /** Sends one notice to one recipient; false when it was not delivered. */
+  send(notice: OutcomeNotice, to: "uploader" | "reimbursee"): Promise<boolean>;
 }
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
   capitalTotalThresholdCents: number;
   capitalLineItemThresholdCents: number;
-  capitalEquipmentUnitCents: number;
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;
+  qbMatchWindowDays: number;
+  qbMaxCreatesPerRun: number;
+  qbMaxCreatesPerDay: number;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────
@@ -289,6 +384,8 @@ export interface ExpenseSettings {
 export interface ExpenseRouteCtx {
   req: Request;
   params: Record<string, string>;
+  /** The caller; the host refuses a request with none before the route runs. */
+  principal: ExpensePrincipal;
 }
 
 /** A route factory's body: parse → service → model bag (stripped by the host). */

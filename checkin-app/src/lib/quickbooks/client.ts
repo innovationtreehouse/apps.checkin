@@ -3,7 +3,6 @@
  * getQuickBooks() answers null (QuickBooks off) unless packages/quickbooks/src/guard.ts
  * admits the configured company; the guard's inputs are our config only.
  */
-import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import {
   QuickBooksClient,
   assertQboClientId,
@@ -13,8 +12,9 @@ import {
   type QboRealm,
   type RefresherToken,
 } from "@checkin/quickbooks";
-import { config } from "@/lib/config";
+import { KindedError } from "@checkin/component-kit";
 import { logger } from "@/lib/logger";
+import { invokeRefresher } from "@/lib/tokenRefresher";
 
 /** Re-ask the refresher this long before the token it handed out expires. Must stay below the refresher's own 10-min refresh margin, or every call re-invokes it. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
@@ -23,19 +23,20 @@ const CLIENT_TTL_MS = 60_000;
 
 export type InvokeRefresher = (functionName: string) => Promise<unknown>;
 
-const invokeLambda: InvokeRefresher = async (functionName) => {
-  const lambda = new LambdaClient({ region: config.awsRegion() });
-  const res = await lambda.send(new InvokeCommand({ FunctionName: functionName, Payload: JSON.stringify({ action: "current" }) }));
-  // The error payload can echo token-endpoint detail; name only the function.
-  if (res.FunctionError) throw new Error(`QBO token refresher ${functionName} failed`);
-  return JSON.parse(new TextDecoder().decode(res.Payload));
-};
+/** Shown on System Status and carried by every QuickBooks call while the login is revoked. */
+export const QBO_RECONNECT = "QuickBooks needs reconnecting: its login was revoked. Finance reconnects it by re-running the QuickBooks consent.";
+
+const QBO_WRONG_COMPANY = "QuickBooks settings are wrong: the token refresher holds a different QuickBooks company than this instance's QBO_REALM_ID. Finance checks which company the consent was run for.";
+const QBO_MALFORMED = "QuickBooks settings are wrong: the token refresher's answer is not a QuickBooks token, so QBO_REFRESHER_FN may name the wrong function. The infra operator checks it.";
+
+const invokeLambda: InvokeRefresher = (functionName) =>
+  invokeRefresher({ functionName, service: "QBO token refresher", reconnect: QBO_RECONNECT, malformed: QBO_MALFORMED });
 
 function parseRefresherToken(value: unknown): RefresherToken {
   const v = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
   const { accessToken, expiresAt, realmId, clientId } = v;
   if (typeof accessToken !== "string" || !accessToken || typeof expiresAt !== "number" || typeof realmId !== "string" || typeof clientId !== "string") {
-    throw new Error("QBO token refresher returned a malformed answer");
+    throw new KindedError("settings", QBO_MALFORMED);
   }
   return { accessToken, expiresAt, realmId, clientId };
 }
@@ -60,7 +61,7 @@ export function lambdaAccessTokenSource(opts: {
 
   const fetchToken = async (): Promise<RefresherToken> => {
     const token = parseRefresherToken(await invoke(opts.functionName));
-    if (token.realmId !== opts.realmId) throw new Error("QBO token refresher holds a different realm");
+    if (token.realmId !== opts.realmId) throw new KindedError("settings", QBO_WRONG_COMPANY);
     assertQboClientId(opts.checkinEnv, token.clientId, opts.devClientId);
     return token;
   };
@@ -92,30 +93,38 @@ function tokenSource(checkinEnv: string | undefined, realmId: string): AccessTok
   return null;
 }
 
-/** Builds the client, or answers null with the reason logged. Never throws. */
-export async function buildQuickBooks(): Promise<QuickBooksClient | null> {
+export type QuickBooksBuild =
+  | { ok: true; client: QuickBooksClient; tokens: AccessTokenSource; env: QboRealm["env"] }
+  | { ok: false; reason: string };
+
+/** Builds the client, or answers why QuickBooks is off. Never throws. */
+export function tryBuildQuickBooks(): QuickBooksBuild {
   const realmId = process.env.QBO_REALM_ID;
-  if (!realmId) return null;
+  if (!realmId) return { ok: false, reason: "no company set (QBO_REALM_ID)" };
   try {
     const checkinEnv = process.env.CHECKIN_ENV;
     const realm: QboRealm = { env: qboEnvFromEnv(), realmId };
     assertQboTarget({ checkinEnv, realm, sandboxRealmAllowed: process.env.QBO_SANDBOX_REALM_ALLOWED });
     const tokens = tokenSource(checkinEnv, realmId);
-    if (!tokens) {
-      logger.error("QuickBooks is off: no token source (set QBO_REFRESHER_FN)");
-      return null;
-    }
-    return new QuickBooksClient(tokens, realm);
+    if (!tokens) return { ok: false, reason: "no token source (set QBO_REFRESHER_FN)" };
+    return { ok: true, client: new QuickBooksClient(tokens, realm), tokens, env: realm.env };
   } catch (err) {
-    logger.error("QuickBooks is off:", err instanceof Error ? err.message : String(err));
-    return null;
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** Builds the client, or answers null with the reason logged. Never throws. */
+export function buildQuickBooks(): QuickBooksClient | null {
+  const built = tryBuildQuickBooks();
+  if (built.ok) return built.client;
+  if (process.env.QBO_REALM_ID) logger.error("QuickBooks is off:", built.reason);
+  return null;
 }
 
 let built: { at: number; client: Promise<QuickBooksClient | null> } | null = null;
 
 /** The shared QuickBooks client, or null while QuickBooks is off. Rebuilt every CLIENT_TTL_MS. */
 export function getQuickBooks(): Promise<QuickBooksClient | null> {
-  if (!built || Date.now() - built.at >= CLIENT_TTL_MS) built = { at: Date.now(), client: buildQuickBooks() };
+  if (!built || Date.now() - built.at >= CLIENT_TTL_MS) built = { at: Date.now(), client: Promise.resolve(buildQuickBooks()) };
   return built.client;
 }

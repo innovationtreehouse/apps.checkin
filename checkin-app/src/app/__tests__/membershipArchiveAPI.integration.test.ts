@@ -14,8 +14,9 @@
  * row at close time, re-runs the external advance, and refuses when there's nothing
  * to restore, the household is DENIED, or another application is open.
  *
- * And "Record refund": PENDING_BG_CLEARANCE → PENDING_PAYMENT clearing paidAt; a paid
- * BLOCKED row only loses paidAt.
+ * And "Record refund": PENDING_BG_CLEARANCE → PENDING_PAYMENT clearing paidAt; every
+ * other paid open step, BLOCKED included, only loses paidAt. With close, that gives the
+ * board an exit from every open household application, legacy steps included.
  */
 
 import { POST as ARCHIVE } from '@/app/api/membership-ops/applications/archive/route';
@@ -24,6 +25,8 @@ import { GET as ADMIN_LIST } from '@/app/api/membership-ops/applications/route';
 import { getIntakeState, startIntake, submitIntake } from '@/lib/membership/intake';
 import { recordRefund } from '@/lib/membership/refund';
 import { activateByProcessId } from '@/lib/membership/payment';
+import { todoCounts } from '@/lib/nav/todoCounts';
+import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -56,11 +59,15 @@ function archivedListReq() {
     return new Request('http://localhost:4000/api/membership-ops/applications?archived=1') as unknown as Parameters<typeof ADMIN_LIST>[0];
 }
 
-type Status = 'INTAKE' | 'PENDING_EXTERNAL_ACTION' | 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'BLOCKED' | 'ACTIVE';
-async function makeProcess(label: string, status: Status, extra: { paidAt?: Date; membershipStatus?: 'NONE' | 'DENIED' } = {}) {
+type Status = 'INTAKE' | 'PENDING_EXTERNAL_ACTION' | 'PENDING_BG_REVIEW' | 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'BLOCKED' | 'ACTIVE' | 'RENEWAL_PENDING_BG';
+async function makeProcess(
+    label: string,
+    status: Status,
+    extra: { paidAt?: Date; membershipStatus?: 'NONE' | 'DENIED'; kind?: 'INITIAL' | 'RENEWAL' } = {},
+) {
     const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
     const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: extra.membershipStatus ?? 'NONE' } });
-    const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status, paidAt: extra.paidAt ?? null } });
+    const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: extra.kind ?? 'INITIAL', status, paidAt: extra.paidAt ?? null } });
     return { householdId: hh.id, membershipId: m.id, processId: p.id };
 }
 
@@ -78,7 +85,7 @@ async function wipe() {
     const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
     const ids = hhs.map((h) => h.id);
     if (ids.length) {
-        await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+        await prisma.orgMembershipProcess.deleteMany({ where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -257,8 +264,8 @@ describe('Membership application archive API', () => {
     });
 
     it('reopens a renewal closed from the legacy RENEWAL_PENDING_BG', async () => {
-        // Rows closed under the older, wider rule (and backfilled by migration
-        // 20260806160000) may hold it; nothing closes into it any more.
+        // Archived rows may hold RENEWAL_PENDING_BG in archivedFromStatus; nothing closes
+        // into it.
         const hh = await prisma.household.create({ data: { name: `LegacyRenewal ${TAG}` } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
         const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'RENEWAL_PENDING_BG' } });
@@ -380,6 +387,17 @@ describe('Membership application archive API', () => {
         expect(archivedBody.processes.every((p: { status: string }) => p.status === 'ARCHIVED')).toBe(true);
     });
 
+    it('the Applications badge counts the rows the default list shows, leaving out a closed application', async () => {
+        const { processId } = await makeProcess('ClosedForBadge', 'PENDING_PAYMENT');
+        await makeProcess('OpenForBadge', 'PENDING_PAYMENT');
+        asBoard(boardId);
+        await ARCHIVE(req({ processId }) as never);
+
+        const listed = (await (await ADMIN_LIST(listReq() as never)).json()).processes;
+        const counts = await todoCounts({ id: boardId, isBoardMember: true } as AuthenticatedUser);
+        expect(counts.admin?.applicationsTotal).toBe(listed.length);
+    });
+
     // --- record refund (lib; the route lands with its registry entry) ---
 
     it('record refund: PENDING_BG_CLEARANCE → PENDING_PAYMENT, clears paidAt, keeps the order id and the check', async () => {
@@ -403,7 +421,7 @@ describe('Membership application archive API', () => {
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { shopifyOrderId: 'ord-old' } });
         await recordRefund(processId, boardId, 'Refunded in Shopify');
 
-        await activateByProcessId(processId, 'ord-new', true);
+        await activateByProcessId(processId, 'ord-new', { appliesToYear: 2026 });
         const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect({ status: after?.status, paid: !!after?.paidAt, order: after?.shopifyOrderId })
             .toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, order: 'ord-new' });
@@ -427,5 +445,50 @@ describe('Membership application archive API', () => {
         const selfBoard = await prisma.person.create({ data: { name: 'self board', isBoardMember: true, householdId: own.householdId } });
         await expect(recordRefund(own.processId, selfBoard.id, 'x')).rejects.toMatchObject({ code: 'same_household_applicant' });
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: own.processId } }))?.paidAt).not.toBeNull();
+    });
+
+    // --- Board exits: each open household application ends by Board action alone ---
+
+    it('closes an unpaid legacy RENEWAL_PENDING_BG renewal', async () => {
+        const { processId } = await makeProcess('ExitUnpaidLegacy', 'RENEWAL_PENDING_BG', { kind: 'RENEWAL' });
+        asBoard(boardId);
+        expect((await ARCHIVE(req({ processId }) as never)).status).toBe(200);
+        const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect([after?.status, after?.archivedFromStatus]).toEqual(['ARCHIVED', 'RENEWAL_PENDING_BG']);
+    });
+
+    it.each([
+        ['INITIAL', 'PENDING_BG_REVIEW'],
+        ['RENEWAL', 'RENEWAL_PENDING_BG'],
+        ['RENEWAL', 'PENDING_EXTERNAL_ACTION'],
+        ['RENEWAL', 'PENDING_PAYMENT'],
+    ] as const)('a paid %s application at %s: the refund keeps its step and check, then it closes', async (kind, status) => {
+        const { processId } = await makeProcess(`ExitPaid-${kind}-${status}`, status, { kind, paidAt: new Date() });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { bgConsentAt: new Date(), shopifyOrderId: `ord-${processId}` } });
+
+        expect(await recordRefund(processId, boardId, 'Refunded in Shopify')).toEqual({ status });
+        const refunded = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect({ status: refunded?.status, paidAt: refunded?.paidAt, consent: !!refunded?.bgConsentAt, order: refunded?.shopifyOrderId })
+            .toEqual({ status, paidAt: null, consent: true, order: `ord-${processId}` });
+
+        asBoard(boardId);
+        expect((await ARCHIVE(req({ processId }) as never)).status).toBe(200);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe('ARCHIVED');
+    });
+
+    it.each([
+        ['INITIAL', 'PENDING_BG_REVIEW'],
+        ['RENEWAL', 'RENEWAL_PENDING_BG'],
+        ['RENEWAL', 'PENDING_EXTERNAL_ACTION'],
+        ['RENEWAL', 'PENDING_PAYMENT'],
+        ['INITIAL', 'PENDING_BG_CLEARANCE'],
+    ] as const)('never closes a paid %s application at %s before its refund is recorded', async (kind, status) => {
+        const { processId } = await makeProcess(`NoClosePaid-${kind}-${status}`, status, { kind, paidAt: new Date() });
+        asBoard(boardId);
+        const res = await ARCHIVE(req({ processId }) as never);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toContain('record the refund first');
+        const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect({ status: after?.status, paid: !!after?.paidAt }).toEqual({ status, paid: true });
     });
 });

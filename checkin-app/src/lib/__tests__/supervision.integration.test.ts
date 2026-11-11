@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration coverage for the supervising-adult test (#1436 / #1550) against a
+ * Integration coverage for the supervising-adult test against a
  * real Postgres — the half the unit tests mock away is the query itself: the
  * nested membership filter, and the participant-seat probe's "programme in
  * session now" OR (an event bracketing now, or the programme's own dates).
@@ -28,11 +28,14 @@ jest.mock('@/lib/notifications', () => ({
 const TAG = 'supervision-test';
 const HOUR = 60 * 60 * 1000;
 const CLEARED = new Date('2026-06-01');
+/** A recheck policy under which CLEARED stays valid for years. */
+const POLICY = { bgRecheckMonths: 120, orgMembershipYearBoundary: new Date('2000-08-01') };
 
 describe('supervising adults (integration)', () => {
     const people: Record<string, Person> = {};
     const householdIds: number[] = [];
     const programIds: number[] = [];
+    let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
 
     /** A cleared adult of their own ACTIVE member household. */
     async function makeAdult(key: string, opts: { isKeyholder?: boolean; cleared?: boolean } = {}) {
@@ -76,6 +79,10 @@ describe('supervising adults (integration)', () => {
         prisma.visit.create({ data: { personId: people[key].id, arrivedAt: new Date() } });
 
     beforeAll(async () => {
+        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+        savedSettings = prev ? { bgRecheckMonths: prev.bgRecheckMonths, orgMembershipYearBoundary: prev.orgMembershipYearBoundary } : null;
+        await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...POLICY }, update: POLICY });
+
         await makeAdult('ann', { isKeyholder: true });
         await makeHouseholdMate('al', 'ann');
         await makeAdult('ben');
@@ -95,7 +102,7 @@ describe('supervising adults (integration)', () => {
         householdIds.push(people.fay.householdId);
 
         // In session by EVENT: no programme dates at all, one event bracketing now.
-        const byEvent = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Event Prog ${TAG}` } });
+        const byEvent = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Event Prog ${TAG}` } });
         programIds.push(byEvent.id);
         await prisma.event.create({
             data: {
@@ -110,6 +117,7 @@ describe('supervising adults (integration)', () => {
         // In session by DATES: no events, the programme's own dates cover today.
         const byDates = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: `Dates Prog ${TAG}`,
                 phase: 'RUNNING',
                 startAt: new Date(Date.now() - 30 * 24 * HOUR),
@@ -136,6 +144,12 @@ describe('supervising adults (integration)', () => {
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: householdIds } } });
         await prisma.person.deleteMany({ where: { id: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
+        // A row this suite created must go, or its policy leaks into suites that expect none.
+        if (savedSettings) {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
+        } else {
+            await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
+        }
     });
 
     const count = async () => supervisingAdultCount(await supervisingAdultVisits());
@@ -170,9 +184,20 @@ describe('supervising adults (integration)', () => {
 
             expect(await count()).toBe(1);
         });
+
+        it('counts no one while the board has set no recheck policy', async () => {
+            await checkIn('ann');
+            await checkIn('ben');
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { bgRecheckMonths: 0 } });
+            try {
+                expect(await count()).toBe(0);
+            } finally {
+                await prisma.boardSettings.update({ where: { id: 1 }, data: POLICY });
+            }
+        });
     });
 
-    describe('the compliance banner (#1550)', () => {
+    describe('the compliance banner', () => {
         it('is clear when two supervising adults cover an unaccompanied youth', async () => {
             await checkIn('ann');
             await checkIn('ben');
@@ -198,13 +223,13 @@ describe('supervising adults (integration)', () => {
         });
     });
 
-    describe('the departure interrupt ladder (#1436)', () => {
+    describe('the departure interrupt ladder', () => {
         it('warns without a confirm when the third supervising adult leaves', async () => {
             await checkIn('ann');
             await checkIn('ben');
             const cal = await checkIn('cal');
 
-            const res = await wire(processCheckout(people.cal, cal.id, 'kiosk'));
+            const res = await wire(processCheckout(people.cal, cal.id));
             const body = await res.json();
 
             expect(res.status).toBe(200);
@@ -217,14 +242,14 @@ describe('supervising adults (integration)', () => {
             await checkIn('fay');
             const ben = await checkIn('ben');
 
-            const first = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
+            const first = await wire(processCheckout(people.ben, ben.id));
             expect(first.status).toBe(400);
             expect((await first.json()).type).toBe('warning');
             const stamped = await prisma.visit.findUnique({ where: { id: ben.id } });
             expect(stamped?.supervisionWarnedAt).not.toBeNull();
             expect(stamped?.departedAt).toBeNull();
 
-            const second = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
+            const second = await wire(processCheckout(people.ben, ben.id));
             expect(second.status).toBe(200);
             expect((await prisma.visit.findUnique({ where: { id: ben.id } }))?.departedAt).not.toBeNull();
         });
@@ -233,7 +258,7 @@ describe('supervising adults (integration)', () => {
             await checkIn('ann');
             const ben = await checkIn('ben');
 
-            const res = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
+            const res = await wire(processCheckout(people.ben, ben.id));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toMatch(/leaves only 1 supervising adult/i);
@@ -247,7 +272,7 @@ describe('supervising adults (integration)', () => {
             const al = await checkIn('al');
             await checkIn('ben');
 
-            const res = await wire(processCheckout(people.al, al.id, 'kiosk'));
+            const res = await wire(processCheckout(people.al, al.id));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toBeUndefined();
@@ -256,7 +281,7 @@ describe('supervising adults (integration)', () => {
         it('warns a youth checking in below two, and lets them in anyway', async () => {
             await checkIn('ann');
 
-            const res = await wire(processCheckin(people.fay, 'kiosk'));
+            const res = await wire(processCheckin(people.fay));
             const body = await res.json();
 
             expect(res.status).toBe(200);

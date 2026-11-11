@@ -1,7 +1,8 @@
 "use client";
 import { Badge, Code, Table, Text, Title } from "@mantine/core";
 import { useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import { formatGtinDisplay } from "../lib/gtin";
+import { LoadError } from "@checkin/component-ui";
 
 type Status = "pending" | "processed" | "failed";
 interface EventRow {
@@ -23,8 +24,8 @@ function payloadSummary(raw: string): string {
     return raw;
   }
   const parts = [
-    ["provisional", payload.provisionalGtin13],
-    ["real", payload.realGtin13],
+    ["provisional", payload.provisionalGtin13 && formatGtinDisplay(String(payload.provisionalGtin13))],
+    ["real", payload.realGtin13 && formatGtinDisplay(String(payload.realGtin13))],
     ["name", payload.name],
     ["reason", payload.rejectionReason],
   ].filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v)}`);

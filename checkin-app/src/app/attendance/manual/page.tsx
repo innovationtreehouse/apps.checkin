@@ -45,15 +45,12 @@ export default function ManualAttendance() {
     if (!arrivedAt) fe.arrivedAt = "Arrival time is required";
     else if (isNaN(arr.getTime())) fe.arrivedAt = "Invalid arrival time";
     else if (arr.getTime() > now + 5 * 60 * 1000) fe.arrivedAt = "Arrival time cannot be in the future.";
-    if (departedAt) {
+    if (!departedAt) fe.departedAt = "Departure time is required";
+    else {
       const dep = new Date(departedAt);
       if (isNaN(dep.getTime())) fe.departedAt = "Invalid departure time";
       else if (dep.getTime() <= arr.getTime()) fe.departedAt = "Departure time must be after arrival time";
       else if (dep.getTime() - arr.getTime() > MAX_VISIT_MS) fe.departedAt = "A visit cannot be longer than 24 hours.";
-    } else if (arrivedAt && !fe.arrivedAt) {
-      const withinSixHours = now - arr.getTime() <= 6 * 60 * 60 * 1000;
-      const sameDay = arr.toDateString() === new Date(now).toDateString();
-      if (!withinSixHours && !sameDay) fe.departedAt = "Departure time is required for past arrivals.";
     }
     return fe;
   };
@@ -79,7 +76,7 @@ export default function ManualAttendance() {
         // instant so the server doesn't reparse it in ITS timezone (UTC in prod).
         body: JSON.stringify({
           arrivedAt: new Date(arrivedAt).toISOString(),
-          departedAt: departedAt ? new Date(departedAt).toISOString() : "",
+          departedAt: new Date(departedAt).toISOString(),
           // Omitted = self. The server re-checks household scope regardless.
           ...(personId ? { personId: Number(personId) } : {}),
         }),
@@ -113,7 +110,7 @@ export default function ManualAttendance() {
 
         <Text c="dimmed" mb="lg">
           Forgot to scan your badge? You can self-correct your time record here. If you are
-          currently in the building, leave the departure time blank.
+          in the building now, badge at the kiosk instead.
           {members.length > 1 && " As a household lead you can also record a visit for another member of your household."}
         </Text>
 
@@ -143,15 +140,16 @@ export default function ManualAttendance() {
             />
             <TextInput
               type="datetime-local"
-              label="Departure Time (Optional)"
+              label="Departure Time (Required)"
               value={departedAt}
               onChange={(e) => {
                 setDeparted(e.currentTarget.value);
                 setFieldErrors((f) => ({ ...f, departedAt: undefined }));
               }}
               error={fieldErrors.departedAt}
+              required
             />
-            <Button type="submit" disabled={loading || !arrivedAt} loading={loading} mt="sm">
+            <Button type="submit" disabled={loading || !arrivedAt || !departedAt} loading={loading} mt="sm">
               Record Time Entry
             </Button>
           </Stack>

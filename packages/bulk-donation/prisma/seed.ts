@@ -1,5 +1,5 @@
 /**
- * Bulk-donation dev/test seed (#1280 §9). Imports one Benevity file through the
+ * Bulk-donation dev/test seed. Imports one Benevity file through the
  * real upload path: disbursement SEED-D1 matches the seeded account rule and
  * completes; SEED-D2's company has no rule, so it lands on hold. Every gift is
  * comment-less (organizational-level), so no owner is needed. Idempotent: a
@@ -17,12 +17,12 @@ dotenv.config();
 const ORG_ID = "treehouse";
 
 const HEADER =
-  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Merchant Fee,Donor First Name,Donor Last Name,Donor Comment";
+  "Company Name,Corporate / Peer Campaign,Disbursement ID,Disbursement Date,Transaction ID,Donation Date,Donation Amount,Match Amount,Cause Support Fee,Merchant Fee,Check Fee,Donor First Name,Donor Last Name,Donor Comment";
 const CSV = [
   HEADER,
-  "Acme Corp,Giving 2026,SEED-D1,2026-09-01,seed-tx-1,2026-08-15,100.00,100.00,2.50,Ada,Lovelace,",
-  "Acme Corp,Giving 2026,SEED-D1,2026-09-01,seed-tx-2,2026-08-16,25.00,0,0.75,Grace,Hopper,",
-  "Globex,Match Month,SEED-D2,2026-09-02,seed-tx-3,2026-08-20,50.00,50.00,1.25,Alan,Turing,",
+  "Acme Corp,Giving 2026,SEED-D1,2026-09-01,seed-tx-1,2026-08-15,100.00,100.00,0.00,2.50,0.00,Ada,Lovelace,",
+  "Acme Corp,Giving 2026,SEED-D1,2026-09-01,seed-tx-2,2026-08-16,25.00,0,0.00,0.75,0.00,Grace,Hopper,",
+  "Globex,Match Month,SEED-D2,2026-09-02,seed-tx-3,2026-08-20,50.00,50.00,0.00,1.25,0.00,Alan,Turing,",
 ].join("\n");
 
 async function main(): Promise<void> {
@@ -47,7 +47,9 @@ async function main(): Promise<void> {
         corporatePeerCampaign: "*",
         donationAccount: "Contributions:Corporate Giving",
         matchAccount: "Contributions:Corporate Match",
-        feesAccount: "Fees:Benevity",
+        // The local stand-in income account (LOCAL_QUICKBOOKS_ACCOUNTS in checkin).
+        donationAccountId: "8003",
+        matchAccountId: "8003",
       },
     });
   }

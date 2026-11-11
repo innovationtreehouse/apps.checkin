@@ -23,6 +23,7 @@ const PROGRAM_NEEDS: CtxNeeds = {
     programEvents: true,
     activeVisitors: false,
     ledHouseholdMembers: false,
+    householdMembers: false,
 };
 
 function sessionAuth(id: number): Extract<AuthResult, { type: 'session' }> {
@@ -50,7 +51,7 @@ describe('buildCallerContext with a session lacking a numeric id', () => {
         });
         leadId = lead.id;
         const program = await prisma.program.create({
-            data: { name: TAG, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
+            data: { appliesToYear: 2026, name: TAG, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
         });
         programId = program.id;
     });

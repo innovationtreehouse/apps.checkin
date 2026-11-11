@@ -21,6 +21,20 @@ const text: TokenSpec = { kind: "text" };
 const link = (label?: string): TokenSpec => (label ? { kind: "link", label } : { kind: "link" });
 const SAMPLE_URL = "https://checkin.example.org/";
 
+const OPS_TOKENS = {
+    kind: text, cause: text, lanes: text, status: text, summary: text, firstSeen: text,
+    runsSeen: text, items: text, todo: text, actionLink: link("Open System Status"),
+};
+const OPS_SAMPLE = {
+    kind: "connection", cause: "QuickBooks", lanes: "expense, gift", status: "needs reconnecting",
+    summary: "The app's connection to QuickBooks is broken, for example an expired or revoked login, so expense, gift are paused.",
+    firstSeen: "Nov 7, 2026, 2:00 AM", runsSeen: "1", items: "12",
+    todo: "Finance repeats step 3 of the QuickBooks go-live runbook with the infra operator and reseeds the secret (docs/ops/quickbooks-go-live.md).",
+    actionLink: SAMPLE_URL,
+};
+const OPS_SUBJECT = "[{{kind}}] {{cause}}: {{lanes}} — {{status}}";
+const OPS_BODY = "{{summary}}\n\nLanes: {{lanes}}\nFirst seen: {{firstSeen}}\nRuns seen: {{runsSeen}}\nItems waiting: {{items}}\n\nWhat to do: {{todo}}\n\n{{actionLink}}";
+
 export const REGISTRY = {
     // ── checkin (attendance) ────────────────────────────────────────────────
     "checkin.receipt": {
@@ -40,12 +54,6 @@ export const REGISTRY = {
         sampleCtx: { scope: "self", change: "edit", visitId: "4821", actorName: "Alex Rivera", verb: "changed", whose: "one of their own", score: "7", detail: "Mar 7, 10:05 AM → Mar 7, 8:00 AM" },
         defaultSubject: "Attendance: significant {{scope}}-{{change}} of visit #{{visitId}}",
         defaultBody: "{{actorName}} {{verb}} {{whose}} visit (significance {{score}}).\n\n{{detail}}\n\nFull before/after is in the audit trail (Visit #{{visitId}}).",
-    },
-    "attendance.keyholderHandover": {
-        allowedTokens: { leaverName: text, when: text, peopleInside: text },
-        sampleCtx: { leaverName: "Sam", when: "Mar 7, 5:40 PM", peopleInside: "3 people are" },
-        defaultSubject: "You were named as the keyholder in charge",
-        defaultBody: "{{leaverName}} checked out at {{when}} and named you as the keyholder they handed the building over to.\n\n{{peopleInside}} still recorded inside, and no keyholder is checked in. If you are there, check in; if not, let them know.",
     },
 
     // ── programs ────────────────────────────────────────────────────────────
@@ -140,6 +148,12 @@ export const REGISTRY = {
         defaultSubject: "Membership: a paid application was blocked at background check",
         defaultBody: "A household that already paid did not pass background-check review (application #{{processId}}). The membership has not been activated and a refund may be needed — please review and contact the household. {{actionLink}}",
     },
+    "board.checkRejected": {
+        allowedTokens: { personName: text, householdName: text, reviewId: text, actionLink: link("Open applications") },
+        sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", reviewId: "412", actionLink: SAMPLE_URL },
+        defaultSubject: "Membership: a background check was rejected",
+        defaultBody: "A background-check review of {{personName}} ({{householdName}}) was rejected (review #{{reviewId}}). No paid application was blocked, and nothing about the household's membership was changed automatically. Please review the case and decide what the Board does. {{actionLink}}",
+    },
     "board.paymentException": {
         // blurb: the exception kind's fixed description, kept in code (decision B-1).
         allowedTokens: { kind: text, blurb: text, exceptionId: text, actionLink: link("Open payment problems") },
@@ -167,6 +181,46 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
+    // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
+    // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
+    "ops.incidentOpened": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: OPS_SAMPLE,
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: OPS_BODY,
+    },
+    "ops.incidentReminder": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "still open after 3 days", runsSeen: "4" },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: `Still open. ${OPS_BODY}`,
+    },
+    "ops.incidentEscalated": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "open for 2 weeks", runsSeen: "15" },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: `This problem has been open for two weeks, and the alert address has been told. ${OPS_BODY}`,
+    },
+    "ops.incidentRecovered": {
+        allowedTokens: OPS_TOKENS,
+        sampleCtx: { ...OPS_SAMPLE, status: "recovered", summary: "expense, gift ran again without this failure, so the incident is closed.", todo: "Nothing, unless items are still waiting on System Status." },
+        defaultSubject: OPS_SUBJECT,
+        defaultBody: OPS_BODY,
+    },
+
+    // ── Problems list (lib/problems.ts) ─────────────────────────────────────
+    // Ids, steps and dates only: no error text, amounts, donor or vendor names.
+    "ops.problemsDigest": {
+        allowedTokens: { count: text, items: text, actionLink: link("Open System Status") },
+        sampleCtx: {
+            count: "2",
+            items: "expense, QuickBooks posting: 7f3c, stuck since Nov 6, 2026, 2:00 AM\nScheduled job qbo-posting: last ran Nov 5, 2026, 2:00 AM",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Receipt flow: {{count}} problem(s) waiting on a person",
+        defaultBody: "These have been waiting more than a day. System Status lists each one with its error.\n\n{{items}}\n\n{{actionLink}}",
+    },
+
     // ── finance ─────────────────────────────────────────────────────────────
     "finance.receiptMailCeiling": {
         allowedTokens: { unresolved: text, refused: text, actionLink: link("Open the incoming receipt queue") },
@@ -179,6 +233,131 @@ export const REGISTRY = {
         sampleCtx: { created: "25", limit: "number of deposits", remaining: "3", actionLink: SAMPLE_URL },
         defaultSubject: "Income: deposit creation stopped at its per-run cap",
         defaultBody: "Today's income run created {{created}} QuickBooks deposit(s) and stopped at its per-run {{limit}} cap; {{remaining}} payout(s) are still waiting. Nothing else was posted. {{actionLink}}",
+    },
+
+    "finance.receiptMailAgeing": {
+        // since: ", the oldest received <date>", or empty when the date is unknown.
+        allowedTokens: { messages: text, since: text, actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { messages: "6", since: ", the oldest received Sat, 07 Mar 2026 10:05:00 GMT", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: mailed receipts are about to be missed",
+        defaultBody: "Mail runs did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They have left the 30-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
+    },
+    // One per cause of a failed mailbox listing; receiptAlerts.mailListingFailed picks by the failure's kind.
+    "finance.receiptMailboxUnreadable": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: the receipt mailbox needs reconnecting",
+        defaultBody: "Gmail refused today's mail run access to the receipt mailbox, so no mailed receipt was read. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator reconnect the mailbox's Gmail access, then upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.receiptMailboxUnanswered": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: Gmail did not answer the mail run",
+        defaultBody: "Gmail did not answer today's mail run, so no mailed receipt was read. The next run tries again; nothing needs fixing in the app. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. If this repeats, upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.receiptMailboxNotFound": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: Gmail can't find the receipt mailbox",
+        defaultBody: "Gmail has no mailbox at the address today's mail run asked for, so no mailed receipt was read. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator check the receipt mailbox setting, then upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.receiptMailboxFailed": {
+        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
+        sampleCtx: { actionLink: SAMPLE_URL },
+        defaultSubject: "Receipts: the mail run failed unexpectedly",
+        defaultBody: "Today's mail run failed unexpectedly while listing the receipt mailbox, so no mailed receipt was read. It has been logged for the developers. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. Upload or forward anything that was missed. {{actionLink}}",
+    },
+    "finance.incomeBucketUnusable": {
+        allowedTokens: { bucketName: text, issue: text, itemCount: text, actionLink: link("Open income items") },
+        sampleCtx: { bucketName: "Robotics", issue: "is archived", itemCount: "4", actionLink: SAMPLE_URL },
+        defaultSubject: "Income: a budget-owner bucket can't take sales",
+        defaultBody: "The budget-owner bucket {{bucketName}} {{issue}}. {{itemCount}} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. {{actionLink}}",
+    },
+    "finance.incomeSweepIncomplete": {
+        allowedTokens: { since: text, actionLink: link("Open income reconciliation") },
+        sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
+        defaultSubject: "Income: the daily check for stray QuickBooks deposits could not see them all",
+        defaultBody: "QuickBooks returned more deposits created since {{since}} than the daily check reads at once, so a deposit the app created may sit in QuickBooks unlinked. Check recent deposits that carry a checkin key in their memo. {{actionLink}}",
+    },
+    "finance.expensePaymentAccount": {
+        // accountKind: "a <type> account", or "not in QuickBooks".
+        allowedTokens: { accountId: text, accountKind: text, actionLink: link("Open the books map") },
+        sampleCtx: { accountId: "35", accountKind: "a Expense account", actionLink: SAMPLE_URL },
+        defaultSubject: "Expenses: QuickBooks posting is off until the payment account is fixed",
+        defaultBody: "The books map's \"Organisation card\" account (QuickBooks id {{accountId}}) is {{accountKind}}. Expenses post only from a Bank or Credit Card account, so none are posting. {{actionLink}}",
+    },
+    "finance.expenseSweepIncomplete": {
+        allowedTokens: { since: text, actionLink: link("Open expenses") },
+        sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
+        defaultSubject: "Expenses: the daily check for stray QuickBooks entries could not see them all",
+        defaultBody: "QuickBooks returned more purchases or bills created since {{since}} than the daily check reads at once, so an entry the app created may sit in QuickBooks unlinked. Check recent purchases and bills that carry a checkin key in their memo. {{actionLink}}",
+    },
+    "finance.donationDepositHandOver": {
+        allowedTokens: { batches: text, actionLink: link("Open booking batches") },
+        sampleCtx: { batches: "D-1001: it has no disbursement date", actionLink: SAMPLE_URL },
+        defaultSubject: "Donations: a finished giving-platform batch has no deposit",
+        defaultBody: "These finished batches could not be handed over for booking, so no deposit is on its way for them: {{batches}}. Settle each one in QuickBooks by hand and record why. This message comes once for each batch. {{actionLink}}",
+    },
+    "finance.inKindSweepIncomplete": {
+        allowedTokens: { since: text, actionLink: link("Open the in-kind queue") },
+        sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
+        defaultSubject: "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
+        defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
+    },
+
+    // ── receipt ─────────────────────────────────────────────────────────────
+    "receipt.mailReplyCredited": {
+        // from: "you emailed", or "emailed from <address>" when another address sent it.
+        allowedTokens: { creditedName: text, from: text, when: text, actionLink: link("Review it in My receipts") },
+        sampleCtx: { creditedName: "Alex Rivera", from: "you emailed", when: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt received",
+        defaultBody: "Hi {{creditedName}}, a receipt {{from}} on {{when}} is now in your receipts, credited to you. {{actionLink}}.\n\nNot yours? Discard it there, and reply to this message to tell us.",
+    },
+    "receipt.mailReplySender": {
+        allowedTokens: { when: text, creditedName: text },
+        sampleCtx: { when: "March 7, 2026", creditedName: "Alex Rivera" },
+        defaultSubject: "Receipt received",
+        defaultBody: "We received the receipt you emailed on {{when}}. It is credited to {{creditedName}}, who reviews it.\n\nIf you did not send this email, reply to this message and tell us.",
+    },
+
+    // The refused files are listed after this text by the sender, whatever the Board saves here.
+    "receipt.mailRefused": {
+        allowedTokens: { when: text },
+        sampleCtx: { when: "March 7, 2026" },
+        defaultSubject: "Receipt not accepted",
+        defaultBody: "We read the email you sent to the receipt mailbox on {{when}}.",
+    },
+
+    // receipt: "your receipt" to its uploader, "a receipt for your reimbursement" to the person reimbursed.
+    "receipt.rejected": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt not accepted",
+        defaultBody: "Hi {{name}},\n\nFinance did not accept {{receipt}}.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\nThe reason is on the receipt. {{actionLink}}",
+    },
+
+    // ── expense ─────────────────────────────────────────────────────────────
+    // receipt: as for receipt.rejected.
+    "expense.lineRejected": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Receipt reviewed: a line was not approved",
+        defaultBody: "Hi {{name}},\n\nFinance has finished reviewing {{receipt}}, and at least one of its lines was not approved.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\nWhat was not approved, and why, is on the receipt. {{actionLink}}",
+    },
+    "expense.reimbursementComplete": {
+        allowedTokens: { name: text, receipt: text, retailer: text, date: text, actionLink: link("Open the receipt") },
+        sampleCtx: { name: "Alex Rivera", receipt: "your receipt", retailer: "Hardware Depot", date: "March 7, 2026", actionLink: SAMPLE_URL },
+        defaultSubject: "Reimbursement approved",
+        defaultBody: "Hi {{name}},\n\nFinance has signed off {{receipt}} and sent it to the books. The reimbursement is approved and with finance to pay; it has not been paid yet.\n\nRetailer: {{retailer}}\nDate: {{date}}\n\n{{actionLink}}",
+    },
+
+    // ── lifecycle ───────────────────────────────────────────────────────────
+    "lifecycle.driftDigest": {
+        allowedTokens: { newCount: text, stillPresentCount: text, newList: text, stillPresentList: text, actionLink: link("Open the Lifecycle panel") },
+        sampleCtx: { newCount: "1", stillPresentCount: "1", newList: "OrgMembershipProcess process 12: invariant intake-is-unpaid (status INTAKE)", stillPresentList: "ProgramParticipant program 3 / person 45: invariant I2 (status PENDING)", actionLink: SAMPLE_URL },
+        defaultSubject: "Lifecycle drift: {{newCount}} new, {{stillPresentCount}} still present",
+        defaultBody: "These records are off their lifecycle diagram and need a person to resolve them. Nothing was changed automatically.\n\n"
+            + "New since the last report\n{{newList}}\n\nStill present\n{{stillPresentList}}\n\n{{actionLink}}",
     },
 
     // ── shopify ─────────────────────────────────────────────────────────────
@@ -279,3 +458,6 @@ export const REGISTRY = {
 } satisfies Record<string, TemplateSpec>;
 
 export type TemplateKey = keyof typeof REGISTRY;
+
+/** The values a key's body and subject take: every allowed token, as a string. */
+export type TemplateCtx<K extends TemplateKey> = Record<keyof (typeof REGISTRY)[K]["allowedTokens"], string>;

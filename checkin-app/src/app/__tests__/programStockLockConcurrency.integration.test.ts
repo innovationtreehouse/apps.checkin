@@ -24,7 +24,7 @@ describe('program stock writer: one writer per program', () => {
         variantId = `dev-mock-variant-${TAG}-${Date.now()}`;
         const program = await prisma.program.create({
             // Still on sale, so the drain doesn't drop the +5 (sale-ended rule).
-            data: { name: TAG, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: variantId },
+            data: { appliesToYear: 2026, name: TAG, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: variantId },
         });
         programId = program.id;
     });

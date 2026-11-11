@@ -1,18 +1,99 @@
-// Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI). The signer is always the
-// principal; a line with an unfilled seat holds its expense out of the QB outbox.
-import type { Prisma } from "../generated/prisma/client";
-import { db, isUniqueConstraintError } from "../db";
+// Sign-off seats on reimbursement and card-charge lines (Financial Policy Arts. IX and XII), signed in order around the
+// line's approval. The signer is always the principal; a line with an unfilled seat holds its
+// expense out of the QB outbox.
+import type { Expense, Prisma } from "../generated/prisma/client";
+import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { boardApprovalNeeded, conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
-import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { boardApprovalNeeded, clearFrom, isConflicted, filledSeatsByLine, lineHolds, lockBucketLines, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
+import { APPROVABLE_STATUSES, CLOSED_STATES, approvesAsStandIn, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
+import { approvalWaitsOnBoard, lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
-import { raiseFlag } from "./flagService";
+import { SIGNOFF_BADGE_EXPENSE_CAP } from "./badgeCounts";
+import { voidSubmitterConfirmation } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
+
+type Actor = ReturnType<typeof actorOf>;
+type SignedLine = { lineItemId: number; seat: Seat; facts: SignoffFacts; filled: FilledSeat[] };
+
+/**
+ * How many open lines in the bucket wait on a Board signature because of the bucket they are in:
+ * non-Everyday card charges with no Board authorization and no Board seat signed. The host refuses
+ * to make an org-level bucket a program bucket while any is open, since that removes the seat.
+ */
+export async function linesAwaitingBoardSeat(bucketId: number, client: Db = db): Promise<number> {
+  const expenses = await client.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      needsReimbursement: false,
+      state: { notIn: [...CLOSED_STATES] },
+      OR: [{ everydayWithinLimits: false }, { everydayWithinLimits: null }],
+      approvals: { some: { ownerId: bucketId } },
+    },
+  });
+  const facts = await signoffFactsForExpenses(client, expenses, { readOnly: true });
+  let count = 0;
+  for (const { byLine, filled, approvals } of facts.values()) {
+    for (const [lineId, line] of byLine) {
+      const signed = (filled.get(lineId) ?? []).some((f) => f.seat === "BOARD");
+      if (approvals.get(lineId)?.ownerId === bucketId && line.boardSeat && !signed) count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Runs `change` holding the bucket against new lines; `awaiting` counts its lines that wait on a
+ * Board seat. The host commits its flag change inside `change`, so no line enters the bucket
+ * between the count and that commit.
+ */
+export async function holdBucketLines<T>(bucketId: number, change: (awaiting: () => Promise<number>) => Promise<T>): Promise<T> {
+  return db.$transaction(async (tx) => {
+    await lockBucketLines(tx, bucketId, "exclusive");
+    return change(() => linesAwaitingBoardSeat(bucketId, tx));
+  }, { timeout: 15_000 });
+}
+
+/** Refuses an expense that takes no sign-off now. */
+function requireSignable(expense: { backfill: boolean; state: string; needsReimbursement: boolean; reimburseePersonId: number | null }): void {
+  if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
+  if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
+}
+
+/** Checks and records one seat, inside a transaction holding the expense lock. */
+async function signLocked(tx: Prisma.TransactionClient, actor: Actor, expense: Expense, lineItemId: number, seat: Seat): Promise<SignedLine> {
+  const facts = (await signoffFactsByLine(tx, expense)).get(lineItemId)!;
+  const filled = (await filledSeatsByLine(tx, expense.id)).get(lineItemId) ?? [];
+  const refusal = signoffRefusal(facts, filled, seat, actor.userId);
+  if (refusal) throw new ServiceError(403, refusal);
+  await tx.expenseLineSignoff.create({
+    data: { expenseId: expense.id, lineItemId, seat, signerUserId: actor.userId, signerUsername: actor.username },
+  });
+  await writeAudit(tx, actor, { expenseId: expense.id, action: "signoff", lineItemId, fieldChanged: "seat", valueAfter: seat });
+  return { lineItemId, seat, facts, filled };
+}
+
+/** The seat or the signer was taken by a concurrent sign-off. */
+function seatTaken(err: unknown): never {
+  if (isUniqueConstraintError(err)) throw new ServiceError(409, "Seat already filled or signer already seated");
+  throw err;
+}
+
+/** After the seats commit: the catalog snapshot of each fully signed line, and the drain once every line is signed. */
+async function afterSigning(actor: Actor, expense: Expense, signed: SignedLine[]): Promise<void> {
+  for (const { lineItemId, seat, facts, filled } of signed) {
+    if (missingSeats(facts, [...filled, { seat, signerUserId: actor.userId }]).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
+  }
+  if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
+    await drainExpense(expense.orgId, expense.id);
+  }
+}
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
   const actor = actorOf(principal);
@@ -21,54 +102,53 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
     select: { expenseId: true },
   });
   if (!line) throw new ServiceError(404, "Line item not found");
+  // The person reimbursed signs the submitter seat only by confirming the receipt.
+  if (seat === "SUBMITTER") throw new ServiceError(403, "Confirm the receipt to sign this seat");
 
   // Facts are read under the expense row lock, so a reimbursee or bucket change cannot commit
   // between the eligibility check and the insert.
-  const signed = await db
+  const { expense, signed } = await db
     .$transaction(async (tx) => {
       await lockExpense(tx, line.expenseId);
       const expense = (await tx.expense.findUnique({ where: { id: line.expenseId } }))!;
-      if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
-      if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
-      if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
-      if (seat === "PROGRAM_APPROVER") {
-        const approval = await tx.lineItemOwnerApproval.findFirst({ where: { lineItemId }, select: { ownerId: true } });
-        if (approval?.ownerId == null) throw new ServiceError(409, "The line has no budget bucket yet; FINANCE assigns one before the program approver signs");
-      }
-
-      const facts = (await signoffFactsByLine(tx, expense)).get(lineItemId)!;
-      const filled = (await filledSeatsByLine(tx, expense.id)).get(lineItemId) ?? [];
-      const refusal = signoffRefusal(facts, filled, seat, actor.userId);
-      if (refusal) throw new ServiceError(403, refusal);
-
-      await tx.expenseLineSignoff.create({
-        data: { expenseId: expense.id, lineItemId, seat, signerUserId: actor.userId, signerUsername: actor.username },
-      });
-      await writeAudit(tx, actor, { expenseId: expense.id, action: "signoff", lineItemId, fieldChanged: "seat", valueAfter: seat });
-      return { expense, facts, filled };
+      requireSignable(expense);
+      return { expense, signed: await signLocked(tx, actor, expense, lineItemId, seat) };
     })
-    .catch((err: unknown) => {
-      // The seat or the signer was taken by a concurrent sign-off.
-      if (isUniqueConstraintError(err)) throw new ServiceError(409, "Seat already filled or signer already seated");
-      throw err;
-    });
+    .catch(seatTaken);
+  await afterSigning(actor, expense, [signed]);
+}
 
-  const { expense, facts, filled } = signed;
-  const nowFilled = [...filled, { seat, signerUserId: actor.userId }];
-  if (seat === "TREASURER" && !facts.finance.includes(actor.userId)) {
-    await raiseFlag(expense.id, "COI", "no FINANCE holder could sign; a Board member took the Treasurer seat");
-  }
-  const actorHousehold = (await getExpenseRuntime().signoff.householdOf([actor.userId])).filter((id) => id !== actor.userId);
-  const nowFacts = { ...facts, seatedHouseholds: [...facts.seatedHouseholds, ...actorHousehold] };
-  const blocked = blockedSeats(nowFacts, nowFilled);
-  if (blocked.some((s) => s !== "BOARD")) {
-    await raiseFlag(expense.id, "COI", `${facts.kind === "card_charge" ? "a card charge needs a second" : "a reimbursement needs a third"} Board substitution; held`);
-  }
-  if (blocked.includes("BOARD")) await raiseFlag(expense.id, "COI", "no Board member without a conflict can take the Board seat; held");
-  if (missingSeats(facts, nowFilled).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
-  if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
-    await drainExpense(expense.orgId, expense.id);
-  }
+/**
+ * Sign all as Treasurer: signs the Treasurer seat on every listed line of the expense under one
+ * expense lock, each through the same checks as a single signature, or none of them. A refusal
+ * names the line by its number.
+ */
+export async function signLines(principal: ExpensePrincipal, expenseId: string, lineItemIds: number[]): Promise<void> {
+  const actor = actorOf(principal);
+  const ids = [...new Set(lineItemIds)];
+  if (ids.length === 0) throw new ServiceError(400, "Name at least one line to sign");
+
+  const { expense, signed } = await db
+    .$transaction(async (tx) => {
+      await lockExpense(tx, expenseId);
+      const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+      if (!expense) throw new ServiceError(404, "Expense not found");
+      requireSignable(expense);
+      const lines = await tx.expenseLineItem.findMany({ where: { expenseId, id: { in: ids } }, select: { id: true, lineNumber: true }, orderBy: { lineNumber: "asc" } });
+      if (lines.length !== ids.length) throw new ServiceError(404, "Line item not found");
+      const signed: SignedLine[] = [];
+      for (const line of lines) {
+        try {
+          signed.push(await signLocked(tx, actor, expense, line.id, "TREASURER"));
+        } catch (err) {
+          if (err instanceof ServiceError) throw new ServiceError(err.status, `Line ${line.lineNumber}: ${err.message}`);
+          throw err;
+        }
+      }
+      return { expense, signed };
+    })
+    .catch(seatTaken);
+  await afterSigning(actor, expense, signed);
 }
 
 /**
@@ -86,17 +166,41 @@ async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId
 
 const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";
 
+/** At most this many people answer one reimbursee search. */
+const REIMBURSEE_SEARCH_LIMIT = 20;
+
 /**
- * Names the uploader, or the live Person the uploader's id resolves to, as the Person owed a
- * reimbursement whose reimbursee is unknown, clears REIMBURSEE_UNKNOWN,
- * and voids every non-submitter sign-off on the expense, so each seat is signed for that payee.
- * A known reimbursee is never changed.
+ * Live adults whose name contains `query`, for FINANCE to name as reimbursee, leaving out
+ * everyone `setReimbursee` would refuse for a conflict. Under two characters matches nobody.
  */
-export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, principal) => {
+export async function reimburseeOptions(orgId: string, expenseId: string, query: string, principal: ExpensePrincipal): Promise<Array<{ personId: number; name: string }>> {
   await assertOrg(orgId);
   const actor = actorOf(principal);
   if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
-  if (!Number.isInteger(personId) || personId <= 0) throw new ServiceError(400, "personId must be a positive integer");
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { submitterId: true } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  const text = query.trim();
+  if (text.length < 2) return [];
+  if (await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: null }, actor.userId)) return [];
+  const dir = getExpenseRuntime().signoff;
+  const ownHousehold = new Set([actor.userId, ...(await dir.householdOf([actor.userId]))]);
+  return (await dir.searchAdults(text, REIMBURSEE_SEARCH_LIMIT + ownHousehold.size)).filter((p) => !ownHousehold.has(p.personId)).slice(0, REIMBURSEE_SEARCH_LIMIT);
+}
+
+/**
+ * Names a live adult as the one owed a reimbursement whose reimbursee is unknown, or adds a
+ * non-member adult by name and names them. A confirmation already given is cleared with every
+ * step after it, so the named person confirms; otherwise any seat signed while the payee was
+ * unknown is signed again. A known reimbursee is never changed.
+ */
+export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, principal) => {
+  await assertOrg(orgId);
+  const actor = actorOf(principal);
+  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
+  if ("personId" in choice && (!Number.isInteger(choice.personId) || choice.personId <= 0)) {
+    throw new ServiceError(400, "personId must be a positive integer");
+  }
+  if ("newPerson" in choice && !choice.newPerson.name.trim()) throw new ServiceError(400, "The new person needs a name");
 
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
   if (!expense) throw new ServiceError(404, "Expense not found");
@@ -105,13 +209,16 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
   if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
   if (!reimburseeUnknown(expense)) throw new ServiceError(409, REIMBURSEE_KNOWN);
   const dir = getExpenseRuntime().signoff;
-  if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
-  // Only the uploader, who said they paid, is reimbursed.
-  if (personId !== (await dir.livePersonFor(expense.submitterId))) {
-    throw new ServiceError(403, "Only the person who uploaded the receipt can be named as reimbursee");
+  const conflicted = "You cannot name the reimbursee on an expense that you or your household submitted or would be reimbursed for";
+  // A new person's household holds only them, so only the submitter's side can conflict; checked before anyone is added.
+  if ("newPerson" in choice && await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: null }, actor.userId)) {
+    throw new ServiceError(403, conflicted);
   }
-  if ((await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: personId })).includes(actor.userId)) {
-    throw new ServiceError(403, "You cannot name the reimbursee on an expense that you or your household submitted or would be reimbursed for");
+  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim(), actor.userId);
+  if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
+  if (!(await dir.isAdult(personId))) throw new ServiceError(400, "Only an adult can be named as reimbursee");
+  if (await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: personId }, actor.userId)) {
+    throw new ServiceError(403, conflicted);
   }
 
   const state = await db.$transaction(async (tx) => {
@@ -128,12 +235,12 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
       valueBefore: null,
       valueAfter: String(personId),
     });
-    // Any seat signed while the payee was unknown is signed again for the payee.
-    await voidSignoffs(tx, actor, expenseId, null, "the reimbursee was set");
-    await tx.expenseFlag.updateMany({
-      where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
-      data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },
-    });
+    // Naming the payee changes who is paid: a confirmation already given is given again, and so is every step after it.
+    if (await tx.expenseLineSignoff.count({ where: { expenseId, seat: "SUBMITTER" } })) {
+      await voidSubmitterConfirmation(tx, actor, expenseId, ["reimbursee"]);
+    } else {
+      await clearFrom(tx, actor, expenseId, null, "TREASURER", "the reimbursee was set");
+    }
     return current.state;
   });
 
@@ -155,13 +262,14 @@ async function openExpense(tx: Prisma.TransactionClient, expenseId: string) {
  * covers the purchase. It stands in for the Board seat on a card charge's org-level lines and
  * clears the hold on a purchase at or over the Board-review total; an expense needing neither
  * takes none. It is not an approval. The text is required, a conflicted caller is refused (a
- * FINANCE holder records it, else a Board member), and once recorded it is not changed.
+ * FINANCE holder records it, else a Board member), and once recorded it is not changed. It closes
+ * THRESHOLD_CROSSED, which asks the same question.
  */
 export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
   const actor = actorOf(principal);
   const text = authorization.trim();
   if (text === "") throw new ServiceError(400, "Say what the Board authorized");
-  const { state, byFinance } = await db.$transaction(async (tx) => {
+  const state = await db.$transaction(async (tx) => {
     const expense = await openExpense(tx, expenseId);
     if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
     const facts = [...(await signoffFactsByLine(tx, expense)).values()];
@@ -176,9 +284,8 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
       data: { boardAuthorization: text, boardAuthorizedByUserId: actor.userId, boardAuthorizedByUsername: actor.username, boardAuthorizedAt: new Date() },
     });
     await writeAudit(tx, actor, { expenseId, action: "board_authorization_recorded", fieldChanged: "boardAuthorization", valueAfter: text });
-    return { state: expense.state, byFinance: facts[0].finance.includes(actor.userId) };
+    return expense.state;
   });
-  if (!byFinance) await raiseFlag(expenseId, "COI", "no FINANCE holder could record it; a Board member recorded the Board authorization");
   if (state === "qb_pending") await drainExpense(await getOrgId(), expenseId);
 }
 
@@ -191,4 +298,127 @@ export async function signoffStatus(expenseId: string) {
     const seats = filled.get(lineItemId) ?? [];
     return { lineItemId, filled: seats, missing: lineHolds(approval, f, seats), blocked: blockedSeats(f, seats) };
   });
+}
+
+/**
+ * Sign-off status as the caller sees it: each line also carries the acts the caller may take there,
+ * what it waits on otherwise, and whether the caller may record the expense's Board authorization.
+ */
+export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  return (await callerLines(principal, expense)).map(({ facts: _facts, waitsOnBoard: _waitsOnBoard, ...status }) => status);
+}
+
+/** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, its facts, and whether its approval waits on a Board member. */
+export async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
+  return (await callerLinesFor(principal, [expense], readOnly)).get(expense.id)!;
+}
+
+/** callerLines for each of the expenses, their facts read together (signoffFactsForExpenses). */
+export async function callerLinesFor(principal: ExpensePrincipal, expenses: Expense[], readOnly = false) {
+  const state = await signoffFactsForExpenses(db, expenses, { readOnly });
+  const caller = { id: actorOf(principal).userId, isFinance: principal.isFinance };
+  return new Map(
+    expenses.map((expense) => {
+      const { byLine, filled, approvals, boardApprovalNeeded: approvalNeeded } = state.get(expense.id)!;
+      const held = { state: expense.state, backfill: expense.backfill, reimburseeUnknown: reimburseeUnknown(expense) };
+      const mayRecord = mayRecordBoardAuthorization({
+        callerId: caller.id,
+        expense: { ...held, boardAuthorization: expense.boardAuthorization },
+        factsByLine: [...byLine.values()],
+        boardApprovalNeeded: approvalNeeded,
+      });
+      const lines = [...byLine].map(([lineItemId, f]) => {
+        const seats = filled.get(lineItemId) ?? [];
+        const holds = lineHolds(approvalNeeded, f, seats);
+        const input: LineActionsInput = { caller, expense: held, approval: approvals.get(lineItemId) ?? null, facts: f, filled: seats, holds };
+        const { actions, awaiting } = lineActions(input);
+        return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f, waitsOnBoard: approvalWaitsOnBoard(input) };
+      });
+      return [expense.id, lines] as const;
+    }),
+  );
+}
+
+/** One expense's lines waiting for a signature the caller may give, by Finance review tab. */
+export interface SignaturesWaiting {
+  expense: Expense;
+  toSign: number[];
+  board: number[];
+}
+
+/**
+ * The lines whose main act for this caller is a Treasurer or Board signature, from the line-actions
+ * function: a line is listed only once the steps before its signature are done, and a Board
+ * stand-in only where no one else can act. Reads at most
+ * SIGNOFF_BADGE_EXPENSE_CAP open expenses with an approved line (newest first), as the sign-off
+ * badges do; an expense with nothing for the caller is left out.
+ */
+export async function signaturesWaiting(principal: ExpensePrincipal): Promise<SignaturesWaiting[]> {
+  if (!principal.isFinance && !principal.isBoard) return [];
+  const me = actorOf(principal).userId;
+  const expenses = await db.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      state: { notIn: [...CLOSED_STATES] },
+      NOT: { needsReimbursement: true, reimburseePersonId: null },
+      approvals: { some: { status: "approved" } },
+    },
+    orderBy: { submittedAt: "desc" },
+    take: SIGNOFF_BADGE_EXPENSE_CAP,
+  });
+  const linesOf = await callerLinesFor(principal, expenses, true);
+  const out: SignaturesWaiting[] = [];
+  for (const expense of expenses) {
+    const row: SignaturesWaiting = { expense, toSign: [], board: [] };
+    for (const line of linesOf.get(expense.id)!) {
+      const main = line.actions.find((a) => a.primary);
+      const tab = main ? signatureTab(line.facts, main, me) : null;
+      if (tab) row[tab].push(line.lineItemId);
+    }
+    if (row.toSign.length + row.board.length > 0) out.push(row);
+  }
+  return out;
+}
+
+/** One expense's lines whose approval waits on a Board member: the ones the caller may give, and the ones they are conflicted on. */
+export interface BoardApprovalsWaiting {
+  expense: Expense;
+  give: number[];
+  conflicted: number[];
+}
+
+/**
+ * For a Board member, the lines whose approval only a Board member can give: an org-level line, or
+ * one no bucket approver may approve. `give` holds the lines whose main act for the caller is that
+ * approval; `conflicted` the ones the caller may not decide because the expense is theirs or their
+ * household's, so another Board member must. Reads every open expense in the approval step, as the
+ * finance queue reads its other reasons.
+ */
+export async function boardApprovalsWaiting(principal: ExpensePrincipal): Promise<BoardApprovalsWaiting[]> {
+  if (!principal.isBoard) return [];
+  const me = actorOf(principal).userId;
+  const expenses = await db.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      state: "owner_approval",
+      NOT: { needsReimbursement: true, reimburseePersonId: null },
+      approvals: { some: { status: { in: [...APPROVABLE_STATUSES] } } },
+    },
+    orderBy: { submittedAt: "desc" },
+  });
+  const linesOf = await callerLinesFor(principal, expenses, true);
+  const out: BoardApprovalsWaiting[] = [];
+  for (const expense of expenses) {
+    const row: BoardApprovalsWaiting = { expense, give: [], conflicted: [] };
+    for (const line of linesOf.get(expense.id)!) {
+      if (line.actions.some((a) => a.act === "approve" && a.primary) && approvesAsStandIn(line.facts, me)) row.give.push(line.lineItemId);
+      else if (line.waitsOnBoard && line.facts.conflicted.includes(me)) row.conflicted.push(line.lineItemId);
+    }
+    if (row.give.length + row.conflicted.length > 0) out.push(row);
+  }
+  return out;
 }

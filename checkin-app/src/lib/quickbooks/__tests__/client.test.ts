@@ -1,4 +1,5 @@
-import { buildQuickBooks, lambdaAccessTokenSource } from "../client";
+import { kindOf } from "@checkin/component-kit";
+import { buildQuickBooks, lambdaAccessTokenSource, tryBuildQuickBooks } from "../client";
 
 jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
 
@@ -37,8 +38,11 @@ describe("lambdaAccessTokenSource", () => {
         expect(invoke).toHaveBeenCalledTimes(1);
     });
 
-    it("refuses an answer for another realm", async () => {
-        await expect(source(jest.fn().mockResolvedValue(answer({ realmId: PROD }))).current()).rejects.toThrow(/different realm/);
+    it("refuses an answer for another company as settings, naming the setting and who checks it", async () => {
+        const err = await source(jest.fn().mockResolvedValue(answer({ realmId: PROD }))).current().catch((e: unknown) => e);
+        expect(kindOf(err)).toBe("settings");
+        expect((err as Error).message).toMatch(/different QuickBooks company.*QBO_REALM_ID.*Finance/);
+        expect((err as Error).message).not.toContain(PROD);
     });
 
     it("refuses production keys off prod and development keys on prod", async () => {
@@ -46,10 +50,12 @@ describe("lambdaAccessTokenSource", () => {
         await expect(source(jest.fn().mockResolvedValue(answer()), () => 0, "prod").current()).rejects.toThrow(/refuses the development/);
     });
 
-    it("refuses a malformed answer and retries on the next call", async () => {
+    it("refuses a malformed answer as settings and retries on the next call", async () => {
         const invoke = jest.fn().mockResolvedValueOnce({ accessToken: "" }).mockResolvedValueOnce(answer());
         const tokens = source(invoke);
-        await expect(tokens.current()).rejects.toThrow(/malformed/);
+        const err = await tokens.current().catch((e: unknown) => e);
+        expect(kindOf(err)).toBe("settings");
+        expect((err as Error).message).toMatch(/QBO_REFRESHER_FN may name the wrong function\. The infra operator checks it/);
         expect(await tokens.current()).toBe("tok-1");
     });
 });
@@ -116,5 +122,15 @@ describe("buildQuickBooks", () => {
     it("is off with no token source", async () => {
         env({ QBO_REFRESHER_FN: undefined });
         expect(await buildQuickBooks()).toBeNull();
+    });
+
+    it("answers the reason it is off, for the status page", () => {
+        expect(tryBuildQuickBooks()).toMatchObject({ ok: true, env: "sandbox" });
+        env({ QBO_REFRESHER_FN: undefined });
+        expect(tryBuildQuickBooks()).toEqual({ ok: false, reason: "no token source (set QBO_REFRESHER_FN)" });
+        env({ QBO_SANDBOX_REALM_ALLOWED: "2222" });
+        expect(tryBuildQuickBooks()).toEqual({ ok: false, reason: "QBO realm is not the allowlisted sandbox realm" });
+        env({ QBO_REALM_ID: undefined });
+        expect(tryBuildQuickBooks()).toEqual({ ok: false, reason: "no company set (QBO_REALM_ID)" });
     });
 });

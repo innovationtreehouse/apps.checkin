@@ -20,13 +20,10 @@ export interface RequireRoleResult {
 }
 
 /**
- * Client-side admin role gate. Redirects unauthenticated or unauthorized users to `/`
+ * Client-side role gate for a page or layout. Redirects unauthenticated or unauthorized users
  * and returns the typed session user plus loading/ready flags.
  *
- * Replaces the copy-pasted `useSession` + `useEffect(redirect)` + `session.user as {...}`
- * block that each admin page hand-rolled. The `/admin` layout still enforces the global
- * gate; this enforces the page's own (often stricter) role requirement and removes the
- * unnecessary casts — `Session['user']` is already typed via `src/types/next-auth.d.ts`.
+ * `Session['user']` is typed via `src/types/next-auth.d.ts`, so callers need no cast.
  *
  * Unauthenticated users are always sent to `/` (they must sign in); authenticated users who
  * lack every allowed role are sent to `options.redirectTo` (default `/`).

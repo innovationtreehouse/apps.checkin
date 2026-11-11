@@ -4,7 +4,7 @@
 /**
  * Integration Tests for Onboarding Status API
  * Tests GET /api/profile/onboarding-status — in particular that youth
- * are never asked for a phone number (issue #169)
+ * are never asked for a phone number
  */
 
 import { GET } from '@/app/api/profile/onboarding-status/route';
@@ -104,7 +104,7 @@ describe('Onboarding Status API Integration Tests', () => {
             expect(data.needsPhone).toBe(true);
         });
 
-        it('should NOT require a phone for a youth (issue #169)', async () => {
+        it('should NOT require a phone for a youth', async () => {
             const res = await callRoute(youthId);
             expect(res.status).toBe(200);
 

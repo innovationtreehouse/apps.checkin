@@ -5,16 +5,29 @@ import type { IncomeConfig } from "@checkin/income";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureIncome = jest.fn<void, [IncomeConfig]>();
+const roleAccounts = jest.fn();
 jest.mock("@checkin/income", () => ({
+  BANK_ROLE: { shopify: "SHOPIFY_BANK", benevity: "BENEVITY_BANK" },
+  SHOPIFY_LINE_ROLES: { charge_remainder: "SHOPIFY_CHARGE_REMAINDER", fees: "SHOPIFY_FEES", adjustments: "SHOPIFY_ADJUSTMENTS" },
+  roleAccounts,
   configureIncome,
   mirrorPayoutStatus: (s: string) => s.toLowerCase(),
   mirrorSource: () => "api",
   toQbDeposit: jest.fn(),
 }));
-jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn(), getPrincipal: jest.fn() }));
-jest.mock("@/lib/shopifyRead/client", () => ({ isConfigured: () => false }));
+jest.mock("@/lib/components/host", () => ({ getOrg: jest.fn(), getPrincipal: jest.fn() }));
+const mirrorConfigured = jest.fn(() => false);
+const incomeItemsSeen = jest.fn();
+jest.mock("@/lib/shopifyRead/client", () => ({ isConfigured: () => mirrorConfigured(), incomeItemsSeen: () => incomeItemsSeen() }));
+const withAppItems = jest.fn();
+jest.mock("../appItems", () => ({ withAppItems: (sold: unknown) => withAppItems(sold) }));
 const getQuickBooks = jest.fn();
-jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
+const buildQuickBooks = jest.fn();
+jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
+const listQuickBooksAccounts = jest.fn();
+jest.mock("@/lib/finance/booksMap", () => ({ listQuickBooksAccounts: () => listQuickBooksAccounts() }));
+const emailAlert = jest.fn().mockResolvedValue(true);
+jest.mock("@/lib/emailRecipients", () => ({ emailAlert }));
 
 async function config(): Promise<IncomeConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -27,6 +40,19 @@ const ENV = { ...process.env };
 beforeEach(() => jest.clearAllMocks());
 afterEach(() => {
   process.env = { ...ENV };
+});
+
+describe("income item list binding", () => {
+  it("adds the app's items to the items sold", async () => {
+    mirrorConfigured.mockReturnValue(true);
+    const sold = [{ variantId: "1", title: "Sold", sku: null }];
+    const merged = [...sold, { variantId: "2", title: "Unsold", sku: null }];
+    incomeItemsSeen.mockResolvedValue(sold);
+    withAppItems.mockResolvedValue(merged);
+    await expect((await config()).mirror!.itemsSeen()).resolves.toEqual(merged);
+    expect(withAppItems).toHaveBeenCalledWith(sold);
+    mirrorConfigured.mockReturnValue(false);
+  });
 });
 
 describe("income QuickBooks Class binding", () => {
@@ -51,5 +77,81 @@ describe("income QuickBooks Class binding", () => {
     process.env.QBO_REALM_ID = "123";
     getQuickBooks.mockResolvedValue(null);
     await expect((await config()).classes!.activeClassIds()).rejects.toThrow("QuickBooks is off");
+  });
+});
+
+describe("income posting binding", () => {
+  const client = { bookCloseDate: jest.fn() };
+
+  beforeEach(() => {
+    process.env.QBO_REALM_ID = "123";
+    delete process.env.INCOME_MIRROR_NEWEST_WINS;
+    buildQuickBooks.mockReturnValue(client);
+  });
+
+  it("binds the guarded client, creation gated", async () => {
+    expect((await config()).posting).toEqual({ client, mirrorNewestWins: false });
+  });
+
+  it("opens creation only when the mirror is newest-wins", async () => {
+    process.env.INCOME_MIRROR_NEWEST_WINS = "true";
+    expect((await config()).posting?.mirrorNewestWins).toBe(true);
+  });
+
+  it("is unbound without a QuickBooks realm", async () => {
+    delete process.env.QBO_REALM_ID;
+    expect((await config()).posting).toBeUndefined();
+    expect(buildQuickBooks).not.toHaveBeenCalled();
+  });
+
+  it("is unbound when the guard refuses the company", async () => {
+    buildQuickBooks.mockReturnValue(null);
+    expect((await config()).posting).toBeUndefined();
+  });
+
+  it("names what posting still lacks, counting the Shopify roles as the drain resolves them", async () => {
+    const { incomePostingMissing } = await import("../configure");
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_FEES: "3" });
+    await expect(incomePostingMissing()).resolves.toEqual([
+      "Shopify mirror",
+      "the switch INCOME_MIRROR_NEWEST_WINS=true",
+      "no account picked for: Shopify: card remainder, Shopify: adjustments",
+    ]);
+    delete process.env.QBO_REALM_ID;
+    roleAccounts.mockResolvedValue({ SHOPIFY_BANK: "1", SHOPIFY_CHARGE_REMAINDER: "3", SHOPIFY_FEES: "4", SHOPIFY_ADJUSTMENTS: "5" });
+    await expect(incomePostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)", "Shopify mirror", "the switch INCOME_MIRROR_NEWEST_WINS=true"]);
+  });
+});
+
+describe("Benevity posting readiness", () => {
+  it("names every Benevity role the books map leaves unset; gifts and matches book to their rules' accounts, net of fees", async () => {
+    const { benevityPostingMissing } = await import("../configure");
+    process.env.QBO_REALM_ID = "123";
+    roleAccounts.mockResolvedValue({});
+    await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity disbursements: bank account"]);
+
+    delete process.env.QBO_REALM_ID;
+    roleAccounts.mockResolvedValue({ BENEVITY_BANK: "1" });
+    await expect(benevityPostingMissing()).resolves.toEqual(["QuickBooks company (QBO_REALM_ID)"]);
+  });
+});
+
+describe("income QuickBooks account list binding", () => {
+  it("reads the books map's live account list", async () => {
+    const accounts = [{ id: "4001", name: "Sales", accountType: "Income" }];
+    listQuickBooksAccounts.mockResolvedValue(accounts);
+    await expect((await config()).quickBooksAccounts!()).resolves.toEqual(accounts);
+  });
+});
+
+describe("income alerts", () => {
+  it("sends each alert to the alert address", async () => {
+    const { alerts } = await config();
+    await alerts!.postCapReached({ orgId: "org", cap: "count", created: 5, createdCents: 500, remaining: 2 });
+    await alerts!.bucketUnusable({ orgId: "org", budgetOwnerId: 3, bucketName: null, issue: "archived", itemCount: 4 });
+    await alerts!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") });
+    expect(emailAlert.mock.calls.map((c) => c[0])).toEqual(["finance.incomePostCap", "finance.incomeBucketUnusable", "finance.incomeSweepIncomplete"]);
+    expect(emailAlert.mock.calls[1][1]).toMatchObject({ bucketName: "#3", itemCount: "4" });
+    expect(emailAlert.mock.calls[2][1].since).toBe("2026-10-01");
   });
 });

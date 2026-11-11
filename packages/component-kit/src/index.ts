@@ -1,13 +1,14 @@
 /**
  * The error and route layer every component library shares: the errors a library throws,
  * the mapping from those errors to an HTTP status, and the parse helpers its route
- * factories use. Server-only; it imports no React and no database driver.
+ * factories use; and the mechanics of consuming the catalog's org events. Server-only; it imports no React and no database driver.
  *
  * Errors are recognised by a `Symbol.for` brand, never by `instanceof`: the instrumentation
  * chunk that configures a library and each route chunk can load separate copies of this
  * module, so class identity differs, while the global symbol registry is shared. The file
  * has no relative imports: Turbopack resolves only the package's `.` export.
  */
+import { dbFailureKind } from "@checkin/pg-kit";
 import type { ZodType } from "zod";
 
 const SERVICE_ERROR = Symbol.for("@checkin/component-kit/ServiceError");
@@ -17,13 +18,14 @@ function branded(err: unknown, brand: symbol): err is Error & { status: number }
   return err instanceof Error && brand in err && "status" in err && typeof err.status === "number";
 }
 
-/** An expected failure a service names by its HTTP status: 400, 403, 404, 409, 429. */
+/** An expected failure a service names by its HTTP status: 400, 403, 404, 409, 429. An optional `code` is what a UI branches on. */
 export class ServiceError extends Error {
   readonly [SERVICE_ERROR] = true;
 
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ServiceError";
@@ -37,14 +39,17 @@ export class ComponentHttpError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
+    /** Names of the refused inputs, never their submitted values. */
+    public readonly fields?: readonly string[],
   ) {
     super(message);
     this.name = "ComponentHttpError";
   }
 }
 
-export function httpError(status: number, message: string): ComponentHttpError {
-  return new ComponentHttpError(status, message);
+export function httpError(status: number, message: string, code?: string, fields?: readonly string[]): ComponentHttpError {
+  return new ComponentHttpError(status, message, code, fields);
 }
 
 export function isServiceError(err: unknown): err is ServiceError {
@@ -57,6 +62,7 @@ export function isComponentHttpError(err: unknown): err is ComponentHttpError {
 
 interface ZodIssueLike {
   message: string;
+  path: readonly PropertyKey[];
 }
 
 function isZodError(err: unknown): err is Error & { issues: ZodIssueLike[] } {
@@ -69,13 +75,24 @@ export function zodMessage(error: { issues: readonly ZodIssueLike[] }, fallback 
 }
 
 /**
+ * A failed parse as a 400 naming the refused top-level inputs. Only `path[0]` is named, since
+ * a deeper segment can be a submitted key. A schema whose top level is a `z.record`, a
+ * `z.map` or an object with `.catchall()` puts a submitted key in `path[0]` too, so it must
+ * not reach this with request input.
+ */
+export function zodHttpError(error: { issues: readonly ZodIssueLike[] }, fallback?: string): ComponentHttpError {
+  const names = error.issues.map((issue) => issue.path[0]).filter((name): name is string => typeof name === "string");
+  return httpError(400, zodMessage(error, fallback), undefined, [...new Set(names)]);
+}
+
+/**
  * The HTTP error an expected failure renders as: a ServiceError or ComponentHttpError keeps
- * its status, a ZodError is a 400. Anything else is null and stays an opaque 500.
+ * its status and code, a ZodError is a 400. Anything else is null and stays an opaque 500.
  */
 export function toHttpError(err: unknown): ComponentHttpError | null {
   if (isComponentHttpError(err)) return err;
-  if (isServiceError(err)) return httpError(err.status, err.message);
-  if (isZodError(err)) return httpError(400, zodMessage(err, "Invalid request"));
+  if (isServiceError(err)) return httpError(err.status, err.message, err.code);
+  if (isZodError(err)) return zodHttpError(err, "Invalid request");
   return null;
 }
 
@@ -86,6 +103,21 @@ export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
   } catch (err) {
     throw toHttpError(err) ?? err;
   }
+}
+
+/** Runs each named count; a failed one is logged and left out, so one failing count never blanks the others. */
+export async function settleCounts<T extends Record<string, unknown>>(
+  label: string,
+  counts: { [K in keyof T]: () => Promise<T[K]> },
+): Promise<Partial<T>> {
+  const keys = Object.keys(counts) as (keyof T & string)[];
+  const results = await Promise.allSettled(keys.map(async (k) => counts[k]()));
+  const settled: Partial<T> = {};
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") settled[keys[i]] = r.value;
+    else console.error(`nav counts: ${label} ${keys[i]} failed`, r.reason);
+  });
+  return settled;
 }
 
 /** A positive integer path or query id: decimal digits only, so `0x1f`, `1e2` and ` 42` are a 400. */
@@ -105,7 +137,7 @@ export async function readJson(req: Request): Promise<unknown> {
 
 export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   const result = schema.safeParse(await readJson(req));
-  if (!result.success) throw httpError(400, zodMessage(result.error));
+  if (!result.success) throw zodHttpError(result.error);
   return result.data;
 }
 
@@ -113,12 +145,75 @@ export function query(req: Request): URLSearchParams {
   return new URL(req.url).searchParams;
 }
 
+/**
+ * What kind of failure an outside call met, which decides who acts and whether the item is
+ * charged a try: `system` a service or our infrastructure is down, `connection` a credential
+ * or link is broken, `settings` our configuration is wrong or missing, `data` this item can't
+ * be taken, `bug` our code failed unexpectedly.
+ */
+export type FailureKind = "system" | "connection" | "settings" | "data" | "bug";
+
+const KINDED_ERROR = Symbol.for("@checkin/component-kit/KindedError");
+
+/** An error sorted where the outside call caught it. */
+export class KindedError extends Error {
+  readonly [KINDED_ERROR] = true;
+
+  constructor(
+    public readonly kind: FailureKind,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "KindedError";
+  }
+}
+
+export function isKindedError(err: unknown): err is KindedError {
+  return err instanceof Error && KINDED_ERROR in err && "kind" in err && typeof err.kind === "string";
+}
+
+/**
+ * The kind of any error. A library's 4xx is data, except 401 and 403 (our wiring or the system
+ * actor's permissions are wrong: bug) and 429 (a passing overload: system). A database
+ * connection error takes the kind pg-kit's `dbFailureKind` gives it. Anything unrecognised is a
+ * bug, which keeps today's retry-then-hold.
+ */
+export function kindOf(err: unknown): FailureKind {
+  if (isKindedError(err)) return err.kind;
+  if (isServiceError(err) || isComponentHttpError(err)) return statusKind(err.status);
+  if (isZodError(err)) return "data";
+  return dbFailureKind(err) ?? "bug";
+}
+
+function statusKind(status: number): FailureKind {
+  if (status === 401 || status === 403) return "bug";
+  if (status === 429 || status >= 500) return "system";
+  return "data";
+}
+
+const NOT_WIRED = Symbol.for("@checkin/component-kit/NotWiredError");
+
 /** Thrown by an inert port or an unbound accessor: the crossing is declared but not bound. Callers retry later. */
-export class NotWiredError extends Error {
+export class NotWiredError extends KindedError {
+  readonly [NOT_WIRED] = true;
+
   constructor(port: string) {
-    super(`${port} is not wired`);
+    super("settings", `${port} is not wired`);
     this.name = "NotWiredError";
   }
+}
+
+/** An unbound port: the only failure that means "not connected". Any other `settings` failure is itself. */
+export function isNotWired(err: unknown): err is NotWiredError {
+  return isKindedError(err) && NOT_WIRED in err;
+}
+
+/** The 503 wording a person reads when the catalog needs fixing: unbound, or its database missing. Null for any other failure. */
+export function catalogSettingsMessage(err: unknown): string | null {
+  if (isNotWired(err)) return "No catalog is connected";
+  if (kindOf(err) === "settings") return "The catalog database does not exist; the infra operator checks its settings";
+  return null;
 }
 
 /** The acting person id. A 401 on anything but an integer: Prisma drops an undefined `where` key. */
@@ -128,15 +223,57 @@ export function callerId(principal: { id?: unknown } | null | undefined): number
   return id;
 }
 
+/** One kinded failure in a library's lane, as its "on failure" port receives it. Ids and codes only, never error text. */
+export interface FailureReport {
+  lane: string;
+  kind: FailureKind;
+  status?: number;
+  faultCodes?: readonly string[];
+  requestId?: string;
+  /** What failed, by id: "receipt 12", never submitted text. */
+  detail?: string;
+}
+
+/**
+ * One item a library's step left stuck, as its "stuck items" port answers. `href` is the item's own
+ * page, null when it has none; `failedAt` is the first failure where the library records one, else
+ * the item's last change. No error text: the item's page shows it under its own access rules.
+ */
+export interface StuckItem {
+  id: string;
+  step: string;
+  href: string | null;
+  failedAt: Date;
+}
+
+/**
+ * A library's "on failure" port. Unbound, a failure is only logged. The lane hands the report off
+ * and goes on without waiting: a port that returns a promise finishes on its own, and its rejection
+ * is logged.
+ */
+export type OnFailure = (report: FailureReport) => void | Promise<void>;
+
+function failureReport(lane: string, err: unknown, detail: string | undefined): FailureReport {
+  const report: FailureReport = { lane, kind: kindOf(err) };
+  if (err instanceof Error) {
+    if ("status" in err && typeof err.status === "number") report.status = err.status;
+    if ("codes" in err && Array.isArray(err.codes) && err.codes.length > 0) report.faultCodes = err.codes.map(String);
+    if ("requestId" in err && typeof err.requestId === "string") report.requestId = err.requestId;
+  }
+  if (detail !== undefined) report.detail = detail;
+  return report;
+}
+
 interface RuntimeShape<Principal> {
   org?: () => Promise<{ id: string }>;
   auth?: { getPrincipal(): Promise<Principal | null> };
+  onFailure?: OnFailure;
 }
 
 /**
  * One component's runtime: the host configures it once at boot, routes and services read it.
  * Stored on globalThis so the instrumentation chunk and the route chunks share one runtime,
- * and it survives dev HMR. Every accessor throws until the host has configured it.
+ * and it survives dev HMR. `require`, `getPrincipal`, `getOrgId` and `assertOrg` throw until the host has configured it.
  */
 export function defineRuntime<Config extends RuntimeShape<Principal>, Principal extends { id: number }>(name: string) {
   const key = Symbol.for(`@checkin/component-kit/runtime/${name}`);
@@ -178,9 +315,153 @@ export function defineRuntime<Config extends RuntimeShape<Principal>, Principal 
     },
     /** The current request's org id, the scope of every row. */
     getOrgId,
+    /**
+     * Sorts a lane's failure: logs one `failure_kinded` line, hands the report to the bound
+     * "on failure" port without waiting on it, and returns the kind. Never throws, so it is safe
+     * inside a catch or a transaction.
+     */
+    failed(lane: string, err: unknown, detail?: string): FailureKind {
+      const report = failureReport(lane, err, detail);
+      console.warn(JSON.stringify({ level: "warn", event: "failure_kinded", library: name, ...report, ts: new Date().toISOString() }));
+      const portThrew = (portErr: unknown) => console.error(`[${name}] on-failure port threw:`, portErr);
+      try {
+        void Promise.resolve(store[key]?.onFailure?.(report)).catch(portThrew);
+      } catch (portErr) {
+        portThrew(portErr);
+      }
+      return report.kind;
+    },
     /** Callee guard: a crossing payload must carry the injected org. */
     async assertOrg(orgId: string): Promise<void> {
       if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
     },
   };
+}
+
+/** What consuming one catalog org event came to. */
+export type OrgEventOutcome = "processed" | "duplicate" | "failed" | "skipped";
+
+export interface OrgEventStep<E, S extends "duplicate" | "skipped"> {
+  /** An outcome that settles the event without applying it, such as a ledger row already processed. */
+  check?(event: E): Promise<S | null>;
+  /**
+   * The consumer's commit rule. It either writes the ledger and the reaction in one transaction,
+   * or reacts and leaves replay to catch-up, which skips and retries so one bad event never
+   * holds back the feed. A throw records a failure.
+   */
+  apply(event: E): Promise<void>;
+  /** A ledger write after `apply` whose throw reaches the caller instead of recording a failure. */
+  recordProcessed?(event: E): Promise<void>;
+  /** Records the failure. False when an overlapping consumer's processed outcome stands. */
+  recordFailure(event: E, failureReason: string): Promise<boolean>;
+  onFailure(event: E, err: unknown): void;
+}
+
+/** One event's consume step. A failed reaction is recorded, not thrown; a failed ledger write is thrown. */
+export function orgEventStep<E, S extends "duplicate" | "skipped" = never>(step: OrgEventStep<E, S>) {
+  return async (event: E): Promise<"processed" | "failed" | "duplicate" | S> => {
+    const settled = await step.check?.(event);
+    if (settled) return settled;
+    try {
+      await step.apply(event);
+    } catch (err) {
+      step.onFailure(event, err);
+      const failureReason = err instanceof Error ? err.message : String(err);
+      return (await step.recordFailure(event, failureReason)) ? "failed" : "duplicate";
+    }
+    await step.recordProcessed?.(event);
+    return "processed";
+  };
+}
+
+export interface OrgEventSweep<E> {
+  limit: number;
+  /** Events recorded as failed, oldest first. */
+  failed: E[];
+  /** The page of the org's events after an id, oldest first. Empty ends the read. */
+  readPage(afterId: number): Promise<E[]>;
+  idOf(event: E): number;
+  /** Those of `ids` already in the consumer's ledger, whatever their status. */
+  receivedIds(ids: number[]): Promise<number[]>;
+  consume(event: E): Promise<OrgEventOutcome>;
+  onUnrecorded(event: E, err: unknown): void;
+  onUnreadable(err: unknown): void;
+}
+
+export interface OrgEventSweepResult {
+  counts: Record<OrgEventOutcome, number>;
+  newlyFailed: number;
+  unprocessed: number;
+  unreadable: boolean;
+  /** No event source is bound: a settings problem the run records, not a catalog outage to alert on. */
+  notConnected: boolean;
+  /** An event newly failed, an unreadable catalog, or a capped run that processed nothing. */
+  needsAlert: boolean;
+}
+
+/** The part of a run's cap that failed events may take ahead of new ones, so they can't starve them. */
+const RETRY_FIRST_SHARE = 0.1;
+
+/**
+ * Catch-up sweep: retries a small share of the failed events, pages through all the org's events
+ * and consumes those not in the ledger, then retries more failed events with the cap left. Reading
+ * from the start means no event is missed however late it committed or however many later ids were
+ * received. What stays undone is retried on the next run: an event that can't be recorded counts as
+ * failed and, with no ledger row, is read again. A capped run that made progress drains itself on
+ * later runs, so it needs no alert, and a retry that fails again only stays failed in the ledger.
+ */
+export async function sweepOrgEvents<E>(sweep: OrgEventSweep<E>): Promise<OrgEventSweepResult> {
+  const counts: Record<OrgEventOutcome, number> = { processed: 0, duplicate: 0, failed: 0, skipped: 0 };
+  const consume = async (event: E): Promise<OrgEventOutcome> => {
+    try {
+      return await sweep.consume(event);
+    } catch (err) {
+      sweep.onUnrecorded(event, err);
+      return "failed";
+    }
+  };
+  const retry = async (events: E[]) => {
+    for (const event of events) counts[await consume(event)]++;
+  };
+  const firstRetries = sweep.failed.slice(0, Math.ceil(sweep.limit * RETRY_FIRST_SHARE));
+  await retry(firstRetries);
+
+  let unprocessed = 0;
+  let unreadable = false;
+  let notConnected = false;
+  let budget = sweep.limit - firstRetries.length;
+  let newlyFailed = 0;
+  try {
+    // ponytail: rereads the org's whole event history daily; keep a low-water mark if it reaches millions.
+    let after = 0;
+    for (;;) {
+      const page = await sweep.readPage(after);
+      if (page.length === 0) break;
+      const ids = page.map(sweep.idOf);
+      const received = new Set(await sweep.receivedIds(ids));
+      for (const [i, event] of page.entries()) {
+        if (received.has(ids[i])) continue;
+        if (budget > 0) {
+          budget--;
+          const outcome = await consume(event);
+          counts[outcome]++;
+          if (outcome === "failed") newlyFailed++;
+        } else {
+          unprocessed++;
+        }
+      }
+      after = ids[ids.length - 1];
+    }
+  } catch (err) {
+    if (isNotWired(err)) notConnected = true;
+    else unreadable = true;
+    sweep.onUnreadable(err);
+  }
+
+  const laterRetries = sweep.failed.slice(firstRetries.length, firstRetries.length + budget);
+  await retry(laterRetries);
+  unprocessed += sweep.failed.length - firstRetries.length - laterRetries.length;
+
+  const needsAlert = newlyFailed > 0 || unreadable || (unprocessed > 0 && counts.processed === 0);
+  return { counts, newlyFailed, unprocessed, unreadable, notConnected, needsAlert };
 }

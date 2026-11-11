@@ -18,7 +18,7 @@ const bob = {
 };
 
 // Operations holds the Participants directory read-only, plus add-contact — every
-// other write/rich-create affordance (household assign, edit-details, bulk import,
+// other write/rich-create affordance (household assign, edit-details,
 // new person, the roles editor link) is board/sysadmin-only. The API is the real
 // guard (people/search's opsOnly strip, the edit endpoints' roles: [...] gates);
 // this pins the UI mirror so an ops session isn't shown a button whose endpoint
@@ -33,7 +33,6 @@ describe("AdminParticipantsIndex — operations sees a read-only directory", () 
         expect(screen.getByText("The B Family")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "+ Add contact" })).toBeInTheDocument();
 
-        expect(screen.queryByRole("button", { name: "Bulk Import" })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "+ New Person" })).not.toBeInTheDocument();
         expect(screen.queryByRole("link", { name: "Manage" })).not.toBeInTheDocument();
         expect(screen.queryByText("Actions")).not.toBeInTheDocument();

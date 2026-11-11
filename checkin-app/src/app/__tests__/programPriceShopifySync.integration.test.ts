@@ -75,6 +75,7 @@ describe('PATCH /api/programs/[id] — Shopify price sync', () => {
     async function createProgram(suffix: string) {
         return prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 name: `${TAG} ${suffix}`, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'),
                 orgMemberPriceCents: 8000, nonOrgMemberPriceCents: 10000,
                 shopifyProductId: '501', shopifyVariantId: '601',

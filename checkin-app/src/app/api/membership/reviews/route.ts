@@ -2,97 +2,69 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { handler, unauthorized } from "@/security/handler";
-import { eligibleReviewProcessIds, attestedUnclearedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
+import { eligibleReviewProcessIds, attestedUnclearedProcessIds, ownRejectedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { reviewErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
-const STATUS_FOR: Record<ReviewError["code"], number> = {
-    not_reviewer: 403,
-    not_found: 404,
-    wrong_phase: 409,
-    same_household_applicant: 403,
-    same_household_reviewer: 403,
-    already_attested: 409,
-    not_undoable: 409,
-    invalid_subject: 400,
-};
+const REVIEW_QUEUE_SELECT = {
+    id: true,
+    subjectPerson: { select: { id: true, name: true, householdId: true, household: { select: { name: true } } } },
+    requestedForHousehold: {
+        select: {
+            name: true,
+            // The applicant's "anything else we should know?" note — the signal a
+            // volunteer-only household uses to ask the reviewer to mark them volunteer.
+            intakeNotes: true,
+            householdMembers: { where: { isHouseholdLead: true }, select: { id: true, name: true, email: true } },
+        },
+    },
+    _count: { select: { attestations: true } },
+} satisfies Prisma.OrgMembershipProcessSelect;
 
 /**
- * GET /api/membership/reviews — applications this reviewer may attest, or with
- * `?mine=1` the ones they already approved that have not cleared.
+ * GET /api/membership/reviews — check reviews this reviewer may decide, with
+ * `?mine=1` the ones they already approved that have not cleared, or with
+ * `?rejected=1` the blocked ones they rejected (which they may change to approve).
  *
  * Eligibility is computed in the service; the result is returned as model rows
  * so the security stripper governs field visibility (registry grants reviewers
- * pii + public only — applicant parents' names/emails, nothing internal). The
- * attestation _count doubles as the approval count for queue rows.
+ * pii + public only). The attestation _count is the approval count: a review in
+ * the queue only ever holds approvals. Nothing about who decided is selected, so
+ * reviewer B never learns that reviewer A signed off.
  *
- * Attestations come back as bare `subjectPersonId`s so the card can show each lead's
- * own approval count — a reviewer needs to see that a household-mate is sitting at
- * 1 of 2 before they choose whom to name. Nothing else is selected: `reviewerId`
- * would tell reviewer B that reviewer A already signed off (anchoring), and `result`
- * is redundant because an awaiting process only ever holds APPROVEs.
- *
- * For a household review the query selects ONLY the household leads' (parents')
- * person rows — the reviewer never needs the children, so their PII never leaves
- * the DB. For a PERSON_BG it selects the SUBJECT person instead (name + household
- * context, subject may have no household), so the reviewer sees who they're
- * approving rather than a blank row. Both name/household fields are public-band, so
- * the stripper passes them for the reviewer grant; it stays defense-in-depth on top
- * of this narrowing, not the primary filter.
+ * A review with a person selects that person (name + household context). A review a
+ * household asked for also selects that household: its name, its intake note, and
+ * ONLY its leads' person rows, the people its first reviewer names from. Children
+ * are never selected.
  */
 export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) => {
     if (auth.type !== "session") throw unauthorized();
-    // ?mine=1: reviews this reviewer already approved that have not cleared.
-    const mine = new URL(req.url).searchParams.get("mine") === "1";
-    const ids = mine ? await attestedUnclearedProcessIds(auth.user.id) : await eligibleReviewProcessIds(auth.user.id);
+    const params = new URL(req.url).searchParams;
+    const ids = params.get("mine") === "1" ? await attestedUnclearedProcessIds(auth.user.id)
+        : params.get("rejected") === "1" ? await ownRejectedProcessIds(auth.user.id)
+        : await eligibleReviewProcessIds(auth.user.id);
     const queue = await prisma.orgMembershipProcess.findMany({
         where: { id: { in: ids } },
         orderBy: { stageEnteredAt: "asc" },
-        select: {
-            id: true,
-            // The BG subject (set only on a PERSON_BG row): identity + household
-            // context so the reviewer knows who the check is for. Household may be null.
-            subjectPerson: {
-                select: {
-                    id: true,
-                    name: true,
-                    householdId: true,
-                    household: { select: { name: true } },
-                },
-            },
-            orgMembership: {
-                select: {
-                    household: {
-                        select: {
-                            name: true,
-                            // The applicant's "anything else we should know?" note — the
-                            // signal a volunteer-only household uses to ask the reviewer to
-                            // mark them volunteer. Classified pii; reviewers hold that band.
-                            intakeNotes: true,
-                            // Live leads only: these are the selectable check subjects, and
-                            // the service rejects a tombstone the card offered.
-                            householdMembers: { where: { isHouseholdLead: true, ...LIVE_PERSON }, select: { id: true, name: true, email: true } },
-                        },
-                    },
-                },
-            },
-            attestations: { select: { subjectPersonId: true } },
-            _count: { select: { attestations: true } },
-        },
+        select: REVIEW_QUEUE_SELECT,
     });
     return { OrgMembershipProcess: queue };
 });
 
-// POST /api/membership/reviews — submit an attestation
+// POST /api/membership/reviews — record a decision on a check review
 // { processId, result, isMarkedVolunteerFamily, subjectPersonIds }.
 // Board members are implicit reviewers (see canReviewBackgroundChecks); attest()
-// re-checks, and validates the subjects against the household's live leads.
+// re-checks. The first decision on a review with no person names one lead of the
+// requested household in subjectPersonIds, on a rejection as well as an approval.
+// An APPROVE from the reviewer whose rejection blocked the review changes their
+// answer: the review starts over with that approval as its first.
 export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
-    let body: { processId?: number; result?: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; isMarkedVolunteer?: boolean; note?: string; subjectPersonIds?: number[] };
+    let body: { processId?: number; result?: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; note?: string; subjectPersonIds?: number[] };
     try {
         body = await req.json();
     } catch {
@@ -108,15 +80,14 @@ export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMemb
     try {
         const outcome = await attest(auth.user.id, body.processId, {
             result: body.result,
-            // A review page loaded before the rename deploy still sends isMarkedVolunteer; drop the fallback one release later.
-            isMarkedVolunteerFamily: body.isMarkedVolunteerFamily ?? body.isMarkedVolunteer,
+            isMarkedVolunteerFamily: body.isMarkedVolunteerFamily,
             note: note || undefined,
             subjectPersonIds: subjectIds(body.subjectPersonIds),
         });
         return NextResponse.json({ outcome });
     } catch (error) {
         if (error instanceof ReviewError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: STATUS_FOR[error.code] });
+            return reviewErrorResponse(error);
         }
         logger.error("Attestation error:", error);
         return apiError("Internal Server Error", 500);

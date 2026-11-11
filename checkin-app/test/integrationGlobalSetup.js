@@ -17,7 +17,35 @@
 const { execFileSync } = require('node:child_process')
 const { createRequire } = require('node:module')
 const { dirname, resolve } = require('node:path')
-const { adminClient, withDb, workerDbName } = require('./integrationDb')
+const { Client } = require('pg')
+const { TEST_DML_ROLE, adminClient, withDb, withDmlRole, workerDbName } = require('./integrationDb')
+
+/**
+ * Create the role row-security suites read as, shaped like the app's DML role:
+ * it owns nothing, so RLS binds it. Roles are cluster-wide and concurrent runs
+ * share the cluster, so creation tolerates losing the race, and the role is
+ * never dropped.
+ */
+async function createTestDmlRole(admin) {
+    await admin.query(`
+        DO $$ BEGIN
+            CREATE ROLE ${TEST_DML_ROLE} LOGIN PASSWORD '${TEST_DML_ROLE}' NOSUPERUSER NOBYPASSRLS;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+        END $$`)
+}
+
+/** Grant on the template, so every worker DB cloned from it inherits the grants. */
+async function grantTestDmlRole(templateUrl) {
+    const client = new Client({ connectionString: templateUrl })
+    await client.connect()
+    try {
+        await client.query(`GRANT USAGE ON SCHEMA public TO ${TEST_DML_ROLE}`)
+        await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${TEST_DML_ROLE}`)
+        await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${TEST_DML_ROLE}`)
+    } finally {
+        await client.end()
+    }
+}
 
 /** Resolve the Prisma CLI entrypoint as seen from checkin-app (handles hoisting). */
 function resolvePrismaBin(cwd) {
@@ -47,6 +75,7 @@ module.exports = async function integrationGlobalSetup(globalConfig) {
     // Publish for the workers (inherited at fork) and for teardown (same process).
     process.env.TEST_RUN_ID = runId
     process.env.TEST_BASE_URL = base
+    process.env.TEST_DML_BASE_URL = withDmlRole(base)
     process.env.TEST_MAXW = String(maxWorkers)
     process.env.TEST_TEMPLATE_DB = template
 
@@ -64,6 +93,9 @@ module.exports = async function integrationGlobalSetup(globalConfig) {
             env: { ...process.env, DATABASE_URL: withDb(base, template) },
             stdio: 'inherit',
         })
+
+        await createTestDmlRole(admin)
+        await grantTestDmlRole(withDb(base, template))
 
         // One DB per worker, cloned from the template.
         for (let w = 1; w <= maxWorkers; w++) {

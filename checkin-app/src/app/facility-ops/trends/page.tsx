@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card, Group, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { FACILITY_AGGREGATE_ROLES } from "@/lib/nav/sections/facilityOps";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -44,49 +46,20 @@ export default function ParticipationTrendsPage() {
   const [period, setPeriod] = useState<PeriodType>("month");
   const [programId, setProgramId] = useState<string>("");
   const [showSource, setShowSource] = useState(false);
-  const [programs, setPrograms] = useState<ProgramOption[]>([]);
-  const [buckets, setBuckets] = useState<TrendBucket[]>([]);
-  const [totals, setTotals] = useState<TrendBucket | null>(null);
-  const [loading, setLoading] = useState(true);
+  // A failed list leaves the aggregate view, which is the page's default.
+  const { data: programs } = useLoad<ProgramOption[]>(ready ? "/api/programs" : null);
 
-  // Fetch programs for the dropdown
-  useEffect(() => {
-    fetch("/api/programs")
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setPrograms(data.map((p: { id: number; name: string }) => ({ id: p.id, name: p.name })));
-        }
-      })
-      .catch((err) => console.error("Failed to load programs for trends dropdown:", err));
-  }, []);
-
-  // Fetch trends data
-  useEffect(() => {
-    if (!ready) return;
-
-    const params = new URLSearchParams({ period });
-    if (programId) params.set("programId", programId);
-
-    fetch(`/api/facility/trends?${params}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setBuckets(data.buckets || []);
-        setTotals(data.totals || null);
-      })
-      .catch((err) => console.error("Failed to load facility trends:", err))
-      .finally(() => setLoading(false));
-  }, [period, programId, ready]);
+  const params = new URLSearchParams({ period });
+  if (programId) params.set("programId", programId);
+  const { data, error, reload } = useLoad<{ buckets?: TrendBucket[]; totals?: TrendBucket | null }>(ready ? `/api/facility/trends?${params}` : null);
+  const buckets = data?.buckets ?? [];
+  const totals = data?.totals ?? null;
 
   if (authLoading) {
     return <PageLoader />;
   }
 
   if (!ready) return null;
-
-  if (loading && buckets.length === 0) {
-    return <PageLoader />;
-  }
 
   const fmtHours = (h: number) => {
     if (h === 0) return "0";
@@ -125,7 +98,7 @@ export default function ParticipationTrendsPage() {
           w={280}
           data={[
             { value: "", label: "All Programs (Aggregate)" },
-            ...programs.map((p) => ({ value: String(p.id), label: p.name })),
+            ...(programs ?? []).map((p) => ({ value: String(p.id), label: p.name })),
           ]}
         />
         <Switch
@@ -135,6 +108,12 @@ export default function ParticipationTrendsPage() {
         />
       </Group>
 
+      {error ? (
+        <LoadError what="the trends" message={error} onRetry={reload} />
+      ) : !data ? (
+        <PageLoader />
+      ) : (
+        <>
       {totals && (
         <SimpleGrid cols={{ base: 2, sm: 3, md: 6 }}>
           {stats.map((s) => (
@@ -218,6 +197,8 @@ export default function ParticipationTrendsPage() {
             </Table.Tbody>
           </Table>
         </Table.ScrollContainer>
+      )}
+        </>
       )}
     </Stack>
   );

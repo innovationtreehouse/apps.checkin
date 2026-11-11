@@ -23,13 +23,21 @@ export const INVENTORY_NAV_LINKS: readonly InventoryNavLink[] = [
     href: "/inventory/org-items",
     icon: "🏷️",
     subLinks: [
-      { name: "Items", href: "/inventory/org-items", icon: "🏷️" },
+      { name: "All inventory", href: "/inventory/org-items", icon: "🏷️" },
+      { name: "Needs a location", href: "/inventory/unlocated", icon: "❔", managerOnly: true },
+      { name: "Receive queue", href: "/inventory/receive-queue", icon: "🚚", receiving: true },
       { name: "Locations", href: "/inventory/locations", icon: "📍" },
+      { name: "Provisional Map", href: "/inventory/provisional-items", icon: "🧩", managerOnly: true },
     ],
   },
-  { name: "Receive Queue", href: "/inventory/receive-queue", icon: "🚚", receiving: true },
-  { name: "Applied Deltas", href: "/inventory/received-deltas", icon: "🧾", receiving: true },
-  { name: "Merge Conflicts", href: "/inventory/merge-conflicts", icon: "⚠️", managerOnly: true },
-  { name: "Provisional Map", href: "/inventory/provisional-items", icon: "🧩", managerOnly: true },
-  { name: "Org Events", href: "/inventory/org-events", icon: "📨", managerOnly: true },
+  {
+    name: "Diagnostics",
+    href: "/inventory/merge-conflicts",
+    icon: "🩺",
+    subLinks: [
+      { name: "Merge Conflicts", href: "/inventory/merge-conflicts", icon: "⚠️", managerOnly: true },
+      { name: "Org Events", href: "/inventory/org-events", icon: "📨", managerOnly: true },
+      { name: "Inventory log", href: "/inventory/inventory-log", icon: "📜", receiving: true },
+    ],
+  },
 ];

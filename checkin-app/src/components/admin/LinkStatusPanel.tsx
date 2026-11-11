@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import {
   Badge,
   Button,
@@ -23,41 +25,25 @@ type IntegrationError = {
 };
 
 export function LinkStatusPanel() {
-  const [errors, setErrors] = useState<IntegrationError[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { data, error, reload } = useLoad<{ errors: IntegrationError[] }>("/api/system-status/links");
+  const errors = data?.errors ?? null;
   const [busyId, setBusyId] = useState<number | null>(null);
-
-  function load() {
-    return fetch("/api/system-status/links")
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        setErrors(data.errors);
-      })
-      .catch(() => {
-        setFailed(true);
-      });
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
 
   async function toggleResolved(e: IntegrationError) {
     setBusyId(e.id);
     try {
-      await fetch(`/api/system-status/links/${e.id}`, {
+      await api(`/api/system-status/links/${e.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resolved: !e.resolvedAt }),
       });
-      await load();
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setBusyId(null);
     }
   }
 
-  if (failed) return <Text c="red">Failed to load link status.</Text>;
+  if (error) return <LoadError what="link status" message={error} onRetry={reload} />;
   if (!errors) {
     return (
       <Center mih="30vh">

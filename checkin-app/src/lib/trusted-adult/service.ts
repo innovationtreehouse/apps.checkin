@@ -1,9 +1,11 @@
 import prisma from "@/lib/prisma";
+import { ServiceError } from "@checkin/component-kit";
+import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
+import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
-import { AUTHORIZED_REVIEW, expiringApprovals } from "@/lib/trusted-adult/filters";
+import { authorizedReview, expiringApprovals } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
 import type { TxClient } from "@/lib/db-client";
@@ -44,7 +46,7 @@ function lockTrustedAdult(tx: TxClient, taId: number) {
 const APPROVAL_VALID_DAYS = 365;
 const WARN_LEAD_DAYS = 30;
 
-export class TrustedAdultError extends Error {
+export class TrustedAdultError extends ServiceError {
     constructor(
         public readonly code:
             | "not_found"
@@ -54,7 +56,7 @@ export class TrustedAdultError extends Error {
             | "already_open",
         message: string,
     ) {
-        super(message);
+        super(TRUSTED_ADULT_ERROR_STATUS[code], message, code);
         this.name = "TrustedAdultError";
     }
 }
@@ -208,6 +210,15 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
     return review;
 }
 
+/** A denial of the adult's own household, or of the household they belong to. */
+async function adultHouseholdDenied(tx: TxClient, ta: { householdId: number; trustedAdultPersonId: number | null }) {
+    const person = ta.trustedAdultPersonId
+        ? await tx.person.findUnique({ where: { id: ta.trustedAdultPersonId }, select: { householdId: true } })
+        : null;
+    const householdIds = person ? [ta.householdId, person.householdId] : [ta.householdId];
+    return (await tx.orgMembership.count({ where: { householdId: { in: householdIds }, status: "DENIED" } })) > 0;
+}
+
 /**
  * Promote a MODIFIED review's proposed facts onto the parent TrustedAdult. Called
  * inside the approval transaction only — the live approved facts stay put until the
@@ -256,9 +267,8 @@ export async function hideTrustedAdult(id: number, actorId: number) {
 /**
  * A household lead withdraws a Trusted Adult — REVOKES every review that isn't
  * already revoked, not just the latest. A renewal opens a new review while the
- * prior APPROVED row lingers, and the pickup list (/operational) shows a TA while
- * ANY review is APPROVED. Revoking only the latest would leave a stale approval
- * live, so the adult keeps showing up on the pickup list after withdrawal.
+ * prior approval stays live, even once that review is approved, so revoking only the
+ * latest would leave the adult on the pickup list after withdrawal.
  */
 export async function withdrawTrustedAdult(id: number, actorId: number, opts?: { latestReviewOnly?: boolean }) {
     const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true } });
@@ -397,12 +407,11 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         // Approving a MODIFIED review is the moment its proposed edits become fact.
         if (input.decision === "APPROVE") await promoteProposal(tx, review);
         await audit(tx, personActor(boardMemberId), review.trustedAdultId, { status: review.status }, { status, decision: input.decision });
-        // "Deny & Revoke": reject the adult outright. Revoke EVERY live approval, not
-        // just one — /operational shows a TA while ANY review is APPROVED, so leaving
-        // one live would keep the adult on the pickup list after a full rejection.
+        // "Deny & Revoke": reject the adult outright. Revoke every APPROVED row, lapsed
+        // ones included, so the sweep cannot later tell the family it merely expired.
         if (input.decision === "DENY" && input.revokePriorApprovals) {
             const live = await tx.trustedAdultReview.findMany({
-                where: { trustedAdultId: review.trustedAdultId, ...AUTHORIZED_REVIEW },
+                where: { trustedAdultId: review.trustedAdultId, status: "APPROVED" },
                 orderBy: { id: "desc" },
             });
             if (live.length) {
@@ -419,7 +428,7 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
     });
 
     if (input.decision === "REQUEST_INFO") {
-        await notifyHouseholdFamily(result.householdId, "The board needs more information about a trusted adult", input.note?.trim());
+        await notifyHouseholdFamily(result.householdId, "trustedAdult.requestInfo", { note: input.note?.trim() ?? "", actionLink: trustedAdultsUrl() });
     }
     // Every denial notifies the family. The message depends on what survives the deny:
     // a live approval left standing (a rejected change), nothing left (a plain rejection),
@@ -429,27 +438,27 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         if (input.revokePriorApprovals) {
             await notifyHouseholdFamily(
                 result.householdId,
-                `Trusted adult no longer authorized: ${name}`,
-                `The board did not approve ${name}, and any prior approval has been revoked. They are no longer authorized at the front desk. You may submit a new request if things change.`,
+                "trustedAdult.deniedRevoked",
+                { adultName: name, actionLink: trustedAdultsUrl() },
             );
         } else {
-            // Mirror /operational's rule: a surviving APPROVED review = still authorized.
+            // Mirror /operational's rule: a surviving authorized review keeps the adult listed.
             const live = await prisma.trustedAdultReview.findFirst({
-                where: { trustedAdultId: head.trustedAdultId, ...AUTHORIZED_REVIEW },
+                where: { trustedAdultId: head.trustedAdultId, ...authorizedReview(new Date()) },
                 orderBy: { reviewBy: "desc" },
             });
             if (live) {
                 const until = live.reviewBy ? ` (valid until ${live.reviewBy.toISOString().slice(0, 10)})` : "";
                 await notifyHouseholdFamily(
                     result.householdId,
-                    `Trusted adult change not approved: ${name}`,
-                    `The board did not approve your recent change to ${name}. The previously approved arrangement${until} remains in effect. You can submit a new change any time.`,
+                    "trustedAdult.changeNotApproved",
+                    { adultName: name, until, actionLink: trustedAdultsUrl() },
                 );
             } else {
                 await notifyHouseholdFamily(
                     result.householdId,
-                    `Trusted adult not approved: ${name}`,
-                    `The board did not approve ${name}. You may submit a new request if things change.`,
+                    "trustedAdult.notApproved",
+                    { adultName: name, actionLink: trustedAdultsUrl() },
                 );
             }
         }
@@ -458,7 +467,13 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
 }
 
 /**
- * Board / sysadmin override: force a review to a terminal state regardless of phase.
+ * Board / sysadmin override: settle a review regardless of its phase, under the parent
+ * lock so the checks hold against what the household or another board member just did.
+ *
+ * Revoke acts on the adult: the live approval ends with it, because the review the board
+ * is looking at may be a declined change sitting on top of that approval. Deny acts on
+ * its review, so denying a change leaves the earlier approval standing. Approve refuses a
+ * withdrawn adult, a denied household, and any review that is no longer the latest.
  *
  * Same conflict-of-interest rule as decideReview, and no role is exempt from it — a
  * board member may not override their OWN household's review (else they could
@@ -471,55 +486,96 @@ export async function overrideReview(
     action: "approve" | "deny" | "revoke",
     sharedNote?: string | null,
 ) {
-    const review = await prisma.trustedAdultReview.findUnique({
+    const head = await prisma.trustedAdultReview.findUnique({
         where: { id: reviewId },
         include: { trustedAdult: { select: { householdId: true, trustedAdultPersonId: true, trustedAdultName: true } } },
     });
-    if (!review) throw new TrustedAdultError("not_found", "Review not found.");
+    if (!head) throw new TrustedAdultError("not_found", "Review not found.");
 
     const me = await prisma.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
     if (
         isTrustedAdultConflict({
             actorParticipantId: actorId,
             actorHouseholdId: me?.householdId,
-            taHouseholdId: review.trustedAdult.householdId,
-            taTrustedAdultPersonId: review.trustedAdult.trustedAdultPersonId,
+            taHouseholdId: head.trustedAdult.householdId,
+            taTrustedAdultPersonId: head.trustedAdult.trustedAdultPersonId,
         })
     ) {
         throw new TrustedAdultError("forbidden", "You can't override your own household's trusted-adult review — someone outside your household must.");
     }
-
-    const now = new Date();
-    const data: Record<string, unknown> = { decidedById: actorId };
-    if (action === "approve") {
-        if (!sharedNote?.trim()) {
-            throw new TrustedAdultError("bad_input", "A shared note is required to force-approve.");
-        }
-        data.status = "APPROVED";
-        data.decision = "APPROVE";
-        data.sharedNote = sharedNote.trim();
-        data.effectiveFrom = now;
-        data.reviewBy = daysFromNow(now, APPROVAL_VALID_DAYS);
-    } else if (action === "deny") {
-        data.status = "DENIED";
-        data.decision = "DENY";
-    } else {
-        data.status = "REVOKED";
+    if (action === "approve" && !sharedNote?.trim()) {
+        throw new TrustedAdultError("bad_input", "A shared note is required to force-approve.");
     }
 
+    const actor = personActor(actorId);
     const updated = await prisma.$transaction(async (tx) => {
-        const u = await tx.trustedAdultReview.update({ where: { id: reviewId }, data });
-        if (action === "approve") await promoteProposal(tx, review);
-        await audit(tx, personActor(actorId), review.trustedAdultId, { status: review.status }, { status: data.status, override: action });
-        return u;
+        await lockTrustedAdult(tx, head.trustedAdultId);
+        const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
+        if (!review) throw new TrustedAdultError("not_found", "Review not found.");
+
+        if (action === "approve") {
+            const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: review.trustedAdultId }, orderBy: { id: "desc" } });
+            if (latest?.id !== review.id) {
+                throw new TrustedAdultError("wrong_phase", "This review is out of date — reload the page.");
+            }
+            if (review.status === "REVOKED") {
+                throw new TrustedAdultError("wrong_phase", "This trusted adult was withdrawn or revoked — the household has to resubmit them.");
+            }
+            if (await adultHouseholdDenied(tx, head.trustedAdult)) {
+                throw new TrustedAdultError("wrong_phase", "This household has been denied membership — restore it before approving.");
+            }
+            const now = new Date();
+            const approved = await tx.trustedAdultReview.update({
+                where: { id: reviewId },
+                data: {
+                    decidedById: actorId,
+                    status: "APPROVED",
+                    decision: "APPROVE",
+                    sharedNote: sharedNote!.trim(),
+                    effectiveFrom: now,
+                    reviewBy: daysFromNow(now, APPROVAL_VALID_DAYS),
+                },
+            });
+            await promoteProposal(tx, review);
+            await audit(tx, actor, review.trustedAdultId, { status: review.status }, { status: "APPROVED", override: action });
+            return approved;
+        }
+
+        // Denying an approval ends the adult's authorization; denying a change does not.
+        const endsAuthorization = action === "revoke" || review.status === "APPROVED";
+        const others = endsAuthorization
+            ? await tx.trustedAdultReview.findMany({
+                  where: { trustedAdultId: review.trustedAdultId, status: "APPROVED", id: { not: reviewId } },
+                  select: { id: true },
+                  orderBy: { id: "asc" },
+              })
+            : [];
+        const settled = review.status === "REVOKED" || review.status === "SUPERSEDED" || (action === "deny" && review.status === "DENIED");
+        if (settled && others.length === 0) {
+            throw new TrustedAdultError("wrong_phase", "This review has already been settled — reload the page.");
+        }
+        if (others.length) {
+            await tx.trustedAdultReview.updateMany({ where: { id: { in: others.map((r) => r.id) } }, data: { status: "REVOKED" } });
+            for (const r of others) {
+                await audit(tx, actor, review.trustedAdultId, { status: "APPROVED", reviewId: r.id }, { status: "REVOKED", reviewId: r.id, override: action, overrideOf: reviewId });
+            }
+        }
+        if (settled) return review;
+        const status = action === "deny" ? "DENIED" : "REVOKED";
+        const closed = await tx.trustedAdultReview.update({
+            where: { id: reviewId },
+            data: { decidedById: actorId, status, ...(action === "deny" ? { decision: "DENY" as const } : {}) },
+        });
+        await audit(tx, actor, review.trustedAdultId, { status: review.status }, { status, override: action });
+        return closed;
     });
     // A forced denial/revocation notifies the family, like the ordinary deny path.
     if (action === "deny" || action === "revoke") {
-        const name = review.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
+        const name = head.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
         await notifyHouseholdFamily(
-            review.trustedAdult.householdId,
-            `Trusted adult no longer authorized: ${name}`,
-            `The board has ${action === "revoke" ? "revoked" : "denied"} ${name}. They are no longer authorized at the front desk. You may submit a new request if things change.`,
+            head.trustedAdult.householdId,
+            "trustedAdult.overrideDecided",
+            { adultName: name, action: action === "revoke" ? "revoked" : "denied", actionLink: trustedAdultsUrl() },
         );
     }
     return updated;
@@ -527,9 +583,9 @@ export async function overrideReview(
 
 /**
  * Nightly sweep: (1) warn the household 30 days before an approval lapses, once;
- * (2) expire approvals whose reviewBy has passed so they re-enter the board queue
- * via a renewal, and tell the family — expiring drops the adult off the front
- * desk's pickup list, so silence would surface as a refused pickup.
+ * (2) flip approvals whose reviewBy has passed to EXPIRED so they re-enter the board
+ * queue via a renewal, and tell the family. The pickup list already dropped them when
+ * reviewBy passed; this run only cleans up and notifies.
  */
 export async function runExpirySweep(now: Date) {
     const warnThreshold = daysFromNow(now, WARN_LEAD_DAYS);
@@ -543,7 +599,8 @@ export async function runExpirySweep(now: Date) {
         ...new Set(
             (
                 await prisma.trustedAdultReview.findMany({
-                    where: { status: "APPROVED", reviewBy: { not: null, lte: warnThreshold, gt: now } },
+                    // An archived household gets no expiry warning.
+                    where: { status: "APPROVED", reviewBy: { not: null, lte: warnThreshold, gt: now }, trustedAdult: { household: { archivedAt: null } } },
                     select: { trustedAdultId: true },
                 })
             ).map((r) => r.trustedAdultId),
@@ -562,8 +619,8 @@ export async function runExpirySweep(now: Date) {
         const due = r.reviewBy ? r.reviewBy.toISOString().slice(0, 10) : "soon";
         await notifyHouseholdFamily(
             r.householdId,
-            "A trusted adult approval is expiring soon",
-            `This board-approved trusted adult expires on ${due}. You can resubmit it for board review in one click — no need to re-enter anything.`,
+            "trustedAdult.expiring",
+            { deadline: due, actionLink: trustedAdultsUrl() },
         );
         await prisma.trustedAdultReview.update({ where: { id: r.id }, data: { expiryWarningSentAt: now } });
         warned++;
@@ -571,32 +628,41 @@ export async function runExpirySweep(now: Date) {
 
     const lapsed = await prisma.trustedAdultReview.findMany({
         where: { status: "APPROVED", reviewBy: { not: null, lte: now } },
-        select: { id: true, trustedAdultId: true, status: true, householdId: true, trustedAdult: { select: { trustedAdultName: true } } },
+        select: { id: true, trustedAdultId: true, status: true, householdId: true, trustedAdult: { select: { trustedAdultName: true, household: { select: { id: true } } } } },
     });
     let expired = 0;
     for (const r of lapsed) {
-        await prisma.$transaction(async (tx) => {
-            await tx.trustedAdultReview.update({ where: { id: r.id }, data: { status: "EXPIRED" } });
+        // The read above is unlocked: a denial, withdrawal or renewal may have settled this row since.
+        const flipped = await prisma.$transaction(async (tx) => {
+            await lockTrustedAdult(tx, r.trustedAdultId);
+            const { count } = await tx.trustedAdultReview.updateMany({
+                where: { id: r.id, status: "APPROVED", reviewBy: { lte: now } },
+                data: { status: "EXPIRED" },
+            });
+            if (count === 0) return false;
             await audit(tx, systemActor("cron:trusted-adult-expiry"), r.trustedAdultId, { status: r.status }, { status: "EXPIRED" });
+            return true;
         });
+        if (!flipped) continue;
         expired++;
         // Notify only after the flip commits: the status change is the authoritative act,
         // the email a courtesy on top, so a slow or failing provider can't hold the tx.
         // The flip is its own dedup — an EXPIRED row is no longer selected by this query —
         // and it also excludes this row from the authorization check below.
-        const stillAuthorized = await prisma.trustedAdultReview.findFirst({
-            where: { trustedAdultId: r.trustedAdultId, ...AUTHORIZED_REVIEW },
+        const approvalLeft = await prisma.trustedAdultReview.findFirst({
+            where: { trustedAdultId: r.trustedAdultId, status: "APPROVED" },
             select: { id: true },
         });
-        // One lapsed review is not a lapsed adult: a renewal approved before this row's
-        // date still authorizes them, and /operational still lists them. Only the review
-        // that leaves the adult with no approval at all earns the de-authorization notice.
-        if (stillAuthorized) continue;
+        // One lapsed review is not a lapsed adult: another approval may still authorize
+        // them, or be lapsed too and flip later in this run. Only the flip that leaves the
+        // adult with no approval at all earns the de-authorization notice, so it goes once.
+        // Row security returns an archived household as null: it still lapses, but gets no email.
+        if (approvalLeft || !r.trustedAdult.household) continue;
         const name = r.trustedAdult.trustedAdultName?.trim() || "your trusted adult";
         await notifyHouseholdFamily(
             r.householdId,
-            `Trusted adult approval expired: ${name}`,
-            `The board's approval of ${name} has expired. They are no longer authorized at the front desk. You can resubmit them for board review in one click — no need to re-enter anything.`,
+            "trustedAdult.expired",
+            { adultName: name, actionLink: trustedAdultsUrl() },
         );
     }
 
@@ -614,19 +680,20 @@ export async function assertHouseholdLead(householdId: number, actorId: number) 
 
 /** Email every board member that a trusted-adult review is waiting. */
 async function notifyBoard(): Promise<void> {
-    const base = config.baseUrl();
     await emailBoardMembers(
-        "Trusted adult: a disclosure needs board review",
-        `<p>A trusted-adult disclosure is awaiting board review. <a href="${base}/safety/trusted-adults">Review it</a>.</p>`,
+        "trustedAdult.boardReview",
+        { actionLink: `${config.baseUrl()}/safety/trusted-adults` },
         "Board trusted-adult ping failed:",
     );
 }
 
 /** Email the household's leads (the "family"). */
-async function notifyHouseholdFamily(householdId: number, subject: string, body?: string): Promise<void> {
-    const base = config.baseUrl();
-    const html = `<p>${escapeHtml(body ?? "")}</p><p><a href="${base}/trusted-adults">View your trusted adults</a>.</p>`;
-    await emailHouseholdLeads(householdId, subject, html, "Family trusted-adult ping failed:");
+async function notifyHouseholdFamily<K extends TemplateKey>(householdId: number, key: K, ctx: TemplateCtx<K>): Promise<void> {
+    await emailHouseholdLeads(householdId, key, ctx, "Family trusted-adult ping failed:");
+}
+
+function trustedAdultsUrl(): string {
+    return `${config.baseUrl()}/trusted-adults`;
 }
 
 function audit(

@@ -28,10 +28,11 @@ export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new 
     // Builds the endpoint; s-read-function makes the call.
     ['packages/s-ingest-core/src/config.ts', ['shopify.admin-read']],
     ['s-read-function/src/shopify/token.ts', ['shopify.oauth']],
+    ['gmail-refresher-function/src/oauth.ts', ['gmail.oauth']],
 ]);
 
 export const THIRD_PARTY_HOST_RE =
-    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com|gmail\.googleapis\.com)/;
+    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com|gmail\.googleapis\.com|accounts\.google\.com|oauth2\.googleapis\.com)/;
 /** An absolute URL with a host (literal, `${…}` or `[ipv6]`), except loopback. A bare
  *  scheme prefix (`"https://" + host`) is not a fixed destination and does not match. */
 export const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?![\w.-]))[\w$[]/;

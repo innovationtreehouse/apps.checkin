@@ -10,6 +10,8 @@ import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
 import type { Token } from '@/security/core';
 import { classifications } from '@/security/budgetOwnerSyntheticClassifications';
+import { getRoute } from '@/security/core';
+import '@/security/registry';
 
 const ctx: CallerContext = {
     selfId: 1,
@@ -52,5 +54,27 @@ describe('budget-owner synthetic views', () => {
         expect(strip('BudgetOwnerApprover', approver, PUBLIC_ONLY)).toEqual({ personId: 9, name: 'Pat Doe' });
         const option = { id: 9, name: 'Pat Doe' };
         expect(strip('BudgetOwnerApproverOption', option, PUBLIC_ONLY)).toEqual(option);
+    });
+
+    it('books-map rows and account options reach finance or board whole, and nobody on a public view', () => {
+        const rows: Array<[string, object]> = [
+            ['BooksMapClass', { budgetOwnerId: 2, budgetOwnerName: 'Robotics', quickBooksClassId: '5000000000000123' }],
+            ['BooksMapAccount', { role: 'BANK_DEPOSITS', quickBooksAccountId: '35' }],
+            ['QuickBooksAccountOption', { id: '35', name: 'Checking', accountType: 'Bank', active: true }],
+        ];
+        for (const [model, row] of rows) {
+            expect(strip(model, row, FINANCE_OR_BOARD_VIEW)).toEqual(row);
+            expect(strip(model, row, PUBLIC_ONLY)).toEqual({});
+        }
+    });
+
+    it('finance or board reads the books map; finance alone edits it', () => {
+        expect(getRoute('GET /api/books-map')?.authorize).toBe('finance-or-board');
+        expect(getRoute('GET /api/books-map/quickbooks-accounts')?.authorize).toBe('finance-or-board');
+        for (const endpoint of ['PUT /api/books-map/classes/[budgetOwnerId]', 'PUT /api/books-map/accounts/[role]']) {
+            const route = getRoute(endpoint);
+            expect(route?.authorize).toBe('finance');
+            expect(route?.orderedView.map(([role]) => role)).toEqual(['isFinance']);
+        }
     });
 });

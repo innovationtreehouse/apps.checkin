@@ -1,4 +1,4 @@
-// Re-export stub (#1289): mounts a workflow-mapping route factory under
+// Re-export stub: mounts a workflow-mapping route factory under
 // /api/workflow-mapping/* through checkin's handler(). The endpoint string MUST
 // match its src/security/registry/workflow.ts entry.
 import { handler } from "@/security/handler";

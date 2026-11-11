@@ -13,6 +13,7 @@ import { activateProgramEnrollment, refuseReversedActivation } from '@/lib/progr
 import { adjustProgramInventory } from '@/lib/shopify/stock';
 import { orderEntitlesEnrollment } from '@/lib/finance/reconcile/program';
 import { returnTestOrderStock } from '@/lib/finance/reconcile/reversals';
+import { raisePaymentException } from '@/lib/finance/reconcile/exceptions';
 
 jest.mock('@/lib/programs/activateEnrollment', () => ({
     activateProgramEnrollment: jest.fn(),
@@ -95,7 +96,7 @@ describe('POST /api/webhooks/shopify — program test orders', () => {
         expect(entitles).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
         expect(adjustProgramInventory).not.toHaveBeenCalled();
-        expect(returnTestOrderStock).toHaveBeenCalledWith('777001', [{ variantId: '5551', quantity: 1 }]);
+        expect(returnTestOrderStock).toHaveBeenCalledWith('777001', [{ variantId: '5551', quantity: 1, currentQuantity: 1 }]);
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: true, outcome: 'test order for program 7 — ignored' });
     });
 
@@ -105,6 +106,20 @@ describe('POST /api/webhooks/shopify — program test orders', () => {
         expect(activate).toHaveBeenCalledWith(expect.objectContaining({ programId: 7, personIds: [41], shopifyOrderId: '777001' }));
         expect(returnTestOrderStock).not.toHaveBeenCalled();
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: false, outcome: 'program 7: activated 1 of 1 participant(s)' });
+    });
+
+    it('carries the current quantity, which seats are judged by, next to the original one', async () => {
+        const edited = { ...PROGRAM_ORDER, line_items: [{ variant_id: 5551, quantity: 2, current_quantity: 1 }] };
+        await POST(signedReq(JSON.stringify(edited)));
+        expect(entitles.mock.calls[0][0].lines).toEqual([{ variantId: '5551', quantity: 2, currentQuantity: 1 }]);
+    });
+
+    it('a replay of an order whose seats are all spent activates nobody and raises nothing', async () => {
+        entitles.mockResolvedValueOnce({ ok: false, kind: null, spent: true });
+        await POST(signedReq(JSON.stringify(PROGRAM_ORDER)));
+        expect(activate).not.toHaveBeenCalled();
+        expect(raisePaymentException).not.toHaveBeenCalled();
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ outcome: 'program 7: order already spent on earlier enrollments — not activated' });
     });
 
     it('an order reversed before activation is recorded as refused, not activated', async () => {

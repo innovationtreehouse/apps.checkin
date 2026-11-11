@@ -4,11 +4,29 @@ import {
   buildProvisionalGtin13,
   calculateChecksum,
   formatGtinDisplay,
-  formatItemId,
   formatProvisionalDisplay,
   isProvisionalGtin13,
+  isValidGtin13,
+  parseGtinInput,
   parseProvisionalSequence,
 } from "../index";
+
+describe("isValidGtin13", () => {
+  it("accepts 13 digits with the right check digit", () => {
+    expect(isValidGtin13("4006381333931")).toBe(true);
+    expect(isValidGtin13(buildGtin13("A", 1, 1))).toBe(true);
+  });
+
+  it("rejects a wrong check digit", () => {
+    expect(isValidGtin13("4006381333932")).toBe(false);
+  });
+
+  it("rejects anything that is not exactly 13 digits", () => {
+    for (const value of ["", "400638133393", "40063813339310", "400638133393X", " 4006381333931", "4006381333931\n"]) {
+      expect(isValidGtin13(value)).toBe(false);
+    }
+  });
+});
 
 describe("calculateChecksum", () => {
   it("calculateChecksum_returns_correct_digit_for_known_input", () => {
@@ -23,6 +41,18 @@ describe("calculateChecksum", () => {
     for (const [letter, sub, seq] of [["A", 1, 1], ["M", 50, 500], ["Z", 99, 9998]] as const) {
       const gtin = buildGtin13(letter, sub, seq);
       expect(calculateChecksum(gtin.slice(0, 12))).toBe(parseInt(gtin[12], 10));
+    }
+  });
+
+  it("calculateChecksum_throws_on_a_non_digit", () => {
+    for (const value of ["40063813339X", "4006381-3393", " 40063813339", "4006381333.3"]) {
+      expect(() => calculateChecksum(value)).toThrow("exactly 12 digits");
+    }
+  });
+
+  it("calculateChecksum_throws_unless_exactly_12_characters", () => {
+    for (const value of ["", "40063813339", "4006381333931"]) {
+      expect(() => calculateChecksum(value)).toThrow("exactly 12 digits");
     }
   });
 });
@@ -136,17 +166,49 @@ describe("formatGtinDisplay", () => {
 
   it("returns_raw_gtin_for_non_0200_codes", () => {
     expect(formatGtinDisplay("5901234123457")).toBe("5901234123457");
+    expect(formatGtinDisplay("4006381333931")).toBe("4006381333931");
+  });
+
+  it("returns_input_that_is_not_13_digits_unchanged", () => {
+    for (const value of ["", "*", "B", "0200", "0200abc000000"]) expect(formatGtinDisplay(value)).toBe(value);
+  });
+
+  it("returns_a_0200_gtin_with_no_category_letter_unchanged", () => {
+    expect(formatGtinDisplay("0200010000018")).toBe("0200010000018");
+    expect(formatGtinDisplay("0200019900016")).toBe("0200019900016");
   });
 });
 
-describe("formatItemId", () => {
-  it("formats_provisional_gtin_as_P_plus_padded_sequence", () => {
-    expect(formatItemId(buildProvisionalGtin13(1))).toBe("P000001");
+describe("parseGtinInput", () => {
+  it("round-trips the display form of all three kinds", () => {
+    for (const gtin of [buildProvisionalGtin13(123), buildGtin13("B", 3, 42), buildGtin13("Z", 99, 9999), "4006381333931"]) {
+      expect(parseGtinInput(formatGtinDisplay(gtin))).toBe(gtin);
+    }
   });
 
-  it("formats_catalog_gtin_as_subcategory_letter_sequence_compact", () => {
-    // buildGtin13("A",1,1) → "020001010001X" → subPart="01", catPos=01→A, seqPart="0001"
-    const gtin = buildGtin13("A", 1, 1);
-    expect(formatItemId(gtin)).toBe("01A0001");
+  it("reads the documented short forms", () => {
+    expect(parseGtinInput("P000123")).toBe(buildProvisionalGtin13(123));
+    expect(parseGtinInput("03B0042")).toBe(buildGtin13("B", 3, 42));
+  });
+
+  it("trims and ignores the case of the letter", () => {
+    expect(parseGtinInput("  p000123\n")).toBe(buildProvisionalGtin13(123));
+    expect(parseGtinInput(" 03b0042 ")).toBe(buildGtin13("B", 3, 42));
+  });
+
+  it("rejects 13 digits with a wrong check digit", () => {
+    expect(parseGtinInput("4006381333932")).toBeNull();
+  });
+
+  it("rejects a character that is not a letter A-Z", () => {
+    for (const text of ["03@0042", "03[0042", "03\u00c90042", "0300042"]) {
+      expect(parseGtinInput(text)).toBeNull();
+    }
+  });
+
+  it("rejects junk and near misses", () => {
+    for (const text of ["", "   ", "hammer", "P00012", "P0001234", "Q000123", "3B0042", "03B00421", "400638133393", "40063813339310", "03 B0042"]) {
+      expect(parseGtinInput(text)).toBeNull();
+    }
   });
 });

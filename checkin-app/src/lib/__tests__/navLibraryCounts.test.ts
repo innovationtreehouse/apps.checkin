@@ -1,7 +1,23 @@
 import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
 
+const mockCountAwaitingFinance = jest.fn(async (viewerId: number) => ({
+  total: viewerId,
+  byState: { financial_review: viewerId - 1, duplicate_flagged: 1, flow_error: 0 },
+}));
+
+// A Board member's count adds the confirmations only the Board gives.
+const mockCountToConfirm = jest.fn(async (id: number, isBoardMember = false) => id + (isBoardMember ? 100 : 0));
+
 jest.mock("@checkin/receipt", () => ({
-  receiptService: { countAwaitingFinance: async () => 5, countAwaitingSubmitter: async (id: number) => id * 10 },
+  receiptService: {
+    countAwaitingFinance: (viewerId: number) => mockCountAwaitingFinance(viewerId),
+    countAwaitingSubmitter: async (id: number) => id * 10,
+    countToConfirm: (id: number, isBoardMember?: boolean) => mockCountToConfirm(id, isBoardMember),
+  },
+}));
+
+jest.mock("@checkin/global-catalog", () => ({
+  proposalService: { getNavCounts: async () => ({ pendingProvisionalItems: 3, pendingItemReferences: 2, unresolvedConflicts: 1, pendingChallenges: 4 }) },
 }));
 
 describe("the receipt provider", () => {
@@ -10,19 +26,70 @@ describe("the receipt provider", () => {
   beforeEach(() => { process.env.RECEIPT_DATABASE_URL = "postgres://receipt"; });
   afterEach(() => { delete process.env.RECEIPT_DATABASE_URL; });
 
-  it("reports the review count to FINANCE and not to BOARD, which cannot act on the queues", async () => {
+  it("reports the review counts to FINANCE and not to BOARD, which cannot act on the queues", async () => {
     // FINANCE and BOARD may submit receipts too, so each also gets its own count.
-    expect(await collectLibraryCounts({ id: 1, isFinance: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingMe: 10, awaitingFinance: 5 },
+    expect(await collectLibraryCounts({ id: 5, isFinance: true }, ["receipt"], receipt)).toEqual({
+      receipt: {
+        awaitingMe: 50,
+        awaitingFinance: 5,
+        "awaitingFinance:financial_review": 4,
+        "awaitingFinance:duplicate_flagged": 1,
+        "awaitingFinance:flow_error": 0,
+      },
     });
+    expect(mockCountAwaitingFinance).toHaveBeenCalledWith(5);
     expect(await collectLibraryCounts({ id: 1, isBoardMember: true }, ["receipt"], receipt)).toEqual({
-      receipt: { awaitingMe: 10 },
+      receipt: { awaitingMe: 10, toConfirm: 101 },
+    });
+    expect(mockCountAwaitingFinance).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an uploader their own count and the confirmations waiting on them", async () => {
+    const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
+    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20, toConfirm: 2 } });
+  });
+
+  it("leaves out a failed count and logs it, keeping the others", async () => {
+    const boom = new Error("db down");
+    mockCountToConfirm.mockRejectedValueOnce(boom);
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
+    const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
+    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
+    expect(error).toHaveBeenCalledWith("nav counts: receipt toConfirm failed", boom);
+    error.mockRestore();
+  });
+
+  it("reports an adult whose membership lapsed only the confirmations waiting on them", async () => {
+    const lapsed = { ageBand: "adult" as const, isActiveOrgMember: false };
+    expect(await collectLibraryCounts({ id: 3, ...lapsed }, ["receipt"], receipt)).toEqual({ receipt: { toConfirm: 3 } });
+  });
+});
+
+jest.mock("@checkin/local-inventory", () => ({ getNavCounts: async () => ({ openBackorders: 4 }) }));
+
+describe("the local-inventory provider", () => {
+  const inventory = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "local-inventory");
+
+  beforeEach(() => { process.env.LOCAL_INVENTORY_DATABASE_URL = "postgres://inventory"; });
+  afterEach(() => { delete process.env.LOCAL_INVENTORY_DATABASE_URL; });
+
+  it("reports open backorders to an inventory manager", async () => {
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["local-inventory"], inventory)).toEqual({
+      "local-inventory": { openBackorders: 4 },
     });
   });
 
-  it("reports an uploader only their own count", async () => {
-    const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
-    expect(await collectLibraryCounts({ id: 2, ...adult }, ["receipt"], receipt)).toEqual({ receipt: { awaitingMe: 20 } });
+  it("reports nothing to FINANCE or BOARD, which read the queue but cannot receive", async () => {
+    for (const u of [{ id: 2, isFinance: true }, { id: 3, isBoardMember: true }, { id: 4 }]) {
+      expect(await collectLibraryCounts(u, ["local-inventory"], inventory)).toBeUndefined();
+    }
+  });
+
+  it("reports no count when the library has no database", async () => {
+    delete process.env.LOCAL_INVENTORY_DATABASE_URL;
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["local-inventory"], inventory)).toEqual({
+      "local-inventory": {},
+    });
   });
 });
 import { foldBadges, libraryCount, sectionBadges, sectionTabBadge } from "@/components/navBadges";
@@ -116,5 +183,26 @@ describe("library badge pattern", () => {
       { count: 5, color: "red", label: "a; c" },
       { count: 2, color: "gray", label: "b" },
     ]);
+  });
+});
+
+describe("the catalog provider", () => {
+  const catalog = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "catalog");
+
+  beforeEach(() => { process.env.CATALOG_DATABASE_URL = "postgres://catalog"; });
+  afterEach(() => { delete process.env.CATALOG_DATABASE_URL; });
+
+  it("reports the pending proposals to an INVENTORY_MANAGER alone", async () => {
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["catalog"], catalog)).toEqual({
+      catalog: { pendingProvisionalItems: 3, pendingItemReferences: 2, unresolvedConflicts: 1, pendingChallenges: 4 },
+    });
+    for (const viewer of [{ id: 2, isBoardMember: true }, { id: 3, isFinance: true }, { id: 4, isSysadmin: true }]) {
+      expect(await collectLibraryCounts(viewer, ["catalog"], catalog)).toBeUndefined();
+    }
+  });
+
+  it("omits the counts when the catalog is not configured", async () => {
+    delete process.env.CATALOG_DATABASE_URL;
+    expect(await collectLibraryCounts({ id: 1, isInventoryManager: true }, ["catalog"], catalog)).toEqual({ catalog: {} });
   });
 });

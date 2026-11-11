@@ -2,9 +2,9 @@
  * @jest-environment node
  */
 /**
- * Concurrency tests for trusted-adult mutating operations. Unlike the membership
- * BG-review flow (lib/membership/review.ts FOR UPDATE), the trusted-adult service
- * was check-then-act with NO row lock — a TOCTOU race:
+ * Concurrency tests for trusted-adult mutating operations. Like the membership
+ * BG-review flow (lib/membership/review.ts FOR UPDATE), these check then act, so
+ * they need a row lock. Without one:
  *   - renewTrustedAdult: two concurrent renews both read a terminal latest review,
  *     both pass the "already open" guard, both create a PENDING review → TWO open
  *     reviews for one trusted adult.
@@ -89,7 +89,7 @@ describe('trusted-adult mutation concurrency', () => {
         const codes = [code(a), code(b)];
 
         // Exactly one renewal wins; the other re-reads the now-open review under the
-        // lock and bails with already_open. Pre-fix BOTH win and two PENDING reviews open.
+        // lock and bails with already_open. Unlocked, BOTH win and two PENDING reviews open.
         expect(codes.filter((c) => c === 'fulfilled')).toHaveLength(1);
         expect(codes.filter((c) => c === 'already_open')).toHaveLength(1);
 
@@ -116,7 +116,7 @@ describe('trusted-adult mutation concurrency', () => {
         const review = await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } });
         expect(['APPROVED', 'DENIED']).toContain(review!.status);
 
-        // Exactly ONE decision audit row, and it matches the final state — pre-fix the
+        // Exactly ONE decision audit row, and it matches the final state — unlocked, the
         // loser also writes an audit row whose decision contradicts the persisted one.
         const audits = await prisma.auditLog.findMany({
             where: { tableName: 'TrustedAdult', affectedEntityId: ta.id },

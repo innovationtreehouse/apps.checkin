@@ -12,7 +12,6 @@ import {
   type DonationSink,
   type ExpenseSink,
   type InventorySink,
-  type OrgIdentity,
   type WorkflowPrincipal,
   type WorkflowRuntimeConfig,
 } from "./contract";
@@ -31,9 +30,8 @@ const requireRuntime = workflowRuntime.require;
 
 export const configureWorkflowMapping = workflowRuntime.configure;
 
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
+export const getOrgId = workflowRuntime.getOrgId;
+export const assertOrg = workflowRuntime.assertOrg;
 
 export function ports(): WorkflowPorts {
   const r = requireRuntime();

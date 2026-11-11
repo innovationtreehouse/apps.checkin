@@ -35,6 +35,17 @@ export const REFRESH_MARGIN_MS = 10 * 60_000;
 /** Log marker the invalid_grant alarm's metric filter matches. */
 export const INVALID_GRANT_MARKER = "QBO_INVALID_GRANT";
 
+/**
+ * Thrown when only a person re-running consent can restore the connection. Lambda reports
+ * `name` as the failure's errorType, the one field of the error the app reads.
+ */
+export class ReconsentRequired extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReconsentRequired";
+  }
+}
+
 export function expiresAt(t: QboTokens): number {
   return t.obtainedAt + t.expiresIn * 1000;
 }
@@ -67,6 +78,7 @@ async function refresh(creds: StoredCredentials): Promise<StoredCredentials> {
     // A revoked or expired refresh token needs an operator to re-consent; retrying cannot help.
     if (err instanceof Error && err.message.includes("invalid_grant")) {
       console.error(`${INVALID_GRANT_MARKER}: QuickBooks refresh token rejected; re-run consent`, { realmId: creds.realmId });
+      throw new ReconsentRequired("QuickBooks refresh token rejected; re-run consent");
     }
     throw err;
   }
@@ -86,7 +98,7 @@ async function saveRotated(store: CredentialStore, creds: StoredCredentials): Pr
     } catch (err) {
       if (attempt >= SAVE_RETRY_DELAYS_MS.length) {
         console.error(`${INVALID_GRANT_MARKER}: rotated QuickBooks token could not be saved; re-run consent`, { realmId: creds.realmId });
-        throw err;
+        throw new ReconsentRequired("rotated QuickBooks token could not be saved; re-run consent");
       }
       await new Promise((resolve) => setTimeout(resolve, SAVE_RETRY_DELAYS_MS[attempt]));
     }

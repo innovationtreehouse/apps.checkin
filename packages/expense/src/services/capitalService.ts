@@ -5,6 +5,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
+import { dropHandSetAccount } from "../lib/account-types";
 import { drainExpense } from "../lib/financial-flow";
 import { advanceWorkflowInTx } from "../lib/workflow-engine";
 import { formatItfa, fullyDepreciatedDate, nextItfaSeq, parseItfa } from "../lib/capital-register";
@@ -82,7 +83,10 @@ export async function submitCapitalReview(
 
   // Line item writes, audit records, and state transition are a single atomic unit.
   await db.$transaction(async (tx) => {
+    const before = new Map((await tx.expenseLineItem.findMany({ where: { expenseId }, select: { id: true, isCapital: true, manualQbAccount: true } })).map((l) => [l.id, l]));
     for (const li of lineItems) {
+      const was = before.get(li.lineItemId);
+      if (was && was.isCapital !== li.isCapital) await dropHandSetAccount(tx, actor, expenseId, was);
       await tx.expenseLineItem.update({
         where: { id: li.lineItemId, expenseId },
         data: {

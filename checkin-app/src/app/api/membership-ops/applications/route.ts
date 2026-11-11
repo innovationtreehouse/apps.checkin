@@ -1,12 +1,13 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { openProcess } from "@/lib/membership/lifecycle";
 
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/membership-ops/applications — in-flight membership applications for the board.
- * Every process not yet ACTIVE, with its household + external-phase flags.
+ * Every open process, with its household (or, for a per-person process,
+ * its subject person) + external-phase flags.
  *
  * Field visibility is governed by the security registry (isSysadmin/board get the
  * full applicant PII; anyone else admitted would be stripped to public). The bag
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 export const GET = handler("GET /api/membership-ops/applications", async ({ req }) => {
     const archived = new URL(req.url).searchParams.get("archived") === "1";
     const processes = await prisma.orgMembershipProcess.findMany({
-        where: archived ? { status: "ARCHIVED" } : { status: { notIn: ["ACTIVE", "ARCHIVED"] } },
+        where: archived ? { status: "ARCHIVED" } : openProcess.where,
         orderBy: { createdAt: "desc" },
         select: {
             id: true,
@@ -32,6 +33,8 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
             bgClearedAt: true,
             paidAt: true,
             attestations: { select: { id: true, result: true, subjectPersonId: true, isMarkedVolunteerFamily: true } },
+            requestedForHouseholdId: true,
+            subjectPerson: { select: { id: true, name: true, householdId: true } },
             orgMembership: {
                 select: {
                     householdId: true,
@@ -39,9 +42,8 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
                     household: {
                         select: {
                             name: true,
-                            // Live only: the leads here are the selectable subjects of a
-                            // board force-approve, and the service rejects a tombstone.
-                            householdMembers: { where: LIVE_PERSON, select: { id: true, name: true, email: true, isHouseholdLead: true } },
+                            // The leads here are the selectable subjects of a board force-approve.
+                            householdMembers: { select: { id: true, name: true, email: true, isHouseholdLead: true } },
                         },
                     },
                 },

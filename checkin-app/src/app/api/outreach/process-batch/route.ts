@@ -64,8 +64,8 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
             where: { id: item.personId },
             select: { name: true, emailSuppressed: true, household: { select: { orgMembership: { select: { status: true } } } } },
         });
-        // A household denied after the snapshot was frozen gets nothing either.
-        if (person?.household?.orgMembership?.status === "DENIED") {
+        // A household denied or archived after the snapshot was frozen gets nothing either.
+        if (person && (!person.household || person.household.orgMembership?.status === "DENIED")) {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_denied" } });
             continue;
         }

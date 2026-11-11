@@ -41,11 +41,17 @@ export interface QboRef {
   name?: string;
 }
 
+/** When QuickBooks created an entry, with QuickBooks' UTC offset. */
+export interface QboMetaData {
+  CreateTime?: string;
+}
+
 // A QBO Purchase (expense: cash/card/check). Bills have a similar shape (VendorRef/TxnDate/TotalAmt).
 export interface QboPurchase {
   Id: string;
   TxnDate: string; // YYYY-MM-DD
   TotalAmt: number;
+  MetaData?: QboMetaData;
   EntityRef?: { value: string; name?: string }; // vendor on a Purchase
   VendorRef?: { value: string; name?: string }; // vendor on a Bill
   AccountRef?: QboRef; // the card or bank account a Purchase was paid from
@@ -73,9 +79,20 @@ export interface QboDeposit {
   Id: string;
   TxnDate: string;
   TotalAmt: number;
+  MetaData?: QboMetaData;
   DepositToAccountRef?: QboRef;
   PrivateNote?: string;
   Line?: { Description?: string; Amount?: number }[];
+}
+
+/** A JournalEntry; TotalAmt is the sum of its debits. */
+export interface QboJournalEntry {
+  Id: string;
+  TxnDate: string;
+  TotalAmt: number;
+  MetaData?: QboMetaData;
+  PrivateNote?: string;
+  Line?: { Amount?: number; JournalEntryLineDetail?: { PostingType?: "Debit" | "Credit"; AccountRef?: QboRef } }[];
 }
 
 export interface QboBillPayment {

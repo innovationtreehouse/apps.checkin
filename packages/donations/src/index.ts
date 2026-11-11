@@ -3,8 +3,10 @@ import { z } from 'zod';
 const DisbursementItemV1 = z.object({
   type: z.enum(['donation', 'match', 'fees']),
   account: z.string(),
-  // Integer minor units (cents), matching the integer-cents discipline used end
-  // to end (DB columns, CSV ingest, @checkin/money). Never a fractional float.
+  // The rule's QuickBooks account id, fixed when the batch finished; absent on batches finished
+  // before rules named accounts. A batch finished since fees reduced income has no fees item.
+  accountId: z.string().optional(),
+  // Integer cents, net of the row's fee part on a donation or match. Never a fractional float.
   amountCents: z.number().int(),
   transactionId: z.string(),
 });

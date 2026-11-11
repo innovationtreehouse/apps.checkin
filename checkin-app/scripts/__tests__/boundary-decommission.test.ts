@@ -84,6 +84,24 @@ defineOutbound({
 });
 `;
 
+// A per-library registry file: single-line calls sharing a view constant.
+const LIBRARY_BASE = `// Fee route policy.
+import { defineRoute, type OrderedViewEntry } from '../core';
+
+const FINANCE_VIEW: readonly OrderedViewEntry[] = [['isFinance', ['everyones:internal', 'public']]];
+
+// Lists every fee.
+defineRoute({ endpoint: 'GET /api/fees', authorize: 'finance', envelope: null, returns: ['FeePayment'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/fees/[id]/refund', authorize: 'finance', envelope: null, returns: ['FeePayment'], orderedView: FINANCE_VIEW });
+defineRoute({
+    endpoint: 'GET /api/fees/summary',
+    authorize: 'finance',
+    envelope: null,
+    returns: ['FeeSummary'],
+    orderedView: FINANCE_VIEW,
+});
+`;
+
 const SCHEMA_BASE = `model Person {
   id Int @id
 }
@@ -192,6 +210,41 @@ describe('segmentation', () => {
             'defineRoute:GET /api/fees/payments',
             'defineOutbound:email.admin-notify',
         ]);
+    });
+});
+
+describe('segmentTopLevelCalls on a per-library file', () => {
+    it('keys single-line and multi-line calls alike', () => {
+        const r = segmentTopLevelCalls(LIBRARY_BASE);
+        expect(r.error).toBeUndefined();
+        expect(r.segments!.filter(s => s.type === 'entity').map(s => s.name)).toEqual([
+            'GET /api/fees',
+            'POST /api/fees/[id]/refund',
+            'GET /api/fees/summary',
+        ]);
+    });
+
+    // Removing such a line would take an uncertified second entry with it.
+    it('rejects two calls on one line', () => {
+        const head = LIBRARY_BASE.replace(
+            "orderedView: FINANCE_VIEW });\ndefineRoute({ endpoint: 'POST",
+            "orderedView: FINANCE_VIEW }); defineRoute({ endpoint: 'POST",
+        );
+        expect(segmentTopLevelCalls(head)).toHaveProperty('error');
+    });
+
+    it('rejects code trailing a call', () => {
+        const head = LIBRARY_BASE.replace(
+            "returns: ['FeePayment'], orderedView: FINANCE_VIEW });",
+            "returns: ['FeePayment'], orderedView: FINANCE_VIEW }); widen();",
+        );
+        expect(segmentTopLevelCalls(head)).toHaveProperty('error');
+    });
+
+    it('keys a call by its own endpoint, not one quoted in its comment', () => {
+        const head = LIBRARY_BASE.replace('// Lists every fee.', "// Replaces endpoint: 'GET /api/old-fees'.");
+        const names = segmentTopLevelCalls(head).segments!.filter(s => s.type === 'entity').map(s => s.name);
+        expect(names[0]).toBe('GET /api/fees');
     });
 });
 
@@ -496,5 +549,71 @@ describe('certifyDecommission', () => {
         expect(r.ok).toBe(false);
         expect(r.reasons).toHaveLength(1);
         expect(r.reasons[0]).toContain('checkin-app/src/lib/fees.ts');
+    });
+
+    describe('per-library registry files', () => {
+        const LIBRARY = 'checkin-app/src/security/registry/fees.ts';
+        const REFUND_ROUTE = 'checkin-app/src/app/api/fees/[id]/refund/route.ts';
+        const withoutRefund = dropLines(LIBRARY_BASE, [lineOf(LIBRARY_BASE, 'POST /api/fees/[id]/refund'), lineOf(LIBRARY_BASE, 'POST /api/fees/[id]/refund')]);
+
+        const attempt = (libraryHead: string | null, libraryBase: string | null = LIBRARY_BASE) =>
+            certifyDecommission({
+                changed: [
+                    { status: 'M', path: LIBRARY },
+                    { status: 'D', path: REFUND_ROUTE },
+                ],
+                boundaryChanged: [LIBRARY],
+                violations: [REFUND_ROUTE],
+                readBase: files({ [LIBRARY]: libraryBase, [REFUND_ROUTE]: 'export async function POST() {}' }),
+                readHead: files({ [LIBRARY]: libraryHead, [REFUND_ROUTE]: null }),
+            });
+
+        it('certifies a whole-entry removal with its route file deleted', () => {
+            const r = attempt(withoutRefund);
+            expect(r.reasons).toEqual([]);
+            expect(r.ok).toBe(true);
+            expect(r.removedEndpoints).toEqual(['POST /api/fees/[id]/refund']);
+        });
+
+        it('rejects a partial edit to a surviving entry', () => {
+            const r = attempt(withoutRefund.replace("endpoint: 'GET /api/fees', authorize: 'finance'", "endpoint: 'GET /api/fees', authorize: 'authenticated'"));
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain(`${LIBRARY}: diff is not a pure whole-entry removal`);
+        });
+
+        it('rejects an edit to a shared view constant', () => {
+            const r = attempt(withoutRefund.replace("['everyones:internal', 'public']", "['everyones:pii', 'public']"));
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain(LIBRARY);
+        });
+
+        it('rejects an added entry', () => {
+            const r = attempt(
+                withoutRefund.replace(
+                    'defineRoute({\n',
+                    "defineRoute({ endpoint: 'GET /api/fees/all', authorize: 'public', envelope: null, returns: ['FeePayment'], orderedView: FINANCE_VIEW });\ndefineRoute({\n",
+                ),
+            );
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain("entry added: defineRoute 'GET /api/fees/all'");
+        });
+
+        it('rejects a library file added or deleted outright', () => {
+            expect(attempt(withoutRefund, null).reasons.join()).toContain('added or deleted outright');
+            expect(attempt(null).reasons.join()).toContain('added or deleted outright');
+        });
+
+        it('treats a file nested below registry/ as non-declarative', () => {
+            const NESTED = 'checkin-app/src/security/registry/sub/fees.ts';
+            const r = certifyDecommission({
+                changed: [{ status: 'M', path: NESTED }],
+                boundaryChanged: [NESTED],
+                violations: [],
+                readBase: files({ [NESTED]: LIBRARY_BASE }),
+                readHead: files({ [NESTED]: withoutRefund }),
+            });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain('non-declarative boundary file');
+        });
     });
 });

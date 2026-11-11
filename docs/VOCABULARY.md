@@ -66,7 +66,7 @@ Program roles (all Treehouse Volunteers):
 
 | Role | Meaning | Code | Notes |
 |---|---|---|---|
-| **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
+| **Program Leader** | the person responsible for a program | `leadMentorId`, `leadMentor` | policy term; **retire "lead mentor"** in anything people read. The code name `leadMentor` means Program Leader and is kept deliberately, because renaming it would change a security-boundary file together with app code |
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](rules/programs.md), Assumptions) |
 | **Program Treasurer** | keeps a program's money; a program may have several. The app records treasurers on a budget bucket, not on the program: with the bucket's owner, they approve its lines | `BudgetOwnerTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*); the Board names them on Budgets |
 
@@ -137,7 +137,7 @@ adult) → two attestations → **clearance** (dated; the validity window runs f
 | **Approve / Reject** | the **value** carried on an attestation — what was judged, never the act of judging | `AttestationResult` | "Approve" / "Reject" |
 | **Clearance** / **cleared** | the outcome: two attestations, dated. The re-check window runs from that date | `bgClearedAt`, `PENDING_BG_CLEARANCE`, `Person.lastBackgroundCheck` | "cleared" |
 | **Consent** | the **applicant's** act — they submitted the Averity form. Never "attest" | `bgConsentAt`, `markBgConsent` | "consent" |
-| **Override** | the board acting against the flow's own outcome — force-approving a blocked application, or discarding attestations | `overrideBlocked` | "override" |
+| **Reset** | the board discarding a review's attestations so it needs two new approvals. The board never clears a check itself | `boardResetReview` | "Reset for re-review" |
 
 Rules:
 1. **A reviewer attests; two attestations clear the check.** One word per sense —
@@ -233,3 +233,4 @@ Product-owner decision — **design to these; do not relitigate the names or sha
 
 - **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](rules/membership.md).
 - **Treehouse Card** — any corporate/business/debit/credit card opened on the Treehouse EIN (reserved for future financial rules).
+- **Part ID** — the name every screen gives a catalog item's GTIN, shown in short form (`02B0011` minted, `P000002` provisional, 13 digits for a real barcode). A store's or manufacturer's number for the part is a **part #** (store part #, mfr part #), never a Part ID. The rule is in [rules/inventory.md](rules/inventory.md).

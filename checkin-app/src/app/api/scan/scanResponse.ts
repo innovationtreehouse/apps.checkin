@@ -4,7 +4,6 @@ import { apiJson } from "@/lib/api-response";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
 import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
 import { SUPERVISION_CONFIRM_MS, type CloseOffer, type ScanOutcome } from "@/lib/attendance/scan";
-import { FORCE_CLOSE_CONFIRM_SECONDS, presentLabels, type CloseGuardResult } from "@/lib/attendance/keyholderGuard";
 import { MIN_SUPERVISING_ADULTS } from "@/lib/supervision";
 import { formatTime } from "@/lib/time";
 
@@ -16,15 +15,18 @@ export type ScanResult =
     /** A repeat read of the same badge within the debounce window. */
     | { kind: "debounced" }
     /** A replayed departure pulled a machine departure back to its scan time. */
-    | { kind: "departure_pulled_back" }
-    /** The web last-keyholder guard asks for, or refuses, a close choice. */
-    | { kind: "close_guard"; guard: Exclude<CloseGuardResult, { action: "proceed" }> };
+    | { kind: "departure_pulled_back" };
+
+/** Seconds a close offer counts down at the kiosk. */
+export const FORCE_CLOSE_CONFIRM_SECONDS = 15;
 
 export type WireContext = {
     /** The request came from a signed kiosk. */
     signedRequest: boolean;
     /** A live close from a badge that is not a keyholder: the scan went through as itself. */
     closeRefused?: boolean;
+    /** The latest finished nightly close, read by the route after the scan commits. */
+    lastNightlyCloseAt?: string | null;
 };
 
 /**
@@ -47,6 +49,18 @@ function departureWarning(remaining: number | undefined) {
     return remaining === MIN_SUPERVISING_ADULTS
         ? `Warning: only ${MIN_SUPERVISING_ADULTS} supervising adults remain in the building.`
         : `Warning: checking out leaves ${leftInBuilding(remaining)} in the building.`;
+}
+
+/**
+ * The "others are here" list on a close offer, labelled as the kiosk roster
+ * labels people: nickname, else first name, a last initial only to tell two
+ * apart, else the email local-part. Never a last name or an address — it renders
+ * on the public kiosk screen (docs/rules/attendance-checkin.md, "The kiosk").
+ * Keyed by visit id, which is unique per row.
+ */
+function presentLabels(visits: { id: number; person: Pick<Person, "name" | "nickname" | "email"> }[]): string[] {
+    const labels = getKioskDisplayNames(visits.map(v => ({ ...v.person, id: v.id })));
+    return visits.flatMap(v => labels.get(v.id) || []);
 }
 
 async function closeOfferFields(offer: CloseOffer | undefined) {
@@ -115,25 +129,20 @@ async function wireBody(result: ScanResult, ctx: WireContext): Promise<{ body: R
                     : { type: "parked", message: "Recorded for review." },
                 status: 200,
             };
-        case "refused":
-            return { body: { error: "Facility is closed. A keyholder must badge in at the door first." }, status: 403 };
         case "duplicate":
             return { body: { type: "duplicate_ignored", message: "Event already recorded." }, status: 200 };
         case "debounced":
             return { body: { type: "ignored_debounce", message: "Scan ignored due to debounce." }, status: 200 };
         case "departure_pulled_back":
             return { body: { type: "checkout", message: "Checked out successfully", facilityClosed: false }, status: 200 };
-        case "close_guard":
-            return result.guard.action === "warn"
-                ? { body: result.guard.warning, status: 400 }
-                : { body: { error: result.guard.error }, status: result.guard.status };
     }
 }
 
-/** The kiosk and web wire for a scan's result: the only place its statuses, messages and flags are decided. */
+/** The kiosk wire for a scan's result: the only place its statuses, messages and flags are decided. */
 export async function toResponse(result: ScanResult, ctx: WireContext): Promise<Response> {
     const { body, status } = await wireBody(result, ctx);
+    const closeTime = { lastNightlyCloseAt: ctx.lastNightlyCloseAt };
     return apiJson(ctx.closeRefused
-        ? { ...body, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }
-        : body, status);
+        ? { ...body, ...closeTime, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }
+        : { ...body, ...closeTime }, status);
 }

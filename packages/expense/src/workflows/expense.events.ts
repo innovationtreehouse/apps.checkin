@@ -15,6 +15,9 @@ export type AllApprovalsTerminalEvent = {
   anyRejected: boolean;
 };
 
+/** A line's approval reopened after the expense left owner approval; it waits for owner approval again. */
+export type ApprovalReopenedEvent = { type: 'APPROVAL_REOPENED' };
+
 // ── Capital review ────────────────────────────────────────────────────────────
 
 export type CapitalReviewSubmittedEvent = {
@@ -41,6 +44,7 @@ export type ExpenseEvent =
   | FlowStartedEvent
   | AllOwnersAssignedEvent
   | AllApprovalsTerminalEvent
+  | ApprovalReopenedEvent
   | CapitalReviewSubmittedEvent
   | DepreciationSetEvent
   | HoldsCreatedEvent

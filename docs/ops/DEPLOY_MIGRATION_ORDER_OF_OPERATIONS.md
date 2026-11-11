@@ -101,7 +101,7 @@ boundary change must ship alone as usual. Removing a `ROW_SCOPE_KEY` entry
 **widens**: `makeScopesHeld` returns the empty set for a row missing its scope
 key, but with the entry gone `scopeKey === undefined` and the same row gets
 `everyones`. For that container the schema-exit check is the only guard —
-unlike `SCOPE_BINDINGS`/`registry.ts`, which narrow on their own. Do not relax
+unlike `SCOPE_BINDINGS` and the registry files, which narrow on their own. Do not relax
 it on the belief that removals narrow.
 
 The comparison is byte-strict apart from the two edits a whole-entity drop
@@ -111,7 +111,13 @@ element in stops the entry compiling). Both are normalised on both sides;
 nothing else is.
 
 The same shape covers route kills: an entire `defineRoute` removal qualifies
-when the PR also deletes the route file/verb export. One fail-closed corner:
+when the PR also deletes the route file/verb export. The certifier reads
+`registry.ts` and every per-library file directly under
+`src/security/registry/` (`registry/<lib>.ts`) the same way, so a route
+whose entry lives in a library file ships as one PR too. Anything outside an
+entry, such as a library file's shared view constant, must stay byte-identical:
+removing the last entry that uses a constant, together with the constant, fails
+certification. One fail-closed corner:
 the certifier requires the removed entry's route file to export the verb **at
 base**, so removing an ALREADY-INERT entry fails certification — split that
 into its own PR. Fallback if certification is unwanted: park the model in

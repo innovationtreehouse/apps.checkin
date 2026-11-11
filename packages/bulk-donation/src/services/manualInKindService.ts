@@ -4,10 +4,11 @@
 import { z } from "zod";
 import { db } from "../db";
 import { InKindDonorSchema, inventorySourceKey } from "../contract";
-import { getCatalogLookup, getInventoryApply } from "../runtime";
-import { recordDonorDataReads, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { catalogNotConnected, getCatalogLookup, getInventoryApply } from "../runtime";
+import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError } from "@checkin/component-kit";
+import { kindOf, ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "@checkin/gtin";
 
 export const MAX_IN_KIND_LINE_QUANTITY = 100_000;
 export const MAX_IN_KIND_LINE_VALUE_CENTS = 100_000_000;
@@ -52,18 +53,16 @@ const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyNa
 
 export const manualInKindService = {
   /**
-   * Newest first. Donor fields are selected, and each returned record's read audited, only when
-   * `reader` is given: the caller passes one only for a viewer allowed to see donor identity.
+   * Newest first. Donor fields are selected only when `withDonor` is set: the caller sets it only
+   * for a viewer allowed to see donor identity.
    */
-  async list(orgId: string, reader: DonorReadContext | null, page?: { skip: number; take: number }) {
-    const rows = await db.manualInKindDonation.findMany({
+  async list(orgId: string, withDonor: boolean, page?: { skip: number; take: number }) {
+    return db.manualInKindDonation.findMany({
       where: { orgId },
-      select: reader ? { ...LIST_SELECT, ...DONOR_SELECT } : LIST_SELECT,
+      select: withDonor ? { ...LIST_SELECT, ...DONOR_SELECT } : LIST_SELECT,
       orderBy: [{ recordedAt: "desc" }, { id: "desc" }],
       ...page,
     });
-    if (reader) await recordDonorDataReads(db, orgId, "manual_in_kind", reader, rows.map((r) => String(r.id)));
-    return rows;
   },
 
   /**
@@ -77,7 +76,11 @@ export const manualInKindService = {
 
     const catalog = getCatalogLookup();
     for (const gtin13 of new Set(lines.map((l) => l.gtin13))) {
-      if (!(await catalog.getItem(gtin13))) throw new ServiceError(400, `Catalog item ${gtin13} not found`);
+      const item = await catalog.getItem(gtin13).catch((err: unknown) => {
+        if (kindOf(err) === "system") throw new ServiceError(503, "The catalog is unavailable; try again");
+        return catalogNotConnected(err);
+      });
+      if (!item) throw new ServiceError(400, `Catalog item ${formatGtinDisplay(gtin13)} not found`);
     }
 
     const donation = await db.$transaction(async (tx) => {
@@ -112,34 +115,43 @@ export const manualInKindService = {
       return row;
     });
 
-    let inventoryLoaded = true;
-    try {
-      await this.loadInventory(orgId, donation.id);
-    } catch (err) {
-      console.warn(`[bulk-donation] in-kind donation ${donation.id} recorded; inventory load failed`, err);
-      inventoryLoaded = false;
-    }
+    // loadInventory logs its own failure.
+    const inventoryLoaded = await this.loadInventory(orgId, donation.id).then(() => true, () => false);
     return { id: donation.id, inventoryLoaded };
   },
 
-  /** Load a recorded donation's goods. Safe to repeat: the callee is idempotent on `donation:<id>`. */
+  /**
+   * Load a recorded donation's goods. Safe to repeat: the callee is idempotent on `donation:<id>`.
+   * A failure is logged with its kind; a `data` one is inventory refusing it for good, and passes
+   * through so the inventory manager is told to adjust stock by hand. A `bug`, such as a callee's
+   * 401 or 403, is our wiring, never the viewer's permission: a 500 that says so.
+   */
   async loadInventory(orgId: string, id: number): Promise<void> {
     const donation = await db.manualInKindDonation.findFirst({ where: { id, orgId }, include: { lines: true } });
     if (!donation) throw new ServiceError(404, "In-kind donation not found");
-    await getInventoryApply().apply({
-      receiptId: inventorySourceKey(donation.id),
-      orgId,
-      retailer: null,
-      lineItems: donation.lines.map((l) => ({
-        lineItemId: l.id,
-        gtin13: l.gtin13,
-        provisionalName: l.description ?? l.gtin13,
-        quantityDelta: l.quantity,
-        isDelayed: false,
-        conversionFactor: 1,
-        conversionVersion: 1,
-      })),
-    });
+    try {
+      await getInventoryApply().apply({
+        receiptId: inventorySourceKey(donation.id),
+        orgId,
+        retailer: null,
+        lineItems: donation.lines.map((l) => ({
+          lineItemId: l.id,
+          gtin13: l.gtin13,
+          provisionalName: l.description ?? l.gtin13,
+          quantityDelta: l.quantity,
+          isDelayed: false,
+          conversionFactor: 1,
+          conversionVersion: 1,
+        })),
+      });
+    } catch (err) {
+      const kind = kindOf(err);
+      console.warn(`[bulk-donation] in-kind donation ${id} inventory load failed (${kind})`, err);
+      if (kind !== "bug") throw err;
+      const fault = new ServiceError(500, "Loading the goods into inventory hit a fault in our software; tell whoever runs the system");
+      fault.cause = err;
+      throw fault;
+    }
     if (!donation.inventoryLoadedAt) {
       await db.manualInKindDonation.updateMany({ where: { id, inventoryLoadedAt: null }, data: { inventoryLoadedAt: new Date() } });
     }

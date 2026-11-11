@@ -1,11 +1,13 @@
 // S5 consumer: catalog provisional-resolution events. Each event is recorded in
 // ExpenseReceivedOrgEvent and applied in one transaction, so a reaction that throws rolls the
-// record back; the failure is then recorded on its own and replayed by the catch-up sweep.
+// record back; the failure is then recorded on its own and waits for a person's retry.
+import { ServiceError, orgEventStep, sweepOrgEvents } from "@checkin/component-kit";
 import { parseOrgEvent } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import { CatalogOrgEventSchema, type CatalogOrgEvent } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
+import { FAILED_AGAIN } from "../lib/retry";
 import { createOrgEventsRepository } from "../repositories/orgEvents";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
@@ -13,7 +15,7 @@ import { createProvisionalItemMapService } from "./provisionalItemMapService";
 
 export type ConsumeResult = "processed" | "duplicate" | "failed";
 
-async function apply(tx: Db, ev: CatalogOrgEvent, payload: unknown): Promise<void> {
+async function react(tx: Db, ev: CatalogOrgEvent, payload: unknown): Promise<void> {
   const service = createProvisionalItemMapService({
     provisionalRepo: createProvisionalItemMapRepository(tx),
     resolutionRepo: createProvisionalResolutionRepository(tx),
@@ -33,63 +35,81 @@ async function apply(tx: Db, ev: CatalogOrgEvent, payload: unknown): Promise<voi
   }
 }
 
-/** Handler the catalog's post-commit call-out invokes in-process. A failed reaction is recorded, not thrown. */
-export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> {
-  const ev = CatalogOrgEventSchema.parse(raw);
-  await assertOrg(ev.orgId);
-  const payloadText = typeof ev.payload === "string" ? ev.payload : JSON.stringify(ev.payload);
-
-  const existing = await db.expenseReceivedOrgEvent.findFirst({ where: { id: ev.id }, select: { status: true } });
-  if (existing?.status === "processed") return "duplicate";
-
-  const row = { orgId: ev.orgId, eventType: ev.eventType, payload: payloadText, receivedAt: ev.createdAt };
-  try {
+const consumeRow = orgEventStep<CatalogOrgEvent, "duplicate">({
+  async check(ev) {
+    const existing = await db.expenseReceivedOrgEvent.findFirst({ where: { id: ev.id }, select: { status: true } });
+    return existing?.status === "processed" ? "duplicate" : null;
+  },
+  async apply(ev) {
+    const payloadText = payloadTextOf(ev);
     await db.$transaction(async (tx) => {
       await tx.expenseReceivedOrgEvent.upsert({
         where: { id: ev.id },
-        create: { id: ev.id, ...row, status: "processed" },
-        update: { status: "processed", failureReason: null },
+        create: { id: ev.id, ...ledgerRow(ev), status: "processed" },
+        update: { status: "processed", failureReason: null, firstFailedAt: null },
       });
-      await apply(tx, ev, JSON.parse(payloadText));
+      await react(tx, ev, JSON.parse(payloadText));
     });
-    return "processed";
-  } catch (err) {
-    const failureReason = err instanceof Error ? err.message : String(err);
+  },
+  async recordFailure(ev, failureReason) {
+    await db.expenseReceivedOrgEvent.createMany({ data: [{ id: ev.id, ...ledgerRow(ev), status: "failed", failureReason, firstFailedAt: new Date() }], skipDuplicates: true });
+    // An overlapping consumer may have processed this event; its outcome stands.
+    const unprocessed = { id: ev.id, status: { not: "processed" } };
+    const { count } = await db.expenseReceivedOrgEvent.updateMany({ where: unprocessed, data: { status: "failed", failureReason } });
+    await db.expenseReceivedOrgEvent.updateMany({ where: { ...unprocessed, firstFailedAt: null }, data: { firstFailedAt: new Date() } });
+    return count > 0;
+  },
+  onFailure(ev, err) {
     logError("catalog_event_failed", { eventId: ev.id, eventType: ev.eventType }, err);
-    await db.expenseReceivedOrgEvent.upsert({
-      where: { id: ev.id },
-      create: { id: ev.id, ...row, status: "failed", failureReason },
-      update: { status: "failed", failureReason },
-    });
-    return "failed";
-  }
+  },
+});
+
+function payloadTextOf(ev: CatalogOrgEvent): string {
+  return typeof ev.payload === "string" ? ev.payload : JSON.stringify(ev.payload);
+}
+
+function ledgerRow(ev: CatalogOrgEvent) {
+  return { orgId: ev.orgId, eventType: ev.eventType, payload: payloadTextOf(ev), receivedAt: ev.createdAt };
+}
+
+/** Apply one event and record the outcome. A failed reaction is recorded, not thrown. */
+async function recordCatalogEvent(raw: unknown): Promise<ConsumeResult> {
+  const ev = CatalogOrgEventSchema.parse(raw);
+  await assertOrg(ev.orgId);
+  return consumeRow(ev);
+}
+
+/** Handler the catalog's post-commit call-out invokes in-process. A failed event is recorded, not thrown. */
+export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> {
+  return recordCatalogEvent(raw);
+}
+
+/** Retry of a failed event: applies it once from its stored row. 404 when no event of this org is failed, 409 when it fails again. */
+export async function retryCatalogEvent(id: number): Promise<void> {
+  const row = await db.expenseReceivedOrgEvent.findFirst({ where: { id, orgId: await getOrgId(), status: "failed" } });
+  if (!row) throw new ServiceError(404, "No failed catalog event with this id");
+  const result = await recordCatalogEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload, createdAt: row.receivedAt });
+  if (result === "failed") throw new ServiceError(409, FAILED_AGAIN);
 }
 
 /**
- * How far behind the cursor catch-up re-reads. Catalog ids are assigned at insert, not at
- * commit, so an event with a lower id can commit after a higher one was consumed.
- * Assumes no catalog transaction stays open while more than this many others commit; make it
- * time-based if bulk catalog edits arrive.
+ * Catch-up sweep over the org's catalog events (see `sweepOrgEvents`). The host's daily reconcile
+ * cron step calls it. Capped; counts only.
  */
-export const CATALOG_EVENT_LOOKBACK = 100;
-
-/**
- * Catch-up sweep: retries failed events, then reads the catalog's events from a lookback
- * window behind the cursor (max received id), skipping ids already in the ledger. The host's
- * daily reconcile cron step calls it. Capped; counts only.
- */
-export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult, number>> {
-  const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0 };
+export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult | "unprocessed", number> & { unreadable: boolean; notConnected?: true }> {
+  const orgId = await getOrgId();
   const repo = createOrgEventsRepository(db);
-  const failed = (await repo.findPending(await getOrgId())).slice(0, limit);
-  for (const r of failed) {
-    counts[await consumeCatalogEvent({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
-  }
-  const from = Math.max(0, (await repo.getMaxId()) - CATALOG_EVENT_LOOKBACK);
-  const received = new Set(await repo.idsAfter(from));
-  const fresh = (await getExpenseRuntime().catalogEvents.eventsAfter(from)).filter(
-    (raw) => !received.has(CatalogOrgEventSchema.pick({ id: true }).parse(raw).id),
-  );
-  for (const raw of fresh.slice(0, Math.max(0, limit - failed.length))) counts[await consumeCatalogEvent(raw)]++;
-  return counts;
+  const pending = await repo.findPending(orgId);
+  const sweep = await sweepOrgEvents<unknown>({
+    limit,
+    failed: pending.map((r) => ({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })),
+    readPage: (after) => getExpenseRuntime().catalogEvents.eventsSince(orgId, after),
+    idOf: (raw) => CatalogOrgEventSchema.pick({ id: true }).parse(raw).id,
+    receivedIds: (ids) => repo.idsIn(ids),
+    consume: recordCatalogEvent,
+    onUnrecorded: (_raw, err) => logError("catalog_event_unrecorded", {}, err),
+    onUnreadable: (err) => logError("catalog_events_unreadable", {}, err),
+  });
+  const { processed, duplicate, failed: failedCount } = sweep.counts;
+  return { processed, duplicate, failed: failedCount, unprocessed: sweep.unprocessed, unreadable: sweep.unreadable, ...(sweep.notConnected && { notConnected: true }) };
 }

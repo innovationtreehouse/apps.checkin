@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy-build smoke (#1967): boot the production image against a migrated
+# Deploy-build smoke: boot the production image against a migrated
 # Postgres and check that each wired library's HTTP errors keep their status
 # (400/409, never 500) under `next build` bundling.
 #
@@ -103,9 +103,10 @@ SELECT id FROM p;
 SQL
 )
 
-# Persona-mint is off under NODE_ENV=production; a JWT carrying the person id
-# and email is enough: the jwt callback re-reads roles by token.id on every
-# request and ends a token whose email no longer matches the person's.
+# Under CHECKIN_ENV=dev persona-mint needs a verified org session, so mint a JWT
+# directly. A JWT carrying the person id and email is enough: the jwt callback
+# re-reads roles by token.id on every request and ends a token whose email no
+# longer matches the person's.
 TOKEN=$(docker run --rm -w /app/checkin-app -e SECRET="$SECRET" -e PERSON_ID="$PERSON_ID" \
   "$BUILDER_IMAGE" node -e '
     require("next-auth/jwt")

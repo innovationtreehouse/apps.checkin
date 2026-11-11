@@ -1,4 +1,4 @@
-/** Conversion-challenge route factories (#1286). */
+/** Conversion-challenge route factories. */
 import { mapServiceErrors, parseId, query } from "@checkin/component-kit";
 import { createConversionChallengeRepository } from "../repositories/conversionChallenge";
 import { acceptChallenge, rejectChallenge } from "../services/conversionChallengeService";

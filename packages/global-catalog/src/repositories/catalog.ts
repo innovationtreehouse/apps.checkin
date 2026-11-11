@@ -1,9 +1,24 @@
+import { parseGtinInput } from "@checkin/gtin";
 import type { PrismaClient, Prisma } from "../generated/prisma/client";
 
 const ITEM_INCLUDE = {
   category: { select: { name: true, letter: true } },
   subcategory: { select: { name: true, number: true } },
 } as const;
+
+/** What a search box matches: name, GTIN, an active reference's part number, category, subcategory, or the GTIN a typed short ID stands for. */
+export function itemSearch(q: string): Prisma.ItemWhereInput[] {
+  const gtin13 = parseGtinInput(q);
+  return [
+    { name: { contains: q, mode: "insensitive" } },
+    { gtin13: { contains: q } },
+    // ponytail: unindexed EXISTS scan over item_references, fine at today's catalog size; add a trigram index on part_number if search slows.
+    { itemReferences: { some: { archivedAt: null, partNumber: { contains: q, mode: "insensitive" } } } },
+    { category: { name: { contains: q, mode: "insensitive" } } },
+    { subcategory: { name: { contains: q, mode: "insensitive" } } },
+    ...(gtin13 ? [{ gtin13 }] : []),
+  ];
+}
 
 export function createCatalogRepository(db: PrismaClient) {
   return {
@@ -90,6 +105,9 @@ export function createCatalogRepository(db: PrismaClient) {
     findItemByGtin13: (gtin13: string) =>
       db.item.findFirst({ where: { gtin13 } }),
 
+    findActiveItemByGtin13: (gtin13: string) =>
+      db.item.findFirst({ where: { gtin13, archivedAt: null }, select: { gtin13: true, name: true } }),
+
     findItemByGtin13WithIncludes: (gtin13: string) =>
       db.item.findFirst({ where: { gtin13 }, include: ITEM_INCLUDE }),
 
@@ -100,7 +118,7 @@ export function createCatalogRepository(db: PrismaClient) {
       db.item.findMany({
         where: {
           archivedAt: null,
-          OR: [{ name: { contains: query, mode: "insensitive" } }, { gtin13: { contains: query } }],
+          OR: itemSearch(query),
         },
         select: { gtin13: true, name: true },
         orderBy: { name: "asc" },
@@ -131,7 +149,7 @@ export function createCatalogRepository(db: PrismaClient) {
     // One page of items. The matching total is served separately (countItems) via
     // the count route, so the list itself never over-counts — a table-wide total
     // can't ride checkin's model-bag response (the stripper drops non-model
-    // scalars, #1286 §7), so the paginated UI reads the count endpoint for it.
+    // scalars), so the paginated UI reads the count endpoint for it.
     async listItemsPaginated(params: {
       where: Prisma.ItemWhereInput;
       orderBy: Prisma.ItemOrderByWithRelationInput[];

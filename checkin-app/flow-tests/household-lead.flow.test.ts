@@ -41,6 +41,7 @@ describe("flow: household lead manages the household (CUJS A3)", () => {
 
         // Leadership: only a lead promotes; a youth can't lead; the last lead can't step down.
         expect((await api(partner, "/api/household/lead", post({ participantId: partnerId }))).status).toBe(403);
+        expect((await api(partner, "/api/household/lead", { method: "DELETE", body: JSON.stringify({ participantId: lead.personaId }) })).status).toBe(403);
         expect((await api(lead, "/api/household/lead", post({ participantId: youthId }))).status).toBe(400);
         expect((await api(lead, "/api/household/lead", { method: "DELETE", body: JSON.stringify({ participantId: lead.personaId }) })).status).toBe(400);
         expect((await api(lead, "/api/household/lead", post({ participantId: partnerId }))).status).toBe(200);

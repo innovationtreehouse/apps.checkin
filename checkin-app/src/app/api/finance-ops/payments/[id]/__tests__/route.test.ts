@@ -27,15 +27,13 @@ const OTHER_HOUSEHOLD = 9;
 
 const ordersMock = ordersByLegacyIds as jest.Mock;
 let householdById: Record<number, number>;
-let mergedIntoById: Record<number, number>;
 let exception: { personId: number | null; processId: number | null; shopifyOrderId: string | null };
 
 beforeEach(() => {
     householdById = { [ACTOR_ID]: ACTOR_HOUSEHOLD, 20: OTHER_HOUSEHOLD, 21: ACTOR_HOUSEHOLD, 22: OTHER_HOUSEHOLD };
-    mergedIntoById = {};
     exception = { personId: null, processId: null, shopifyOrderId: null };
     prisma.person.findUnique = jest.fn(async ({ where }: { where: { id: number } }) =>
-        where.id in householdById ? { householdId: householdById[where.id], mergedIntoId: mergedIntoById[where.id] ?? null } : null,
+        where.id in householdById ? { householdId: householdById[where.id] } : null,
     ) as jest.Mock;
     prisma.person.findMany = jest.fn().mockResolvedValue([]);
     prisma.personMerge.findUnique = jest.fn().mockResolvedValue(null);
@@ -122,12 +120,6 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
         expect(errorSpy).toHaveBeenCalled();
         errorSpy.mockRestore();
         expect(prisma.paymentException.updateMany).not.toHaveBeenCalled();
-    });
-
-    it("refuses when the exception's person was merged into someone in the actor's household", async () => {
-        exception.personId = 22;
-        mergedIntoById = { 22: 21 };
-        expect((await call()).status).toBe(403);
     });
 
     it("refuses when the exception's person is gone and the merge archive names a survivor in the actor's household", async () => {

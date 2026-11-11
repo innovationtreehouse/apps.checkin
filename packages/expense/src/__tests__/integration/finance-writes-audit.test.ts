@@ -4,7 +4,7 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses, finance } from "../../routes";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
@@ -15,9 +15,11 @@ import type { ExpenseRouteHandler } from "../../contract";
 const FINANCE = principal(3, { isFinance: true });
 const ACTOR = { actorUserId: 3, actorUsername: "person-3" };
 
+let caller = FINANCE;
+
 function call(route: ExpenseRouteHandler, method: string, params: Record<string, string> = {}, body?: unknown) {
   const req = new Request("http://test/api/expense", body === undefined ? { method } : { method, body: JSON.stringify(body) });
-  return route({ req, params });
+  return route({ req, params, principal: caller });
 }
 
 async function onlyOrgAudit() {
@@ -37,7 +39,10 @@ async function auditOf(write: () => Promise<unknown>) {
 const mapping = { category: "Hardware", subcategory: "Cables", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "5000" };
 
 describeDb("FINANCE writes are audited", () => {
-  beforeEach(() => bindPorts({ auth: { getPrincipal: async () => FINANCE } }));
+  beforeEach(() => {
+    bindPorts({});
+    caller = FINANCE;
+  });
 
   it("setting a held line's account records hold_account_set with before and after", async () => {
     const id = await seedExpense({ state: "qb_on_hold" });
@@ -82,7 +87,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("marking test data is FINANCE only", async () => {
     const id = await seedExpense();
-    bindPorts({ auth: { getPrincipal: async () => principal(4, { isBoard: true }) } });
+    caller = principal(4, { isBoard: true });
 
     await expect(call(expenses.testData, "PUT", { id }, { isTestData: true })).rejects.toMatchObject({ status: 403 });
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ isTestData: false });
@@ -113,6 +118,8 @@ describeDb("FINANCE writes are audited", () => {
   });
 
   it("QuickBooks account create, update and delete each record one row", async () => {
+    const accounts = ["5100", "5200"].map((id) => ({ id, name: `Supplies ${id}`, accountType: "Expense" }));
+    bindPorts({ quickbooks: { accounts: async () => accounts } });
     const created = await auditOf(() => call(finance.createQbAccount, "POST", {}, { name: "Supplies", qbAccount: "5100" }));
     expect(created).toMatchObject({ entityType: "qb_account", action: "created" });
     const id = created.entityId!;
@@ -126,6 +133,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("setting a part's owner records the previous and new bucket", async () => {
     const gtin13 = "0000000000017";
+    bindPorts({ catalog: catalogResolving({ 1: gtin13 }) });
     await auditOf(() => call(finance.setOwnership, "PUT", {}, { gtin13, ownerId: 100 }));
     const row = await auditOf(() => call(finance.setOwnership, "PUT", {}, { gtin13, ownerId: 101 }));
     expect(row).toMatchObject({ entityType: "part_owner", entityId: gtin13, action: "owner_set" });

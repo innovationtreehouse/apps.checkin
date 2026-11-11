@@ -29,7 +29,7 @@ describe('Eligible Participants API Integration Tests', () => {
 
     const ENV_BEFORE = process.env.CHECKIN_ENV;
     beforeAll(async () => {
-        // The route now authenticates via authenticateRequest, whose local-kiosk
+        // The route authenticates via authenticateRequest, whose local-kiosk
         // fallback (CHECKIN_ENV=local) treats a cookieless request as kiosk. Pin to
         // 'dev' so unauthenticated stays unauthenticated (401), like registryAuthz.
         process.env.CHECKIN_ENV = 'dev';
@@ -47,7 +47,7 @@ describe('Eligible Participants API Integration Tests', () => {
             where: { personId: { in: existingUserIds } }
         });
 
-        // Memberships live on the household now; scope cleanup to this test's households.
+        // Memberships live on the household; scope cleanup to this test's households.
         await prisma.orgMembership.deleteMany({
              where: { householdId: { in: existingHouseholdIds } }
         });
@@ -82,7 +82,7 @@ describe('Eligible Participants API Integration Tests', () => {
         });
         commonId = commonUser.id;
 
-        // Create Active Member — membership now lives on the household (status ACTIVE).
+        // Create Active Member — membership lives on the household (status ACTIVE).
         const activeMember = await prisma.person.create({
             data: {
                 email: 'active-member-elig-api-test@example.com',
@@ -137,12 +137,12 @@ describe('Eligible Participants API Integration Tests', () => {
 
         // Create mock programs
         const publicProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Elig API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Elig API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
         });
         publicProgramId = publicProgram.id;
 
         const orgMemberOnlyProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Elig API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Elig API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
         });
         orgMemberOnlyProgramId = orgMemberOnlyProgram.id;
 
@@ -214,7 +214,7 @@ describe('Eligible Participants API Integration Tests', () => {
 
     // Helper function to mock Next.js App Router params
     const createParams = (id: number) => ({ params: Promise.resolve({ id: id.toString() }) });
-    // A REAL Request: the route now runs through the security handler(), which
+    // A REAL Request: the route runs through the security handler(), which
     // calls authenticateRequest(req) and reads req.headers — a bare {nextUrl}
     // mock crashes there. The route reads the query via new URL(req.url).
     const createReq = (id: number, search: string = '') => {
@@ -275,6 +275,19 @@ describe('Eligible Participants API Integration Tests', () => {
              expect(names).toContain('Household Member Candidate');
              expect(names).toContain('Non Member Candidate');
              expect(names).not.toContain('Already Enrolled Candidate');
+        });
+
+        it('lists a person who withdrew from the program, so they can be enrolled again', async () => {
+             const where = { programId_personId: { programId: publicProgramId, personId: alreadyEnrolledId } };
+             const before = await prisma.programParticipant.findUniqueOrThrow({ where });
+             await prisma.programParticipant.update({ where, data: { status: 'WITHDRAWN', endedAt: new Date() } });
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+                 const data = await (await GET(createReq(publicProgramId, 'Candidate'), createParams(publicProgramId))).json();
+                 expect(data.members.map((m: { name: string }) => m.name)).toContain('Already Enrolled Candidate');
+             } finally {
+                 await prisma.programParticipant.update({ where, data: { status: before.status, endedAt: null } });
+             }
         });
 
         it('should filter candidates by query string via name', async () => {

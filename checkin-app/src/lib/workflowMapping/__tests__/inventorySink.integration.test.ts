@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X4 binding: workflow-mapping's InventorySink driven into the real
+ * Workflow-mapping's InventorySink driven into the real
  * local-inventory apply, each library on its own throwaway database migrated
  * from its committed migrations. The receipt runs through the library services
  * (proceed → apply → retry-apply) exactly as the routes call them.
@@ -15,6 +15,7 @@ import {
     getPrisma as getWorkflowPrisma,
     lineItemService,
     receiptService,
+    receivingOutcomes,
 } from '@checkin/workflow-mapping';
 import type { CompletedReceipt } from '@checkin/receipt-types';
 import { getPrisma as getInventoryPrisma } from '@checkin/local-inventory';
@@ -78,7 +79,7 @@ beforeAll(async () => {
     configureWorkflowMapping({
         auth: { getPrincipal: async () => ({ id: 1, name: 'Manager' }) },
         org: async () => ORG,
-        // The expense leg (X5) is a stand-in, so each test chooses whether the money side lands.
+        // The expense leg is a stand-in, so each test chooses whether the money side lands.
         expenseSink: {
             pushReceipt: async () => {
                 if (expense.fails) throw new Error('ExpenseSink.pushReceipt not wired');
@@ -144,7 +145,7 @@ const stock = async () =>
 const legs = (id: number) => wm.receivedReceipt.findUniqueOrThrow({ where: { id } });
 
 describe('X4 InventorySink → local-inventory apply', () => {
-    it('applies a proceeded receipt once, keyed receipt:<id>; a late edit never re-sends it', async () => {
+    it('applies a proceeded receipt once, keyed receipt:<id>; its lines lock and a retry never re-sends it', async () => {
         const { id, lineIds } = await seedReceipt('x4-once');
         const before = await stock();
 
@@ -162,9 +163,8 @@ describe('X4 InventorySink → local-inventory apply', () => {
         expect(await li.receivedInventoryDelta.findMany({ where: { orgId: ORG.id, sourceKey: 'receipt:x4-once' } }))
             .toEqual([expect.objectContaining({ status: 'applied' })]);
 
-        // Inventory already applied: the edit is allowed, logged as late, and the retry leaves stock alone.
-        await lineItemService.markNonInventory(id, lineIds[0]);
-        expect(await wm.workflowAuditLog.count({ where: { receivedReceiptId: id, eventType: 'line_edited_late' } })).toBe(1);
+        // Inventory already applied: the lines are locked, and the retry leaves stock alone.
+        await expect(lineItemService.markNonInventory(id, lineIds[0])).rejects.toMatchObject({ status: 409 });
         expense.fails = false;
         await receiptService.retryApply(id);
         expect(await receiptService.apply(id)).toEqual({ state: 'resolved' });
@@ -205,7 +205,7 @@ describe('X4 InventorySink → local-inventory apply', () => {
 
         expect(result).toEqual({
             state: 'apply_failed',
-            error: 'This source was already applied with a different inventory delta.',
+            error: 'Inventory: This source was already applied with a different inventory delta.',
         });
         const row = await legs(id);
         expect(row.state).toBe('apply_failed');
@@ -224,5 +224,36 @@ describe('X4 InventorySink → local-inventory apply', () => {
             }),
         ).rejects.toThrow(/org/);
         expect(await li.receivedInventoryDelta.count({ where: { sourceKey: 'receipt:x4-foreign' } })).toBe(0);
+    });
+
+    it('reads a resolved receipt as received with its open backorders, until the last queued line is fulfilled', async () => {
+        const { id } = await seedReceipt('x4-backorder');
+        const cancelled = await seedReceipt('x4-backorder-cancel');
+        expense.fails = false;
+        for (const r of [id, cancelled.id]) {
+            await receiptService.proceed(r);
+            expect(await receiptService.apply(r)).toEqual({ state: 'resolved' });
+        }
+
+        expect(await receivingOutcomes(['x4-backorder'])).toEqual(new Map([['x4-backorder', { receiving: 'received', openBackorders: 1 }]]));
+        const listed = await receiptService.list(undefined, ['x4-backorder', 'x4-backorder-cancel']);
+        expect(listed.map((r) => [r.receiptId, r.openBackorders])).toEqual(
+            expect.arrayContaining([['x4-backorder', 1], ['x4-backorder-cancel', 1]]),
+        );
+        expect((await receiptService.detail(id)).parsedReceipt.openBackorders).toBe(1);
+
+        await li.receiveQueue.updateMany({ where: { orgId: ORG.id, receiptId: 'x4-backorder' }, data: { fulfilledAt: new Date() } });
+        await li.receiveQueue.updateMany({
+            where: { orgId: ORG.id, receiptId: 'x4-backorder-cancel' },
+            data: { cancelledAt: new Date(), cancelledBy: 1, cancelReason: 'Never shipped' },
+        });
+
+        expect(await receivingOutcomes(['x4-backorder', 'x4-backorder-cancel'])).toEqual(
+            new Map([
+                ['x4-backorder', { receiving: 'received', openBackorders: 0 }],
+                ['x4-backorder-cancel', { receiving: 'received', openBackorders: 0 }],
+            ]),
+        );
+        expect((await receiptService.detail(id)).parsedReceipt.openBackorders).toBe(0);
     });
 });

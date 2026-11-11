@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Delivery guard — the third leg the security suite was missing.
+ * Delivery guard — the third leg of the security suite.
  *
  * The suite already proves two of the three things a policy owes:
  *   - ADMISSION       — who may invoke the route      (registryAuthz.integration)
@@ -9,9 +9,9 @@
  * Neither proves DELIVERY: that an admitted persona actually RECEIVES fields.
  * A view narrowed to deny-all (or to a tier the model has no field at, or to
  * `secret`) returns 200 with an empty body and passes BOTH — while the real
- * user journey silently ships blank. That gap is where PR #1137 finding 1 lives.
+ * user journey silently ships blank.
  *
- * This closes the leg at the unit layer. For every registered route that
+ * This covers that leg at the unit layer. For every registered route that
  * declares `returns`, and every persona in its `orderedView`, it runs the REAL
  * stripper over fully-populated synthetic rows under a caller context built to
  * satisfy exactly the scopes that persona's tokens reference, then asserts the
@@ -27,9 +27,9 @@
  *
  * WHAT THIS DOES NOT COVER: per-row scope correctness on the LIVE handler's
  * select. A synthetic row always carries the binding field, so the class where
- * a handler's `select` omits it (e.g. `Visit.personId`, #1137 finding 1, which
+ * a handler's `select` omits it (e.g. `Visit.personId`, which
  * strips the timestamps at runtime) is invisible here — that needs a
- * route-specific INTEGRATION delivery assertion in the route's conversion PR.
+ * route-specific INTEGRATION delivery assertion.
  * This guard owns deny-all / stripper-blank / wrong-tier / secret-only views.
  */
 import { allRoutes, parseToken, type Token, classifications } from '@/security/core';

@@ -3,7 +3,7 @@
  * ReceivedInventoryDelta in the same transaction as the stock change. Real Postgres; describeDb
  * skips without one.
  */
-import { buildProvisionalGtin13 } from "@checkin/gtin";
+import { buildProvisionalGtin13, formatGtinDisplay } from "@checkin/gtin";
 import { expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
@@ -134,6 +134,32 @@ describeDb("apply idempotency", () => {
     ]);
   });
 
+  it("names a provisional with no line name by its short ID, and a replay still matches", async () => {
+    const svc = makeReceiptService();
+    const short = formatGtinDisplay(PROV);
+    const lines = [{ gtin13: PROV, quantityDelta: 2, isProvisional: true, provisionalName: PROV }];
+
+    await svc.applyDonation(TEST_ORG_ID, "8", lines);
+    const replay = await svc.applyDonation(TEST_ORG_ID, "8", lines);
+
+    expect(replay.replayed).toBe(true);
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ name: short });
+  });
+
+  it("a refused donation line records the failure and its reason until a retry applies", async () => {
+    const svc = makeReceiptService();
+    const refused = [{ gtin13: GTIN, quantityDelta: 1, isProvisional: true }];
+
+    await expect(svc.applyDonation(TEST_ORG_ID, "7", refused)).rejects.toMatchObject({ status: 400 });
+    expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ sourceKey: "donation:7", status: "failed", failureReason: `Not a provisional Part ID: ${GTIN}` });
+    expect(await svc.donationFailureReason(TEST_ORG_ID, "7")).toBe(`Not a provisional Part ID: ${GTIN}`);
+    expect(await svc.donationFailureReason(TEST_ORG_ID_2, "7")).toBeNull();
+
+    await svc.applyDonation(TEST_ORG_ID, "7", [{ gtin13: GTIN, quantityDelta: 1 }]);
+    expect(await svc.donationFailureReason(TEST_ORG_ID, "7")).toBeNull();
+    expect(await qty(TEST_ORG_ID)).toBe(1);
+  });
+
   it("rejects malformed input at the boundary before touching stock", async () => {
     const svc = makeReceiptService();
     const bad: Array<[string, string, number, number | undefined]> = [
@@ -173,6 +199,25 @@ describeDb("apply idempotency", () => {
     expect(again).toEqual({ ...first, replayed: true });
     expect(await qty(TEST_ORG_ID, PROV)).toBe(2);
     expect(await db.receivedInventoryDelta.findFirst()).toMatchObject({ status: "applied", failureReason: null });
+    expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ reconcileLastError: "lock timeout" });
+    logged.mockRestore();
+  });
+
+  it("a reconcile that throws after createProvisional commits still returns the new rows", async () => {
+    const reconcileProvisionalOnCreate = vi.fn(async () => {
+      throw new Error("lock timeout");
+    });
+    const svc = makeReceiptService({ reconcileProvisionalOnCreate });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const created = await svc.createProvisional(TEST_ORG_ID, {
+      provisionalGtin13: PROV, name: "Widget", usageBehavior: "Unknown", proposedByUserId: 1, receiptId: "r-1",
+    });
+
+    expect(reconcileProvisionalOnCreate).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalled();
+    expect(created.provisionalItem).toMatchObject({ provisionalGtin13: PROV, status: "pending" });
+    expect(await db.inventoryProvisionalItem.count({ where: { provisionalGtin13: PROV } })).toBe(1);
     logged.mockRestore();
   });
 });

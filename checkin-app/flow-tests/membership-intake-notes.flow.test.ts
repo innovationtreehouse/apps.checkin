@@ -9,8 +9,8 @@
  * types the note during intake, and the reviewer (who also sets the volunteer
  * bit) must actually see it. Drives the real journey over HTTP against a running
  * seeded dev server: applicant fills intake WITH the note, board records the two
- * external actions (which puts the application into the parallel BG-review
- * track), then GET /api/membership/reviews returns the note on that row.
+ * external actions (whose consent opens a check review for the household), then
+ * GET /api/membership/reviews returns the note on that review.
  *
  * Assumes a freshly-seeded DB. Uses parent.family3 (household3), a non-member
  * household seeded specifically so this suite's applicant is disjoint from the
@@ -20,13 +20,11 @@
  * queue.
  */
 
-import { loginAs, api } from "./helpers";
+import { loginAs, api, queuedReviewFor } from "./helpers";
 
 const NOTE = "MAGIC: we're a volunteer-only household, no students enrolled — please mark us volunteer.";
 
 type State = { process: { id: number; status: string } | null };
-type QueueRow = { id: number; orgMembership: { household: { name: string | null; intakeNotes: string | null } | null } | null };
-type Reviews = { queue: QueueRow[] };
 
 describe("flow: intake notes surface to the BG-review queue", () => {
     it("applicant's intake note comes back in GET /api/membership/reviews", async () => {
@@ -52,15 +50,13 @@ describe("flow: intake notes surface to the BG-review queue", () => {
         const afterSubmit = await api<State>(applicant, "/api/membership");
         const processId = afterSubmit.json.process!.id;
 
-        // Board records contract + BG consent → application enters the BG-review track.
+        // Board records contract + BG consent → a check review opens for the household.
         await api(reviewer, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
         await api(reviewer, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-bg-consent" }) });
 
         // The reviewer's queue must carry the applicant's note, unhidden.
-        const reviews = await api<Reviews>(reviewer, "/api/membership/reviews");
-        expect(reviews.status).toBe(200);
-        const row = reviews.json.queue.find((r) => r.id === processId);
+        const row = await queuedReviewFor(reviewer, applicant.personaId);
         expect(row).toBeDefined();
-        expect(row!.orgMembership?.household?.intakeNotes).toBe(NOTE);
+        expect(row!.requestedForHousehold?.intakeNotes).toBe(NOTE);
     });
 });

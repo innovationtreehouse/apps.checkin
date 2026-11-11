@@ -1,30 +1,22 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
+import { nextBoundary } from "@/lib/membership/renewal";
+import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
+import { personBgOpen } from "@/lib/membership/lifecycle";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
-import { bgObligatedWhere, ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
+import { bgObligatedWhere, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
 /** Calendar day of an instant, UTC — how `@db.Date` columns come back from Prisma. */
 const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
-/**
- * The people merged INTO this survivor, from whichever record still holds them
- * (§6, #1456 phase 2b).
- *
- * The PersonMerge archive wins over the tombstone `Person` row: the archive is
- * the record that survives 2b-3's delete, and while both exist they say the same
- * thing. `mergedFrom` then covers only merges that predate the archive, keyed by
- * id so the same merge is never counted twice.
- */
-function mergeSourceIdentities(s: {
-    mergedFrom: { id: number; name: string | null; lastBackgroundCheck: Date | null }[];
-    mergedArchive: { fromId: number; snapshot: unknown }[];
-}) {
-    const archived = s.mergedArchive.map((a) => {
+/** The people merged INTO this survivor, read from their PersonMerge archive snapshots. */
+function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: unknown }[] }) {
+    return s.mergedArchive.map((a) => {
         const snap = (a.snapshot ?? {}) as { name?: string | null; lastBackgroundCheck?: string | null };
         return {
             id: a.fromId,
@@ -32,8 +24,6 @@ function mergeSourceIdentities(s: {
             lastBackgroundCheck: snap.lastBackgroundCheck ? new Date(snap.lastBackgroundCheck) : null,
         };
     });
-    const covered = new Set(archived.map((a) => a.id));
-    return [...archived, ...s.mergedFrom.filter((m) => !covered.has(m.id))];
 }
 
 /**
@@ -41,29 +31,33 @@ function mergeSourceIdentities(s: {
  * fallen out of compliance but were NOT auto-terminated (the system deliberately
  * never auto-revokes — a human must follow up). Surfaces only what's knowable
  * from real data; there is no GRACE status modeled, so no grace bucket. Reasons:
- *   STALE_BG  — ACTIVE household whose background check aged past bgRecheckMonths
- *               (predicate owned by householdBgIsFresh; skipped when the board
- *               hasn't set the policy — bgRecheckMonths = 0 or no membership-year
- *               boundary).
+ *   STALE_BG  — ACTIVE household that no longer qualifies on its people's checks:
+ *               no lead's check is valid at the boundary, or an adult's check is
+ *               disputed (householdQualifies; skipped when the board hasn't set
+ *               the policy — bgRecheckMonths = 0 or no membership-year boundary).
  *   REVOKED / DENIED — OrgMembership status.
  *   STUCK_BG_CLEARANCE — a process parked at PENDING_BG_CLEARANCE (paid, never cleared).
  * A household with multiple problems gets all its reason tags.
  *
- * Also returns two PERSON-scoped lists (program people may not sit in a member
+ * Also returns three PERSON-scoped lists (program people may not sit in a member
  * household, so they can't key on householdId):
  *   peopleNeedingBgCheck — check-obligated people ≥18 (as of the boundary) with no
  *                          fresh check. Skipped when the policy is unset.
  *   peopleMissingDob     — check-obligated people whose age is unknown (no DOB,
  *                          not declared 25+): data hygiene, NOT bg-needed.
+ *   peopleWithDisputedCheck — people whose own check review is rejected, or whose
+ *                          rejection was sent back and has not cleared (BG_DISPUTED).
+ *                          Listed whatever the policy: a dispute ignores the window.
  * Check-obligated = bgObligatedWhere: program-attached, or a signing adult (lead)
  * of an ACTIVE member household.
  *
- * And two lists of background-check dates that trace to no named person (#1260):
- *   blanketStamped          — households cleared before per-adult subjects existed,
- *                             where every lead was stamped. One-time cleanup; narrow
+ * And two lists of background-check dates that trace to no named person:
+ *   blanketStamped          — households cleared with no per-adult subject, where
+ *                             every lead was stamped. One-time cleanup; narrow
  *                             it with ?bgClearedSince=YYYY-MM-DD.
  *   mergeInheritedBgChecks  — survivors of a person merge who took the merged-away
- *                             record's date. Permanent until #1396 closes that hole.
+ *                             record's date. A standing list: it is how the board
+ *                             spots a merge of two different people.
  */
 export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req) => {
     const now = new Date();
@@ -71,7 +65,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const since = sinceParam ? new Date(sinceParam) : null;
     const bgClearedSince = since && !Number.isNaN(since.getTime()) ? since : null;
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const bgRecheckMonths = settings?.bgRecheckMonths ?? 0;
+    const bgRecheckMonths = settings?.bgRecheckMonths;
     const boundary = settings?.orgMembershipYearBoundary
         ? nextBoundary(settings.orgMembershipYearBoundary, now)
         : null;
@@ -85,17 +79,16 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     };
 
     // 1. Stale background check — only when the board has configured a window AND a
-    //    membership-year boundary. Reuse householdBgIsFresh per household (stale =
-    //    returns false); with either half of the policy unset it always returns false,
-    //    so skip the whole bucket rather than tag every household.
-    if (bgRecheckMonths > 0 && boundary) {
+    //    membership-year boundary. With either half unset no household qualifies, so
+    //    skip the whole bucket rather than tag every household.
+    if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
+        const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
         const active = await prisma.orgMembership.findMany({
             where: { status: "ACTIVE" },
             select: { householdId: true },
         });
         for (const m of active) {
-            const fresh = await householdBgIsFresh(m.householdId, boundary, bgRecheckMonths);
-            if (!fresh) add(m.householdId, "STALE_BG");
+            if (!householdQualifies(await householdCheckStandings(prisma, m.householdId, threshold))) add(m.householdId, "STALE_BG");
         }
     }
 
@@ -131,12 +124,12 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     };
     const peopleNeedingBgCheck: PersonRow[] = [];
     const peopleMissingDob: PersonRow[] = [];
-    if (bgRecheckMonths > 0 && boundary) {
+    if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
         const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
         // Same population the PERSON_BG triggers open for, so every obligation they
         // create has a row here with a submit action behind it.
         const people = await prisma.person.findMany({
-            where: { ...bgObligatedWhere(now), ...LIVE_PERSON },
+            where: bgObligatedWhere(now),
             select: {
                 id: true,
                 name: true,
@@ -171,8 +164,28 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         }
     }
 
-    // 5. Blanket-stamped background checks (#1260). Before per-adult subjects, clearing
-    //    a household check stamped EVERY lead from the same `new Date()` that set the
+    // 4b. People whose check is disputed, from their own open or blocked check reviews.
+    const reviewed = await prisma.orgMembershipProcess.findMany({
+        where: { kind: "PERSON_BG", subjectPersonId: { not: null }, ...personBgOpen.where },
+        select: { subjectPersonId: true },
+    });
+    const reviewedIds = [...new Set(reviewed.flatMap((r) => (r.subjectPersonId === null ? [] : [r.subjectPersonId])))];
+    const reviewsByPerson = await loadCheckReviews(prisma, reviewedIds);
+    const disputedIds = reviewedIds.filter((id) => disputingReviews(reviewsByPerson.get(id) ?? []).length > 0);
+    const disputedPeople = disputedIds.length
+        ? await prisma.person.findMany({ where: { id: { in: disputedIds } }, select: { id: true, name: true, householdId: true }, orderBy: { name: "asc" } })
+        : [];
+    const peopleWithDisputedCheck: PersonRow[] = disputedPeople.map((p) => ({
+        personId: p.id,
+        name: p.name || `Person #${p.id}`,
+        householdId: p.householdId,
+        programId: null,
+        programName: null,
+        reason: "BG_DISPUTED",
+    }));
+
+    // 5. Blanket-stamped background checks: a household clearance with no per-adult
+    //    subject, where EVERY lead carries the same `new Date()` that set the
     //    process's bgClearedAt. They are compared by UTC DAY, not instant:
     //    `Person.lastBackgroundCheck` is `@db.Date` and truncates to midnight, while
     //    `bgClearedAt` keeps its time, so an equality join matches nothing at all.
@@ -197,7 +210,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                             id: true,
                             name: true,
                             householdMembers: {
-                                where: { isHouseholdLead: true, ...LIVE_PERSON },
+                                where: { isHouseholdLead: true },
                                 select: { id: true, name: true, email: true, lastBackgroundCheck: true },
                             },
                         },
@@ -255,28 +268,20 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         };
     });
 
-    // 6. Background-check dates that arrived through a person merge (#1396). The merge
-    //    rule takes the later of the two dates unconditionally, with no record of whose
-    //    check it was, so a survivor can hold a date that traces to nobody. Unlike the
-    //    blanket stamps this list never empties on its own — every future merge can mint
-    //    another — so it stays after the one-time cleanup is done.
+    // 6. Background-check dates that arrived through a person merge, which takes the
+    //    later of the two dates unconditionally. Unlike the blanket stamps this list is
+    //    standing: every merge can add a row, and it is how the board spots a merge of
+    //    two different people.
     //
-    //    Both the predicate and `fromName` used to come from the tombstone Person
-    //    row, which #1456 phase 2b-3 deletes — taking this list's answer with it.
-    //    So the PersonMerge archive is the preferred source and the tombstone is
-    //    the fallback, for as long as both exist: merges from before the archive
-    //    shipped have only a tombstone, merges after 2b-3 have only an archive, and
-    //    right now a merge writes both. `mergedArchive: { some: {} }` is unfiltered
-    //    because the date lives inside a Json blob — the match happens below, over
-    //    a handful of rows.
+    //    A merge deletes the merged-away Person row, so the PersonMerge archive is
+    //    the source for both the predicate and `fromName`. `mergedArchive: { some: {} }`
+    //    is unfiltered because the date lives inside a Json blob — the match happens
+    //    below, over a handful of rows.
     const survivors = await prisma.person.findMany({
         where: {
             lastBackgroundCheck: { not: null },
-            OR: [
-                { mergedFrom: { some: { lastBackgroundCheck: { not: null } } } },
-                { mergedArchive: { some: {} } },
-            ],
-            ...LIVE_PERSON,
+            mergedArchive: { some: {} },
+            household: { archivedAt: null },
         },
         select: {
             id: true,
@@ -284,7 +289,6 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             email: true,
             householdId: true,
             lastBackgroundCheck: true,
-            mergedFrom: { select: { id: true, name: true, lastBackgroundCheck: true } },
             mergedArchive: { select: { fromId: true, snapshot: true } },
         },
         orderBy: { name: "asc" },
@@ -312,11 +316,8 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    ponytail: the manual route accepts any personId, but this list only surfaces
     //    program-attached candidates — reaching someone not in a program needs a person
     //    picker we don't have a surface for yet.
-    // subjectPerson is filtered through LIVE_PERSON as a relation filter: an obligation
-    // whose subject was merged away must not stay on the board's chase list — the person
-    // it names no longer exists to chase.
     const openAgreements = await prisma.orgMembershipProcess.findMany({
-        where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION", subjectPerson: { is: LIVE_PERSON } },
+        where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION" },
         select: { subjectPerson: { select: { id: true, name: true, householdId: true } } },
     });
     const peopleAwaitingAgreement: PersonRow[] = openAgreements
@@ -337,7 +338,6 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         where: {
             ...autoPopulationWhere(now),
             isDeclaredAdult: true,
-            ...LIVE_PERSON,
         },
         select: { id: true, name: true, householdId: true },
         orderBy: { name: "asc" },
@@ -370,14 +370,14 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const agreementLists = { peopleAwaitingAgreement, peopleNeedingAgreement };
 
     if (reasons.size === 0) {
-        return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
+        return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
     }
 
     const households = await prisma.household.findMany({
         where: { id: { in: [...reasons.keys()] } },
         include: {
             householdMembers: {
-                where: { isHouseholdLead: true, ...LIVE_PERSON },
+                where: { isHouseholdLead: true },
                 select: { id: true, name: true, phone: true, email: true, lastBackgroundCheck: true },
             },
         },
@@ -406,5 +406,5 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         };
     });
 
-    return NextResponse.json({ households: result, peopleNeedingBgCheck, peopleMissingDob, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
+    return NextResponse.json({ households: result, peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
 });

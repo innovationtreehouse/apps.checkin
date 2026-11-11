@@ -3,9 +3,9 @@
  */
 /**
  * The nightly sweep vs a departure racing it. The departure holds the person
- * and facility locks, as every check-out path does; the sweep takes the same
- * locks per visit, so it waits, re-reads the visit as departed, and leaves the
- * racing departure in place instead of overwriting it with AUTO_CLOSE.
+ * and facility locks, as every check-out path does; the sweep reads open visits
+ * under the facility lock, so it waits, reads the visit as departed, and leaves
+ * the racing departure in place instead of overwriting it with AUTO_CLOSE.
  *
  * jest.setup.js sets TEST_DB_POOL_MAX=2 so the racing departure and the sweep
  * run on separate connections, matching production.
@@ -67,7 +67,7 @@ describe('GET /api/cron/nightly lock', () => {
 
         await lockTaken;
         const sweep = GET(cronReq());
-        // Give the sweep time to read the still-open visit and block on the lock.
+        // Give the sweep time to block on the facility lock.
         await new Promise((r) => setTimeout(r, 750));
         release();
         await departure;
