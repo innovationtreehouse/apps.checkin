@@ -55,7 +55,7 @@ describe('My-programs conflicts resolve API', () => {
         });
         participantId = participant.id;
 
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}`, leadMentorId: leadId } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}`, leadMentorId: leadId } });
         programId = program.id;
         const event = await prisma.event.create({
             data: { programId, name: `Event ${TAG}`, startAt: hoursAgo(5), endAt: hoursAgo(2) },
@@ -107,6 +107,22 @@ describe('My-programs conflicts resolve API', () => {
             expect(res.status).toBe(409);
         } finally {
             await prisma.visit.deleteMany({ where: { id: isolated.id } });
+        }
+    });
+
+    it('returns 409 for an open visit, even one that overlaps, and leaves it live', async () => {
+        const open = await prisma.visit.create({
+            data: { personId: participantId, arrivedAt: hoursAgo(5), associatedEventId: eventId },
+        });
+        const sibling = await prisma.visit.create({
+            data: { personId: participantId, arrivedAt: hoursAgo(4), departedAt: hoursAgo(1) },
+        });
+        try {
+            const res = await callAs({ id: leadId }, { visitId: open.id });
+            expect(res.status).toBe(409);
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: open.id } })).deletedAt).toBeNull();
+        } finally {
+            await prisma.visit.deleteMany({ where: { id: { in: [open.id, sibling.id] } } });
         }
     });
 

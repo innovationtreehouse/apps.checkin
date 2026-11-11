@@ -24,8 +24,7 @@ const FIELDS = Object.keys(SELECT) as Field[];
  * GET /api/settings/outreach — the four outreach template columns, plus the current
  * membership-year boundary's next occurrence (read-only, for the live preview's
  * {{deadline}} — computed server-side so the client never has to re-derive nextBoundary()
- * and pull prisma into the bundle, see settings/membership/page.tsx's currentBoundaryLabel
- * for the workaround this avoids). Null when the boundary isn't configured yet.
+ * and pull prisma into the bundle). Null when the boundary isn't configured yet.
  */
 export const GET = withAuth({ roles: ROLES }, async () => {
     const settings = await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: SELECT });

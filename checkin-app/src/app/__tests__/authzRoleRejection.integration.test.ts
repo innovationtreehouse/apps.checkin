@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 /**
- * Negative-auth coverage for protected routes that previously had NO 401/403
- * test. Two shapes:
+ * Negative-auth coverage for protected routes. Two shapes:
  *
  *  1. ROLE-GATED — reject both the unauthenticated caller (401) and a plain
  *     authenticated user with no privileged role (403). Table-driven; the auth
@@ -22,10 +21,8 @@ import { PATCH as ADMIN_HH_PATCH } from '@/app/api/membership-ops/households/[id
 import { POST as PARTICIPANTS_POST } from '@/app/api/membership-ops/participants/route';
 import { PUT as PARTICIPANT_PUT } from '@/app/api/membership-ops/participants/[id]/route';
 import { POST as PARTICIPANT_HH_POST } from '@/app/api/membership-ops/participants/[id]/household/route';
-import { POST as IMPORT_POST } from '@/app/api/membership-ops/participants/import/route';
 import { POST as MERGE_POST } from '@/app/api/membership-ops/participants/merge/route';
 import { GET as MERGE_ANALYZE_GET } from '@/app/api/membership-ops/participants/merge/analyze/route';
-import { POST as IMPORT_PREVIEW_POST } from '@/app/api/membership-ops/participants/import/preview/route';
 import { GET as SYSTEM_HEALTH_GET } from '@/app/api/system-status/health/route';
 import { GET as TRENDS_GET } from '@/app/api/facility/trends/route';
 import { GET as ADMIN_TA_GET } from '@/app/api/safety/trusted-adults/route';
@@ -128,7 +125,7 @@ describe('Protected-route role rejection', () => {
         plainId = (await prisma.person.create({ data: { name: `Plain ${TAG}`, householdId: plainHh } })).id;
         // A real event so events/[id] GET reaches its in-handler staff gate
         // (a missing event short-circuits to 404 before the 403).
-        const prog = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
+        const prog = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
         programId = prog.id;
         eventId = (await prisma.event.create({
             data: { programId, name: `Evt ${TAG}`, startAt: new Date('2030-01-01T10:00:00Z'), endAt: new Date('2030-01-01T12:00:00Z') },
@@ -139,13 +136,13 @@ describe('Protected-route role rejection', () => {
         // not staff of ownedEvent — the cross-program attacker).
         const ownerHh = (await prisma.household.create({ data: { name: `Owner HH ${TAG}` } })).id;
         ownerLeadId = (await prisma.person.create({ data: { name: `OwnerLead ${TAG}`, householdId: ownerHh } })).id;
-        const ownedProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Owned Prog ${TAG}`, leadMentorId: ownerLeadId } });
+        const ownedProgram = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Owned Prog ${TAG}`, leadMentorId: ownerLeadId } });
         ownedEventId = (await prisma.event.create({
             data: { programId: ownedProgram.id, name: `Owned Evt ${TAG}`, startAt: new Date('2030-02-01T10:00:00Z'), endAt: new Date('2030-02-01T12:00:00Z') },
         })).id;
         const foreignHh = (await prisma.household.create({ data: { name: `Foreign HH ${TAG}` } })).id;
         foreignLeadId = (await prisma.person.create({ data: { name: `ForeignLead ${TAG}`, householdId: foreignHh } })).id;
-        await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Foreign Prog ${TAG}`, leadMentorId: foreignLeadId } });
+        await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Foreign Prog ${TAG}`, leadMentorId: foreignLeadId } });
     });
 
     afterAll(async () => {
@@ -161,17 +158,15 @@ describe('Protected-route role rejection', () => {
         { name: 'POST /api/membership-ops/participants', invoke: () => PARTICIPANTS_POST(nreq('http://localhost/api/membership-ops/participants', 'POST', {})) },
         { name: 'PUT /api/membership-ops/participants/[id]', invoke: () => PARTICIPANT_PUT(nreq('http://localhost/api/membership-ops/participants/1', 'PUT', {}), idCtx(1)) },
         { name: 'POST /api/membership-ops/participants/[id]/household', invoke: () => PARTICIPANT_HH_POST(nreq('http://localhost/api/membership-ops/participants/1/household', 'POST', {}), idCtx(1)) },
-        { name: 'POST /api/membership-ops/participants/import', invoke: () => IMPORT_POST(nreq('http://localhost/api/membership-ops/participants/import', 'POST')) },
         { name: 'POST /api/membership-ops/participants/merge', invoke: () => MERGE_POST(nreq('http://localhost/api/membership-ops/participants/merge', 'POST', {})) },
         { name: 'GET /api/membership-ops/participants/merge/analyze', invoke: () => MERGE_ANALYZE_GET(nreq('http://localhost/api/membership-ops/participants/merge/analyze')) },
-        { name: 'POST /api/membership-ops/participants/import/preview', invoke: () => IMPORT_PREVIEW_POST(nreq('http://localhost/api/membership-ops/participants/import/preview', 'POST')) },
         { name: 'GET /api/system-status/health', invoke: () => SYSTEM_HEALTH_GET(nreq('http://localhost/api/system-status/health')) },
         { name: 'GET /api/facility/trends', invoke: () => TRENDS_GET(nreq('http://localhost/api/facility/trends')) },
         { name: 'GET /api/safety/trusted-adults', invoke: () => ADMIN_TA_GET(nreq('http://localhost/api/safety/trusted-adults')) },
         { name: 'POST /api/safety/trusted-adults/override', invoke: () => TA_OVERRIDE_POST(nreq('http://localhost/api/safety/trusted-adults/override', 'POST', {})) },
         { name: 'PATCH /api/shop/tools/[id]', invoke: () => SHOP_TOOL_PATCH(nreq('http://localhost/api/shop/tools/1', 'PATCH', {}), idCtx(1)) },
-        // P0-B2: routes collapsed from getServerSession onto the withAuth roles gate.
-        // (finance-ops/payment-plans POST is covered in programPaymentPlansAPI; its GET is now a handler().)
+        // Routes on the withAuth roles gate.
+        // (finance-ops/payment-plans POST is covered in programPaymentPlansAPI; its GET is a handler().)
         { name: 'GET /api/events (standalone list)', invoke: () => EVENTS_LIST_GET(nreq('http://localhost/api/events')) },
         { name: 'POST /api/programs', invoke: () => PROGRAMS_POST(nreq('http://localhost/api/programs', 'POST', {})) },
         { name: 'POST /api/programs/[id]/sync-shopify', invoke: () => PROGRAM_SYNC_SHOPIFY_POST(nreq('http://localhost/api/programs/1/sync-shopify', 'POST', {}), idCtx(1)) },
@@ -237,11 +232,29 @@ describe('Protected-route role rejection', () => {
         });
     });
 
+    // ---- program create names a lead — Board only; a sysadmin off the Board is denied
+    describe('POST /api/programs — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await PROGRAMS_POST(nreq('http://localhost/api/programs', 'POST', {}));
+            expect(res.status).toBe(403);
+        });
+    });
+
     // ---- bg-attestations DELETE — Board only; a sysadmin off the Board is denied
     describe('DELETE /api/membership-ops/bg-attestations/[id] — sysadmin alone is denied', () => {
         it('403s a sysadmin who is not on the Board', async () => {
             as(plainId, { householdId: plainHh, isSysadmin: true });
             const res = await BG_ATTEST_DELETE(nreq('http://localhost/api/membership-ops/bg-attestations/1', 'DELETE', { reason: 'test' }), idCtx(1));
+            expect(res.status).toBe(403);
+        });
+    });
+
+    // ---- review-override — Board only; a sysadmin off the Board is denied -----
+    describe('POST /api/membership-ops/applications/review-override — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await REVIEW_OVERRIDE_POST(nreq('http://localhost/api/membership-ops/applications/review-override', 'POST', {}));
             expect(res.status).toBe(403);
         });
     });
@@ -269,7 +282,7 @@ describe('Protected-route role rejection', () => {
     });
 
     // ---- Facility Ops — operations reaches the aggregate, not the record ------
-    // #1633 [Decision]: operations reach attendance in aggregate only — the
+    // Operations reach attendance in aggregate only — the
     // trends, and printing the ID badges (whose /api/people/search + /api/programs
     // already admit them). One person's record sits outside that reach: they do
     // not record, correct or remove a visit, and do not read the raw badge events
@@ -345,10 +358,10 @@ describe('Protected-route role rejection', () => {
             const res = await EVENT_PATCH(nreq(`http://localhost/api/events/${eventId}`, 'PATCH', { action: 'cancel' }), idCtx(eventId));
             expect(res.status).toBe(401);
         });
-        // IDOR boundary (route migrated in #571): the gate is the inline
+        // IDOR boundary: the gate is the inline
         // `event.program.leadMentorId === caller` check. A lead of a DIFFERENT
         // program must be 403'd AND must not mutate the event — a 403 that still
-        // wrote would be the real bug. Re-read to pin it. Mirrors fd192fc.
+        // wrote would be the real bug. Re-read to pin it.
         it('PATCH 403 for a lead of a DIFFERENT program (confirmAttendance) — and the event is untouched', async () => {
             as(foreignLeadId);
             const before = await prisma.event.findUnique({ where: { id: ownedEventId }, select: { attendanceConfirmedAt: true, attendanceConfirmedById: true } });

@@ -312,6 +312,7 @@ export default function DevDashboard() {
                                         gap: "0.1rem",
                                         textAlign: "left",
                                         overflow: "hidden",
+                                        flexShrink: 0,
                                     }}
                                     title={p.email}
                                 >

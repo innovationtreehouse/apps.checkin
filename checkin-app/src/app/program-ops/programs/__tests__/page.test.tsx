@@ -4,7 +4,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent } from "@testing-library/react";
-import { renderWithProviders, mockFetchJson, resetRtl, router } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, resetRtl, router, setSession } from "@/test-helpers/rtl";
 import AdminProgramsIndex from "../page";
 
 beforeEach(() => resetRtl());
@@ -61,7 +61,17 @@ describe("AdminProgramsIndex", () => {
     expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
+  it("hides create-program from a sysadmin off the Board", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs": programs });
+    renderWithProviders(<AdminProgramsIndex />);
+    await screen.findByText("Robotics Club");
+
+    expect(screen.queryByRole("button", { name: "+ New Program" })).not.toBeInTheDocument();
+  });
+
   it("navigates to the create-program page", async () => {
+    setSession({ id: 1, isBoardMember: true });
     mockFetchJson({ "/api/programs": programs });
     renderWithProviders(<AdminProgramsIndex />);
     await screen.findByText("Robotics Club");

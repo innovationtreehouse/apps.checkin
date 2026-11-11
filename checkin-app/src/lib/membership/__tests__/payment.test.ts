@@ -2,17 +2,22 @@
  * @jest-environment node
  */
 /**
- * Unit test for the H2 fix in activate() (prisma mocked, no DB): a Shopify
+ * Unit test for the variant check in activate() (prisma mocked, no DB): a Shopify
  * payment (opts.via === "payment") must actually contain the membership
  * product (its Shopify variant) before a PENDING_PAYMENT process activates.
  *   - no membership variant in the order -> NOT activated, no paidAt, outcome no_item (raised by the caller).
- *   - membership variant present         -> activates as before (status ACTIVE, membership ACTIVE).
+ *   - membership variant present         -> activates (status ACTIVE, membership ACTIVE).
  *   - a "manual" (board) activation never had an order to check, so it's exempt regardless.
  *
  * Also covers the activation email's INITIAL/RENEWAL split: a renewing household
  * is thanked for renewing, not welcomed as if it were new.
  */
 import { activate, activateByProcessId, certifyPaymentPlan } from '@/lib/membership/payment';
+import { logBackendError } from '@/lib/logger';
+import { openPersonBgForNewMember } from '@/lib/membership/personBgTriggers';
+import { openPersonAgreementForNewMember } from '@/lib/membership/personAgreementTriggers';
+import { householdHasDisputedCheck } from '@/lib/membership/checkStanding';
+import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 
 jest.mock('@/lib/prisma', () => {
     const mock = {
@@ -29,10 +34,14 @@ jest.mock('@/lib/prisma', () => {
     return { __esModule: true, default: mock };
 });
 jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
-jest.mock('@/lib/logger', () => ({ logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() } }));
+jest.mock('@/lib/logger', () => ({ logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() }, logBackendError: jest.fn() }));
+jest.mock('@/lib/membership/personBgTriggers', () => ({ openPersonBgForNewMember: jest.fn() }));
+jest.mock('@/lib/membership/personAgreementTriggers', () => ({ openPersonAgreementForNewMember: jest.fn() }));
 jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/emailRecipients', () => ({ emailHouseholdLeads: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
+jest.mock('@/lib/membership/checkStanding', () => ({ householdHasDisputedCheck: jest.fn().mockResolvedValue(false) }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     setHouseholdStatus: jest.fn().mockResolvedValue(true),
     raiseDeniedHouseholdActivity: jest.fn().mockResolvedValue(undefined),
@@ -63,6 +72,27 @@ beforeEach(() => {
     prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
     setHouseholdStatus.mockResolvedValue(true);
     hasHouseholdConflict.mockResolvedValue(false);
+    jest.mocked(householdHasDisputedCheck).mockResolvedValue(false);
+});
+
+it('holds a cleared payment unactivated, unstamped, when someone in the household is disputed, then settles the household', async () => {
+    prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+    });
+    jest.mocked(householdHasDisputedCheck).mockResolvedValue(true);
+
+    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-disputed', { appliesToYear: 2026 });
+
+    expect(outcome).toBe('held');
+    expect(householdHasDisputedCheck).toHaveBeenCalledWith(prisma, household.householdId);
+    expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING_BG_CLEARANCE', bgClearedAt: null }) }),
+    );
+    expect(setHouseholdStatus).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ newData: expect.objectContaining({ status: 'PENDING_BG_CLEARANCE', bgCleared: false, reason: expect.stringContaining('disputed') }) }),
+    }));
+    expect(settleHouseholdBg).toHaveBeenCalledWith(household.householdId);
 });
 
 it('does NOT activate a PENDING_PAYMENT process when the order has no membership item', async () => {
@@ -70,7 +100,7 @@ it('does NOT activate a PENDING_PAYMENT process when the order has no membership
         id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
     });
 
-    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-1', false);
+    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-1', null);
 
     expect(outcome).toBe('no_item');
     expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
@@ -89,7 +119,7 @@ it('activates a PENDING_PAYMENT process when the order contains the membership i
         id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
-    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-2', true);
+    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 });
 
     expect(outcome).toBe('active');
     expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
@@ -109,11 +139,9 @@ it('welcomes an INITIAL household on activation', async () => {
         id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
-    await activateByProcessId(PROCESS_ID, 'order-3', true);
+    await activateByProcessId(PROCESS_ID, 'order-3', { appliesToYear: 2026 });
 
-    const [, subject, body] = emailHouseholdLeads.mock.calls[0];
-    expect(subject).toBe('Welcome to the Treehouse — your membership is active!');
-    expect(body).toContain('Welcome to the Innovation Treehouse community');
+    expect(emailHouseholdLeads.mock.calls[0][1]).toBe('membership.welcome');
 });
 
 it('thanks a RENEWAL household for renewing instead of welcoming it', async () => {
@@ -121,17 +149,58 @@ it('thanks a RENEWAL household for renewing instead of welcoming it', async () =
         id: PROCESS_ID, kind: 'RENEWAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
-    await activateByProcessId(PROCESS_ID, 'order-4', true);
+    await activateByProcessId(PROCESS_ID, 'order-4', { appliesToYear: 2026 });
 
-    const [, subject, body] = emailHouseholdLeads.mock.calls[0];
-    expect(subject).toBe('Thank you for renewing — your Treehouse membership is active!');
-    expect(subject).not.toContain('Welcome');
-    expect(body).toContain('Thank you for renewing');
+    expect(emailHouseholdLeads.mock.calls[0][1]).toBe('membership.renewed');
+});
+
+describe('work after the payment commits', () => {
+    const openBg = openPersonBgForNewMember as jest.Mock;
+    const openAgreement = openPersonAgreementForNewMember as jest.Mock;
+
+    beforeEach(() => {
+        openBg.mockResolvedValue(undefined);
+        openAgreement.mockResolvedValue(undefined);
+    });
+
+    it('a failed trigger leaves the activation reported, logs it, and still runs the next trigger', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        });
+        const failure = new Error('trigger failed');
+        openBg.mockRejectedValue(failure);
+
+        const { outcome } = await activateByProcessId(PROCESS_ID, 'order-5', { appliesToYear: 2026 });
+
+        expect(outcome).toBe('active');
+        expect(openAgreement).toHaveBeenCalledWith(3, expect.any(Date));
+        expect(logBackendError).toHaveBeenCalledWith(failure, expect.stringContaining('background-check trigger'), { processId: PROCESS_ID, householdId: 3 });
+    });
+
+    it('a board certify succeeds when a trigger fails', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        });
+        openAgreement.mockRejectedValue(new Error('trigger failed'));
+
+        await expect(activate(PROCESS_ID, { via: 'manual', actorId: 1 })).resolves.toBeDefined();
+    });
+
+    it('a failed raise on a DENIED household still throws, so the webhook redelivers', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+            id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
+        });
+        household.status = 'DENIED';
+        const failure = new Error('raise failed');
+        raiseDeniedHouseholdActivity.mockRejectedValueOnce(failure);
+
+        await expect(activateByProcessId(PROCESS_ID, 'order-6', { appliesToYear: 2026 })).rejects.toBe(failure);
+    });
 });
 
 it('a manual (board) activation is exempt from the membership-item check', async () => {
     // certifyPaymentPlan never has a Shopify order to check (via !== "payment"),
-    // so it activates even though no hasMembershipItem is passed at all.
+    // so it activates with no membership line to check.
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
         id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
@@ -149,7 +218,7 @@ describe('payments that land on nothing awaiting them', () => {
 
     it('a redelivery of the recorded order is a plain noop', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({ status: 'ACTIVE', paidAt: new Date(), shopifyOrderId: 'order-1' }));
-        expect((await activateByProcessId(PROCESS_ID, 'order-1', true)).outcome).toBe('noop');
+        expect((await activateByProcessId(PROCESS_ID, 'order-1', { appliesToYear: 2026 })).outcome).toBe('noop');
     });
 
     it.each([
@@ -160,7 +229,7 @@ describe('payments that land on nothing awaiting them', () => {
         ['a second order on a paid BLOCKED process', { status: 'BLOCKED', paidAt: new Date(), shopifyOrderId: 'order-1' }],
     ])('%s is nothing_due and writes nothing', async (_label, over) => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc(over));
-        expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('nothing_due');
+        expect((await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 })).outcome).toBe('nothing_due');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
         expect(setHouseholdStatus).not.toHaveBeenCalled();
     });
@@ -168,7 +237,7 @@ describe('payments that land on nothing awaiting them', () => {
     it('a DENIED household changes nothing and raises the board item', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({}));
         household.status = 'DENIED';
-        expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('denied');
+        expect((await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 })).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
         expect(emailHouseholdLeads).not.toHaveBeenCalled();
@@ -177,7 +246,7 @@ describe('payments that land on nothing awaiting them', () => {
     it('an order on a paid application of a DENIED household is raised as DENIED, not nothing_due', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({ status: 'PENDING_BG_CLEARANCE', paidAt: new Date() }));
         household.status = 'DENIED';
-        expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('denied');
+        expect((await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 })).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
     });
@@ -185,14 +254,14 @@ describe('payments that land on nothing awaiting them', () => {
     it('a redelivery of the recorded order on a DENIED household stays a noop', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({ status: 'ACTIVE', paidAt: new Date(), shopifyOrderId: 'order-1' }));
         household.status = 'DENIED';
-        expect((await activateByProcessId(PROCESS_ID, 'order-1', true)).outcome).toBe('noop');
+        expect((await activateByProcessId(PROCESS_ID, 'order-1', { appliesToYear: 2026 })).outcome).toBe('noop');
         expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
     });
 
     it('a deny that lands before the household write leaves the process untouched', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({}));
         setHouseholdStatus.mockResolvedValue(false);
-        expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('denied');
+        expect((await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 })).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalled();
     });
@@ -201,17 +270,18 @@ describe('payments that land on nothing awaiting them', () => {
 describe('BLOCKED', () => {
     it('records a real membership payment and stays BLOCKED', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'BLOCKED', paidAt: null, orgMembershipId: MEMBERSHIP_ID });
-        expect((await activateByProcessId(PROCESS_ID, 'order-5', true)).outcome).toBe('paid_while_blocked');
+        expect((await activateByProcessId(PROCESS_ID, 'order-5', { appliesToYear: 2026 })).outcome).toBe('paid_while_blocked');
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
             where: { id: PROCESS_ID, status: 'BLOCKED', paidAt: null },
             data: expect.objectContaining({ shopifyOrderId: 'order-5' }),
         });
+        expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear).toBe(2026);
         expect(notifyBoardPaidReject).toHaveBeenCalledWith(PROCESS_ID);
     });
 
     it('checks the membership item before stamping paidAt', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'BLOCKED', paidAt: null, orgMembershipId: MEMBERSHIP_ID });
-        expect((await activateByProcessId(PROCESS_ID, 'order-6', false)).outcome).toBe('no_item');
+        expect((await activateByProcessId(PROCESS_ID, 'order-6', null)).outcome).toBe('no_item');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 });
@@ -254,5 +324,43 @@ describe('certifyPaymentPlan checks under the row lock', () => {
         household.status = 'DENIED';
         await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+});
+
+describe('the year a settlement records', () => {
+    const awaiting = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID };
+    const recordedYear = () => prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear;
+
+    beforeEach(() => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue(awaiting);
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) });
+    });
+    afterEach(() => jest.useRealTimers());
+    const at = (date: Date) => jest.useFakeTimers({ now: date, doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout'] });
+
+    it('a Shopify payment records the year of its line', async () => {
+        await activateByProcessId(PROCESS_ID, 'order-7', { appliesToYear: 2031 });
+        expect(recordedYear()).toBe(2031);
+    });
+
+    it.each([
+        ['the day before the renewal window opens', new Date(Date.UTC(2027, 5, 30)), 2026],
+        ['the day the renewal window opens', new Date(Date.UTC(2027, 6, 1)), 2027],
+    ])('a board certify with no year records the live year on %s', async (_label, now, year) => {
+        at(now);
+        await certifyPaymentPlan(PROCESS_ID, 1);
+        expect(recordedYear()).toBe(year);
+    });
+
+    it('a board certify records the year it is given', async () => {
+        at(new Date(Date.UTC(2027, 6, 15)));
+        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 });
+        expect(recordedYear()).toBe(2026);
+    });
+
+    it('a board certify records no year when no boundary is set', async () => {
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
+        await certifyPaymentPlan(PROCESS_ID, 1);
+        expect(recordedYear()).toBeNull();
     });
 });

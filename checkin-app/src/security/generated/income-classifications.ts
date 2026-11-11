@@ -5,6 +5,7 @@ export const classifications = {
     PayoutReconciliation: {
         id: 'public',
         orgId: 'internal',
+        source: 'internal',
         payoutGid: 'internal',
         payoutDate: 'internal',
         payoutNetCents: 'internal',
@@ -23,12 +24,14 @@ export const classifications = {
         postClaimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
         qbNote: 'internal',
+        expected: 'internal',
     },
     IncomeItemCategory: {
         id: 'public',
         orgId: 'internal',
         variantId: 'internal',
         budgetOwnerId: 'internal',
+        quickBooksAccountId: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -36,7 +39,10 @@ export const classifications = {
         orgId: 'internal',
         maxCreatesPerRun: 'internal',
         maxCreateCentsPerRun: 'internal',
+        benevityMaxCreateCentsPerRun: 'internal',
+        benevityMatchWindowDays: 'internal',
         qbPostingOnAt: 'internal',
+        benevityQbPostingOnAt: 'internal',
     },
     IncomeQbMatchExclusion: {
         id: 'public',
@@ -73,6 +79,10 @@ export const relations = {
     },
     IncomeAuditLog: {
     },
+} as const;
+
+export const marks = {
+    PayoutReconciliation: ['payoutNetCents', 'depositTotalCents'],
 } as const;
 
 export type Models = keyof typeof classifications;

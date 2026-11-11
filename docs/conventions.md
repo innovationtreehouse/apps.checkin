@@ -30,7 +30,7 @@ the endpoint behind it answers anyone who asks.
 
 - **Any address the app generates uses a domain the organisation controls, or a
   reserved non-routable one.** This holds for addresses nobody will ever read —
-  a tombstone on a merged record still resolves somewhere, and somewhere is
+  an address left on a merged record still resolves somewhere, and somewhere is
   someone else's mail server.
 
 A domain choice is invisible in review. A plausible-looking name is registrable
@@ -183,6 +183,104 @@ missed a row stored at a different time of day.
 
 ---
 
+## A library's pages share one client kit
+
+- **Package UIs take their fetch helpers, `LoadError`, `Pager` and paging from
+  `@checkin/component-ui`, and format money with `@checkin/money`.** Each
+  package binds its route base once with `createClient`.
+- **A package page learns who is looking from `useViewer()`, never from the
+  host's session.** The host maps its session onto `Viewer` once, in
+  `checkin-app/src/components/AuthProvider.tsx`. A new role a package needs is
+  a new `Viewer` field.
+
+---
+
+## A paged list keeps its place in the URL
+
+- **A paged list keeps its page in the URL query (`page`), with the filters,
+  view tabs and sort that decide its rows.** A reload, the back button and a
+  shared link land on the same rows, and each page is its own page view in the
+  finance view log.
+- **Typed search text stays out of the URL.** It lives in the screen's state,
+  and a change starts again on page 1. Selects, date pickers and toggles go in
+  the URL.
+- **Paging pushes a history entry; a filter, view or sort change replaces the
+  entry and drops `page`.** Back steps through pages, not filter states.
+- **A bad or out-of-range `page` never shows an error.** A missing,
+  non-numeric, zero or negative `page` is page 1. A list that knows its total
+  shows its last page for a page past the end; a list without one shows the
+  empty page with its pager.
+- **`limit` stays out of the URL** while no screen lets anyone pick a page size.
+- **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
+  `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
+  for the page or a filter.
+
+---
+
+## A shared helper has one home
+
+- **Before writing a small helper, look in the package that owns its kind, and
+  add a new one there rather than copying it.**
+  - `@checkin/component-kit`: a library's errors, route parsing (`parseId`,
+    `readJson`, `parseBody`) and runtime (`defineRuntime`, which gives `getOrgId`).
+  - `@checkin/pg-kit`: the advisory lock, unique-race retries and the lazy Prisma
+    client. `monitoring-db` and `s-ingest-core` wrap the lock only to bind their
+    own database.
+  - `@checkin/quickbooks`: moving a day for a books window (`shiftDate`).
+  - `@checkin/money` and `@checkin/component-ui`: as the section above says.
+
+---
+
+## One process, one implementation
+
+- **A step that happens in two places is one piece of code both call.** When
+  the same decision, check or sequence of steps is needed by two libraries, two
+  kinds of record or two routes, it is written once and both call it. A copy, a
+  near-copy or a second implementation "for our side" is a fork: the two drift,
+  and each fix lands in only one of them.
+- **A record crosses into another library only to change owner.** Handing a
+  record to the library that takes the next step is fine when nothing flows
+  back and the hand-over is audited and either atomic or retried. Copying it so
+  another library can run the same steps on its own copy is the fork above.
+- **Where the domain says two things are treated the same, they run the same
+  code.** "The same rule" kept true by two implementations is a rule waiting to
+  diverge.
+
+The failure is slow. Each copy is correct the day it is written; the defect is
+the later fix that reaches one of them.
+
+---
+
+## A simple machine with a known risk beats a complete one nobody can read
+
+- **Whether a step can be undone depends on what undoing it costs, and where.**
+  - **A bad state that lives entirely in the app, the app must give a way out
+    of.** Nobody can repair it by hand without editing the database, so the
+    software owes a path back: an undo, or a reset that returns the record to a
+    known starting point and has it go through again.
+  - **A decision whose effects are outside the app may be declared
+    irreversible.** Once it has reached the books, a physical label or another
+    party, unwinding it in the app would mean modelling every outside effect
+    to keep them in step. Past that point the app says the decision is final,
+    and a mistake is cleaned up by hand. That costs a person some work, and it
+    keeps the machine readable. The point is chosen, stated and the same
+    everywhere the decision is taken.
+- **Take a decision as late as it can be taken, after the things that could
+  reverse it.** A decision taken before its record settles needs machinery to
+  unwind it when the record moves; one taken after needs none.
+- **An edge case the design does not handle is an accepted, written-down risk,
+  not a branch.** Record how it could happen, what it costs when it does, and
+  how it is cleaned up by hand. Do not add a state, flag or route whose only
+  purpose is a case that rarely or never happens.
+- **A state nothing can reach is removed.** Code for an unreachable case is not
+  insurance; it is a second account of the system that every reader has to
+  disprove.
+
+The failure is unreadability. A machine that covers everything is one nobody
+can hold in their head, and the bugs live in the transitions nobody traced.
+
+---
+
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never
@@ -193,13 +291,45 @@ missed a row stored at a different time of day.
   issue's message. The host's `componentRoute()` (`lib/components/route.ts`)
   renders all three as checkin's API error; anything else is rethrown and the host
   answers an opaque 500. The kit's tests and the host wrapper's test pin this.
+  A `ServiceError` may also carry a `code`, for a UI that branches on it; the host
+  sends it as `{ error, code }`. `ReviewError`, `PaymentError`, `ExternalError`,
+  `RenewalError` and `TrustedAdultError` extend `ServiceError` and read their
+  status from `lib/domainErrorResponse.ts`.
 
-- **A library's runtime fails closed the same way everywhere.** Each library
+- **A library's runtime fails closed.** Each library
   builds its runtime with the kit's `defineRuntime`. Until the host configures
-  it, every accessor throws. A missing principal, or one without an integer id,
-  is a 401. An unbound port or accessor throws `NotWiredError` and never fakes
-  success. A callee that takes an `orgId` from its caller checks it with
-  `assertOrg` first.
+  it, an accessor that needs the configuration throws. `configured()` and
+  `getOrgEventConsumers` return nothing instead, for reads that must not throw,
+  such as one after a commit. A missing principal, or one without an integer id,
+  is a 401. An unbound push or write port throws rather than report success,
+  usually `NotWiredError`. Expense's outbound gateway and the add-person port in
+  expense and receipt throw a plain `Error`.
+  Donations' capital review is the exception that does nothing when unbound, since
+  no line then goes to review. An unbound read port falls back to an inert adapter
+  that returns an empty result, or throws where it has no answer to give: expense's
+  QuickBooks reader throws `QuickBooksNotConnectedError`, and every library's
+  catalog reader and catalog event source throw `NotWiredError`, so an unbound
+  catalog never reads as "no match" or "no events". A route that reads an
+  unbound catalog answers 503 "No catalog is connected"; a missing catalog database
+  answers 503 naming who fixes it; an outage stays 502. A route or matcher reads only
+  `NotWiredError` as "not connected", never another `settings` failure, and tests
+  for it with the kit's branded `isNotWired`; the kit's `catalogSettingsMessage`
+  holds both 503 wordings. The catch-up sweep records an unbound event source as
+  `notConnected` and raises no alert; any other failure to read, a missing catalog
+  database included, is an unreadable catalog and alerts. A callee that takes an `orgId`
+  from its caller checks it with `assertOrg` first.
+
+- **At a crossing, a callee's 4xx means refused for good.** When one library
+  calls another, a `ServiceError` or http error in the 4xx range, or a
+  validation error (400), means the item will never pass: the caller stops
+  retrying and shows a person. A 401, a 403 and a 429 are not refusals: a 401
+  or 403 is a bug in our wiring or the system actor's permissions, a 429 a
+  passing overload. Anything else means try again. A
+  callee never throws a 4xx for something that could pass later, nor a plain
+  error for an item it will never take. "Already done" is a return value, never
+  a throw. The kit's `kindOf` reads errors this way, at system-actor crossings;
+  a 403 for a person's own permission is shown to that person as a refusal and
+  is not read through `kindOf`.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race
   it can tolerate is caught where it happens and re-read or thrown as
@@ -219,6 +349,50 @@ missed a row stored at a different time of day.
 The failure shows only in a built app. In unit tests every module is loaded once,
 so `instanceof` holds; in the server, the same 409 arrives as an error from
 another copy of the class and the caller sees a 500.
+
+---
+
+## A person is told what happened in one way
+
+This is the rule for new code, in the host and in every library. Existing pages
+move to it in later changes.
+
+- **An action that worked says so in a floating message that goes away by
+  itself.**
+
+- **An action that failed says so in a message that stays in the lower right
+  until the person dismisses it, or until a retry replaces it or a later success
+  clears it.** It survives moving to another page, because a person who clicked
+  away may not have read it. This holds while a modal is open; the modal stays
+  open. A display nobody attends is the exception, under its own rule below.
+
+- **A page that could not load says so in place of its content, with a retry.**
+  An empty space must never read as an empty list.
+
+- **A broken input is highlighted on the input.** A refusal from the server that
+  concerns one field names that field in its words, or sends the field name so
+  the form can highlight it. Sending the field name is the long-term aim.
+
+- **A condition that is true now is shown inline for as long as it is true.** A
+  failing supervision check, a missing emergency contact and a broken checkout
+  are conditions, so a dismissal must not be able to clear them. If the app can
+  still show it after a reload, it is a condition. Anything else a save leaves
+  the person to read stays in the lower right in yellow until dismissed.
+
+- **A display nobody attends raises no message that waits to be dismissed.** A
+  kiosk screen shows its state inline, because nobody is there to clear it. This
+  overrides the rule that an action that failed keeps a message in the lower
+  right.
+
+- **A message that stays on screen carries the server's chosen words or fixed
+  text, never exception text.** It holds no personal detail the current page
+  would not show, because anyone walking past can read it.
+
+The failure is a message nobody sees: a red line above the fold while the person
+is looking at the Save button at the bottom, or a blank list that looks like an
+all-clear.
+
+---
 
 ## The dictionary's word is the code's word
 

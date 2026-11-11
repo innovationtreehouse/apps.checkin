@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { isYouth } from '@/lib/time';
 import { Button, Card, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { notifications } from '@mantine/notifications';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdOption = {
@@ -26,7 +29,7 @@ export default function NewParticipantPage() {
 }
 
 function NewParticipantForm() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const searchParams = useSearchParams();
   const queryHouseholdId = searchParams.get('householdId');
 
@@ -46,26 +49,16 @@ function NewParticipantForm() {
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{ email?: string }>({});
 
-  // Handle deep linked household
-  useEffect(() => {
-    if (queryHouseholdId && !householdId) {
-      const fetchHousehold = async () => {
-        try {
-          const res = await fetch(`/api/membership-ops/households?id=${queryHouseholdId}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.household) {
-              setHouseholdId(data.household.id.toString());
-              setHouseholdSearch(data.household.name || `Household #${data.household.id}`);
-            }
-          }
-        } catch (err) {
-          console.error("Failed to fetch deep linked household:", err);
-        }
-      };
-      fetchHousehold();
-    }
-  }, [queryHouseholdId, householdId]);
+  const { data: linked, error: linkedError, reload: reloadLinked } = useLoad<{ household?: { id: number; name: string | null } }>(
+    ready && queryHouseholdId ? `/api/membership-ops/households?id=${queryHouseholdId}` : null,
+  );
+  // The linked household fills an empty picker, including after each save, until staff clear it.
+  const [linkCleared, setLinkCleared] = useState(false);
+  const linkedHousehold = linked?.household;
+  if (linkedHousehold && householdId === "" && !linkCleared) {
+    setHouseholdId(linkedHousehold.id.toString());
+    setHouseholdSearch(linkedHousehold.name || `Household #${linkedHousehold.id}`);
+  }
 
   if (authLoading) {
     return <PageLoader />;
@@ -195,6 +188,7 @@ function NewParticipantForm() {
 
             {/* Household Selector */}
             <Paper withBorder radius="md" p="md">
+              {linkedError && <LoadError what="the linked household" message={linkedError} onRetry={reloadLinked} />}
               <EntityPicker<HouseholdOption>
                 label="Add to Existing Household (Optional)"
                 description="Search by household name or member name/email. If left blank, a new household will be created automatically for adults."
@@ -209,8 +203,8 @@ function NewParticipantForm() {
                 }}
                 getOptionLabel={(h) => h.name || `Household #${h.id}`}
                 getOptionDescription={(h) => h.householdMembers.map((p) => p.name || p.email || 'Unnamed').join(', ') || 'Empty'}
-                onSelect={(h) => { setHouseholdId(h.id.toString()); setHouseholdSearch(h.name || `Household #${h.id}`); }}
-                onClear={() => { setHouseholdId(""); setHouseholdSearch(""); }}
+                onSelect={(h) => { setHouseholdId(h.id.toString()); setHouseholdSearch(h.name || `Household #${h.id}`); setLinkCleared(false); }}
+                onClear={() => { setHouseholdId(""); setHouseholdSearch(""); setLinkCleared(true); }}
               />
             </Paper>
 

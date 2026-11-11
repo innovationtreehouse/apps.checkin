@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the expense classifications (#1272 §5). Money, vendor,
+ * Boundary coverage for the expense classifications. Money, vendor,
  * QuickBooks refs and settings are `internal`; person ids, usernames and the
  * reimbursee are `pii`; free text and stored payloads are `personal`. So a view
  * that grants `internal` only (a bucket approver's filtered rows) sees amounts
@@ -50,10 +50,12 @@ describe('expense tiering', () => {
     });
 
     it('tiers who signed, every actor and the reimbursee pii', () => {
-        const pii = Object.entries(expenseGenerated.classifications)
+        const pii = Object.entries(expenseMaps)
             .flatMap(([model, fields]) => Object.entries(fields).filter(([, t]) => t === 'pii').map(([f]) => `${model}.${f}`))
             .sort();
         expect(pii).toEqual([
+            'DonatedCapitalLine.reviewedByUserId',
+            'DonatedCapitalLineView.reviewedByUserId',
             'Expense.boardAuthorizedByUserId',
             'Expense.boardAuthorizedByUsername',
             'Expense.reimburseePersonId',
@@ -70,11 +72,25 @@ describe('expense tiering', () => {
             'ExpenseOrgAuditLog.actorUsername',
             'ExpenseOrgSettingsChange.actorUserId',
             'ExpenseOrgSettingsChange.actorUsername',
+            'ExpenseQbCandidateView.vendorRef',
             'ExpenseQbMatchExclusion.excludedByUserId',
             'ExpenseQbMatchExclusion.excludedByUsername',
+            'ExpenseQbVendorOption.displayName',
+            'ExpenseReceiptReview.approvedByUserId',
             'ExpenseReimburseeVendor.reimburseePersonId',
+            'ExpenseReimburseeView.name',
+            'ExpenseReimburseeView.personId',
+            'ExpenseTaxApproval.approvedByUserId',
             'LineItemOwnerApproval.decidedByUserId',
         ]);
+    });
+
+    it('tiers a field named for a person pii, in generated and synthetic shapes alike', () => {
+        const misTiered = Object.entries(expenseMaps).flatMap(([model, fields]) =>
+            Object.entries(fields)
+                .filter(([field, tier]) => /(UserId|Username|PersonId|^personId)$/.test(field) && tier !== 'pii')
+                .map(([field, tier]) => `${model}.${field}:${tier}`));
+        expect(misTiered).toEqual([]);
     });
 
     it('tiers the org settings internal', () => {
@@ -167,6 +183,20 @@ describe('expense stripper', () => {
         expect(strip('DonatedCapitalLineView', { ...line, donorName: 'Pat Doe', donorEmail: 'pat@example.com' }, FINANCE_VIEW)).toEqual(line);
         expect(strip('DonatedCapitalLineView', line, INTERNAL_ONLY)).not.toHaveProperty('reviewedByUserId');
         expect(strip('DonatedCapitalLineView', line, ['public'])).toEqual({});
+    });
+
+    it("an internal-only view keeps a line's status and the caller's own acts, and drops any signer", () => {
+        const status = {
+            lineItemId: 3,
+            filled: ['SUBMITTER'],
+            missing: ['TREASURER'],
+            blocked: [],
+            actions: [{ act: 'sign', primary: true }],
+            awaiting: ['Awaiting approval'],
+            mayRecordBoardAuthorization: false,
+        };
+        expect(strip('ExpenseLineSignoffStatus', { ...status, signerUserId: 9, signerUsername: 'jordan' }, INTERNAL_ONLY)).toEqual(status);
+        expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({});
     });
 
     it('a public-only view sees nothing, settings included', () => {

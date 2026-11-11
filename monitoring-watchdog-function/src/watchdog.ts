@@ -1,7 +1,7 @@
 /**
  * Watchdog orchestration.
  *
- * Freshness is PUSH-based (F7): each service writes its own run outcome into the dedicated
+ * Freshness is PUSH-based: each service writes its own run outcome into the dedicated
  * monitoring DB's `service_heartbeat` table; the watchdog READS those rows in one query
  * rather than connecting to each service's financial database. For every registered service
  * it then decides staleness (no recent success) or erroring (recent runs are failing), and
@@ -12,8 +12,8 @@
  * STALE takes precedence over ERRORING: with no recent success at all the pipeline is
  * effectively down (CRITICAL); ERRORING is the earlier WARNING state where runs still
  * succeed within the window but newer runs have begun to fail. A service with no heartbeat
- * row at all (registered but never reported) is stale with a null age — same as the old
- * probe's "no COMPLETED run on record".
+ * row at all (registered but never reported) is stale with a null age, reported as
+ * "no COMPLETED run on record".
  *
  * Emission order matters: the metric (EMF → stdout) fires FIRST and unconditionally, so a
  * monitoring-DB failure can't suppress the signal. recordIncident is best-effort on top.
@@ -214,7 +214,7 @@ const NEVER_REPORTED: ServiceFreshness = { lastFinishedAt: null, latestFailure: 
 export async function runWatchdog(
   cfg: WatchdogConfig,
 ): Promise<{ checked: number; incidents: number; skipped?: boolean }> {
-  // Concurrency (F19): the read + per-service incident writes run under a Postgres advisory
+  // Concurrency: the read + per-service incident writes run under a Postgres advisory
   // lock, so two overlapping invocations can't both pass a service's open-incident dedup and
   // double-record — the single-flight guarantee is defended in code, not by reserved
   // concurrency = 1 alone.
@@ -249,7 +249,7 @@ export async function runWatchdog(
 
 /** Read service freshness once and evaluate every registered service. Runs under the lock. */
 async function check(cfg: WatchdogConfig): Promise<{ checked: number; incidents: number }> {
-  // One read of the monitoring DB replaces N probes of N financial databases (F7).
+  // One read of the monitoring DB covers every service; no financial database is touched.
   const heartbeats = await readServiceHeartbeats(
     prisma,
     cfg.env,

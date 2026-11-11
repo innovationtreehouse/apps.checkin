@@ -8,10 +8,8 @@
  * TS in-flight status lists are `IN_FLIGHT_INITIAL` / `IN_FLIGHT_RENEWAL` in
  * lib/membership/lifecycle. Nothing but this test forces them equal. It READS
  * pg_indexes.indexdef (never alters DDL) and asserts each index's
- * `WHERE status = ANY (ARRAY[…])` set equals the constant — turning the old
- * hand-sync comment into an enforced check. The 20260715 migration already had
- * to widen the renewal index by hand to match a TS edit; this catches the next
- * such drift automatically.
+ * `WHERE status = ANY (ARRAY[…])` set equals the constant, because a TS edit
+ * otherwise needs a matching hand-written index change that nothing would flag.
  *
  * Requires the migrate-deploy-provisioned integration DB (the partial indexes
  * are migration-only, so a db-push schema would not have them).

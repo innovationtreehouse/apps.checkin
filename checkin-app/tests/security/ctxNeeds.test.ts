@@ -1,7 +1,7 @@
 /**
  * ctxNeeds — the proof the scoped CallerContext prefetch is behavior-neutral.
  *
- * buildCallerContext now fetches only the fields a route's policy can consume
+ * buildCallerContext fetches only the fields a route's policy can consume
  * (spec.ctxNeeds, derived in core.ts from authorize + orderedView roles +
  * granted token scopes). Skipping a fetch leaves that field an EMPTY set, so
  * this suite asserts, for EVERY registered route:
@@ -39,17 +39,14 @@ import {
 import { stripValue } from '@/security/stripper';
 import { SCOPE_BINDINGS } from '@/security/scopeBindings';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import prisma from '@/lib/prisma';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface.
 import '@/security/registry';
 
-// expense-approver's treasurer leg makes one inline DB read, independent of
+// expense-approver's approver leg makes one directory read, independent of
 // CallerContext, so masked ≡ full still holds; this stub keeps the "no real DB"
 // invariant (jest.setup rejects the real client).
-beforeAll(() => {
-    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue(null);
-});
+jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn(async () => []) }));
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────
 
@@ -66,6 +63,8 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
         eventIdsInScopePrograms: new Set(),
         activeVisitorIds: new Set(),
         ledHouseholdMemberIds: new Set(),
+        // Populated in every full context, so masking it away must leave the stripped output unchanged.
+        householdMemberIds: new Set([5, 6]),
         ...opts,
     };
 }
@@ -190,11 +189,12 @@ function maskToNeeds(full: CallerContext, needs: CtxNeeds): CallerContext {
         ledHouseholdMemberIds: needs.ledHouseholdMembers
             ? full.ledHouseholdMemberIds
             : new Set(),
+        householdMemberIds: needs.householdMembers ? full.householdMemberIds : undefined,
     };
 }
 
 // Representative rows: each carries every field any binding matches on (same
-// shape as the S1 equivalence suite), so one row set exercises all models.
+// shape as scopeBindingsEquivalence.test.ts), so one row set exercises all models.
 const ROWS: Array<Record<string, unknown> | null> = [
     null,
     {},
@@ -302,6 +302,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: false,
             activeVisitors: false,
             ledHouseholdMembers: false,
+            householdMembers: false,
         });
     });
 
@@ -312,6 +313,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: false,
             activeVisitors: false,
             ledHouseholdMembers: true,
+            householdMembers: false,
         });
     });
 
@@ -322,6 +324,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: false,
             activeVisitors: false,
             ledHouseholdMembers: false,
+            householdMembers: false,
         });
     });
 
@@ -332,7 +335,13 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programEvents: true,
             activeVisitors: false,
             ledHouseholdMembers: false,
+            householdMembers: true,
         });
+    });
+
+    it('a route that can send household-owned finance rows fetches the household members', () => {
+        expect(byEndpoint.get('GET /api/finance-ops/payment-plans')?.ctxNeeds.householdMembers).toBe(true);
+        expect(byEndpoint.get('GET /api/receipts')?.ctxNeeds.householdMembers).toBe(false);
     });
 
     it('ALL_CTX_NEEDS is the everything mask (masking with it is a no-op)', () => {

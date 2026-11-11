@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Stage-2 substrate: displayed intent is applied, not re-toggled from live
+ * Displayed intent is applied, not re-toggled from live
  * Visit state. Conflicts park. A non-keyholder IN with no keyholder present
  * checks in all the same.
  */

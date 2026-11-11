@@ -1,7 +1,7 @@
 /**
  * Arms the security scope validators (scopes.ts §7.6). They are pure config
  * checks with no runtime caller — this test is what makes them enforce anything.
- * See docs/security/auth-consistency-analysis.md §9 Step 3 (final flip).
+ * See docs/security/auth-consistency-analysis.md §9 Step 3.
  *
  * Both assertions must stay `toEqual([])`. If one goes red, DO NOT pin it to the
  * current error list — a red test naming a real gap is the point of the gate.

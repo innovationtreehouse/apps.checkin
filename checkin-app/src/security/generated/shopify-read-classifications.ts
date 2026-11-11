@@ -90,6 +90,7 @@ export const classifications = {
         sku: 'internal',
         title: 'internal',
         quantity: 'internal',
+        currentQuantity: 'internal',
         variantGid: 'internal',
         variantLegacyId: 'internal',
         priceCents: 'internal',
@@ -161,6 +162,14 @@ export const relations = {
     },
     ShopBalanceTransaction: {
     },
+} as const;
+
+export const marks = {
+    ShopOrder: ['customerEmail', 'customerName', 'subtotalCents', 'shippingCents', 'taxCents', 'discountCents', 'totalCents', 'totalRefundedCents', 'discountCodes'],
+    ShopOrderLine: ['priceCents', 'discountCents'],
+    ShopRefund: ['totalRefundedCents'],
+    ShopPayout: ['netCents', 'chargesGrossCents', 'chargesFeeCents', 'refundsGrossCents', 'refundsFeeCents', 'adjustmentsGrossCents', 'adjustmentsFeeCents', 'reservedFundsCents', 'retriedCents'],
+    ShopBalanceTransaction: ['amountCents', 'feeCents', 'netCents'],
 } as const;
 
 export type Models = keyof typeof classifications;

@@ -1,9 +1,13 @@
-import { beforeEach, expect, it } from "vitest";
+import { KindedError, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { DONOR_NAME_MAX } from "@checkin/receipt-types";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import { resendDonorSync } from "../../services/catchUp";
+import { sendDonorSync } from "../../lib/donor-sync";
+import { importReceipts } from "../../services/importService";
+import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, TEST_ORG_ID, clearAll, configure, manualDetails, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -13,10 +17,54 @@ beforeEach(async () => {
   configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink });
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 const donorSync = async (id: string) => (await db.receipt.findUniqueOrThrow({ where: { id } })).donorSync;
 const badMath = () => manualDetails({ receiptTotal: "1" });
 
 describeDb("in-kind mark and donor (X13)", () => {
+  it("refuses a typed-in donor the host's check refuses, before anything is written", async () => {
+    const refuse = vi.fn(async () => {
+      throw new ServiceError(403, "own household");
+    });
+    const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...typed }, refuse)).rejects.toMatchObject({ status: 403 });
+    expect(await db.receipt.count()).toBe(0);
+
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
+    await expect(receiptService.setInKind(r.id, typed, refuse)).rejects.toMatchObject({ status: 403 });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: false, donorLastName: null });
+    expect(refuse).toHaveBeenCalledTimes(2);
+  });
+
+  it("reserves no OCR call for an upload whose typed-in donor is refused", async () => {
+    const extract = vi.fn(okOcr().extract);
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, ocr: { extract } });
+    const refuse = vi.fn(async () => {
+      throw new ServiceError(403, "own household");
+    });
+    const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    await expect(receiptService.upload(textFile(), "text/plain", typed, refuse)).rejects.toMatchObject({ status: 403 });
+    expect(await db.receiptAuditLog.count({ where: { action: "ocr_call" } })).toBe(0);
+    expect(extract).not.toHaveBeenCalled();
+    expect(await db.receipt.count()).toBe(0);
+  });
+
+  it("records a typed-in donor the check passes", async () => {
+    const pass = vi.fn(async () => undefined);
+    const typed = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } }, pass);
+    expect(pass).toHaveBeenCalledTimes(1);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: typed.id } })).toMatchObject({ isInKind: true, donorLastName: "Donor" });
+  });
+
+  it("never checks \"I am the donor\" or a cleared mark", async () => {
+    const pass = vi.fn(async () => undefined);
+    const self = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } }, pass);
+    await receiptService.setInKind(self.id, { isInKind: true, donor: { self: true } }, pass);
+    await receiptService.setInKind(self.id, { isInKind: false }, pass);
+    expect(pass).not.toHaveBeenCalled();
+  });
+
   it("requires a donor and forbids reimbursement", async () => {
     await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true })).rejects.toMatchObject({
       status: 400,
@@ -31,10 +79,35 @@ describeDb("in-kind mark and donor (X13)", () => {
     ).rejects.toMatchObject({ status: 400 });
   });
 
+  it("refuses \"I am the donor\" from a person whose profile name donations would refuse", async () => {
+    const self = { isInKind: true, donor: { self: true } };
+    const typed = { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } };
+    const refused = { status: 400, message: expect.stringContaining("Your profile name can't be used as the donor") };
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
+    for (const bad of [{ firstName: "" }, { lastName: "  " }, { firstName: "x".repeat(DONOR_NAME_MAX + 1) }]) {
+      actAs({ ...ALICE, ...bad });
+      await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...self })).rejects.toMatchObject(refused);
+      await expect(receiptService.setInKind(r.id, self)).rejects.toMatchObject(refused);
+    }
+    expect(await db.receipt.count()).toBe(1);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: false, donorSync: "none" });
+    expect(ports.calls.donors).toEqual([]);
+
+    const gift = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...typed });
+    await receiptService.setInKind(r.id, typed);
+    expect(ports.calls.donors.map((c) => c.receiptId)).toEqual([gift.id, r.id]);
+  });
+
+  it("\"I am the donor\" stores the profile name as donations receives it", async () => {
+    actAs({ ...ALICE, firstName: " Ann ", lastName: "Lee " });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorFirstName: "Ann", donorLastName: "Lee", donorSync: "synced" });
+  });
+
   it("'I am the donor' sends the uploader's names; the push carries only isInKind", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
     expect(ports.calls.donors).toEqual([
-      { orgId: TEST_ORG_ID, receiptId: r.id, donor: { firstName: ALICE.firstName, lastName: ALICE.lastName, companyName: null } },
+      { orgId: TEST_ORG_ID, receiptId: r.id, donor: { firstName: ALICE.firstName, lastName: ALICE.lastName, companyName: null }, seq: 0 },
     ]);
     expect(await donorSync(r.id)).toBe("synced");
     expect(ports.calls.pushes[0].isInKind).toBe(true);
@@ -50,29 +123,57 @@ describeDb("in-kind mark and donor (X13)", () => {
     expect(ports.calls.donors[0].donor).toEqual({ firstName: "Dana", lastName: "Donor", companyName: "Donor Co" });
   });
 
-  it("a failed first send stays pending and the catch-up step resends it", async () => {
+  it("a failed first send stays pending, and finance's re-send delivers it", async () => {
     ports.fail.donor = true;
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
     expect(await donorSync(r.id)).toBe("pending");
     ports.fail.donor = false;
-    expect(await resendDonorSync()).toEqual({ resent: 1, failed: 0 });
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: true });
     expect(await donorSync(r.id)).toBe("synced");
-    expect(ports.calls.donors).toHaveLength(2);
+    expect(ports.calls.donors).toHaveLength(3);
   });
 
   it("clearing the mark sends withdrawInKind and drops the donor names", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
     expect(r.state).toBe("validation_failed");
     await receiptService.setInKind(r.id, { isInKind: false });
-    expect(ports.calls.withdrawals).toEqual([{ orgId: TEST_ORG_ID, receiptId: r.id }]);
+    expect(ports.calls.withdrawals).toEqual([{ orgId: TEST_ORG_ID, receiptId: r.id, seq: 1 }]);
     const row = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(row).toMatchObject({ isInKind: false, donorFirstName: null, donorSync: "synced" });
+  });
+
+  it("refuses the mark on a receipt already in QuickBooks", async () => {
+    const { results } = await importReceipts([
+      {
+        importSourceId: "held-open",
+        qbTxnId: "qb-1",
+        retailer: "Old Store",
+        receiptDate: "2023-03-01",
+        shippingCents: 0,
+        taxCents: 0,
+        discountCents: 0,
+        receiptTotalCents: 900,
+        mimeType: "text/plain",
+        fileBase64: Buffer.from("held open").toString("base64"),
+        lineItems: [{ lineNumber: 1, description: "Old thing", quantity: 1, unitPriceCents: 500, totalPriceCents: 500, isDelayed: false }],
+      },
+    ]);
+    const id = results[0].id as string;
+    expect(results[0].state).toBe("validation_failed");
+
+    await expect(receiptService.setInKind(id, { isInKind: true, donor: { self: true } })).rejects.toMatchObject({
+      status: 400,
+      message: "This receipt is already in QuickBooks, so it can't be marked as a donation",
+    });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id } })).toMatchObject({ isInKind: false, donorSync: "none" });
+    expect(ports.calls.donors).toEqual([]);
   });
 
   it("a never-in-kind receipt never sends withdrawInKind", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
     await receiptService.setInKind(r.id, { isInKind: false });
-    await resendDonorSync();
+    expect(await sendDonorSync(r.id, null)).toBe(false);
     expect(ports.calls.withdrawals).toEqual([]);
     expect(await donorSync(r.id)).toBe("none");
   });
@@ -83,8 +184,8 @@ describeDb("in-kind mark and donor (X13)", () => {
       receiptSink: ports.receiptSink,
       donorSink: {
         ...ports.donorSink,
-        recordInKindDonor: async (orgId, receiptId, donor) => {
-          ports.calls.donors.push({ orgId, receiptId, donor });
+        recordInKindDonor: async (orgId, receiptId, donor, seq) => {
+          ports.calls.donors.push({ orgId, receiptId, donor, seq });
           if (edits-- > 0) await db.receipt.update({ where: { id: receiptId }, data: { donorFirstName: "Edited" } });
         },
       },
@@ -100,13 +201,13 @@ describeDb("in-kind mark and donor (X13)", () => {
       receiptSink: ports.receiptSink,
       donorSink: {
         ...ports.donorSink,
-        recordInKindDonor: async (orgId, receiptId, donor) => {
-          ports.calls.donors.push({ orgId, receiptId, donor });
+        recordInKindDonor: async (orgId, receiptId, donor, seq) => {
+          ports.calls.donors.push({ orgId, receiptId, donor, seq });
           await db.receipt.update({ where: { id: receiptId }, data: { donorFirstName: `Edit${++n}` } });
         },
       },
     });
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
     expect(ports.calls.donors).toHaveLength(3);
     expect(await donorSync(r.id)).toBe("pending");
   });
@@ -117,5 +218,132 @@ describeDb("in-kind mark and donor (X13)", () => {
     const rows = await db.receiptAuditLog.findMany({ where: { receiptId: r.id } });
     expect(rows.find((a) => a.action === "in_kind_updated")).toMatchObject({ valueBefore: "false", valueAfter: "true" });
     expect(JSON.stringify(rows)).not.toContain("Dana");
+  });
+});
+
+describeDb("stale donor sends (in-kind findings K2–K4)", () => {
+  it("a send held across a donor edit carries the older seq, and the edit's send the newer", async () => {
+    ports.fail.donor = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
+    ports.fail.donor = false;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const sent: Array<{ firstName: string; seq: number }> = [];
+    configure({
+      receiptSink: ports.receiptSink,
+      donorSink: {
+        ...ports.donorSink,
+        recordInKindDonor: async (_orgId, _receiptId, donor, seq) => {
+          sent.push({ firstName: donor.firstName, seq });
+          if (sent.length === 1) await held;
+        },
+      },
+    });
+    const senderA = sendDonorSync(r.id, null);
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } });
+    release();
+    await senderA;
+    expect(sent).toEqual([
+      { firstName: ALICE.firstName, seq: 0 },
+      { firstName: "Dana", seq: 1 },
+    ]);
+    expect(await donorSync(r.id)).toBe("synced");
+  });
+
+  it("a finalized receipt is not delivered while its donor sync is pending", async () => {
+    ports.fail.donor = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
+    expect(ports.calls.pushes).toEqual([]);
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorSync: "pending", pushedAt: null });
+    expect(await db.receiptAuditLog.count({ where: { receiptId: r.id, action: "push_deferred" } })).toBe(1);
+
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ firstFailedAt: expect.any(Date), lastError: "donations down" });
+
+    ports.fail.donor = false;
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: true });
+    expect(await donorSync(r.id)).toBe("synced");
+    expect(ports.calls.pushes).toHaveLength(1);
+  });
+
+  it("a mark change whose state check passed before the receipt was finalized is refused", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: { self: true } });
+    const find = receiptRepo.find.bind(receiptRepo);
+    vi.spyOn(receiptRepo, "find").mockImplementationOnce(async (id, orgId, uploadedByUserId) => {
+      const row = await find(id, orgId, uploadedByUserId);
+      await db.receiptDetail.update({ where: { id: r.id }, data: { state: "receipt_finalized" } });
+      return row;
+    });
+    await expect(receiptService.setInKind(r.id, { isInKind: false })).rejects.toMatchObject({ status: 400 });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ isInKind: true, donorSync: "synced" });
+    expect(ports.calls.withdrawals).toEqual([]);
+  });
+});
+
+describeDb("donor sync failures (X13)", () => {
+  const gift = (details = manualDetails()) => receiptService.upload(textFile(), "text/plain", { details, isInKind: true, donor: { self: true } });
+
+  it.each([
+    ["system", () => true as const],
+    ["connection", () => new KindedError("connection", "donations credential revoked")],
+    ["settings", () => new NotWiredError("donorSink")],
+    ["bug", () => new Error("unexpected")],
+    ["data", () => new ServiceError(400, "donor first name is required")],
+  ])("a %s failure is recorded with its kind, and the receipt waits for finance with nothing resent", async (kind, failure) => {
+    ports.fail.donor = failure();
+    const r = await gift();
+    const sends = ports.calls.donors.length;
+
+    actAs(FINANCE);
+    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 1, pushGivenUp: 1 });
+    expect(await receiptService.listNeedsAttention("finance")).toEqual([expect.objectContaining({ id: r.id, lastPushFailedAt: expect.any(Date) })]);
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "donor_sync_failed" }, select: { valueBefore: true } })).toEqual({ valueBefore: kind });
+    expect(ports.calls.donors).toHaveLength(sends);
+  });
+
+  it("a donor send that settles clears its failure, so a later push failure is timed from the push", async () => {
+    ports.fail.donor = true;
+    const r = await gift();
+    const donorFailedAt = (await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).firstFailedAt;
+    expect(donorFailedAt).toBeInstanceOf(Date);
+
+    ports.fail.donor = false;
+    ports.fail.push = new Error("mapping down");
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
+
+    const after = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
+    expect(after).toMatchObject({ donorSync: "synced", lastError: "mapping down" });
+    expect(after.firstFailedAt?.getTime()).toBeGreaterThan(donorFailedAt?.getTime() ?? Infinity);
+  });
+
+  it("an editable receipt whose donor send settles no longer shows as stuck", async () => {
+    const r = await gift(badMath());
+    ports.fail.donor = true;
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { firstName: "Dana", lastName: "Donor" } });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ firstFailedAt: expect.any(Date) });
+
+    ports.fail.donor = false;
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { self: true } });
+
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorSync: "synced", firstFailedAt: null, lastError: null });
+    actAs(FINANCE);
+    expect(await receiptService.get(r.id, "finance")).not.toHaveProperty("lastPushFailedAt");
+  });
+
+  it("a receipt stored with a blank donor is never sent to donations, and stays stuck", async () => {
+    ports.fail.donor = true;
+    const r = await gift();
+    await db.receipt.update({ where: { id: r.id }, data: { donorFirstName: "" } });
+    ports.fail.donor = false;
+    const sends = ports.calls.donors.length;
+
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
+    expect(ports.calls.donors).toHaveLength(sends);
+    expect(ports.calls.pushes).toEqual([]);
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "donor_sync_failed" }, orderBy: { id: "desc" }, select: { valueAfter: true } })).toEqual({ valueAfter: expect.stringContaining("firstName") });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ donorFirstName: "", donorSync: "pending", firstFailedAt: expect.any(Date) });
   });
 });

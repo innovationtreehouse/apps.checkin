@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Group, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { formatCents } from "@checkin/money";
 // Type-only imports: erased at compile time, so the server modules' prisma
 // imports never reach the client bundle — and a server-side reshape is a
@@ -31,19 +32,12 @@ export function MatchAuditPanel() {
 
   // Optimistic local bucket flip → TRACKED_EXCEPTION. Deliberately NOT a re-run of
   // the audit: a re-run re-sweeps the whole mirror and wakes the scale-to-zero
-  // cluster (infra#129) for what is a one-row state change. The next real "Run
+  // cluster for what is a one-row state change. The next real "Run
   // match audit" reconciles from the DB (matchAudit.ts's tracked lookup) anyway.
   const track = async (key: string, body: TrackBody) => {
     setTracking((s) => new Set(s).add(key));
     try {
-      const res = await fetch('/api/finance-ops/s-read/match-audit/track', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', autoClose: false, message: data.error || 'Failed to track this gap.' });
-        return;
-      }
+      await api('/api/finance-ops/s-read/match-audit/track', { method: 'POST', body: JSON.stringify(body) });
       // Flip the matching row's bucket in-place; the memo re-buckets it out of the
       // gap table and into the tracked count.
       setResult((prev) => prev && {
@@ -52,9 +46,9 @@ export function MatchAuditPanel() {
         memberships: prev.memberships.map((m) => body.kind === 'membership' && m.processId === body.processId ? { ...m, bucket: 'TRACKED_EXCEPTION' as const } : m),
         enrollments: prev.enrollments.map((e) => body.kind === 'enrollment' && e.programId === body.programId && e.personId === body.personId ? { ...e, bucket: 'TRACKED_EXCEPTION' as const } : e),
       });
-      notifications.show({ message: 'Gap tracked as a payment problem.' });
-    } catch {
-      notifications.show({ color: 'red', autoClose: false, message: 'Network error tracking this gap.' });
+      showSuccess('Gap tracked as a payment problem.');
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setTracking((s) => { const n = new Set(s); n.delete(key); return n; });
     }
@@ -262,7 +256,7 @@ export function MatchAuditPanel() {
                       }</Table.Td>
                       <Table.Td>
                         {/* NO_PROCESS rows have no processId — no entity to key a PaymentException
-                            on, so no Track button (out of scope for this PR; see matchAudit.ts). */}
+                            on, so no Track button (see matchAudit.ts). */}
                         {m.processId != null && (
                           <Button size="xs" variant="light"
                             loading={tracking.has(`m-${m.processId}`)}

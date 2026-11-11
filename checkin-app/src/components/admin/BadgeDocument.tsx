@@ -94,7 +94,8 @@ const styles = StyleSheet.create({
 interface ParticipantBadge {
     id: number;
     // Already resolved by the page against the ACTIVE roster. Computing it here would
-    // make it a function of the current print batch, which is the #1625 bug.
+    // make it a function of the current print batch, so a printed name would change
+    // with who else is in the batch.
     displayName: string;
     // The membership year, per badge — null for a household that has not settled this
     // renewal cycle, which prints no year at all rather than an unearned one.

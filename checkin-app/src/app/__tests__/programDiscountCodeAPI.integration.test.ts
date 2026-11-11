@@ -14,6 +14,7 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import * as shopify from '@/lib/shopify/discounts';
+import { verifyCheckout } from '@/lib/programs/checkoutSignature';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -27,6 +28,7 @@ jest.mock('@/lib/shopify/discounts', () => {
 });
 
 const TAG = 'discount-code-duration-test';
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function post(programId: number, participantIds: number[]) {
@@ -113,7 +115,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         settledHouseholdId = settled.householdId;
         const settledMembership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: settledHouseholdId } });
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: settledMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date() },
+            data: { orgMembershipId: settledMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(), appliesToYear: boundary.getUTCFullYear() },
         });
 
         // A youth in the settled household — not its lead.
@@ -136,6 +138,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         // handles; two price tiers so it computes a non-zero discount amount.
         const covered = await prisma.program.create({
             data: {
+                appliesToYear: boundary.getUTCFullYear() - 1,
                 startAt: new Date('2026-01-01'),
                 name: `Covered Prog ${TAG}`, phase: 'UPCOMING', endAt: coveredEndAt,
                 shopifyVariantId: 'dev-mock-variant-discount-code-covered',
@@ -146,6 +149,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
 
         const uncovered = await prisma.program.create({
             data: {
+                appliesToYear: boundary.getUTCFullYear(),
                 startAt: new Date('2026-01-01'),
                 name: `Uncovered Prog ${TAG}`, phase: 'UPCOMING', endAt: uncoveredEndAt,
                 shopifyVariantId: 'dev-mock-variant-discount-code-uncovered',
@@ -198,9 +202,14 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const data = await res.json();
         expect(data.code).toMatch(new RegExp(`^PRG${coveredProgramId}-H${unsettledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
+        expect(verifyCheckout(coveredProgramId, [unsettledPersonId], unsettledHouseholdId, data.signature)).toBe(true);
         // 5000 (non-member) - 4000 (member) = 1000: the amount actually
         // reaches the minting call, not just the response shape.
-        expect(mintSpy).toHaveBeenCalledWith(coveredProgramId, unsettledHouseholdId, 'dev-mock-variant-discount-code-covered', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ id: coveredProgramId, shopifyVariantId: 'dev-mock-variant-discount-code-covered' }),
+            unsettledHouseholdId,
+            1000,
+        );
     });
 
     it('returns { code: null, reason } when the program ends after an unsettled member\'s boundary', async () => {
@@ -220,7 +229,11 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const data = await res.json();
         expect(data.code).toMatch(new RegExp(`^PRG${uncoveredProgramId}-H${settledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
-        expect(mintSpy).toHaveBeenCalledWith(uncoveredProgramId, settledHouseholdId, 'dev-mock-variant-discount-code-uncovered', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ id: uncoveredProgramId, shopifyVariantId: 'dev-mock-variant-discount-code-uncovered' }),
+            settledHouseholdId,
+            1000,
+        );
     });
 
     it('mints a code for a past-boundary program stated as the year the unsettled member is covered for', async () => {
@@ -229,10 +242,14 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.code).toMatch(new RegExp(`^PRG${statedEarlierProgramId}-H${unsettledHouseholdId}-`));
-        expect(mintSpy).toHaveBeenCalledWith(statedEarlierProgramId, unsettledHouseholdId, 'dev-mock-variant-discount-code-stated-earlier', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ id: statedEarlierProgramId, shopifyVariantId: 'dev-mock-variant-discount-code-stated-earlier' }),
+            unsettledHouseholdId,
+            1000,
+        );
     });
 
-    it('a non-member still gets { code: null } with no reason (unchanged behavior)', async () => {
+    it('a non-member still gets { code: null } with no reason', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: nonMemberPersonId } });
         const res = await post(coveredProgramId, [nonMemberPersonId]);
         expect(res.status).toBe(200);
@@ -262,6 +279,26 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: settledPersonId } });
         const res = await post(coveredProgramId, []);
         expect(res.status).toBe(400);
+        expect(mintSpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses an ended program: no signature and no code, so no checkout opens', async () => {
+        const ended = await prisma.program.create({
+            data: {
+                appliesToYear: boundary.getUTCFullYear() - 1,
+                startAt: new Date('2026-01-01'),
+                name: `Ended Prog ${TAG}`, phase: 'FINISHED', endAt: coveredEndAt,
+                shopifyVariantId: 'dev-mock-variant-discount-code-ended',
+                orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
+                participants: { create: { personId: unsettledPersonId, status: 'PENDING' } },
+            },
+        });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: unsettledPersonId } });
+        const res = await post(ended.id, [unsettledPersonId]);
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toMatch(/program has ended/i);
+        expect(data.signature).toBeUndefined();
         expect(mintSpy).not.toHaveBeenCalled();
     });
 

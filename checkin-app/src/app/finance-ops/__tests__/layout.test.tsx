@@ -71,17 +71,19 @@ describe("Revenue Ops layout role gate", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("admits a FINANCE-only user without the Board-only finance tabs", () => {
+  it("admits a FINANCE-only user with the payment-plan tabs, without the Board-only tools", () => {
     renderLayout("/income", {
       data: { user: { id: 4, isFinance: true } },
       status: "authenticated",
     });
     expect(screen.getByText(CHILD)).toBeInTheDocument();
-    expect(screen.queryByText("Program Payment Plan")).not.toBeInTheDocument();
+    expect(screen.getByText("Program Payment Plan")).toBeInTheDocument();
+    expect(screen.getByText("Membership Payment Plan")).toBeInTheDocument();
+    expect(screen.queryByText("Payment problems")).not.toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("redirects a sysadmin (finance-ops is board-only, issue #1083)", () => {
+  it("redirects a sysadmin (finance-ops is board-only)", () => {
     renderLayout("/finance-ops/payment-plan", {
       data: { user: { id: 3, isSysadmin: true, isBoardMember: false } },
       status: "authenticated",
@@ -102,6 +104,36 @@ describe("Revenue Ops layout role gate", () => {
   it("redirects unauthenticated callers", () => {
     renderLayout("/finance-ops/payment-plan", { data: null, status: "unauthenticated" });
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("Revenue Ops Shopify tab", () => {
+  const board = { data: { user: { id: 1, isBoardMember: true } }, status: "authenticated" };
+
+  it.each(["/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock", "/income/payouts", "/income/reconciliation"])(
+    "selects Shopify and shows its sub-tabs on %s",
+    (pathname) => {
+      renderLayout(pathname, board);
+      expect(screen.getByRole("tab", { name: /Shopify$/, selected: true })).toBeInTheDocument();
+      for (const name of [/Shopify Hold Reconciliation/, /Payment problems/, /Unconfirmed Shopify stock/, /Payouts/, /^\W*Reconciliation$/]) {
+        expect(screen.getByRole("tab", { name })).toBeInTheDocument();
+      }
+      expect(screen.queryByRole("tab", { name: /Item Categories/ })).not.toBeInTheDocument();
+    },
+  );
+
+  it("selects Income and shows its remaining sub-tabs on an income screen", () => {
+    renderLayout("/income/items", board);
+    expect(screen.getByRole("tab", { name: /Income$/, selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Item Categories/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /QB Exclusions/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Payouts/ })).not.toBeInTheDocument();
+  });
+
+  it("hides the sub-tabs off the Shopify pages", () => {
+    renderLayout("/finance-ops/payment-plan", board);
+    expect(screen.getByRole("tab", { name: /Shopify$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Payment problems/ })).not.toBeInTheDocument();
   });
 });
 

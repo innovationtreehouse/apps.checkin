@@ -223,20 +223,6 @@ describeDb("orgRepository.update", () => {
 
 // ── OrgEventsRepository ───────────────────────────────────────────────────────
 
-describeDb("orgEventsRepository.getMaxId", () => {
-  it("returns 0 when no events exist", async () => {
-    const max = await eventsRepo.getMaxId();
-    expect(max).toBe(0);
-  });
-
-  it("returns the maximum id when events exist", async () => {
-    await db.expenseReceivedOrgEvent.create({ data: { id: 10, orgId: ORG, eventType: "test", payload: "{}", receivedAt: new Date() } });
-    await db.expenseReceivedOrgEvent.create({ data: { id: 20, orgId: ORG, eventType: "test", payload: "{}", receivedAt: new Date() } });
-    const max = await eventsRepo.getMaxId();
-    expect(max).toBe(20);
-  });
-});
-
 describeDb("orgEventsRepository.insert and exists", () => {
   it("exists returns false before insert", async () => {
     expect(await eventsRepo.exists(99)).toBe(false);
@@ -259,7 +245,7 @@ describeDb("orgEventsRepository.updateStatus", () => {
 });
 
 describeDb("orgEventsRepository.findPending", () => {
-  it("returns pending and failed events for the org, not processed ones", async () => {
+  it("returns pending events for the org, not processed or failed ones", async () => {
     await eventsRepo.insert({ id: 1, orgId: ORG, eventType: "t", payload: "{}", receivedAt: new Date() });
     await eventsRepo.insert({ id: 2, orgId: ORG, eventType: "t", payload: "{}", receivedAt: new Date() });
     await eventsRepo.insert({ id: 3, orgId: ORG, eventType: "t", payload: "{}", receivedAt: new Date() });
@@ -271,7 +257,7 @@ describeDb("orgEventsRepository.findPending", () => {
     const pending = await eventsRepo.findPending(ORG);
     const ids = pending.map((e) => e.id);
     expect(ids).toContain(1);
-    expect(ids).toContain(3);
+    expect(ids).not.toContain(3);
     expect(ids).not.toContain(2);
     expect(ids).not.toContain(4);
   });

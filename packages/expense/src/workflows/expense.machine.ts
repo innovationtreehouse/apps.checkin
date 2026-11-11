@@ -59,6 +59,7 @@ export const expenseMachine = setup({
           { guard: 'hasCapitalItems', target: 'set_depreciation_cycle' },
           {                           target: 'qb_pending'             },
         ],
+        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 
@@ -67,6 +68,7 @@ export const expenseMachine = setup({
     set_depreciation_cycle: {
       on: {
         DEPRECIATION_SET: { target: 'qb_pending' },
+        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 
@@ -79,6 +81,7 @@ export const expenseMachine = setup({
         QB_ERROR:      { target: 'qb_error'    },
         // Historical backfill: already booked in QuickBooks — skip the post, land terminal.
         QB_SKIPPED:    { target: 'qb_skipped'  },
+        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 
@@ -91,12 +94,14 @@ export const expenseMachine = setup({
       on: {
         HOLDS_RESOLVED: { target: 'qb_pending' },
         QB_ERROR:       { target: 'qb_error'   },
+        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 
     qb_error: {
       on: {
         RESUBMIT: { target: 'qb_pending' },
+        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 

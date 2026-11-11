@@ -2,9 +2,11 @@ import { findMatch, qbKey, type MatchCandidate } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";
-import { assertOrg, getIncomeConfig, isoDay } from "../runtime";
+import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 import { depositsIn, type DayRange } from "./qb-deposits";
+import { readIncomeSettings } from "../services/settingsService";
+import { BANK_ROLE, BENEVITY_MATCH_WINDOW_DAYS, DEPOSIT_SOURCE, isBenevity, roleAccounts, rowKey } from "./sources";
 
 export const RECON_STATUS = {
   WAITING: "WAITING",
@@ -28,8 +30,18 @@ export const RECON_KIND = {
    * each drain retries it and books it once finance closes the gap.
    */
   NEEDS_MAPPING: "NEEDS_MAPPING",
+  /** A hand-loaded payout first seen after switch-on: the app never creates from one, so finance settles it. */
+  HAND_LOADED: "HAND_LOADED",
+  /**
+   * A waiting payout no longer paid in the mirror once its window ran out. A settled row keeps
+   * this kind, so the unpaid payout finance settled does not drift back to the queue.
+   */
+  PAYOUT_NOT_PAID: "PAYOUT_NOT_PAID",
 } as const;
 export type ReconKind = (typeof RECON_KIND)[keyof typeof RECON_KIND];
+
+/** Kinds that clear on their own: the row goes back to waiting once the mirror agrees, if never attempted. */
+const CLEARING_KINDS: (string | null)[] = [RECON_KIND.TXN_SUM_MISMATCH, RECON_KIND.HAND_LOADED, RECON_KIND.PAYOUT_NOT_PAID];
 
 export const RECON_RESOLUTION = { AUTO: "AUTO", MANUAL: "MANUAL", DISMISSED: "DISMISSED" } as const;
 
@@ -53,6 +65,14 @@ export function strayEntryOf(note: string | null): string | null {
   return /^app entry (\S+) (?:may need voiding|is not linked)/.exec(note ?? "")?.[1] ?? null;
 }
 
+/** Every app entry a note's stray-entry warnings name. */
+function strayEntriesOf(note: string | null): string[] {
+  return [...(note ?? "").matchAll(/app entry (\S+) (?:may need voiding|is not linked)/g)].map((m) => m[1]);
+}
+
+/** How a finance action's audit names a stray app entry it answered, under `answeredEntries`. */
+export const answeredEntryRef = (entryId: string) => `Deposit:${entryId}`;
+
 /**
  * The app note a payout carries once it holds `depositId` and adds `next`: a warning about a
  * different stray app entry stays until finance answers it; every other note is replaced.
@@ -66,19 +86,30 @@ export function nextNote(current: string | null, depositId: string | null, next:
 /** The queue note on an attempted payout a deposit fits by amount: its own deposit may sit outside the window. */
 export const ATTEMPTED_MATCH_NOTE = "a deposit fits by amount, but the app may already have booked this payout; matching checks for the app's own deposit first";
 
-/** When income posting switched on for the org, or null while it is off. */
-export async function postingOnAt(orgId: string): Promise<Date | null> {
-  return (await db.incomeOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true } }))?.qbPostingOnAt ?? null;
+/** The queue note on an attempted payout whose net changed: a deposit the app booked would carry the old net. */
+export const ATTEMPTED_NET_NOTE = "the payout's net changed after the app tried to book it, so the app may have booked the old amount; matching checks for the app's own deposit first";
+
+/** When each source's posting switched on for the org; null while that source is off. */
+export type SwitchOn = { shopify: Date | null; benevity: Date | null };
+
+export async function postingOnAt(orgId: string): Promise<SwitchOn> {
+  const s = await db.incomeOrgSettings.findUnique({ where: { orgId }, select: { qbPostingOnAt: true, benevityQbPostingOnAt: true } });
+  return { shopify: s?.qbPostingOnAt ?? null, benevity: s?.benevityQbPostingOnAt ?? null };
 }
+
+/** One source's switch-on stamp. */
+export const stampOf = (on: SwitchOn, source: string): Date | null => (source === DEPOSIT_SOURCE.BENEVITY ? on.benevity : on.shopify);
 export const DEFAULT_DATE_GRACE_DAYS = 2;
 
-/** A paid mirror payout, normalised for matching. */
+/** A deposit income expects, normalised for matching: a paid mirror payout, or another lane's expected deposit. */
 export interface PayoutFact {
+  depositSource: string;
   payoutGid: string;
   payoutDate: string;
   netCents: number;
   sumMismatch: boolean;
-  source: MirrorSource;
+  /** Where the mirror row came from; null for another lane's expected deposit. */
+  source: MirrorSource | null;
 }
 
 export type ReconcileResult =
@@ -90,8 +121,9 @@ export function addDays(day: string, n: number): string {
   return isoDay(new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000));
 }
 
-export function windowDays(): number {
-  return getIncomeConfig().windowDays ?? DEFAULT_WINDOW_DAYS;
+/** Days after a deposit's date within which it must be booked; a Benevity deposit takes the org's setting, `benevityDays`. */
+export function windowDays(source: string = DEPOSIT_SOURCE.SHOPIFY, benevityDays: number = BENEVITY_MATCH_WINDOW_DAYS): number {
+  return source === DEPOSIT_SOURCE.BENEVITY ? benevityDays : (getIncomeConfig().windowDays ?? DEFAULT_WINDOW_DAYS);
 }
 
 /** The idempotency key of the deposit income creates for a payout. */
@@ -99,10 +131,10 @@ export function incomeKey(payoutGid: string): string {
   return qbKey("income", payoutGid);
 }
 
-/** The days a payout's deposit may be dated: [payoutDate − grace, payoutDate + window]. */
-export function matchWindow(payoutDate: string): { from: string; to: string } {
-  const grace = getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS;
-  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays()) };
+/** The days a deposit may be dated: [date − grace, date + window] for a payout, ± the window for Benevity. */
+export function matchWindow(payoutDate: string, source: string = DEPOSIT_SOURCE.SHOPIFY, benevityDays: number = BENEVITY_MATCH_WINDOW_DAYS): { from: string; to: string } {
+  const grace = source === DEPOSIT_SOURCE.BENEVITY ? benevityDays : (getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS);
+  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays(source, benevityDays)) };
 }
 
 export function depositMatchCandidate(d: QbDeposit): MatchCandidate {
@@ -123,23 +155,6 @@ export async function lockReconciliation(tx: TxClient, orgId: string, wait: bool
   return locked;
 }
 
-/** Deposits another lane holds; empty while that port is unbound. */
-// ponytail: read-then-claim across two databases, so two lanes running at the same instant can
-// still race; a shared claim table in one database closes it if the lanes ever run concurrently.
-export async function otherLaneClaims(orgId: string): Promise<string[]> {
-  return (await getIncomeConfig().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
-}
-
-/** Deposits income holds, for another lane to keep out of its own matching. */
-export async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
-  await assertOrg(orgId);
-  const rows = await db.payoutReconciliation.findMany({
-    where: { orgId, depositId: { not: null } },
-    select: { depositId: true },
-  });
-  return rows.flatMap((r) => (r.depositId ? [r.depositId] : []));
-}
-
 export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
   const { reconcileFrom } = getIncomeConfig();
   const facts: PayoutFact[] = [];
@@ -147,6 +162,7 @@ export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]
     const txns = await mirror.transactions(p.payoutGid);
     const txnNet = txns.reduce((s, t) => s + t.netCents, 0);
     facts.push({
+      depositSource: DEPOSIT_SOURCE.SHOPIFY,
       payoutGid: p.payoutGid,
       payoutDate: isoDay(p.issuedAt),
       netCents: p.netCents,
@@ -157,15 +173,28 @@ export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]
   return facts.sort((a, b) => a.payoutDate.localeCompare(b.payoutDate) || a.payoutGid.localeCompare(b.payoutGid));
 }
 
-/** Why a settled row must reopen, or null when its payout and deposit still agree with it. */
+/** Why the mirror no longer shows a payout as paid, or null while it does. */
+function unpaidCause(payout: MirrorPayout | null): string | null {
+  if (!payout) return "payout_missing";
+  return payout.status === "paid" ? null : `payout_status:${payout.status}`;
+}
+
+/**
+ * Why a settled row must reopen, or null when its payout and deposit still agree with it. A
+ * Benevity row's expected deposit is frozen once posted, so only its deposit is checked.
+ */
 function driftCause(
   row: PayoutReconciliation,
   payout: MirrorPayout | null,
   deposits: Map<string, QbDeposit>,
 ): string | null {
-  if (!payout) return "payout_missing";
-  if (payout.status !== "paid") return `payout_status:${payout.status}`;
-  if (payout.netCents !== row.payoutNetCents) return "payout_amount";
+  if (!isBenevity(row)) {
+    if (row.kind !== RECON_KIND.PAYOUT_NOT_PAID) {
+      const unpaid = unpaidCause(payout);
+      if (unpaid) return unpaid;
+    }
+    if (payout && payout.netCents !== row.payoutNetCents) return "payout_amount";
+  }
   if (!row.depositId) return null;
   const d = deposits.get(row.depositId);
   if (!d) return "deposit_missing";
@@ -178,34 +207,62 @@ function driftCause(
  * Idempotent; a no-op until a deposit source is bound. Reads the ledger only.
  */
 export async function runReconcile(orgId: string, now: Date = new Date()): Promise<ReconcileResult> {
-  const { deposits: depositSource, mirror, bankAccountId: bank } = getIncomeConfig();
-  // Without the bank account a deposit in any account could match, so nothing runs.
-  if (!depositSource || !mirror || !bank) return { status: "unbound" };
+  const { deposits: depositSource, mirror } = getIncomeConfig();
+  if (!depositSource) return { status: "unbound" };
+  // Without its bank account a deposit in any account could match, so a source without one is not read.
+  const accounts = await roleAccounts();
+  const banks = { shopify: mirror ? accounts[BANK_ROLE.shopify] : undefined, benevity: accounts[BANK_ROLE.benevity] };
+  if (!banks.shopify && !banks.benevity) return { status: "unbound" };
+  const bankOf = (source: string) => (source === DEPOSIT_SOURCE.BENEVITY ? banks.benevity : banks.shopify);
+  const sources = (Object.keys(banks) as (keyof typeof banks)[]).filter((s) => banks[s]);
 
-  const window = windowDays();
+  const benevityDays = (await readIncomeSettings(db, orgId)).benevityMatchWindowDays;
   const today = isoDay(now);
-  const facts = await collectPayouts(mirror);
+  // Another lane's expected deposits are facts as income holds them; settled ones are past matching.
+  const expected = await db.payoutReconciliation.findMany({
+    where: { orgId, source: DEPOSIT_SOURCE.BENEVITY, status: { in: [RECON_STATUS.WAITING, RECON_STATUS.OPEN] } },
+  });
+  const facts = [
+    ...(mirror && banks.shopify ? await collectPayouts(mirror) : []),
+    ...(banks.benevity
+      ? expected.map((r): PayoutFact => ({ depositSource: r.source, payoutGid: r.payoutGid, payoutDate: r.payoutDate, netCents: r.payoutNetCents, sumMismatch: false, source: null }))
+      : []),
+  ];
 
   // Settled rows are drift-checked against the payout's current state, whether or not it is
   // still paid and inside reconcileFrom. Rows settled after this read are checked next run.
   const settled = await db.payoutReconciliation.findMany({
-    where: { orgId, status: { in: SETTLED_STATUSES } },
-    select: { payoutGid: true, depositTxnDate: true },
+    where: { orgId, status: { in: SETTLED_STATUSES }, source: { in: sources } },
+    select: { source: true, payoutGid: true, depositTxnDate: true },
   });
   const settledPayouts = new Map<string, MirrorPayout | null>();
-  for (const { payoutGid } of settled) settledPayouts.set(payoutGid, await mirror.payout(payoutGid));
+  for (const { source, payoutGid } of settled) {
+    settledPayouts.set(rowKey({ source, payoutGid }), source === DEPOSIT_SOURCE.SHOPIFY && mirror ? await mirror.payout(payoutGid) : null);
+  }
+
+  // A waiting payout outside the paid read has left paid, or fell behind reconcileFrom.
+  const factKeys = new Set(facts.map((f) => rowKey({ source: f.depositSource, payoutGid: f.payoutGid })));
+  const waiting = mirror && banks.shopify
+    ? await db.payoutReconciliation.findMany({
+        where: { orgId, status: RECON_STATUS.WAITING, source: DEPOSIT_SOURCE.SHOPIFY },
+        select: { source: true, payoutGid: true },
+      })
+    : [];
+  const waitingPayouts = new Map<string, MirrorPayout | null>();
+  for (const w of waiting) {
+    if (mirror && !factKeys.has(rowKey(w))) waitingPayouts.set(rowKey(w), await mirror.payout(w.payoutGid));
+  }
 
   // Reads only each payout's match window and each settled deposit's booked day, never history.
   const ranges: DayRange[] = [
     ...facts.map((f): DayRange => {
-      const w = matchWindow(f.payoutDate);
+      const w = matchWindow(f.payoutDate, f.depositSource, benevityDays);
       return [w.from, w.to];
     }),
     ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
   ];
   const deposits = await depositsIn(depositSource, ranges);
-  const foreign = await otherLaneClaims(orgId);
-  const onAt = await postingOnAt(orgId);
+  const switchedOn = await postingOnAt(orgId);
   const depositsById = new Map(deposits.map((d) => [d.id, d]));
 
   return db.$transaction(
@@ -214,15 +271,15 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
       const result = { status: "ran" as const, matched: 0, opened: 0, drifted: 0 };
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
-      const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
-      const claimed = new Set([...foreign, ...rows.flatMap((r) => (r.depositId ? [r.depositId] : []))]);
+      const byKey = new Map(rows.map((r) => [rowKey(r), r]));
+      const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
       const exclusions = await tx.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } });
       const excluded = new Set(exclusions.map((e) => e.qbTxnId));
 
       // Settled rows whose payout or deposit moved reopen for finance; never re-matched silently.
       for (const row of rows) {
-        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(row.payoutGid)) continue;
-        const payout = settledPayouts.get(row.payoutGid) ?? null;
+        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(rowKey(row))) continue;
+        const payout = settledPayouts.get(rowKey(row)) ?? null;
         const cause = driftCause(row, payout, depositsById);
         if (!cause) continue;
 
@@ -240,16 +297,31 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             payoutNetCents: payout?.netCents ?? row.payoutNetCents,
           },
         });
-        byGid.set(row.payoutGid, updated);
+        byKey.set(rowKey(row), updated);
         await audit(tx, orgId, "reconciliation.drift", row, updated, { userId: null, reason: cause });
         result.drifted++;
+      }
+
+      // A waiting payout that left paid has its window to come back; after that, finance settles it.
+      for (const row of rows) {
+        if (row.status !== RECON_STATUS.WAITING || !waitingPayouts.has(rowKey(row)) || isClaimed(row, now.getTime())) continue;
+        const cause = unpaidCause(waitingPayouts.get(rowKey(row)) ?? null);
+        if (!cause || today <= addDays(row.payoutDate, windowDays(row.source, benevityDays))) continue;
+        const saved = await tx.payoutReconciliation.update({
+          where: { id: row.id },
+          data: { status: RECON_STATUS.OPEN, kind: RECON_KIND.PAYOUT_NOT_PAID },
+        });
+        byKey.set(rowKey(row), saved);
+        await audit(tx, orgId, "reconciliation.opened", row, saved, { userId: null, reason: cause });
+        result.opened++;
       }
 
       // The lookup is the shared findMatch with the bank account findOrCreate uses, so the two
       // never disagree. A hit on the payout's own key is a deposit income created.
       const candidates = deposits.map(depositMatchCandidate);
       for (const fact of facts) {
-        const row = byGid.get(fact.payoutGid);
+        const key = rowKey({ source: fact.depositSource, payoutGid: fact.payoutGid });
+        const row = byKey.get(key);
         const open = row?.status === RECON_STATUS.OPEN && row.kind !== RECON_KIND.DRIFT;
         if (row && row.status !== RECON_STATUS.WAITING && !open) continue;
         // A post holds this payout; its settle decides it.
@@ -260,16 +332,17 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           : findMatch(candidates, {
               date: fact.payoutDate,
               amountCents: fact.netCents,
-              ref: bank,
-              key: incomeKey(fact.payoutGid),
-              window: matchWindow(fact.payoutDate),
+              ref: bankOf(fact.depositSource),
+              key,
+              window: matchWindow(fact.payoutDate, fact.depositSource, benevityDays),
               claimedIds: claimed,
               excludedIds: excluded,
             });
 
         // A payout first seen after switch-on waits for the drain to create it, however late it arrived.
+        const onAt = stampOf(switchedOn, fact.depositSource);
         const seenAfterOn = onAt !== null && (row ? row.createdAt > onAt : now > onAt);
-        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, window);
+        const windowElapsed = !seenAfterOn && today > addDays(fact.payoutDate, windowDays(fact.depositSource, benevityDays));
 
         // An attempted payout's own deposit may sit outside the window, so it never matches by amount
         // here: the drain's post or finance's match looks up its own deposit first.
@@ -329,12 +402,43 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
         }
         // Inside the window an unfound payout waits in the outbox for drainIncomeOutbox. An
         // ambiguous one never waits there: it goes straight to finance and is never created.
-        if (!fact.sumMismatch && !windowElapsed && match?.kind !== "ambiguous") {
-          if (row) continue;
-          const saved = await tx.payoutReconciliation.create({
-            data: { ...base(orgId, fact, now), status: RECON_STATUS.WAITING },
+        // A hand-loaded payout seen after switch-on can never be created, so it has nothing to wait for.
+        const handLoaded = seenAfterOn && fact.source === "hand_loaded";
+        if (!fact.sumMismatch && !windowElapsed && !handLoaded && match?.kind !== "ambiguous") {
+          if (!row) {
+            const saved = await tx.payoutReconciliation.create({
+              data: { ...base(orgId, fact, now), status: RECON_STATUS.WAITING },
+            });
+            await audit(tx, orgId, "reconciliation.waiting", null, saved);
+            continue;
+          }
+          if (row.status === RECON_STATUS.WAITING) {
+            if (row.payoutNetCents === fact.netCents) continue;
+            if (row.qbCreateAttemptedAt) {
+              const saved = await tx.payoutReconciliation.update({
+                where: { id: row.id },
+                data: {
+                  status: RECON_STATUS.OPEN,
+                  kind: RECON_KIND.AMBIGUOUS_DEPOSIT,
+                  payoutNetCents: fact.netCents,
+                  qbNote: nextNote(row.qbNote, null, ATTEMPTED_NET_NOTE),
+                },
+              });
+              await audit(tx, orgId, "reconciliation.opened", row, saved, { userId: null, reason: ATTEMPTED_NET_NOTE });
+              result.opened++;
+              continue;
+            }
+            const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { payoutNetCents: fact.netCents } });
+            await audit(tx, orgId, "reconciliation.waiting", row, saved, { userId: null, reason: "payout_amount" });
+            continue;
+          }
+          // Never attempted, so no deposit of the app's can have landed.
+          if (row.qbCreateAttemptedAt || !CLEARING_KINDS.includes(row.kind)) continue;
+          const saved = await tx.payoutReconciliation.update({
+            where: { id: row.id },
+            data: { status: RECON_STATUS.WAITING, kind: null, payoutNetCents: fact.netCents },
           });
-          await audit(tx, orgId, "reconciliation.waiting", null, saved);
+          await audit(tx, orgId, "reconciliation.waiting", row, saved, { userId: null, reason: `${row.kind} cleared` });
           continue;
         }
 
@@ -342,7 +446,9 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           ? RECON_KIND.TXN_SUM_MISMATCH
           : match?.kind === "ambiguous"
             ? RECON_KIND.AMBIGUOUS_DEPOSIT
-            : RECON_KIND.NO_DEPOSIT;
+            : handLoaded
+              ? RECON_KIND.HAND_LOADED
+              : RECON_KIND.NO_DEPOSIT;
         if (open && row.kind === kind && row.payoutNetCents === fact.netCents) continue;
 
         const saved = row
@@ -366,6 +472,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 function base(orgId: string, fact: PayoutFact, now: Date) {
   return {
     orgId,
+    source: fact.depositSource,
     payoutGid: fact.payoutGid,
     payoutDate: fact.payoutDate,
     payoutNetCents: fact.netCents,
@@ -383,6 +490,9 @@ export function audit(
     userId: null,
   },
 ): Promise<void> {
+  // A finance action that drops a stray-entry warning records the entry, so the orphan sweep never raises it again.
+  const kept = strayEntriesOf(after.qbNote);
+  const answered = actor.userId === null ? [] : strayEntriesOf(before?.qbNote ?? null).filter((e) => !kept.includes(e));
   return recordAudit(tx, {
     orgId,
     actorUserId: actor.userId,
@@ -391,7 +501,7 @@ export function audit(
     entityType: "payout_reconciliation",
     entityId: after.id,
     before: before ?? undefined,
-    after,
+    after: answered.length ? { ...after, answeredEntries: answered.map(answeredEntryRef) } : after,
     reason: actor.reason,
     correlationId: actor.correlationId,
   });

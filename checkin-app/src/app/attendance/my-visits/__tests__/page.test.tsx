@@ -32,7 +32,8 @@ describe("attendance/my-visits page", () => {
     renderWithProviders(<MyVisits />);
 
     expect(await screen.findByText("Open Gym")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Edit visit" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Edit visit" })).toHaveLength(1);
+    expect(screen.getByText("Still checked in")).toBeInTheDocument();
     expect(router.push).not.toHaveBeenCalled();
   });
 
@@ -106,5 +107,14 @@ describe("attendance/my-visits page", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Delete visit" })[0]);
 
     expect(fetchMock).not.toHaveBeenCalledWith("/api/attendance/manual/1", expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("shows the failure, not an empty list, when the load fails", async () => {
+    setSession({ id: 1 });
+    mockFetchJson({});
+    renderWithProviders(<MyVisits />);
+
+    expect(await screen.findByText("Couldn't load your visits")).toBeInTheDocument();
+    expect(screen.queryByText("No visits in the last two weeks.")).not.toBeInTheDocument();
   });
 });

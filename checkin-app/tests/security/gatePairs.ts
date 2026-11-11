@@ -1,5 +1,5 @@
 /**
- * Client gate ↔ server Authorize token pairs (threat model D35). Each library's
+ * Client gate ↔ server Authorize token pairs. Each library's
  * nav entries, pages and count providers decide visibility with a client
  * predicate; the routes behind them admit with a token resolved in
  * security/access-resolvers.ts. gateEquality.test.ts asserts each pair admits
@@ -9,7 +9,7 @@ import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { PAGES } from '@/components/pageRegistry';
 import type { NavSection } from '@/lib/nav/types';
 import { linkGate } from '@/lib/nav/gates';
-import { EXPENSE_OPS } from '@/lib/nav/sections/expenseOps';
+import { FINANCE } from '@/lib/nav/sections/finance';
 import { INVENTORY } from '@/lib/nav/sections/inventory';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
 import { canSeeCatalog, canSubmitReceipts } from '@/lib/volunteer';
@@ -52,7 +52,7 @@ const PERSONA_CLAIMS = {
     staffAccount: staff,
     staffDomainUnverified: { ...staff, emailVerified: false },
     staffHdOffDomainEmail: { ...staff, email: 'persona@example.test' },
-    // A program treasurer has no session claim; the server reads it from the DB.
+    // A bucket treasurer has no session claim; the server reads it from the bucket-approver lookup.
     treasurer: { ageBand: 'adult' },
     sysadmin: { isSysadmin: true },
     board: { isBoardMember: true },
@@ -73,8 +73,10 @@ export const GATE_PERSONAS: Array<[PersonaName, AuthenticatedUser]> = Object.ent
     ([name, claims], i) => [name as PersonaName, { ...base, ...claims, id: i + 1 }],
 );
 
-/** Persona ids the server's treasurer lookup finds a treasurer row for. */
-export const TREASURER_IDS = new Set(GATE_PERSONAS.filter(([n]) => n === 'treasurer').map(([, u]) => u.id));
+/** Persona ids the stubbed bucket-approver lookup finds a bucket for: the treasurer and every program leader. */
+export const APPROVER_IDS = new Set(
+    GATE_PERSONAS.filter(([n, u]) => n === 'treasurer' || (u.programsLed?.length ?? 0) > 0).map(([, u]) => u.id),
+);
 
 /** The nav payload as todo-counts builds it for this viewer, every library released. */
 export function countsFor(user: AuthenticatedUser): TodoCounts {
@@ -85,8 +87,8 @@ export function countsFor(user: AuthenticatedUser): TodoCounts {
         buildingReachable: true,
         activePrograms: 0,
         releasedLibraries: [...LIBRARY_KEYS],
-        // The expense provider's approver signal, with the treasurer lookup stubbed like the server's.
-        libraries: { expense: { approver: user.programsLed?.length || TREASURER_IDS.has(user.id) ? 1 : 0 } },
+        // The expense provider's approver signal, from the same stubbed directory as the server's.
+        libraries: { expense: { approver: APPROVER_IDS.has(user.id) ? 1 : 0 } },
         lead: user.programsLed?.length
             ? { programs: user.programsLed.map((id) => ({ id, name: `p${id}`, totalEnrolled: 0, pending: [], upcoming: [] })) }
             : undefined,
@@ -130,33 +132,56 @@ export type GatePair = {
     differsFor?: readonly PersonaName[];
 };
 
-/** Count providers pair as `counts:<library>`; gateEquality fails on a provider with no pair. */
+/**
+ * Count providers pair as `counts:<library>`; gateEquality fails on a provider with no pair.
+ * A red-pill provider pairs with the route that acts on what it counts.
+ */
 export const GATE_PAIRS: GatePair[] = [
     { name: 'volunteer canSeeCatalog', client: canSeeCatalog, token: 'catalog-viewer' },
     { name: 'page /catalog', client: page('/catalog'), token: 'catalog-viewer' },
     { name: 'page /inventory/org-items', client: page('/inventory/org-items'), token: 'catalog-viewer' },
+    { name: 'tab /inventory/receive-queue', client: tab(INVENTORY, '/inventory/receive-queue'), token: routeToken('GET /api/inventory/receive-queue') },
+    { name: 'page /inventory/receive-queue', client: page('/inventory/receive-queue'), token: routeToken('GET /api/inventory/receive-queue') },
+    { name: 'sub-tab /inventory/inventory-log', client: tab(INVENTORY, '/inventory/inventory-log'), token: routeToken('GET /api/inventory/inventory-log') },
+    { name: 'page /inventory/inventory-log', client: page('/inventory/inventory-log'), token: routeToken('GET /api/inventory/inventory-log') },
+    { name: 'sub-tab /inventory/inventory-log applies route', client: tab(INVENTORY, '/inventory/inventory-log'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
+    { name: 'page /inventory/inventory-log applies route', client: page('/inventory/inventory-log'), token: routeToken('GET /api/inventory/received-inventory-deltas') },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
+    { name: 'counts:catalog', client: counts('catalog'), token: routeToken('POST /api/catalog/provisional-items/[id]/approve') },
+    { name: 'counts:local-inventory', client: counts('local-inventory'), token: routeToken('POST /api/inventory/receive-queue/[id]/fulfill') },
     { name: 'tab /inventory/receiving', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
     { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
-    { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
-    { name: 'Expense Ops section', client: (u) => EXPENSE_OPS.visible(u, null), token: 'finance-or-board' },
-    { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
+    { name: 'tab /inventory/receiving counts route', client: tab(INVENTORY, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
+    { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('POST /api/workflow-mapping/receipts/[id]/apply') },
+    { name: 'Finance section', client: (u) => FINANCE.visible(u, null), token: 'finance-or-board' },
+    { name: 'page /settings/finance', client: page('/settings/finance'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
-    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/payouts') },
-    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/payouts') },
-    { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
+    { name: 'tab /income', client: tab(REVENUE_OPS, '/income'), token: routeToken('GET /api/income/items') },
+    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/items') },
+    { name: 'sub-tab /income/payouts', client: tab(REVENUE_OPS, '/income/payouts'), token: routeToken('GET /api/income/payouts') },
+    { name: 'sub-tab /income/reconciliation', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation') },
+    { name: 'sub-tab /income/reconciliation count route', client: tab(REVENUE_OPS, '/income/reconciliation'), token: routeToken('GET /api/income/reconciliation/count') },
+    { name: 'counts:income', client: counts('income'), token: routeToken('POST /api/income/reconciliation/[id]/resolve') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
     {
         name: 'page /programs-i-lead/expense-approvals',
         client: page('/programs-i-lead/expense-approvals'),
         token: 'expense-approver',
-        // FINANCE and BOARD approve from Expense Ops, not Programs I Lead.
+        // FINANCE and BOARD approve from Finance, not Programs I Lead.
         differsFor: ['board', 'finance'],
     },
     { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },
     { name: 'page /receipts', client: page('/receipts'), token: 'receipt-submitter' },
-    { name: 'page /receipts/review', client: page('/receipts/review'), token: 'finance-or-board' },
+    { name: 'page /finance/review', client: page('/finance/review'), token: 'finance-or-board' },
+    {
+        name: 'counts:receipt',
+        client: counts('receipt'),
+        token: 'receipt-submitter',
+        // Also reports To confirm to any adult who may be named as reimbursee, whatever their membership
+        // or role; the confirmation routes admit any signed-in person and the library decides.
+        differsFor: ['adult', 'leadInactiveAdult', 'programVolunteerInactiveAdult', 'treasurer'],
+    },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
-    { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: 'finance-or-board' },
+    { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: routeToken('PATCH /api/donations/transactions/[id]/owner') },
 ];

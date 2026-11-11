@@ -1,5 +1,5 @@
 import { visibleLinks } from "@/lib/nav/gates";
-import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
+import { FINANCE } from "@/lib/nav/sections/finance";
 import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
@@ -25,61 +25,73 @@ const board: SessionUser = { id: 2, isBoardMember: true };
 const lead: SessionUser = { id: 3, programsLed: [9] };
 const member: SessionUser = { id: 4 };
 
+const TABS = ["Finance review", "Expenses", "Flow status", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Donated Equipment", "Budgets", "Books map", "Incoming receipt queue", "Receipt settings", "Mail aliases"];
+const BOARD_TABS = TABS.filter((t) => t !== "Incoming receipt queue");
+const EXPENSE_SCREENS = ["Expenses", "Account Mapping", "QuickBooks Accounts", "Part Buckets", "Capital Seed", "Donated Equipment", "Budgets", "Books map"];
+
 const names = (tabs: { name: string }[]) => tabs.map((t) => t.name);
 
-describe("Expense Ops tabs", () => {
-  it("shows Expenses then Settings to FINANCE and Board", () => {
-    expect(names(visibleLinks(EXPENSE_OPS, finance, released))).toEqual(["Expenses", "Settings"]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, released))).toEqual(["Expenses", "Settings"]);
-    expect(visibleLinks(EXPENSE_OPS, finance, released).map((t) => t.href)).toEqual(["/expense", "/expense/settings"]);
+describe("Finance section", () => {
+  it("shows the queue first, then the expense list, flow status, setup screens, budgets, mail, receipt settings and mail aliases", () => {
+    expect(names(visibleLinks(FINANCE, finance, released))).toEqual(TABS);
+    expect(names(visibleLinks(FINANCE, board, released))).toEqual(BOARD_TABS);
+    expect(visibleLinks(FINANCE, finance, released)[0].href).toBe("/finance/review");
   });
 
-  it("hides them from a program lead and a plain member", () => {
-    expect(visibleLinks(EXPENSE_OPS, lead, released)).toEqual([]);
-    expect(visibleLinks(EXPENSE_OPS, member, released)).toEqual([]);
+  it("hides it from a program lead and a plain member", () => {
+    expect(visibleLinks(FINANCE, lead, released)).toEqual([]);
+    expect(visibleLinks(FINANCE, member, released)).toEqual([]);
   });
 
-  it("hides them from FINANCE until expense is released, and keeps them for Board", () => {
-    expect(visibleLinks(EXPENSE_OPS, finance, unreleased)).toEqual([]);
-    expect(names(visibleLinks(EXPENSE_OPS, board, unreleased))).toEqual(["Expenses", "Settings"]);
+  it("hides the expense screens from FINANCE until expense is released, and keeps them for Board", () => {
+    expect(names(visibleLinks(FINANCE, finance, unreleased))).toEqual(TABS.filter((t) => !EXPENSE_SCREENS.includes(t)));
+    expect(names(visibleLinks(FINANCE, board, unreleased))).toEqual(BOARD_TABS);
   });
 
-  it("badges Expenses with holds plus open flags", () => {
-    const [expenses] = EXPENSE_OPS.links;
-    expect(expenses.badge?.(counts([...LIBRARY_KEYS], { expense: { holds: 2, openFlags: 1 } }))).toEqual({
-      count: 3,
-      color: "red",
-      label: "3 expense holds and flags",
-    });
-    expect(expenses.badge?.(released)).toBeNull();
+  it("carries one green pill, on Finance review, summing the receipt and expense queue counts", () => {
+    const c = counts([...LIBRARY_KEYS], { expense: { financeQueue: 3, "actionable:capital_review": 2 }, receipt: { awaitingFinance: 2 } });
+    const badges = Object.fromEntries(FINANCE.links.map((t) => [t.name, t.badge?.(c) ?? null]));
+    expect(badges["Finance review"]).toEqual({ count: 5, color: "treehouseGreen", label: "5 items wait on you in Finance review" });
+    expect(Object.values(badges).filter(Boolean)).toHaveLength(1);
+    expect(FINANCE.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
   });
 });
 
 describe("Programs I Lead library tabs", () => {
-  it("shows to a program lead and not to FINANCE or a plain member", () => {
-    expect(names(visibleLinks(PROGRAMS_I_LEAD, lead, released))).toEqual(["Expense approvals", "In-kind gifts"]);
+  const approver = counts([...LIBRARY_KEYS], { expense: { approver: 1 } });
+
+  it("shows to a bucket approver and not to a program lead who approves none, FINANCE or a plain member", () => {
+    expect(names(visibleLinks(PROGRAMS_I_LEAD, member, approver))).toEqual(["Expense approvals", "In-kind gifts"]);
+    expect(visibleLinks(PROGRAMS_I_LEAD, lead, released)).toEqual([]);
     expect(visibleLinks(PROGRAMS_I_LEAD, finance, released)).toEqual([]);
     expect(visibleLinks(PROGRAMS_I_LEAD, member, released)).toEqual([]);
   });
 
-  it("hides Expense approvals from a program lead until expense is released", () => {
-    expect(names(visibleLinks(PROGRAMS_I_LEAD, lead, unreleased))).toEqual(["In-kind gifts"]);
+  it("hides Expense approvals from a bucket approver until expense is released", () => {
+    const approverUnreleased = counts(LIBRARY_KEYS.filter((k) => k !== "expense"), { expense: { approver: 1 } });
+    expect(names(visibleLinks(PROGRAMS_I_LEAD, member, approverUnreleased))).toEqual(["In-kind gifts"]);
   });
 
-  it("badges with lines awaiting the viewer's sign-off", () => {
+  it("badges with the sum of the views' actionable counts", () => {
     const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
-    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { awaitingMySignoff: 2 } }))).toEqual({
-      count: 2,
+    const expense = { approver: 1, "actionable:owner_approval": 2, "actionable:qb_pending": 1 };
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense }))).toEqual({
+      count: 3,
       color: "treehouseGreen",
-      label: "2 expense lines awaiting your sign-off",
+      label: "3 expenses you can act on",
     });
+  });
+
+  it("shows no badge when the viewer can act on nothing, whatever the views hold", () => {
+    const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { approver: 1, "actionable:owner_approval": 0 } }))).toBeNull();
   });
 });
 
 describe("expense count provider", () => {
   const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "expense");
 
-  it("is registered for every signed-in person, so a treasurer gets the approver count", () => {
+  it("is registered for every signed-in person, so a bucket approver gets the approver count", () => {
     expect(provider).toBeDefined();
     expect([finance, board, lead, member].map((u) => provider?.visible(u))).toEqual([true, true, true, true]);
   });

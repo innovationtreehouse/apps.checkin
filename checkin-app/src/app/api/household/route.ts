@@ -9,14 +9,16 @@ import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
 import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
+import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { membershipValidThrough } from "@/lib/orgMembership";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
+import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
+import { personActor } from "@/lib/auditActor";
 
 export const GET = withAuth(
     {},
@@ -30,7 +32,7 @@ export const GET = withAuth(
                 include: {
                     household: {
                         include: {
-                            householdMembers: { where: LIVE_PERSON, select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
+                            householdMembers: { select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
                             orgMembership: true,
                         }
                     }
@@ -126,6 +128,7 @@ export const PATCH = withAuth(
             const householdId = hh.householdId;
 
             const { member, warning } = await prisma.$transaction(async (tx) => {
+                if (memberEmail) await removeAliasesForSignInEmail(tx, memberEmail, personActor(userId), "household_add_member");
                 // Always create a fresh member — never reparent an existing account by
                 // email. Real account linking happens at Google sign-in via
                 // allowDangerousEmailAccountLinking (see lib/auth-options.ts). Attaching
@@ -135,11 +138,8 @@ export const PATCH = withAuth(
                         id: await mintPersonId(tx),
                         name: memberName,
                         ...(memberEmail && { email: memberEmail.toLowerCase() }),
-                        // #1165: strip DoB + declare adult when the entered date is 26+.
-                        // When no DoB is given, the over-25 checkbox owns the flag.
-                        ...normalizeAdultDob(memberDob || null),
+                        ...normalizeAdultDob(memberDob, memberOver25),
                         ...(memberPhone && { phone: formatPhone(memberPhone) }),
-                        ...(memberDob ? {} : { isDeclaredAdult: !!memberOver25 }),
                         allergies: memberAllergies || null,
                         householdId,
                     },
@@ -171,7 +171,7 @@ export const PATCH = withAuth(
             // error framed around login-time linking — do NOT attach the existing
             // account, and do NOT confirm it exists.
             if (isPrismaError(error, 'P2002')) {
-                return apiError("We couldn't add this member with that email. If they already have an account, they'll be linked automatically when they first sign in with Google using that email.", 400);
+                return apiError(EMAIL_IN_USE_REFUSAL, 400);
             }
             logger.error("Household PATCH Error:", error);
             return apiError("Internal Server Error", 500);

@@ -2,9 +2,9 @@
 // Re-run `prisma generate` after editing /// @sensitivity comments.
 
 export const classifications = {
-    WorkflowSystemData: {
+    WorkflowAppliedOrgEvent: {
         id: 'public',
-        orgEventCursor: 'internal',
+        appliedAt: 'public',
     },
     WorkflowFailedOrgEvent: {
         id: 'public',
@@ -25,6 +25,10 @@ export const classifications = {
         expenseAppliedAt: 'public',
         donationAppliedAt: 'public',
         applyClaimedAt: 'public',
+        applySweepAttempts: 'public',
+        applyFirstFailedAt: 'public',
+        inventoryUnconfirmedAt: 'public',
+        matchingPendingSince: 'internal',
         createdAt: 'public',
         updatedAt: 'public',
     },
@@ -35,6 +39,7 @@ export const classifications = {
         recognitionStatus: 'public',
         assignedGtin13: 'public',
         provisionalItemGtin13: 'public',
+        proposedName: 'public',
         conversionFactor: 'public',
         conversionVersion: 'public',
         updatedAt: 'public',
@@ -55,7 +60,7 @@ export const classifications = {
 } as const;
 
 export const relations = {
-    WorkflowSystemData: {
+    WorkflowAppliedOrgEvent: {
     },
     WorkflowFailedOrgEvent: {
     },
@@ -67,6 +72,11 @@ export const relations = {
     },
     WorkflowAuditLog: {
     },
+} as const;
+
+export const marks = {
+    ReceivedReceipt: ['receiptJson'],
+    WorkflowAuditLog: ['details'],
 } as const;
 
 export type Models = keyof typeof classifications;

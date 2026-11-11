@@ -122,7 +122,7 @@ describe("zohoClient", () => {
         await expect(getRequestStatus("t", "req-1")).resolves.toBe("in_progress");
 
         // Declined and expired requests can never be signed — they must surface as
-        // terminal so the caller creates a fresh request (#876).
+        // terminal so the caller creates a fresh request.
         for (const dead of ["declined", "expired", "recalled"]) {
             mockFetchOnce({ requests: { request_status: dead } });
             await expect(getRequestStatus("t", "req-1")).resolves.toBe("terminal");

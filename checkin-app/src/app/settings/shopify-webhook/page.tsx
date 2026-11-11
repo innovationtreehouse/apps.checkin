@@ -18,8 +18,8 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import type { ShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
 type Receipt = ShopifyWebhookReceipt & { id: number };
@@ -28,6 +28,12 @@ interface Status {
   webhookUrl: string;
   storeDomain: string | null;
   receipts: Receipt[];
+}
+
+// The header value is stored as sent; show it raw when it is not a parseable date.
+function formatTriggeredAt(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 /**
@@ -43,7 +49,7 @@ interface Status {
 export default function ShopifyWebhookSettingsPage() {
   // Same gate as the sibling settings pages: board + sysadmin, redirected client-side
   // before any content renders. The status route re-enforces the same roles.
-  const { ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { ready, loading: authLoading } = useRequireRole(SETTINGS_ADMIN_ROLES);
 
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,8 +79,6 @@ export default function ShopifyWebhookSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="shopify-webhook" />
-
       {loading && !status ? (
         <Center py="xl"><Loader /></Center>
       ) : failed && !status ? (
@@ -150,7 +154,7 @@ export default function ShopifyWebhookSettingsPage() {
                 a &quot;Shopify webhook rejected&quot; warning.
               </Alert>
             ) : (
-              <Table.ScrollContainer minWidth={700}>
+              <Table.ScrollContainer minWidth={900}>
                 <Table striped highlightOnHover verticalSpacing="sm">
                   <Table.Thead>
                     <Table.Tr>
@@ -159,6 +163,7 @@ export default function ShopifyWebhookSettingsPage() {
                       <Table.Th>Test</Table.Th>
                       <Table.Th>Signature</Table.Th>
                       <Table.Th>Order</Table.Th>
+                      <Table.Th>Delivery</Table.Th>
                       <Table.Th>Outcome</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
@@ -172,6 +177,14 @@ export default function ShopifyWebhookSettingsPage() {
                           {r.hmacValid ? <Text c="green" component="span">✓</Text> : <Text c="red" component="span" fw={700}>✗</Text>}
                         </Table.Td>
                         <Table.Td>{r.orderId ?? <Text c="dimmed">—</Text>}</Table.Td>
+                        <Table.Td>
+                          {r.deliveryId ? (
+                            <Group gap={4} wrap="nowrap">
+                              <Code title={r.triggeredAt ? `Triggered at ${formatTriggeredAt(r.triggeredAt)}` : undefined}>{r.deliveryId}</Code>
+                              {r.retry && <Badge color="orange" variant="light">retry</Badge>}
+                            </Group>
+                          ) : <Text c="dimmed">—</Text>}
+                        </Table.Td>
                         <Table.Td>{r.outcome}</Table.Td>
                       </Table.Tr>
                     ))}

@@ -55,8 +55,8 @@ export async function syncOrders(
   const since = await readSinceIso(prisma, storeId, ObjectType.ORDER, cfg.cutoverDate);
   // Datetimes in Shopify search filters MUST be quoted: ':' is the syntax's
   // own separator, so an unquoted ISO value truncates at 'T00' — the payments
-  // API rejects it (first real-store backfill, 2026-07-14); the orders parser
-  // silently tolerates the truncation, which is worse.
+  // API rejects it; the orders parser silently tolerates the truncation, which
+  // is worse.
   const filter = `updated_at:>='${since}' status:any`;
   logger.info("sync orders", { since, source });
   const summary = await ingestStream(prisma, storeId, ObjectType.ORDER, source, fetchOrders(client, filter), syncRunId);

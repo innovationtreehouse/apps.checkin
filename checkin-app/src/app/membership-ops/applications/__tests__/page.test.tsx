@@ -20,6 +20,7 @@ import { ModalsProvider } from "@mantine/modals";
 import { EnvProvider } from "@/components/EnvProvider";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
+import { settleAfter } from "@/test-helpers/settle";
 import AdminMembershipPage from "../page";
 
 // modals.openConfirmModal is a no-op without a provider, so a confirmed action would
@@ -32,7 +33,7 @@ const renderPage = () => renderWithProviders(<ModalsProvider><AdminMembershipPag
 // reconciling, losing the page's already-fetched rows state.
 const rewrapped = () => (
     <MantineProvider>
-        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false, csvImportEnabled: false }}>
+        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false, devMocks: { shopify: false, bgConsent: false } }}>
             <ModalsProvider>
                 <AdminMembershipPage />
             </ModalsProvider>
@@ -91,9 +92,10 @@ const rows = [
         bgConsentAt: "2026-01-02T00:00:00.000Z",
         bgClearedAt: null,
         paidAt: null,
-        attestations: [{ id: 1, result: "APPROVE", isMarkedVolunteerFamily: false }],
+        attestations: [],
         orgMembership: { householdId: 2, isVolunteerFamily: true, household: household("Payment Family", 2) },
     },
+
     {
         id: 3,
         kind: "NEW",
@@ -109,6 +111,23 @@ const rows = [
     },
 ];
 
+// A check review a household asked for, named and holding one approval.
+const reviewRow = {
+    id: 5,
+    kind: "PERSON_BG",
+    status: "PENDING_BG_REVIEW",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    zohoEnvelopeId: null,
+    contractSignedAt: null,
+    bgConsentAt: "2026-01-02T00:00:00.000Z",
+    bgClearedAt: null,
+    paidAt: null,
+    attestations: [{ id: 1, result: "APPROVE", subjectPersonId: 21, isMarkedVolunteerFamily: false }],
+    requestedForHouseholdId: 2,
+    subjectPerson: { id: 21, name: "Robin Payment", householdId: 2 },
+    orgMembership: null,
+};
+
 describe("AdminMembershipPage", () => {
     it("renders in-flight applications and their status counts", async () => {
         mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
@@ -119,6 +138,30 @@ describe("AdminMembershipPage", () => {
         expect(screen.getByText("Blocked Family")).toBeInTheDocument();
         expect(screen.getByText(/1 application\(s\) blocked/)).toBeInTheDocument();
         expect(screen.getByText(/This household already paid/)).toBeInTheDocument();
+    });
+
+    it("names a per-person process for its subject person, with a readable kind", async () => {
+        const perPerson = (id: number, kind: string, name: string) => ({
+            ...rows[0], id, kind, orgMembership: null, subjectPerson: { id: 100 + id, name },
+        });
+        mockFetchJson({
+            "/api/membership-ops/applications": {
+                processes: [
+                    perPerson(11, "PERSON_AGREEMENT", "Adult Child"),
+                    perPerson(12, "PERSON_BG", "Checked Volunteer"),
+                    perPerson(13, "KEY_VOLUNTEER_AGREEMENT", "Key Volunteer"),
+                ],
+            },
+        });
+        renderPage();
+
+        expect(await screen.findByText("Adult Child")).toBeInTheDocument();
+        expect(screen.getByText("Checked Volunteer")).toBeInTheDocument();
+        expect(screen.getByText("Key Volunteer")).toBeInTheDocument();
+        expect(screen.getByText(/Membership agreement · application #11/)).toBeInTheDocument();
+        expect(screen.getByText(/Background check · application #12/)).toBeInTheDocument();
+        expect(screen.getByText(/Key Volunteer agreement · application #13/)).toBeInTheDocument();
+        expect(screen.queryByText(/Household #/)).not.toBeInTheDocument();
     });
 
     it("shows an empty state when there are no in-flight applications", async () => {
@@ -135,7 +178,18 @@ describe("AdminMembershipPage", () => {
         expect(screen.queryByRole("button", { name: /Certify payment plan/ })).not.toBeInTheDocument();
     });
 
-    it("drives the external-action, certify, and override controls", async () => {
+    it("offers no review reset or override to a sysadmin off the board", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.queryByRole("button", { name: "Discard approvals — start the review over" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Override →/ })).not.toBeInTheDocument();
+        expect(screen.getByText("A board member can reset this review.")).toBeInTheDocument();
+    });
+
+    it("drives the external-action, certify, and reset controls", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
@@ -162,36 +216,92 @@ describe("AdminMembershipPage", () => {
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Certified — membership activated." })));
 
         fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
+        const dialog = await screen.findByRole("dialog", { name: "Start this background-check review over?" });
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "reviewed the wrong report" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
 
-        // A force-approve stamps the adult it names, so it stays disabled until one is
-        // named — an unnamed override would clear the check against nobody.
-        expect(screen.getByRole("button", { name: /Override/ })).toBeDisabled();
-        fireEvent.click(screen.getByRole("radio", { name: "Lead One" }));
-        fireEvent.click(screen.getByRole("button", { name: /Override/ }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Overridden to payment." })));
+        // Board ruling B5/B25: the board resets a blocked review but never clears it.
+        expect(screen.queryByRole("button", { name: /Override/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     });
 
-    it("clears a still-open review's approvals, behind a confirmation", async () => {
+    it("shows a household application waiting on its check review", async () => {
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Payment Family");
+        expect(screen.getByText(/waiting on the household's check review/)).toBeInTheDocument();
+    });
+
+    it("clears a still-open check review's approvals, with a reason, as the wrong person", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
         const fetchMock = mockFetchJson({
-            "/api/membership-ops/applications": { processes: rows },
+            "/api/membership-ops/applications": { processes: [...rows, reviewRow] },
             "/api/membership-ops/applications/review-override": { ok: true },
         });
         renderPage();
         await screen.findByText("Payment Family");
 
-        // Only the in-review row with an approval on it offers the reset.
+        // Only the check review with an approval on it offers the reset.
         const reset = screen.getByRole("button", { name: "Discard approvals — start the review over" });
         fireEvent.click(reset);
         expect(await screen.findByText("Start this background-check review over?")).toBeInTheDocument();
-        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Discard approvals" }));
+        const dialog = screen.getByRole("dialog");
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "names the wrong parent" } });
+        fireEvent.click(within(dialog).getByRole("switch", { name: /names the wrong person/ }));
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
 
         await waitFor(() =>
             expect(fetchMock).toHaveBeenCalledWith(
                 "/api/membership-ops/applications/review-override",
-                expect.objectContaining({ body: JSON.stringify({ processId: 2, action: "reset", subjectPersonIds: [] }) }),
+                expect.objectContaining({ body: JSON.stringify({ processId: 5, action: "reset", reason: "names the wrong parent", wrongPerson: true }) }),
             ),
         );
+    });
+
+    it("releases a blocked household whose rejected person has left, with a reason", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fetchMock = mockFetchJson({
+            "/api/membership-ops/applications": { processes: rows },
+            "/api/membership-ops/applications/review-override": { ok: true },
+        });
+        renderPage();
+        await screen.findByText("Blocked Family");
+
+        fireEvent.click(screen.getByRole("button", { name: "Release" }));
+        const dialog = await screen.findByRole("dialog", { name: "Release this household from a departed person's rejection?" });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: " divorced, moved out " } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership-ops/applications/review-override",
+                expect.objectContaining({ body: JSON.stringify({ processId: 3, action: "release", reason: "divorced, moved out" }) }),
+            ),
+        );
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Released — the application moves on." })));
+    });
+
+    it("offers no release while someone in the blocked household is under a rejected check review", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const rejected = { ...reviewRow, id: 6, status: "BLOCKED", requestedForHouseholdId: 3, subjectPerson: { id: 31, name: "Sam Blocked", householdId: 3 } };
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [...rows, rejected] } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.getAllByRole("button", { name: "Reset for re-review" }).length).toBeGreaterThan(0);
+        expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
+    });
+
+    it("disables release for the actor's own household", async () => {
+        setSession({ id: 99, householdId: 3, isBoardMember: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Blocked Family");
+        expect(screen.getByRole("button", { name: "Release" })).toBeDisabled();
     });
 
     it("clicking a legend badge narrows the list to that status; clicking again restores it", async () => {
@@ -288,5 +398,54 @@ describe("AdminMembershipPage", () => {
             expect.objectContaining({ method: "POST", body: JSON.stringify({ processId: 3, reason: "Refunded in Shopify" }) }),
         ));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Refund recorded." })));
+    });
+});
+
+describe("failed load", () => {
+    it("shows an error with a retry, never the empty state", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderPage();
+
+        await settleAfter("/api/membership-ops/applications");
+        expect(screen.queryByText("No in-flight membership applications.")).not.toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load applications")).toBeInTheDocument();
+
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [] } });
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(await screen.findByText("No in-flight membership applications.")).toBeInTheDocument();
+    });
+});
+
+describe("Reset for re-review while the reload is in flight", () => {
+    it("sends no second request on a second click", async () => {
+        setSession({ id: 1, isBoardMember: true });
+        const blocked = { ...archivedRows[0], id: 7, status: "BLOCKED", orgMembership: null, subjectPerson: { id: 9, name: "Pat" }, attestations: [] };
+        let finishReload: (rows: unknown) => void = () => {};
+        let reads = 0;
+        const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const answer = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+            if (init?.method === "POST") return answer({});
+            reads += 1;
+            if (reads === 1) return answer({ processes: [blocked] });
+            return new Promise<Response>((resolve) => { finishReload = (rows) => resolve(answer({ processes: rows })); });
+        });
+        global.fetch = fetchMock as unknown as typeof fetch;
+        renderPage();
+
+        const reset = await screen.findByRole("button", { name: "Reset for re-review" });
+        fireEvent.click(reset);
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "start over" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Sent back for re-review." })));
+        await waitFor(() => expect(reads).toBe(2));
+
+        fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+
+        finishReload([{ ...blocked, status: "PENDING_BG_REVIEW" }]);
+        await waitFor(() => expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument());
     });
 });

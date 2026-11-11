@@ -38,7 +38,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
     }
 
     // Conflict of interest, guarding EVERY action here — mirrors certifyPaymentPlan
-    // and overrideBlocked. Marking your own household's contract signed or its BG
+    // and boardResetReview. Marking your own household's contract signed or its BG
     // consent received advances the application to PENDING_PAYMENT with no Zoho
     // envelope and no consent behind it. No role bypasses this.
     //

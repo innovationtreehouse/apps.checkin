@@ -1,5 +1,5 @@
 /**
- * Route auth drift-guard (Step 7 of docs/security/auth-consistency-analysis.md).
+ * Route auth drift-guard (see docs/security/auth-consistency-analysis.md).
  *
  * Static text scan over EVERY `src/app/api/**​/route.ts`. It does NOT touch a DB
  * or run any route — it reads files from disk and asserts how each route ENTERS
@@ -8,7 +8,7 @@
  * enforces field-stripping + grant-resolvability over REGISTERED routes; this
  * guard enforces that a route can only enter through a sanctioned front door in
  * the first place, so the "new route reaches for getServerSession / forgot to
- * wrap" class can't re-grow (it already re-grew 2→6 once; #580 cut it back).
+ * wrap" class can't grow.
  *
  * Three rules, each with an explicit, comment-justified allowlist as the ONLY
  * escape hatch:
@@ -25,9 +25,8 @@
  *      note on how it gates the edge. These models are all-public-tier, so the
  *      SENSITIVE thing is the existence of the row (who's enrolled / RSVP'd /
  *      present), not any field — per-field stripping can't protect them, and
- *      `_count` leaks the roster size even if tiered (the pre-#575 programs/[id]
- *      leak). Writes are out of scope here (GAP-2), so only GET/HEAD handlers
- *      are scanned.
+ *      `_count` leaks the roster size even if tiered. Writes are out of scope here,
+ *      so only GET/HEAD handlers are scanned.
  *
  *      Rule 3 also follows a GET/HEAD handler's `@/lib/...` imports (named,
  *      default, namespace) one module deep, scanning only the called function
@@ -148,7 +147,7 @@ const EDGE_MODELS = new Set(['ProgramParticipant', 'ProgramVolunteer', 'RSVP', '
  * model — `participants` is ProgramParticipant under Program (edge), while the
  * household member set (`householdMembers`) is Person under Household (not),
  * so we must know the enclosing model — a flat key match can't, and would either
- * miss the Program case (the #575 leak class) or false-flag the Household case. */
+ * miss the Program case or false-flag the Household case. */
 const REL = relations as Record<string, Record<string, { model: string }>>;
 
 /** Prisma client property → model name (Prisma lower-cases the first char, e.g.
@@ -458,7 +457,7 @@ const FIX_1 =
 // Routes whose GET/HEAD handler returns edge-sensitive rows. Each MUST gate the
 // edge; the note says how — admission-gated (authorize/role rejects unauthorized
 // callers), query-shaped (only returns the edge for authorized callers, like
-// programs/[id] post-#575), admin-role-gated, or cron/webhook-gated (non-session
+// programs/[id]), admin-role-gated, or cron/webhook-gated (non-session
 // service auth). Keys are the route dir (no /route.ts). Adding a row here is a
 // reviewed assertion that the edge is protected.
 const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
@@ -479,6 +478,7 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'facility/trends': 'admin-role-gated — sysadmin/board',
     'facility/visits': 'admin-role-gated — sysadmin/board',
     'finance-ops/payment-plans': 'admin-role-gated — registry authorize finance-or-board',
+    'finance-ops/payment-plans/past': 'admin-role-gated — registry authorize finance-or-board',
     'finance-ops/s-read/match-audit': 'admin-role-gated — registry authorize BOARD; Board ops screen, Board may see enrollment match rows',
     'household/visits': "query-shaped — own household only (where householdId = caller's)",
     'kioskdisplay/certifications':
@@ -495,7 +495,6 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'profile/visits': 'query-shaped — self only (where participantId = caller)',
     'programs': 'query-shaped — public catalog exposes _count of participants/volunteers (roster SIZE only, no identities/rows); member-only + draft visibility is gated',
     'programs/[id]': 'query-shaped — participants/volunteers included only for staff/enrolled (#575)',
-    'programs/[id]/treasurers': "admin-role-gated — registry authorize finance-or-board; returns the program's ProgramVolunteer roster (id, name, isTreasurer) to pick treasurers from",
     'programs/mine': 'query-shaped — self + household only (where participantId in memberIds)',
     'safety/emergency-contacts': 'admin-role-gated — sysadmin/board/keyholder',
     'system-status/lifecycle': 'admin-role-gated — withAuth roles [sysadmin, board]; lifecycle-violation scan over enrollments',
@@ -672,11 +671,11 @@ describe('route auth drift-guard — detectors catch violations', () => {
         expect(findEdgeReadsInReads(stripComments(synthetic))).toContain('ProgramVolunteer');
     });
 
-    // The forward-looking #575 case: a NEW route including Program.participants
+    // A NEW route including Program.participants
     // must be caught even though `participants` is a shared key. A flat key match
     // that excluded the ambiguous key would MISS this — the whole reason for the
     // parent-aware walk.
-    it('flags Program.participants include in a GET handler (the #575 leak class)', () => {
+    it('flags Program.participants include in a GET handler (a roster leak)', () => {
         const synthetic = `export const GET = handler('x', async () => prisma.program.findUnique({ include: { participants: { include: { participant: true } } } }));`;
         expect(findEdgeReadsInReads(stripComments(synthetic))).toContain('ProgramParticipant');
     });

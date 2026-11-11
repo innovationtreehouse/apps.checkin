@@ -3,6 +3,8 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { findMissingCheckConstraints, spliceCheckConstraints, type CheckConstraintRow } from "./lib/check-constraints";
+import { findMissingRls, spliceRls, type PolicyRow, type RlsTableRow } from "./lib/row-level-security";
 import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "./lib/partial-indexes";
 
 /**
@@ -25,8 +27,7 @@ import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "
  * always drops its OWN temp DBs there. It refuses checkmein/checkin_dev/
  * checkin_prod as a guard against pointing it at a real environment.
  *
- * What "validate" means (see #792, which did this by hand once and hit both
- * of these the hard way):
+ * What "validate" means:
  *  1. Semantic schema identity: a fresh DB migrated through the FULL current
  *     chain (TRUTH) must dump the same schema (scripts/compare-schema-dumps.sh)
  *     as a fresh DB with only the generated candidate applied.
@@ -35,7 +36,11 @@ import { findMissingPartialIndexes, splicePartialIndexes, type IndexRow } from "
  *     index from, and drops it silently. Detected by diffing TRUTH's
  *     pg_indexes against the candidate's; missing ones are spliced back in
  *     verbatim and the candidate is re-validated from scratch.
- *  3. No drift: `prisma migrate diff --exit-code` from the candidate DB
+ *  3. CHECK constraints and row-level security survive: Prisma's DSL can't
+ *     express them either, so the same diff-splice-revalidate runs over
+ *     TRUTH's pg_constraint (contype 'c'), pg_class RLS flags and
+ *     pg_policies, placing each after its table's CREATE TABLE.
+ *  4. No drift: `prisma migrate diff --exit-code` from the candidate DB
  *     against schema.prisma must be empty.
  */
 
@@ -148,6 +153,56 @@ function queryPartialIndexes(url: string): IndexRow[] {
             const [indexname, indexdef] = line.split("\x1f");
             return { indexname, indexdef };
         });
+}
+
+const NULL_SENTINEL = "\x1e";
+
+/** Runs `sql` and returns its rows split into fields; SQL NULL comes back as `null`. */
+function queryRows(url: string, sql: string): (string | null)[][] {
+    const out = execFileSync("psql", [url, "-X", "-t", "-A", "-0", "-F", "\x1f", "-P", `null=${NULL_SENTINEL}`, "-c", sql], {
+        encoding: "utf8",
+    });
+    return out
+        .split("\0")
+        .map((r) => r.replace(/^\n+|\n+$/g, ""))
+        .filter(Boolean)
+        .map((r) => r.split("\x1f").map((f) => (f === NULL_SENTINEL ? null : f)));
+}
+
+function field(row: (string | null)[], i: number): string {
+    const v = row[i];
+    if (v === null || v === undefined) throw new Error(`Unexpected NULL in column ${i} of catalog row: ${JSON.stringify(row)}`);
+    return v;
+}
+
+function queryCheckConstraints(url: string): CheckConstraintRow[] {
+    const sql =
+        `SELECT cl.relname, con.conname, pg_get_constraintdef(con.oid) ` +
+        `FROM pg_constraint con JOIN pg_class cl ON cl.oid = con.conrelid JOIN pg_namespace n ON n.oid = cl.relnamespace ` +
+        `WHERE con.contype = 'c' AND n.nspname = 'public' ORDER BY cl.relname, con.conname;`;
+    return queryRows(url, sql).map((r) => ({ tablename: field(r, 0), conname: field(r, 1), condef: field(r, 2) }));
+}
+
+function queryRls(url: string): { tables: RlsTableRow[]; policies: PolicyRow[] } {
+    const tables = queryRows(
+        url,
+        `SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace ` +
+            `WHERE n.nspname = 'public' AND (c.relrowsecurity OR c.relforcerowsecurity) ORDER BY c.relname;`,
+    ).map((r) => ({ tablename: field(r, 0), enabled: field(r, 1) === "t", forced: field(r, 2) === "t" }));
+    const policies = queryRows(
+        url,
+        `SELECT tablename, policyname, permissive, array_to_string(roles, chr(29)), cmd, qual, with_check ` +
+            `FROM pg_policies WHERE schemaname = 'public' ORDER BY tablename, policyname;`,
+    ).map((r) => ({
+        tablename: field(r, 0),
+        policyname: field(r, 1),
+        permissive: field(r, 2) as PolicyRow["permissive"],
+        roles: field(r, 3).split("\x1d"),
+        cmd: field(r, 4) as PolicyRow["cmd"],
+        qual: r[5],
+        withCheck: r[6],
+    }));
+    return { tables, policies };
 }
 
 function compareSchemas(urlA: string, urlB: string): { identical: boolean; report: string } {
@@ -289,6 +344,10 @@ async function main() {
 
         let dumpDiff: { identical: boolean; report: string } | undefined;
         let truthPartialIndexes: IndexRow[] = [];
+        let truthChecks: CheckConstraintRow[] = [];
+        const restoredChecks: string[] = [];
+        let truthRls: { tables: RlsTableRow[]; policies: PolicyRow[] } = { tables: [], policies: [] };
+        const restoredRls: string[] = [];
         const maxAttempts = 2; // 1 initial + 1 splice-and-retry; a 2nd miss means something's really wrong
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             step(`Validate candidate (attempt ${attempt}/${maxAttempts})`);
@@ -302,32 +361,63 @@ async function main() {
             const candidatePartialIndexes = queryPartialIndexes(candidateUrl);
             const missing = findMissingPartialIndexes(truthPartialIndexes, candidatePartialIndexes);
 
-            if (dumpDiff.identical && missing.length === 0) {
+            truthChecks = queryCheckConstraints(truthUrl);
+            const missingChecks = findMissingCheckConstraints(truthChecks, queryCheckConstraints(candidateUrl));
+            const checkNames = missingChecks.map((c) => `${c.tablename}.${c.conname}`).join(", ");
+
+            truthRls = queryRls(truthUrl);
+            const missingRls = findMissingRls(truthRls, queryRls(candidateUrl));
+            const rlsNames = [
+                ...missingRls.tables.map((t) => `${t.tablename} (RLS${t.forced ? ", FORCE" : ""})`),
+                ...missingRls.policies.map((p) => `${p.tablename}.${p.policyname}`),
+            ];
+            const missingAny = missing.length > 0 || missingChecks.length > 0 || rlsNames.length > 0;
+
+            if (dumpDiff.identical && !missingAny) {
                 checkNoDrift(candidateUrl);
                 console.log("No-drift check passed: candidate matches schema.prisma exactly.");
                 break;
             }
 
-            if (missing.length > 0 && attempt < maxAttempts) {
-                console.log(
-                    `Missing ${missing.length} partial unique index(es) in the candidate ` +
-                        `(${missing.map((m) => m.indexname).join(", ")}) — splicing from TRUTH and re-validating from scratch.`,
-                );
-                candidateSql = splicePartialIndexes(candidateSql, missing);
+            if (missingAny && attempt < maxAttempts) {
+                if (missing.length > 0) {
+                    console.log(
+                        `Missing ${missing.length} partial unique index(es) in the candidate ` +
+                            `(${missing.map((m) => m.indexname).join(", ")}) — splicing from TRUTH.`,
+                    );
+                    candidateSql = splicePartialIndexes(candidateSql, missing);
+                }
+                if (missingChecks.length > 0) {
+                    console.log(`Missing ${missingChecks.length} CHECK constraint(s) in the candidate (${checkNames}) — splicing from TRUTH.`);
+                    candidateSql = spliceCheckConstraints(candidateSql, missingChecks);
+                    restoredChecks.push(...missingChecks.map((c) => `${c.tablename}.${c.conname}`));
+                }
+                if (rlsNames.length > 0) {
+                    console.log(`Missing row-level security in the candidate (${rlsNames.join(", ")}) — splicing from TRUTH.`);
+                    candidateSql = spliceRls(candidateSql, missingRls);
+                    restoredRls.push(...rlsNames);
+                }
+                console.log("Re-validating from scratch.");
                 continue;
             }
 
             throw new Error(
                 `Candidate baseline failed validation after ${attempt} attempt(s).\n` +
                     (dumpDiff.identical ? "" : "Schema dump comparison found real differences (see report above).\n") +
-                    (missing.length > 0 ? `Still missing partial index(es) after splicing: ${missing.map((m) => m.indexname).join(", ")}\n` : ""),
+                    (missing.length > 0 ? `Still missing partial index(es) after splicing: ${missing.map((m) => m.indexname).join(", ")}\n` : "") +
+                    (missingChecks.length > 0 ? `Still missing CHECK constraint(s) after splicing: ${checkNames}\n` : "") +
+                    (rlsNames.length > 0 ? `Still missing row-level security after splicing: ${rlsNames.join(", ")}\n` : ""),
             );
         }
 
         console.log(
             `\nValidation verdict: candidate baseline is semantically identical to the full current chain ` +
-                `(${existingMigrations.length} migrations); ${truthPartialIndexes.length} partial unique index(es) verified; no drift vs schema.prisma.`,
+                `(${existingMigrations.length} migrations); ${truthPartialIndexes.length} partial unique index(es) and ` +
+                `${truthChecks.length} CHECK constraint(s), ${truthRls.tables.length} RLS table(s) and ` +
+                `${truthRls.policies.length} policy(ies) verified; no drift vs schema.prisma.`,
         );
+        console.log(`Restored CHECK constraint(s): ${restoredChecks.length > 0 ? restoredChecks.join(", ") : "none"}.`);
+        console.log(`Restored row-level security: ${restoredRls.length > 0 ? restoredRls.join(", ") : "none"}.`);
 
         if (!commit) {
             console.log("\nDRY RUN — no changes written. Re-run with --commit to replace prisma/migrations/ with this baseline.");

@@ -23,6 +23,7 @@ import {
   IconCalendarEvent,
   IconClipboardList,
   IconCoin,
+  IconGift,
   IconHome,
   IconList,
   IconBug,
@@ -31,7 +32,6 @@ import {
   IconMoon,
   IconPackage,
   IconReceipt,
-  IconReceiptTax,
   IconReportMoney,
   IconSettings,
   IconShieldCheck,
@@ -54,7 +54,7 @@ import { useConfirmNav } from '@/components/UnsavedChangesProvider';
 import { sectionBadges } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { NavSection } from '@/lib/nav/types';
-import { sectionShown, visibleLinks } from '@/lib/nav/gates';
+import { sectionShown, tabHrefs, visibleLinks } from '@/lib/nav/gates';
 import { ATTENDANCE, COMMUNICATION, INDEX, MY_HOUSEHOLD, PROGRAMS } from '@/lib/nav/sections/personal';
 import { SAFETY } from '@/lib/nav/sections/safety';
 import { MY_ACTIVITIES } from '@/lib/nav/sections/myActivities';
@@ -67,8 +67,8 @@ import { MEMBERSHIP_OPS } from '@/lib/nav/sections/membershipOps';
 import { MEMBERSHIP_AUDIT } from '@/lib/nav/sections/membershipAudit';
 import { PROGRAM_OPS } from '@/lib/nav/sections/programOps';
 import { REVENUE_OPS } from '@/lib/nav/sections/revenueOps';
-import { EXPENSE_OPS } from '@/lib/nav/sections/expenseOps';
-import { RECEIPT_REVIEW } from '@/lib/nav/sections/receiptReview';
+import { DONATIONS } from '@/lib/nav/sections/donations';
+import { FINANCE } from '@/lib/nav/sections/finance';
 import { SYSTEM_STATUS } from '@/lib/nav/sections/systemStatus';
 import { SETTINGS } from '@/lib/nav/sections/settings';
 import { DEV_TOOLS } from '@/lib/nav/sections/devTools';
@@ -98,8 +98,8 @@ const NAV_ITEMS: NavItem[] = [
   { section: MEMBERSHIP_AUDIT, icon: <IconUserSearch size={18} /> },
   { section: PROGRAM_OPS, icon: <IconBriefcase size={18} /> },
   { section: REVENUE_OPS, icon: <IconCoin size={18} /> },
-  { section: EXPENSE_OPS, icon: <IconReportMoney size={18} /> },
-  { section: RECEIPT_REVIEW, icon: <IconReceiptTax size={18} /> },
+  { section: FINANCE, icon: <IconReportMoney size={18} /> },
+  { section: DONATIONS, icon: <IconGift size={18} /> },
   { section: SYSTEM_STATUS, icon: <IconSettings size={18} /> },
   { section: SETTINGS, icon: <IconAdjustments size={18} /> },
   { section: INDEX, icon: <IconList size={18} /> },
@@ -154,7 +154,7 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
 
   const signedIn = !!session;
   const user = session?.user;
-  // Faithful to the old NavBar: no navigation on the homepage when signed out.
+  // No navigation on the homepage when signed out.
   const showNav = !(!signedIn && pathname === '/');
 
   const visibleItems = NAV_ITEMS.filter(
@@ -164,8 +164,8 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
     const tabs = visibleLinks(section, user, todoCounts);
     const href = section.hrefFor?.(user, todoCounts) ?? section.href;
     // Longest href this item claims for the current path, so a path under two
-    // sections (/receipts/review sits under /receipts) highlights only the closer one.
-    const match = Math.max(0, ...[href, section.href, ...tabs.map((t) => t.href)].filter((h) => isActive(pathname, h)).map((h) => h.length));
+    // sections (/receipts/settings sits under /receipts) highlights only the closer one.
+    const match = Math.max(0, ...[href, section.href, ...tabs.flatMap(tabHrefs)].filter((h) => isActive(pathname, h)).map((h) => h.length));
     return { ...item, tabs, href, match };
   });
   const bestMatch = Math.max(0, ...visibleItems.map((i) => i.match));
@@ -291,8 +291,8 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
                         // (treehouseGreen/black and gray.2/gray-8 respectively). The gray solid
                         // fill is deliberate: on the dark purple sidebar a 'light' translucent
                         // tint reads dark. The 'blue' household-in-building badge is a one-off
-                        // info color CountBadge doesn't model, so it stays inline (filled + black
-                        // text, same as before). NavLink forces section text white on the colored
+                        // info color CountBadge doesn't model, so it renders inline (filled + black
+                        // text). NavLink forces section text white on the colored
                         // sidebar, so the dark label is pinned explicitly.
                         const intent = badgeIntentFor(badge.color);
                         return intent ? (

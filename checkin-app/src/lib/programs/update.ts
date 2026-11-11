@@ -3,12 +3,11 @@ import prisma from "@/lib/prisma";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
 import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, syncProgramPrice } from "@/lib/shopify/stock";
 import { dollarsToCentsOrNull } from "@checkin/money";
-import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
-import { escapeHtml } from "@/lib/email-templates/base";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
@@ -79,7 +78,7 @@ export async function resolveProgramYear(input: {
     startAt: Date;
     endAt: Date;
     supplied: unknown;
-    current: { appliesToYear: number | null; startAt: Date; endAt: Date } | null;
+    current: { appliesToYear: number; startAt: Date; endAt: Date } | null;
     isBoardMember: boolean;
 }): Promise<ProgramYearResult> {
     const { startAt, endAt, supplied, current, isBoardMember } = input;
@@ -95,9 +94,8 @@ export async function resolveProgramYear(input: {
     if (years.length === 1) return { ok: true, appliesToYear: years[0] };
 
     const askTheBoard = refuse("forbidden", "These dates cross the membership year boundary, so the program's membership year comes from its budget approval. Ask the Board to set it.");
-    const currentYear = current?.appliesToYear;
-    const keptYear = current && currentYear != null && years.includes(currentYear)
-        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? currentYear : null;
+    const keptYear = current && years.includes(current.appliesToYear)
+        && programYearsTouched(boundary, current.startAt, current.endAt).length > 1 ? current.appliesToYear : null;
     const stated = supplied as number | null | undefined;
     if (stated != null && stated !== keptYear) {
         if (!isBoardMember) return askTheBoard;
@@ -119,7 +117,7 @@ export async function authorizeProgramEdit(programId: number, actor: ProgramEdit
     const isLeadMentor = program.leadMentorId === actor.id;
     const isSysAdminOrBoard = actor.isSysadmin || actor.isBoardMember;
     if (!isLeadMentor && !isSysAdminOrBoard) {
-        return refuse("forbidden", "Forbidden: Only Admin, Board Members, or Lead Mentors can edit");
+        return refuse("forbidden", "Forbidden: Only Admin, Board Members, or Program Leaders can edit");
     }
     return { ok: true, program };
 }
@@ -164,7 +162,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (typeof maxParticipants !== "number" || !Number.isInteger(maxParticipants) || maxParticipants <= 0) {
             return refuse("invalid", "maxParticipants must be a positive integer");
         }
-        const enrolled = await prisma.programParticipant.count({ where: { programId, person: LIVE_PERSON, ...ENROLLED_PARTICIPANT } });
+        const enrolled = await prisma.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
         if (maxParticipants < enrolled) {
             return refuse("invalid", `maxParticipants cannot be set below the current enrollment of ${enrolled}`);
         }
@@ -172,27 +170,28 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
 
     if (patch.hasOwnProperty('leadMentorId')) {
         if (!patch.leadMentorId) {
-            return refuse("invalid", "Lead Mentor is required");
+            return refuse("invalid", "Program Leader is required");
         }
         leadMentorId = parseInt(String(patch.leadMentorId));
         if (isNaN(leadMentorId)) {
-            return refuse("invalid", "Invalid lead mentor");
+            return refuse("invalid", "Invalid Program Leader");
         }
-        if (!isSysAdminOrBoard && leadMentorId !== currentProgram.leadMentorId) {
-            return refuse("forbidden", "Forbidden: Only administrators can reassign lead mentors");
+        if (!actor.isBoardMember && leadMentorId !== currentProgram.leadMentorId) {
+            return refuse("forbidden", "Forbidden: Only the Board can reassign Program Leaders");
         }
         const mentor = await prisma.person.findUnique({
             where: { id: leadMentorId },
             select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!mentor) {
-            return refuse("invalid", "Lead mentor not found");
+            return refuse("invalid", "Program Leader not found");
         }
         if (!isLeaderAgeEligible(mentor)) {
-            return refuse("invalid", "Lead mentor must be at least 23 years old");
+            return refuse("invalid", "Program Leader must be at least 23 years old");
         }
-        // Leading a program makes its leader an expense approver. The edit form
-        // resends the current lead on every save, so only a change is refused.
+        // Nobody names themself or their household as a program's leader (Ethics
+        // Policy III.5). The edit form resends the current lead on every save, so
+        // only a change is refused.
         if (leadMentorId !== currentProgram.leadMentorId && (
             leadMentorId === actor.id || await hasHouseholdConflict(prisma, actor.id, mentor.householdId)
         )) {
@@ -209,7 +208,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }
         const effLeadMentorId = leadMentorId !== undefined ? leadMentorId : currentProgram.leadMentorId;
         if (!effLeadMentorId) {
-            return refuse("invalid", "Cannot publish a program without a Lead Mentor assigned");
+            return refuse("invalid", "Cannot publish a program without a Program Leader assigned");
         }
         const eventCount = await prisma.event.count({ where: { programId } });
         if (eventCount === 0) {
@@ -439,7 +438,7 @@ async function flagEnrollmentsNoLongerFitting(before: Program, after: Program): 
     if (before.minAge === after.minAge && before.maxAge === after.maxAge && before.startAt.getTime() === after.startAt.getTime()) return;
     const rule = (p: Program) => ({ minAge: p.minAge, maxAge: p.maxAge, asOf: p.startAt });
     const enrolled = await prisma.programParticipant.findMany({
-        where: { programId: after.id, person: LIVE_PERSON, ...ENROLLED_PARTICIPANT },
+        where: { programId: after.id, ...ENROLLED_PARTICIPANT },
         select: { status: true, person: { select: { name: true, dateOfBirth: true, isDeclaredAdult: true } } },
     });
     const misfits = enrolled.flatMap(({ status, person }) => {
@@ -448,10 +447,10 @@ async function flagEnrollmentsNoLongerFitting(before: Program, after: Program): 
     });
     if (misfits.length === 0) return;
 
-    const rows = misfits.map(m => `<li>${escapeHtml(m.name ?? "Unnamed")}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})</li>`).join("");
-    await emailBoardMembers(
-        `Program "${after.name}": ${misfits.length} enrolled no longer fit its ages`,
-        `<p>An edit to the dates or age limits of <strong>${escapeHtml(after.name)}</strong> leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.</p><ul>${rows}</ul><p><a href="${config.baseUrl()}/program-ops/programs/${after.id}">Open the program</a></p>`,
-        "Program age re-check board alert failed:",
-    );
+    await emailBoardMembers("board.programAgeMisfit", {
+        programName: after.name,
+        count: String(misfits.length),
+        people: misfits.map(m => `${m.name ?? "Unnamed"}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})`).join("\n"),
+        actionLink: `${config.baseUrl()}/program-ops/programs/${after.id}`,
+    }, "Program age re-check board alert failed:");
 }

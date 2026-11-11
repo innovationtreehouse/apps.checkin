@@ -220,8 +220,10 @@ model ShopOrder {
   /// @sensitivity:internal
   name               String?
   /// @sensitivity:personal
+  /// @financeMark
   customerEmail      String?   @map("customer_email")
   /// @sensitivity:personal
+  /// @financeMark
   customerName       String?   @map("customer_name")
   /// @sensitivity:internal
   financialStatus    String?   @map("financial_status")
@@ -238,16 +240,22 @@ model ShopOrder {
   /// @sensitivity:internal
   currency           String?
   /// @sensitivity:internal
+  /// @financeMark
   subtotalCents      Int       @default(0) @map("subtotal_cents")
   /// @sensitivity:internal
+  /// @financeMark
   shippingCents      Int       @default(0) @map("shipping_cents")
   /// @sensitivity:internal
+  /// @financeMark
   taxCents           Int       @default(0) @map("tax_cents")
   /// @sensitivity:internal
+  /// @financeMark
   discountCents      Int       @default(0) @map("discount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   totalCents         Int       @default(0) @map("total_cents")
   /// @sensitivity:internal
+  /// @financeMark
   totalRefundedCents Int       @default(0) @map("total_refunded_cents")
   /// @sensitivity:internal
   test               Boolean   @default(false)
@@ -258,6 +266,7 @@ model ShopOrder {
   /// them (scalar lists can't be null in Prisma, so absence isn't distinguishable —
   /// the same backfill that fills variant ids fixes these).
   /// @sensitivity:internal
+  /// @financeMark
   discountCodes      String[]  @default([]) @map("discount_codes")
   /// Provenance of the node that last wrote this row: an API sync (BACKFILL/INCREMENTAL)
   /// or an operator inject (HAND_LOADED/TEST_LOADED). Every write restamps it. Inject
@@ -286,6 +295,11 @@ model ShopOrderLine {
   title             String?
   /// @sensitivity:internal
   quantity          Int     @default(1)
+  /// Units still on the line after order edits and refunds (Shopify currentQuantity);
+  /// `quantity` is the original count. Null for rows synced before the column shipped —
+  /// readers fall back to `quantity`, and a backfill run repopulates them.
+  /// @sensitivity:internal
+  currentQuantity   Int?    @map("current_quantity")
   /// ProductVariant GID. Null for custom/deleted-product lines, and for rows synced
   /// before the variant columns shipped — a backfill run repopulates those.
   /// @sensitivity:internal
@@ -295,8 +309,10 @@ model ShopOrderLine {
   /// @sensitivity:internal
   variantLegacyId   String? @map("variant_legacy_id")
   /// @sensitivity:internal
+  /// @financeMark
   priceCents        Int     @default(0) @map("price_cents")
   /// @sensitivity:internal
+  /// @financeMark
   discountCents     Int     @default(0) @map("discount_cents")
   /// @sensitivity:internal
   fulfillmentStatus String? @map("fulfillment_status")
@@ -319,6 +335,7 @@ model ShopRefund {
   /// @sensitivity:internal
   createdAt          DateTime? @map("created_at")
   /// @sensitivity:internal
+  /// @financeMark
   totalRefundedCents Int       @default(0) @map("total_refunded_cents")
   /// @sensitivity:personal
   note               String?
@@ -342,22 +359,31 @@ model ShopPayout {
   /// @sensitivity:internal
   currency             String?
   /// @sensitivity:internal
+  /// @financeMark
   netCents             Int       @default(0) @map("net_cents")
   /// @sensitivity:internal
+  /// @financeMark
   chargesGrossCents    Int       @default(0) @map("charges_gross_cents")
   /// @sensitivity:internal
+  /// @financeMark
   chargesFeeCents      Int       @default(0) @map("charges_fee_cents")
   /// @sensitivity:internal
+  /// @financeMark
   refundsGrossCents    Int       @default(0) @map("refunds_gross_cents")
   /// @sensitivity:internal
+  /// @financeMark
   refundsFeeCents      Int       @default(0) @map("refunds_fee_cents")
   /// @sensitivity:internal
+  /// @financeMark
   adjustmentsGrossCents Int      @default(0) @map("adjustments_gross_cents")
   /// @sensitivity:internal
+  /// @financeMark
   adjustmentsFeeCents  Int       @default(0) @map("adjustments_fee_cents")
   /// @sensitivity:internal
+  /// @financeMark
   reservedFundsCents   Int       @default(0) @map("reserved_funds_cents")
   /// @sensitivity:internal
+  /// @financeMark
   retriedCents         Int       @default(0) @map("retried_cents")
   /// Provenance of the last write — see ShopOrder.source.
   /// @sensitivity:internal
@@ -385,10 +411,13 @@ model ShopBalanceTransaction {
   /// @sensitivity:internal
   type                    String
   /// @sensitivity:internal
+  /// @financeMark
   amountCents             Int       @map("amount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   feeCents                Int       @map("fee_cents")
   /// @sensitivity:internal
+  /// @financeMark
   netCents                Int       @map("net_cents")
   /// @sensitivity:internal
   currency                String?

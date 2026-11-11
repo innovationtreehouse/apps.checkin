@@ -33,7 +33,7 @@ describe("GET /api/cron/post-event", () => {
         });
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program", leadMentorId: lead.id }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program", leadMentorId: lead.id }
         });
 
         const now = new Date();
@@ -78,7 +78,7 @@ describe("GET /api/cron/post-event", () => {
         expect(sendEmail).toHaveBeenCalledWith(
             "lead@example.com",
             `Action Required: Confirm Attendance for Past Event`,
-            expect.stringContaining("Review & Confirm Attendance")
+            expect.stringContaining("Review &amp; Confirm Attendance")
         );
 
         // Check DB
@@ -88,7 +88,7 @@ describe("GET /api/cron/post-event", () => {
 
     it("should not send emails for events that haven't finished yet", async () => {
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program" }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program" }
         });
 
         const now = new Date();
@@ -118,7 +118,7 @@ describe("GET /api/cron/post-event", () => {
 
     it("should not double-send emails if postEventEmailSent is true", async () => {
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program" }
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program" }
         });
 
         const now = new Date();

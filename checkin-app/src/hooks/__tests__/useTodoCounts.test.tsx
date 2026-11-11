@@ -3,6 +3,17 @@ import { useTodoCounts } from "../useTodoCounts";
 import { NAV_COUNTS_EVENT } from "@/lib/nav-refresh";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 
+let mockSession: { user: { id: number } } | null = { user: { id: 1 } };
+jest.mock("next-auth/react", () => ({
+  useSession: () => ({ data: mockSession, status: mockSession ? "authenticated" : "unauthenticated" }),
+}));
+
+// The route answers with the counts plus the id of the person it read them for.
+const okResponse = (data: TodoCounts, personId: number) => ({
+  ok: true,
+  json: () => Promise.resolve({ ...data, personId }),
+});
+
 const makeCounts = (building: number): TodoCounts =>
   ({
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
@@ -33,7 +44,7 @@ describe("useTodoCounts", () => {
 
   it("fetches on mount and returns the resolved counts", async () => {
     const data = makeCounts(4);
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve(data) });
+    fetchMock.mockResolvedValue(okResponse(data, 1));
 
     const { result } = renderHook(() => useTodoCounts(true));
 
@@ -63,12 +74,12 @@ describe("useTodoCounts", () => {
 
   it("refetches and updates every consumer when NAV_COUNTS_EVENT fires", async () => {
     const updated = makeCounts(9);
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve(updated) });
+    fetchMock.mockResolvedValue(okResponse(updated, 1));
     const { result } = renderHook(() => useTodoCounts(true));
     await waitFor(() => expect(result.current).toEqual(updated));
 
     const afterEvent = makeCounts(11);
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve(afterEvent) });
+    fetchMock.mockResolvedValue(okResponse(afterEvent, 1));
 
     act(() => {
       window.dispatchEvent(new Event(NAV_COUNTS_EVENT));
@@ -80,5 +91,71 @@ describe("useTodoCounts", () => {
   it("returns null while disabled even once a previous consumer populated the store", () => {
     const { result } = renderHook(() => useTodoCounts(false));
     expect(result.current).toBeNull();
+  });
+
+  it("shows nothing from the previous viewer once another tab switches the session", async () => {
+    const forFirst = makeCounts(5);
+    fetchMock.mockResolvedValue(okResponse(forFirst, 1));
+    const { result, rerender } = renderHook(() => useTodoCounts(true));
+    await waitFor(() => expect(result.current).toEqual(forFirst));
+
+    let answerSecond: (res: unknown) => void = () => {};
+    fetchMock.mockReturnValue(new Promise((resolve) => { answerSecond = resolve; }));
+    fetchMock.mockClear();
+    mockSession = { user: { id: 2 } };
+    rerender();
+    expect(result.current).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const forSecond = makeCounts(6);
+    await act(async () => answerSecond(okResponse(forSecond, 2)));
+    await waitFor(() => expect(result.current).toEqual(forSecond));
+  });
+
+  it("drops a read for the previous viewer that answers after the switch", async () => {
+    let answerLate: (res: unknown) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise((resolve) => { answerLate = resolve; }));
+    const { result, rerender } = renderHook(() => useTodoCounts(true));
+
+    const forThird = makeCounts(8);
+    fetchMock.mockResolvedValue(okResponse(forThird, 3));
+    mockSession = { user: { id: 3 } };
+    rerender();
+
+    await act(async () => answerLate(okResponse(makeCounts(7), 2)));
+    expect(result.current).not.toEqual(makeCounts(7));
+    await waitFor(() => expect(result.current).toEqual(forThird));
+  });
+
+  it("stores nothing when the server answered for someone other than the viewer", async () => {
+    mockSession = { user: { id: 3 } };
+    const forThird = makeCounts(8);
+    fetchMock.mockResolvedValue(okResponse(forThird, 3));
+    const { result, rerender } = renderHook(() => useTodoCounts(true));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(result.current).toEqual(forThird);
+
+    const forFourth = makeCounts(12);
+    fetchMock.mockResolvedValue(okResponse(forFourth, 4));
+    fetchMock.mockClear();
+    act(() => {
+      window.dispatchEvent(new Event(NAV_COUNTS_EVENT));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(result.current).toEqual(forThird);
+
+    mockSession = { user: { id: 4 } };
+    rerender();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current).toEqual(forFourth));
+  });
+
+  it("returns null and fetches nothing when signed out, even if enabled", () => {
+    mockSession = null;
+    const { result } = renderHook(() => useTodoCounts(true));
+    expect(result.current).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

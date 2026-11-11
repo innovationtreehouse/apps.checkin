@@ -9,11 +9,17 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
-    }
+    },
+    "./lockGate": {
+      "types": "./src/lockGate.ts",
+      "import": "./src/lockGate.ts"
+    },
+    "./vitest-plugin": "./src/vitestPlugin.mjs"
   },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "test:watch": "vitest"
   },
   "dependencies": {

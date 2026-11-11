@@ -4,19 +4,22 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses, finance } from "../../routes";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { seedCapitalAssets } from "../../services/capitalService";
+import { excludeQbTxn } from "../../services/qbMatchService";
 import type { ExpenseRouteHandler } from "../../contract";
 
 const FINANCE = principal(3, { isFinance: true });
 const ACTOR = { actorUserId: 3, actorUsername: "person-3" };
 
+let caller = FINANCE;
+
 function call(route: ExpenseRouteHandler, method: string, params: Record<string, string> = {}, body?: unknown) {
   const req = new Request("http://test/api/expense", body === undefined ? { method } : { method, body: JSON.stringify(body) });
-  return route({ req, params });
+  return route({ req, params, principal: caller });
 }
 
 async function onlyOrgAudit() {
@@ -36,7 +39,10 @@ async function auditOf(write: () => Promise<unknown>) {
 const mapping = { category: "Hardware", subcategory: "Cables", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "5000" };
 
 describeDb("FINANCE writes are audited", () => {
-  beforeEach(() => bindPorts({ auth: { getPrincipal: async () => FINANCE } }));
+  beforeEach(() => {
+    bindPorts({});
+    caller = FINANCE;
+  });
 
   it("setting a held line's account records hold_account_set with before and after", async () => {
     const id = await seedExpense({ state: "qb_on_hold" });
@@ -65,7 +71,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("marking test data answers 409 once the expense is in the outbox or past its first QuickBooks state", async () => {
     const queued = await seedExpense();
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: queued, payload: "{}" } });
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: queued } });
     const matched = await seedExpense();
     await db.expense.update({ where: { id: matched }, data: { qbMatchState: "NOT_TEST_DATA" } });
     const lineMatched = await seedExpense();
@@ -81,7 +87,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("marking test data is FINANCE only", async () => {
     const id = await seedExpense();
-    bindPorts({ auth: { getPrincipal: async () => principal(4, { isBoard: true }) } });
+    caller = principal(4, { isBoard: true });
 
     await expect(call(expenses.testData, "PUT", { id }, { isTestData: true })).rejects.toMatchObject({ status: 403 });
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ isTestData: false });
@@ -112,6 +118,8 @@ describeDb("FINANCE writes are audited", () => {
   });
 
   it("QuickBooks account create, update and delete each record one row", async () => {
+    const accounts = ["5100", "5200"].map((id) => ({ id, name: `Supplies ${id}`, accountType: "Expense" }));
+    bindPorts({ quickbooks: { accounts: async () => accounts } });
     const created = await auditOf(() => call(finance.createQbAccount, "POST", {}, { name: "Supplies", qbAccount: "5100" }));
     expect(created).toMatchObject({ entityType: "qb_account", action: "created" });
     const id = created.entityId!;
@@ -125,6 +133,7 @@ describeDb("FINANCE writes are audited", () => {
 
   it("setting a part's owner records the previous and new bucket", async () => {
     const gtin13 = "0000000000017";
+    bindPorts({ catalog: catalogResolving({ 1: gtin13 }) });
     await auditOf(() => call(finance.setOwnership, "PUT", {}, { gtin13, ownerId: 100 }));
     const row = await auditOf(() => call(finance.setOwnership, "PUT", {}, { gtin13, ownerId: 101 }));
     expect(row).toMatchObject({ entityType: "part_owner", entityId: gtin13, action: "owner_set" });
@@ -140,5 +149,22 @@ describeDb("FINANCE writes are audited", () => {
 
     await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA0001", description: "Lathe" }]);
     expect(await db.expenseOrgAuditLog.count()).toBe(1);
+  });
+
+  it("excluding a QuickBooks entry records its id and reason; a repeat answers 409 and writes nothing", async () => {
+    const row = await auditOf(() => excludeQbTxn(FINANCE, "qb-9", "  hand-booked, no receipt "));
+    expect(row).toMatchObject({ entityType: "qb_txn", entityId: "qb-9", action: "excluded", before: null });
+    expect(JSON.parse(row.after!)).toEqual({ reason: "hand-booked, no receipt" });
+
+    await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
+    expect(await db.expenseOrgAuditLog.count()).toBe(1);
+  });
+
+  it("excluding a QuickBooks entry answers 400 for a blank reason and 403 for a non-FINANCE caller, writing nothing", async () => {
+    await expect(excludeQbTxn(FINANCE, "qb-9", "   ")).rejects.toMatchObject({ status: 400 });
+    await expect(excludeQbTxn(principal(4, { isBoard: true }), "qb-9", "hand-booked")).rejects.toMatchObject({ status: 403 });
+
+    expect(await db.expenseQbMatchExclusion.count()).toBe(0);
+    expect(await db.expenseOrgAuditLog.count()).toBe(0);
   });
 });

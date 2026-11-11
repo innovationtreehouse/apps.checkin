@@ -26,6 +26,7 @@
           "sku": "WIDGET-1",
           "title": "Widget",
           "quantity": 2,
+          "currentQuantity": 1,
           "originalUnitPriceSet": { "shopMoney": { "amount": "50.00", "currencyCode": "USD" } },
           "totalDiscountSet": { "shopMoney": { "amount": "0.00", "currencyCode": "USD" } }
         }

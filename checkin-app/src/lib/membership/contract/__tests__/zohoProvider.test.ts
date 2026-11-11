@@ -40,7 +40,7 @@ describe("zoho mock fuse (config)", () => {
         expect(config.zohoWebhookSecret()).toBeNull();
     });
 
-    it("stays active under a production build on a credless dev instance (NODE_ENV eliminated as a fuse, #951)", () => {
+    it("stays active under a production build on a credless dev instance (NODE_ENV is not a fuse)", () => {
         setEnv({ CHECKIN_ENV: "dev", NODE_ENV: "production" });
         expect(config.zohoMockActive()).toBe(true);
     });

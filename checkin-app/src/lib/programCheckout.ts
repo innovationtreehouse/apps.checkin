@@ -11,7 +11,7 @@ import type { Prisma } from "@/generated/prisma/client";
  * A FREE program legitimately has no variant, so gate on a tier being priced at
  * all — never flag on a missing variant alone.
  *
- * Single-pool model (product decision 2026-07-06): `shopifyVariantId` covers
+ * Single-pool model: `shopifyVariantId` covers
  * BOTH tiers by itself — member pricing is a checkout-time discount code, not a
  * separate variant — so it is the only variant a priced program needs.
  *

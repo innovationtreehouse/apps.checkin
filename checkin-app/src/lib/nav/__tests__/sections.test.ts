@@ -1,11 +1,10 @@
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { NavSection, NavUser } from "@/lib/nav/types";
-import { hasAnyRole, linkGate, sectionShown, visibleLinks } from "@/lib/nav/gates";
+import { hasAnyRole, linkGate, sectionShown, tabHrefs, visibleLinks } from "@/lib/nav/gates";
 import { SAFETY } from "@/lib/nav/sections/safety";
 import { MY_ACTIVITIES } from "@/lib/nav/sections/myActivities";
 import { MY_RECEIPTS } from "@/lib/nav/sections/myReceipts";
-import { RECEIPT_REVIEW } from "@/lib/nav/sections/receiptReview";
 import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
 import { SHOP_OPS } from "@/lib/nav/sections/shopOps";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
@@ -14,14 +13,16 @@ import { MEMBERSHIP_OPS } from "@/lib/nav/sections/membershipOps";
 import { MEMBERSHIP_AUDIT } from "@/lib/nav/sections/membershipAudit";
 import { PROGRAM_OPS } from "@/lib/nav/sections/programOps";
 import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
-import { EXPENSE_OPS } from "@/lib/nav/sections/expenseOps";
+import { DONATIONS } from "@/lib/nav/sections/donations";
+import { FINANCE } from "@/lib/nav/sections/finance";
 import { SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
 import { SETTINGS } from "@/lib/nav/sections/settings";
 import { DEV_TOOLS } from "@/lib/nav/sections/devTools";
+import { tabBadgeFor } from "@/components/navBadges";
 
 const SECTIONS: NavSection[] = [
-  SAFETY, MY_ACTIVITIES, MY_RECEIPTS, RECEIPT_REVIEW, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
-  MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, EXPENSE_OPS, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
+  SAFETY, MY_ACTIVITIES, MY_RECEIPTS, PROGRAMS_I_LEAD, SHOP_OPS, INVENTORY, FACILITY_OPS,
+  MEMBERSHIP_OPS, MEMBERSHIP_AUDIT, PROGRAM_OPS, REVENUE_OPS, FINANCE, DONATIONS, SYSTEM_STATUS, SETTINGS, DEV_TOOLS,
 ];
 
 const adult = { ageBand: "adult" as const, isActiveOrgMember: true };
@@ -80,22 +81,57 @@ describe("linkGate", () => {
 });
 
 describe("the Receipts split", () => {
-  it("My Receipts holds only a person's own receipts", () => {
-    expect(MY_RECEIPTS.links.map((l) => l.href)).toEqual(["/receipts", "/receipts/upload"]);
+  it("My Receipts holds a person's own receipts and the reimbursements waiting for their confirmation", () => {
+    expect(MY_RECEIPTS.links.map((l) => l.href)).toEqual(["/receipts", "/receipts/upload", "/receipts/confirm"]);
   });
 
-  it("Receipt Review holds review, settings and mail, for FINANCE or BOARD; mail for FINANCE alone", () => {
-    expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.finance, counts).map((l) => l.href)).toEqual([
-      "/receipts/review",
-      "/receipts/settings",
-      "/receipts/mail",
-    ]);
-    expect(visibleLinks(RECEIPT_REVIEW, PERSONAS.board, counts).map((l) => l.href)).toEqual([
-      "/receipts/review",
-      "/receipts/settings",
-    ]);
+  it("To confirm shows to any adult, a lapsed member included, and to the Board, with a green pill", () => {
+    const confirm = MY_RECEIPTS.links.find((l) => l.href === "/receipts/confirm")!;
+    expect(confirm.visible?.({ ageBand: "adult", isActiveOrgMember: false }, counts)).toBe(true);
+    expect(confirm.visible?.({ isBoardMember: true }, counts)).toBe(true);
+    expect(confirm.visible?.({ ageBand: "youth" }, counts)).toBe(false);
+    expect(confirm.badge?.({ ...counts, libraries: { receipt: { toConfirm: 1 } } })).toEqual({
+      count: 1,
+      color: "treehouseGreen",
+      label: "1 receipt waits for your confirmation",
+    });
+    expect(confirm.badge?.(counts)).toBeNull();
+  });
+
+  it("My receipts carries a green pill for the receipts that wait on their uploader", () => {
+    const list = MY_RECEIPTS.links.find((l) => l.href === "/receipts");
+    expect(list?.badge?.({ ...counts, libraries: { receipt: { awaitingMe: 2 } } })).toEqual({
+      count: 2,
+      color: "treehouseGreen",
+      label: "2 receipts need you",
+    });
+    expect(list?.badge?.(counts)).toBeNull();
+  });
+
+  it("Finance holds the queue, flow status, mail and receipt settings for FINANCE or BOARD; mail for FINANCE alone", () => {
+    const hrefs = (user: NavUser) => visibleLinks(FINANCE, user, counts).map((l) => l.href);
+    expect(hrefs(PERSONAS.finance)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/receipts/mail", "/receipts/settings"]));
+    expect(hrefs(PERSONAS.board)).toEqual(expect.arrayContaining(["/finance/review", "/receipt-flow", "/receipts/settings"]));
+    expect(hrefs(PERSONAS.board)).not.toContain("/receipts/mail");
+    expect(linkGate(FINANCE, "/receipts/settings")(PERSONAS.board, counts)).toBe(true);
     for (const name of ["member", "sysadmin", "operations"]) {
-      expect(sectionShown(RECEIPT_REVIEW, PERSONAS[name], counts)).toBe(false);
+      expect(sectionShown(FINANCE, PERSONAS[name], counts)).toBe(false);
+    }
+  });
+
+  it("Finance review carries a green pill for the receipts that wait on FINANCE", () => {
+    const review = FINANCE.links.find((l) => l.href === "/finance/review");
+    expect(review?.badge?.({ ...counts, libraries: { receipt: { awaitingFinance: 1 } } })).toEqual({
+      count: 1,
+      color: "treehouseGreen",
+      label: "1 item waits on you in Finance review",
+    });
+    expect(review?.badge?.(counts)).toBeNull();
+  });
+
+  it("Inventory has no Flow status tab: the flow status page lives in Finance", () => {
+    for (const u of [PERSONAS.inventoryManager, PERSONAS.keyholder, PERSONAS.finance, PERSONAS.board]) {
+      expect(visibleLinks(INVENTORY, u, counts).flatMap(tabHrefs)).not.toContain("/receipt-flow");
     }
   });
 });
@@ -105,3 +141,27 @@ describe("Membership Ops", () => {
     expect(MEMBERSHIP_OPS.links.find((l) => l.href === "/membership-ops/review")?.name).toBe("Background-check Review");
   });
 });
+
+// The sidebar reads a tab's badge function and the tab row reads tabBadgeFor first,
+// so a tab with both would show different pills in the two places.
+describe("tab badge sources", () => {
+  const counts: TodoCounts = {
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    buildingReachable: true,
+    activePrograms: 0,
+    admin: {
+      membership: 1, applicationsTotal: 1, paymentPlanPending: 1, membershipPaymentPlanPending: 1, trustedAdults: 1, householdsMissingContact: 1,
+      unclaimedHouseholds: 1, brokenHouseholds: 1, brokenEmails: 1, settingsMisconfig: 1, programsMisconfig: 1, openPaymentExceptions: 1,
+    },
+  };
+
+  it("no tab or sub-tab has both a tabBadgeFor case and its own badge function", () => {
+    const both = SECTIONS.flatMap((s) => s.links.flatMap((l) => [l, ...(l.subLinks ?? [])]))
+      .filter((l) => l.badge && tabBadgeFor(l.href, counts))
+      .map((l) => l.href);
+    expect(both).toEqual([]);
+  });
+});
+

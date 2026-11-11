@@ -2,22 +2,38 @@
 // receiptId — the "already applied" check lives here, so the in-process caller gets it.
 import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { db, isUniqueConstraintError } from "../db";
-import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
+import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
+import { FAILED_AGAIN } from "../lib/retry";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
-import { FLAG_AUDIENCE, detectIntakeFlags } from "../lib/flags";
 import { withinEverydayLimits } from "../lib/signoff";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
+import { recordSubmitterSeats } from "./submitterSeatService";
 import { ServiceError } from "@checkin/component-kit";
 
+/** A stored payload as the contract reads it now, so a code it normalizes does not count as a difference. */
+function asParsed(payloadJson: string): string {
+  const stored = CompletedReceiptSchema.safeParse(JSON.parse(payloadJson));
+  return stored.success ? JSON.stringify(stored.data) : payloadJson;
+}
+
+/**
+ * Refusals at arrival (schema, org, a changed payload for a built expense) throw. Once the payload
+ * is stored expense owns it: a failure building the expense leaves the stored row "failed", stuck
+ * until a person retries it, and the call returns "accepted".
+ */
 export async function receiveCompletedReceipt(
   raw: unknown,
-): Promise<{ receiptId: string; status: "created" | "already_applied" }> {
+): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }> {
+  return receive(raw, { replay: false });
+}
+
+async function receive(raw: unknown, { replay }: { replay: boolean }): Promise<{ receiptId: string; status: "created" | "already_applied" | "accepted" }> {
   const receipt = CompletedReceiptSchema.parse(raw);
   await assertOrg(receipt.orgId);
   const { receiptId } = receipt;
@@ -27,13 +43,14 @@ export async function receiveCompletedReceipt(
 
   // Once the expense exists it was built from the stored payload, so a replay must match it.
   const payloadJson = JSON.stringify(receipt);
-  if (existingPayload && existingPayload.payloadJson !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
+  if (existingPayload && asParsed(existingPayload.payloadJson) !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
     throw new ServiceError(409, `Receipt ${receiptId} was already received with a different payload`);
   }
 
   // Record arrival as "received"; "applied" is written only after processing commits, so a crash
-  // in between leaves a row the next call (or the catch-up sweep) finishes.
-  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", failureReason: null, receivedAt: new Date() };
+  // in between leaves a row the next call (or the catch-up sweep) finishes. A resend keeps the
+  // first failure's time.
+  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", receivedAt: new Date() };
   try {
     await db.receivedExpensePayload.upsert({ where: { receiptId }, create: { receiptId, ...arrival }, update: arrival });
   } catch (err) {
@@ -45,35 +62,73 @@ export async function receiveCompletedReceipt(
   try {
     created = await processCompletedReceipt(receipt);
   } catch (err) {
-    await db.receivedExpensePayload.updateMany({
-      where: { receiptId, status: { not: "applied" } },
-      data: { status: "failed", failureReason: err instanceof Error ? err.message : String(err) },
-    });
-    throw err;
+    const kind = expenseRuntime.failed(replay ? "intake-replay" : "intake", err, `receipt ${receiptId}`);
+    logError("intake_build_failed", { receiptId, kind }, err);
+    // A row left "received" is finished by the daily sweep.
+    await recordFailedPayload(receiptId, messageOf(err)).catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
+    return { receiptId, status: "accepted" };
   }
-  await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null } });
+  await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null, firstFailedAt: null } });
   return { receiptId, status: created ? "created" : "already_applied" };
 }
 
-/** Catch-up sweep: re-runs payloads left received or failed. Capped; counts only. */
+/** Marks the payload failed with `reason`, stamping its first failure once. */
+async function recordFailedPayload(receiptId: string, reason: string): Promise<void> {
+  const notApplied = { receiptId, status: { not: "applied" } };
+  await db.receivedExpensePayload.updateMany({ where: notApplied, data: { status: "failed", failureReason: reason } });
+  await db.receivedExpensePayload.updateMany({ where: { ...notApplied, firstFailedAt: null }, data: { firstFailedAt: new Date() } });
+}
+
+/** Catch-up sweep: finishes payloads left "received" by a call that stopped before recording an outcome. Capped; counts only. */
 export async function replayReceivedPayloads(limit = 50): Promise<{ applied: number; failed: number }> {
   const rows = await db.receivedExpensePayload.findMany({
-    where: { orgId: await getOrgId(), status: { in: ["received", "failed"] } },
+    where: { orgId: await getOrgId(), status: "received" },
     orderBy: { receivedAt: "asc" },
     take: limit,
-    select: { payloadJson: true },
+    select: { receiptId: true, payloadJson: true },
   });
   const counts = { applied: 0, failed: 0 };
-  for (const r of rows) {
-    try {
-      await receiveCompletedReceipt(JSON.parse(r.payloadJson));
-      counts.applied++;
-    } catch (err) {
-      counts.failed++;
-      logError("intake_replay_failed", {}, err);
-    }
-  }
+  for (const r of rows) counts[(await replayOne(r)) ? "applied" : "failed"]++;
   return counts;
+}
+
+/** Retry of a failed payload: builds its expense once from the stored payload. 404 when no payload of this org is failed, 409 when it fails again. */
+export async function retryFailedPayload(receiptId: string): Promise<void> {
+  const row = await db.receivedExpensePayload.findFirst({ where: { receiptId, orgId: await getOrgId(), status: "failed" }, select: { receiptId: true, payloadJson: true } });
+  if (!row) throw new ServiceError(404, "No failed intake for this receipt");
+  if (!(await replayOne(row))) throw new ServiceError(409, FAILED_AGAIN);
+}
+
+/** True when the stored payload built its expense; a failure is recorded on the row. Never throws. */
+async function replayOne(row: { receiptId: string; payloadJson: string }): Promise<boolean> {
+  const { receiptId } = row;
+  const stored = storedPayload(row.payloadJson);
+  try {
+    if (!stored.ok) {
+      await recordFailedPayload(receiptId, `The stored payload no longer passes the receipt contract: ${stored.reason}`);
+      return false;
+    }
+    return (await receive(stored.payload, { replay: true })).status !== "accepted";
+  } catch (err) {
+    expenseRuntime.failed("intake-replay", err, `receipt ${receiptId}`);
+    logError("intake_replay_failed", { receiptId }, err);
+    await recordFailedPayload(receiptId, messageOf(err)).catch((markErr) => logError("intake_failure_not_recorded", { receiptId }, markErr));
+    return false;
+  }
+}
+
+function storedPayload(payloadJson: string): { ok: true; payload: unknown } | { ok: false; reason: string } {
+  try {
+    const payload: unknown = JSON.parse(payloadJson);
+    const parsed = CompletedReceiptSchema.safeParse(payload);
+    return parsed.success ? { ok: true, payload } : { ok: false, reason: parsed.error.message };
+  } catch (err) {
+    return { ok: false, reason: messageOf(err) };
+  }
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export const expenseIntake: ExpenseIntake = { receive: receiveCompletedReceipt };
@@ -102,10 +157,9 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boole
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
   const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);
-  const unresolvedDetail =
-    receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     const settings = await readExpenseSettings(tx, receipt.orgId);
+    const review = receiptReviewOf(receipt);
     await tx.expense.create({
       data: {
         id: receipt.receiptId,
@@ -132,11 +186,13 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         ),
         everydayTotalLimitCents: settings.everydayTotalLimitCents,
         everydayItemLimitCents: settings.everydayItemLimitCents,
+        receiptReview: review ? { create: review } : undefined,
       },
     });
 
+    const lineItemIds: number[] = [];
     for (const li of receipt.lineItems) {
-      await tx.expenseLineItem.create({
+      const { id } = await tx.expenseLineItem.create({
         data: {
           expenseId: receipt.receiptId,
           receiptLineItemId: li.receiptLineItemId,
@@ -147,23 +203,35 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
           quantity: li.quantity,
           unitPriceCents: li.unitPriceCents,
           totalPriceCents: li.totalPriceCents,
-          gtin13: li.gtin13,
+          // A non-inventory line is no catalog part, so it keeps no GTIN to map an owner by.
+          gtin13: li.nonInventory ? null : li.gtin13,
           isDelayed: li.isDelayed,
+          nonInventory: li.nonInventory ?? false,
         },
       });
+      lineItemIds.push(id);
     }
 
-    await tx.expenseFlag.createMany({
-      data: detectIntakeFlags({ ...receipt, reimburseePersonId }, settings).map((kind) => ({
-        orgId: receipt.orgId,
-        expenseId: receipt.receiptId,
-        kind,
-        audience: FLAG_AUDIENCE[kind],
-        detail: kind === "REIMBURSEE_UNKNOWN" ? unresolvedDetail : null,
-      })),
-      skipDuplicates: true,
-    });
+    // The person reimbursed's confirmation signs every line: theirs, or a Board member's on their behalf.
+    const confirmation = receipt.submitterConfirmation;
+    if (receipt.needsReimbursement && !receipt.backfill && reimburseePersonId !== null && confirmation?.confirmedByPersonId === reimburseePersonId) {
+      const signer = { userId: confirmation.onBehalfByPersonId ?? reimburseePersonId, username: null };
+      await recordSubmitterSeats(tx, receipt.receiptId, lineItemIds, signer, { reimburseePersonId, confirmedAt: confirmation.confirmedAt, reason: confirmation.onBehalfReason });
+    }
   });
+}
+
+/** The receipt review to store with the expense, or null when the receipt sent neither part. */
+function receiptReviewOf({ taxReviewRequired, financeReview }: CompletedReceipt) {
+  if (taxReviewRequired === undefined && !financeReview) return null;
+  return {
+    taxReviewRequired: taxReviewRequired ?? null,
+    reasons: financeReview?.reasons ?? [],
+    approvedTaxCents: financeReview?.taxCents ?? null,
+    approvedByUserId: financeReview?.decidedByPersonId ?? null,
+    note: financeReview?.note ?? null,
+    approvedAt: financeReview ? new Date(financeReview.decidedAt) : null,
+  };
 }
 
 /** The receipt's reimbursee when it names a checkin Person; an unresolvable id is held as unknown. */

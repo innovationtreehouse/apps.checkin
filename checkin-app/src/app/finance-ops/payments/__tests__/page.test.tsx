@@ -14,9 +14,9 @@ import PaymentProblemsPage from "../page";
  *
  * The POST only STARTS a sync; everything the user then sees comes from polling GET
  * /api/finance-ops/s-read/sync. So each distinct thing that can happen to that poll
- * has to produce a distinct claim — the bug these cover was a failed status READ being
- * reported as "sync is still running", which is a status the page never saw. It hid a
- * real fault (the mirror's SELECT grant not being in place) behind a plausible message.
+ * has to produce a distinct claim. A failed status READ must not be reported as "sync
+ * is still running", a status the page never saw: that hides a real fault (such as the
+ * mirror's SELECT grant not being in place) behind a plausible message.
  *
  * mockFetchJson can't express this: it keys on URL only, so it can't give the POST and
  * the GET on this one path different answers, nor return a non-200 for a known route.
@@ -86,7 +86,7 @@ describe("finance-ops/payments — sync status", () => {
     });
 
     it("reports an unreadable mirror as unreadable — NOT as 'still running'", async () => {
-        // The regression. The sync did start, so the message must own that AND admit it
+        // The sync did start, so the message must own that AND admit it
         // can't see the status; it must not invent one.
         jest.useFakeTimers();
         try {

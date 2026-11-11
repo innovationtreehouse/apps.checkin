@@ -14,6 +14,9 @@ const receipt = {
     hmacValid: false,
     test: true,
     orderId: null,
+    deliveryId: null,
+    triggeredAt: null,
+    retry: null,
     outcome: "rejected: bad signature",
 };
 
@@ -44,5 +47,34 @@ describe("ShopifyWebhookSettingsPage", () => {
 
         expect(await screen.findByText("rejected: bad signature")).toBeInTheDocument();
         expect(fetchMock).toHaveBeenCalledTimes(loadsBefore + 1);
+    });
+
+    it("shows the delivery id and flags a retried delivery", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        mockFetchJson({
+            "/api/settings/shopify-webhook": () => ({
+                webhookUrl: "https://app.test/api/webhooks/shopify",
+                storeDomain: null,
+                receipts: [{ ...receipt, id: 2, hmacValid: true, deliveryId: "delivery-1", triggeredAt: "2026-10-01T11:59:58Z", retry: true, outcome: "already settled" }],
+            }),
+        });
+        renderWithProviders(<ShopifyWebhookSettingsPage />);
+
+        expect(await screen.findByText("delivery-1")).toBeInTheDocument();
+        expect(screen.getByText("retry")).toBeInTheDocument();
+    });
+
+    it("shows a malformed trigger time raw instead of Invalid Date", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        mockFetchJson({
+            "/api/settings/shopify-webhook": () => ({
+                webhookUrl: "https://app.test/api/webhooks/shopify",
+                storeDomain: null,
+                receipts: [{ ...receipt, id: 3, deliveryId: "delivery-2", triggeredAt: "not-a-date" }],
+            }),
+        });
+        renderWithProviders(<ShopifyWebhookSettingsPage />);
+
+        expect(await screen.findByText("delivery-2")).toHaveAttribute("title", "Triggered at not-a-date");
     });
 });

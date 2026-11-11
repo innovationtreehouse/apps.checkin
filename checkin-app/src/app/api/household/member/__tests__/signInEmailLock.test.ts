@@ -16,6 +16,7 @@ import { signInEmailHelp } from "@/lib/person/signInEmail";
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));
+jest.mock("@/lib/person/mailAliases", () => ({ removeAliasesForSignInEmail: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/leads", () => ({
@@ -46,7 +47,7 @@ const LEAD = 1;
 const CO_LEAD = 2;
 const KID = 3;
 
-const NO_GRANTS = { roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0 };
+const NO_GRANTS = { roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 };
 
 function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> = {}, lastBackgroundCheck: Date | null = null) {
     return {
@@ -54,7 +55,14 @@ function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> 
         householdId: 10,
         email: `p${id}@example.com`,
         lastBackgroundCheck,
+        canAccessStaging: false,
+        household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts, ...NO_GRANTS, ...grants },
+        roles: [],
+        budgetOwnersOwned: [], budgetOwnerTreasurerships: [],
+        programsLed: [],
+        instancesLed: [],
+        toolStatuses: [],
     };
 }
 
@@ -82,6 +90,35 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
             "This is the address you sign in with. To change it, email the board at board@example.org.",
         );
         expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a bucket treasurer's email change when they have no sign-in and no other grant", async () => {
+        findPerson.mockResolvedValue({ ...target(CO_LEAD, 0), budgetOwnerTreasurerships: [{ budgetOwnerId: 5 }] });
+        const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a bucket owner's email change when they have no sign-in and no other grant", async () => {
+        findPerson.mockResolvedValue({ ...target(CO_LEAD, 0), budgetOwnersOwned: [{ id: 5 }] });
+        const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a trusted member with no sign-in editing their own email", async () => {
+        findPerson.mockResolvedValue({ ...target(LEAD, 0), budgetOwnerTreasurerships: [{ budgetOwnerId: 5 }] });
+        const res = await patch({ participantId: LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("rolls back when the member becomes trusted between the check and the write", async () => {
+        findPerson.mockResolvedValue(target(CO_LEAD, 0));
+        tx.person.findUnique.mockResolvedValueOnce({ ...target(CO_LEAD, 0), roles: [{ role: "KEYHOLDER" }] });
+        const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toContain("can only be changed by the board");
     });
 
     it("refuses a lead editing a signed-in co-lead's email", async () => {
@@ -130,6 +167,7 @@ describe("PATCH /api/household/member — granted-authority email lock", () => {
         ["a program volunteer row", { programVolunteers: 1 }],
         ["a background-check attestation", { bgAttestationsAsSubject: 1 }],
         ["a background-check process", { personBgProcesses: 1 }],
+        ["a tool certification level", { toolStatuses: 1 }],
     ])("refuses a lead changing the email of a member without a sign-in who holds %s", async (_label, grants) => {
         findPerson.mockResolvedValue(target(KID, 0, grants));
         const res = await patch({ participantId: KID, email: "other@example.com" });
@@ -143,6 +181,29 @@ describe("PATCH /api/household/member — granted-authority email lock", () => {
         const res = await patch({ participantId: KID, email: "other@example.com" });
         expect(res.status).toBe(400);
         expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses the change for a member admitted to staging", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0), canAccessStaging: true });
+        const res = await patch({ participantId: KID, email: "other@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(GRANT_HELP);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses the change for a member of a Volunteer Family household", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0), household: { orgMembership: { isVolunteerFamily: true } } });
+        const res = await patch({ participantId: KID, email: "other@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(GRANT_HELP);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("still lets a lead change the email of a member whose household has no membership row", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0), household: { orgMembership: null } });
+        const res = await patch({ participantId: KID, email: "teen@example.com" });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBe("teen@example.com");
     });
 
     it("refuses clearing the email of a member holding a grant", async () => {

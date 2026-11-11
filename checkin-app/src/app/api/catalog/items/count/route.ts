@@ -1,4 +1,4 @@
-// Re-export stub (#1286): item count for the paginated list UI. The endpoint
+// Re-export stub: item count for the paginated list UI. The endpoint
 // string MUST match its src/security/registry.ts entry (stub-endpoint guard).
 import { handler } from "@/security/handler";
 import { componentRoute } from "@/lib/components/route";

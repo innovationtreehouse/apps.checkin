@@ -30,21 +30,21 @@ const renderFrame = () => renderWithProviders(<AppFrame>{<div>PAGE</div>}</AppFr
 const hrefOf = (label: string) => screen.getByText(label).closest("a")?.getAttribute("href");
 
 describe("AppFrame library nav slots", () => {
-  it("Board: Revenue Ops (legacy first), Expense Ops, Inventory", () => {
+  it("Board: Revenue Ops (legacy first), Finance, Inventory", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
     expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
-    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Finance")).toBe("/finance/review");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
     expect(hrefOf("My Receipts")).toBe("/receipts");
     expect(screen.queryByText("Programs I Lead")).not.toBeInTheDocument();
   });
 
-  it("FINANCE-only: Revenue Ops lands on Income (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
+  it("FINANCE-only: Revenue Ops lands on the program payment plan; Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
     setSession({ id: 2, isFinance: true });
     renderFrame();
-    expect(hrefOf("Revenue Ops")).toBe("/income");
-    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
+    expect(hrefOf("Finance")).toBe("/finance/review");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
   });
 
@@ -55,7 +55,7 @@ describe("AppFrame library nav slots", () => {
     expect(hrefOf("Programs I Lead")).toBe("/programs-i-lead");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
-    expect(screen.queryByText("Expense Ops")).not.toBeInTheDocument();
+    expect(screen.queryByText("Finance")).not.toBeInTheDocument();
   });
 
   it("catalog viewer (keyholder): Inventory and My Receipts right after My Activities", () => {
@@ -84,15 +84,15 @@ describe("AppFrame library nav slots", () => {
     mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["catalog", "local-inventory"] }));
     setSession({ id: 2, isFinance: true });
     const { unmount } = renderFrame();
-    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
-    expect(screen.queryByText("Expense Ops")).not.toBeInTheDocument();
+    expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
+    expect(screen.queryByText("Finance")).not.toBeInTheDocument();
     unmount();
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
-    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Finance")).toBe("/finance/review");
   });
 
-  it("FINANCE with only workflow-mapping released: Inventory lands on Receiving", () => {
+  it("FINANCE with only workflow-mapping released: Inventory lands on Part mapping", () => {
     mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["workflow-mapping"] }));
     setSession({ id: 2, isFinance: true });
     renderFrame();
@@ -102,18 +102,30 @@ describe("AppFrame library nav slots", () => {
   it("plain member: none of the library entries", () => {
     setSession({ id: 5 });
     renderFrame();
-    for (const label of ["Inventory", "Revenue Ops", "Expense Ops", "My Receipts", "Programs I Lead"]) {
+    for (const label of ["Inventory", "Revenue Ops", "Finance", "My Receipts", "Programs I Lead"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
 
   it("folds a library tab's pill into its section entry and highlights the entry on its routes", () => {
     setSession({ id: 2, isFinance: true });
-    setPathname("/expense/42");
-    mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { holds: 2, openFlags: 1 } } }));
+    setPathname("/expense/expenses/42");
+    mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { financeQueue: 2 }, receipt: { awaitingFinance: 1 } } }));
     renderFrame();
-    expect(screen.getByLabelText("3 expense holds and flags")).toHaveTextContent("3");
-    expect(screen.getByText("Expense Ops").closest("a")).toHaveAttribute("data-active", "true");
+    expect(screen.getByLabelText("3 items wait on you in Finance review")).toHaveTextContent("3");
+    expect(screen.getByText("Finance").closest("a")).toHaveAttribute("data-active", "true");
     expect(screen.getByText("Revenue Ops").closest("a")).not.toHaveAttribute("data-active");
+  });
+
+  it.each([
+    ["FINANCE", "/income/reconciliation", { id: 2, isFinance: true }],
+    ["FINANCE", "/income/exclusions", { id: 2, isFinance: true }],
+    ["Board", "/income/payouts", { id: 1, isBoardMember: true }],
+    ["Board", "/finance-ops/payments", { id: 1, isBoardMember: true }],
+  ])("%s: highlights Revenue Ops on a grouped tab's sub-page %s", (_who, pathname, user) => {
+    setSession(user);
+    setPathname(pathname);
+    renderFrame();
+    expect(screen.getByText("Revenue Ops").closest("a")).toHaveAttribute("data-active", "true");
   });
 });

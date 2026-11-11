@@ -6,11 +6,14 @@ export const classifications = {
         orgId: 'internal',
         capitalTotalThresholdCents: 'internal',
         capitalLineItemThresholdCents: 'internal',
-        capitalEquipmentUnitCents: 'internal',
         boardReviewTotalCents: 'internal',
         noteInLieuLimitCents: 'internal',
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
+        qbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
+        qbMaxCreatesPerDay: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',
@@ -58,11 +61,13 @@ export const classifications = {
         qbTxnEntity: 'internal',
         qbVendorId: 'internal',
         qbPostAttempts: 'internal',
+        qbFailureKind: 'internal',
+        qbFirstFailedAt: 'internal',
+        qbLastError: 'personal',
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
+        qbCreateAttemptedAt: 'internal',
         isTestData: 'internal',
-        singleSource: 'internal',
-        financeNotEveryday: 'internal',
         boardAuthorization: 'internal',
         boardAuthorizedByUserId: 'pii',
         boardAuthorizedByUsername: 'pii',
@@ -70,6 +75,22 @@ export const classifications = {
         everydayWithinLimits: 'internal',
         everydayTotalLimitCents: 'internal',
         everydayItemLimitCents: 'internal',
+    },
+    ExpenseReceiptReview: {
+        expenseId: 'internal',
+        taxReviewRequired: 'internal',
+        reasons: 'internal',
+        approvedTaxCents: 'internal',
+        approvedByUserId: 'pii',
+        note: 'personal',
+        approvedAt: 'internal',
+    },
+    ExpenseTaxApproval: {
+        expenseId: 'internal',
+        taxCents: 'internal',
+        approvedByUserId: 'pii',
+        note: 'personal',
+        approvedAt: 'internal',
     },
     ExpenseLineItem: {
         id: 'internal',
@@ -84,6 +105,7 @@ export const classifications = {
         totalPriceCents: 'internal',
         gtin13: 'internal',
         isDelayed: 'internal',
+        nonInventory: 'internal',
         isCapital: 'internal',
         capitalOwnerId: 'pii',
         depreciationYears: 'internal',
@@ -98,6 +120,7 @@ export const classifications = {
         qbTxnId: 'internal',
         qbTxnEntity: 'internal',
         qbAccountId: 'internal',
+        resolvedQbAccount: 'internal',
     },
     LineItemOwnerApproval: {
         id: 'internal',
@@ -108,6 +131,7 @@ export const classifications = {
         decidedAt: 'internal',
         decidedByUserId: 'pii',
         notes: 'personal',
+        bucketFinal: 'internal',
     },
     AccountMapping: {
         id: 'internal',
@@ -134,7 +158,18 @@ export const classifications = {
         id: 'internal',
         orgId: 'internal',
         expenseId: 'internal',
-        payload: 'personal',
+        createdAt: 'internal',
+    },
+    ExpenseOutcomeNotice: {
+        id: 'internal',
+        orgId: 'internal',
+        expenseId: 'internal',
+        event: 'internal',
+        claimedAt: 'internal',
+        uploaderSentAt: 'internal',
+        reimburseeSentAt: 'internal',
+        doneAt: 'internal',
+        attempts: 'internal',
         createdAt: 'internal',
     },
     ExpenseQbAccount: {
@@ -190,6 +225,8 @@ export const classifications = {
         status: 'internal',
         failureReason: 'personal',
         receivedAt: 'internal',
+        replayAttempts: 'internal',
+        firstFailedAt: 'internal',
     },
     ExpenseReceivedOrgEvent: {
         id: 'internal',
@@ -199,6 +236,7 @@ export const classifications = {
         receivedAt: 'internal',
         status: 'internal',
         failureReason: 'personal',
+        firstFailedAt: 'internal',
     },
     CapitalAsset: {
         id: 'internal',
@@ -215,7 +253,25 @@ export const classifications = {
         sourceLineItemId: 'internal',
         sourceReceiptId: 'internal',
         sourceQbTxnId: 'internal',
+        sourceDonatedLineId: 'internal',
         seeded: 'internal',
+        createdAt: 'internal',
+    },
+    DonatedCapitalLine: {
+        id: 'internal',
+        orgId: 'internal',
+        giftSource: 'internal',
+        giftId: 'internal',
+        giftLineId: 'internal',
+        description: 'internal',
+        quantity: 'internal',
+        costCents: 'internal',
+        acquisitionDate: 'internal',
+        budgetOwnerId: 'internal',
+        isCapital: 'internal',
+        depreciationYears: 'internal',
+        reviewedByUserId: 'pii',
+        reviewedAt: 'internal',
         createdAt: 'internal',
     },
     ExpenseQbMatchExclusion: {
@@ -279,6 +335,14 @@ export const relations = {
         holds: { model: 'ExpenseHold', isList: true },
         auditLog: { model: 'ExpenseAuditLog', isList: true },
         flags: { model: 'ExpenseFlag', isList: true },
+        receiptReview: { model: 'ExpenseReceiptReview', isList: false },
+        taxApproval: { model: 'ExpenseTaxApproval', isList: false },
+    },
+    ExpenseReceiptReview: {
+        expense: { model: 'Expense', isList: false },
+    },
+    ExpenseTaxApproval: {
+        expense: { model: 'Expense', isList: false },
     },
     ExpenseLineItem: {
         expense: { model: 'Expense', isList: false },
@@ -299,6 +363,8 @@ export const relations = {
     },
     ExpenseEvent: {
     },
+    ExpenseOutcomeNotice: {
+    },
     ExpenseQbAccount: {
     },
     ExpenseAuditLog: {
@@ -317,6 +383,8 @@ export const relations = {
     },
     CapitalAsset: {
     },
+    DonatedCapitalLine: {
+    },
     ExpenseQbMatchExclusion: {
     },
     ExpenseQbClaim: {
@@ -329,6 +397,18 @@ export const relations = {
     ExpenseFlag: {
         expense: { model: 'Expense', isList: false },
     },
+} as const;
+
+export const marks = {
+    Expense: ['submitterId', 'vendorName', 'taxCents', 'shippingCents', 'discountCents', 'receiptTotalCents', 'reimbursementFor', 'reimburseePersonId'],
+    ExpenseReceiptReview: ['approvedTaxCents'],
+    ExpenseTaxApproval: ['taxCents'],
+    ExpenseLineItem: ['unitPriceCents', 'totalPriceCents', 'allocatedTaxCents', 'allocatedShippingCents', 'allocatedDiscountCents'],
+    ExpenseAuditLog: ['valueBefore', 'valueAfter'],
+    ReceivedExpensePayload: ['payloadJson'],
+    CapitalAsset: ['costCents'],
+    DonatedCapitalLine: ['costCents'],
+    ExpenseReimburseeVendor: ['reimburseePersonId'],
 } as const;
 
 export type Models = keyof typeof classifications;

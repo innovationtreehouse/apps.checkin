@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, use } from "react";
+import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatDateOnly } from "@/lib/time";
 import { isMembershipLapsed } from "@/lib/membership/lapsed";
@@ -24,9 +27,16 @@ type Member = {
 type Household = {
   id: number;
   name?: string | null;
+  archivedAt?: string | null;
   orgMembership?: { status: string; memberSince?: string | null } | null;
   householdMembers?: Member[] | null;
   bgValidUntil?: string | null;
+};
+
+type HouseholdDetail = {
+  household: Household | null;
+  validUntil?: string | null;
+  signing?: Signing | null;
 };
 
 // Every date this renders (memberSince, validUntil, bgValidUntil) is a calendar
@@ -34,43 +44,85 @@ type Household = {
 const fmtDate = (s?: string | null) =>
   s ? formatDateOnly(s, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
+// Board-only "Archive household" / "Unarchive", confirmed before it runs. The server
+// refuses an archive while anything still ties the household to the organisation.
+function ArchiveControl({ household, onChange }: { household: Household; onChange: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const archive = !household.archivedAt;
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/membership-ops/households/${household.id}/${archive ? "archive" : "unarchive"}`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        notifications.show({ message: archive ? "Household archived." : "Household unarchived." });
+        setConfirming(false);
+        onChange();
+      } else {
+        notifications.show({ color: "red", message: data?.error ?? "Couldn't change the household.", autoClose: false });
+      }
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!confirming) {
+    return (
+      <Button variant="light" color={archive ? "red" : undefined} size="xs" w="fit-content" onClick={() => setConfirming(true)}>
+        {archive ? "Archive household…" : "Unarchive household…"}
+      </Button>
+    );
+  }
+  return (
+    <Card withBorder padding="md">
+      <Stack gap="xs">
+        <Text size="sm">
+          {archive
+            ? "Archiving hides this household and its people from every list, search and check-in. Its open applications are closed. You can unarchive it later."
+            : "Unarchiving returns this household to every list. Applications closed by the archive stay closed."}
+        </Text>
+        <Group gap="xs">
+          <Button color={archive ? "red" : undefined} size="xs" loading={saving} onClick={submit}>
+            {archive ? "Archive household" : "Unarchive household"}
+          </Button>
+          <Button variant="subtle" size="xs" disabled={saving} onClick={() => setConfirming(false)}>Cancel</Button>
+        </Group>
+      </Stack>
+    </Card>
+  );
+}
+
 // A household detail view for the board — its members and each member's program
 // enrollments in one focused screen, off the noisy households list.
 export default function HouseholdDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
+  const { ready, loading: authLoading, user } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const router = useRouter();
 
-  const [household, setHousehold] = useState<Household | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [validUntil, setValidUntil] = useState<string | null>(null);
-  const [signing, setSigning] = useState<Signing | null>(null);
+  const { data, error, reload } = useLoad<HouseholdDetail>(ready ? `/api/membership-ops/households?id=${id}` : null);
+  const household = data?.household ?? null;
+  const validUntil = data?.validUntil ?? null;
+  const signing = data?.signing ?? null;
 
-  const fetchHousehold = useCallback(() => fetch(`/api/membership-ops/households?id=${id}`)
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHousehold(data.household);
-        setValidUntil(data.validUntil ?? null);
-        setSigning(data.signing ?? null);
-      } else {
-        notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [id]);
-
-  useEffect(() => {
-    if (ready) fetchHousehold();
-  }, [ready, fetchHousehold]);
-
-  if (authLoading || loading) return <PageLoader />;
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
+
+  if (error) {
+    return (
+      <Stack>
+        <Button variant="subtle" onClick={() => router.push("/membership-ops/households")} w="fit-content">
+          ← Back to Households
+        </Button>
+        <LoadError what="the household" message={error} onRetry={reload} />
+      </Stack>
+    );
+  }
+
+  if (!data) return <PageLoader />;
 
   if (!household) {
     return (
@@ -94,7 +146,9 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
 
       <Group justify="space-between" align="center">
         <Title order={3}>{household.name || `Household #${household.id}`}</Title>
-        {status === "DENIED" ? (
+        {household.archivedAt ? (
+          <Badge color="gray" variant="outline">Archived {fmtDate(household.archivedAt)}</Badge>
+        ) : status === "DENIED" ? (
           <Badge color="red">Denied</Badge>
         ) : status === "ACTIVE" && isMembershipLapsed(validUntil) ? (
           <Badge color="orange">Member (lapsed)</Badge>
@@ -111,7 +165,9 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Text size="sm" c="dimmed">BG valid until: {fmtDate(household.bgValidUntil)}</Text>
       </Group>
 
-      <SigningStatusCard signing={signing} onChange={fetchHousehold} />
+      {user?.isBoardMember && <ArchiveControl household={household} onChange={reload} />}
+
+      <SigningStatusCard signing={signing} onChange={reload} />
 
       {members.length === 0 ? (
         <Text c="dimmed" fs="italic">No people in this household.</Text>

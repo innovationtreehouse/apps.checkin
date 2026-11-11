@@ -33,6 +33,8 @@ describe("setItemCategory body", () => {
     ["a string", json({ budgetOwnerId: "3" }), "budgetOwnerId must be a positive integer or null"],
     ["a fraction", json({ budgetOwnerId: 1.5 }), "budgetOwnerId must be a positive integer or null"],
     ["zero", json({ budgetOwnerId: 0 }), "budgetOwnerId must be a positive integer or null"],
+    ["an account name", json({ budgetOwnerId: null, quickBooksAccountId: "Sales" }), "quickBooksAccountId must be a QuickBooks id (digits only) or null"],
+    ["a numeric account", json({ budgetOwnerId: null, quickBooksAccountId: 400 }), "quickBooksAccountId must be a QuickBooks id (digits only) or null"],
   ])("is a 400 for %s", async (_, req, message) => {
     await expect(call(req)).rejects.toMatchObject({ status: 400, message });
   });

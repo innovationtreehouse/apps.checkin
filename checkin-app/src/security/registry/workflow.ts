@@ -2,9 +2,10 @@
 import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Reads admit INVENTORY_MANAGER, FINANCE or BOARD — finance and the board oversee
-// spend; none auto-admits sysadmins. Writes are INVENTORY_MANAGER-only. All
-// three read roles see `internal` + `public`; the `personal` receiptJson blob is
-// granted to no view, so the stripper removes it from every response.
+// spend; none auto-admits sysadmins. Writes are INVENTORY_MANAGER-only, except
+// closing out a failed apply, which the Board may also do. All three read roles
+// see `internal` + `public`; the `personal` receiptJson blob is granted to no
+// view, so the stripper removes it from every response.
 //
 // NOT registered here, deliberately:
 //   • the intake — the source's org-bearer POST. checkin cannot gate a
@@ -21,18 +22,25 @@ const WORKFLOW_VIEW: readonly OrderedViewEntry[] = [
 const WORKFLOW_MANAGER_VIEW: readonly OrderedViewEntry[] = [
     ['isInventoryManager', ['everyones:internal', 'public']],
 ];
+const WORKFLOW_CLOSE_OUT: Authorize = { anyRole: ['isInventoryManager', 'isBoardMember'] };
+const WORKFLOW_CLOSE_OUT_VIEW: readonly OrderedViewEntry[] = [
+    ['isInventoryManager', ['everyones:internal', 'public']],
+    ['isBoardMember', ['everyones:internal', 'public']],
+];
 
 // Reads — the parsed projections (workflowSyntheticClassifications.ts), never the blob.
-defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptSummary'], orderedView: WORKFLOW_VIEW });
+defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptSummary'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowReceiptSummary', id: 'id', model: 'ReceivedReceipt' }] } });
 defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/counts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptCount'], orderedView: WORKFLOW_VIEW });
-defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/[id]', authorize: WORKFLOW_READ, envelope: null, returns: ['ReceivedReceipt', 'WorkflowReceiptView', 'WorkflowReceiptLineView', 'ReceivedReceiptLineStatus'], orderedView: WORKFLOW_VIEW });
-defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowAuditLog'], orderedView: WORKFLOW_VIEW });
+defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/[id]', authorize: WORKFLOW_READ, envelope: null, returns: ['ReceivedReceipt', 'WorkflowReceiptView', 'WorkflowReceiptLineView', 'ReceivedReceiptLineStatus'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowReceiptView', id: 'receiptId', model: 'Receipt' }] } });
+defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowAuditLog'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowAuditLog', id: 'receivedReceiptId', model: 'ReceivedReceipt' }] } });
 
 // Writes — receipt transitions, then line edits (409 while the receipt is applying or resolved,
 // enforced in the library).
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/proceed', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/apply', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/retry-apply', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
+defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/run-matching', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
+defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/close-out', authorize: WORKFLOW_CLOSE_OUT, envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_CLOSE_OUT_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/associate', authorize: 'inventory-manager', envelope: null, orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/propose', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceiptLineStatus'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/non-inventory', authorize: 'inventory-manager', envelope: null, orderedView: WORKFLOW_MANAGER_VIEW });

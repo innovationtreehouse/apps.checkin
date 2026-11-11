@@ -177,7 +177,7 @@ describe('Ownership-boundary authorization', () => {
 
     // ---- household/settings (PATCH) — lead-only --------------------------------
     describe('PATCH /api/household/settings', () => {
-        // A complete address: assertValidAddress (structured addresses, #513) rejects
+        // A complete address: assertValidAddress (structured addresses) rejects
         // a partial address (400) before this route's lead-only authz check even runs.
         const body = { line1: '1 New St', city: 'Anytown', state: 'CA', postalCode: '90210' };
         it('401 unauthenticated', async () => {
@@ -233,7 +233,7 @@ describe('Ownership-boundary authorization', () => {
             // leadB is a lead (passes the lead gate for THEIR household) but the contact
             // belongs to HH_A — the service must not find/update it for HH_B. A 404 alone
             // doesn't prove the row was untouched (a guard that ran AFTER the write would
-            // still 404); re-read and compare. Mirrors fd192fc.
+            // still 404); re-read and compare.
             const before = await prisma.emergencyContact.findUnique({ where: { id: contact1 } });
             const res = await EC_PATCH(jsonReq({ name: 'Hijack', phone: '555-555-6666' }), ecCtx(contact1));
             expect(res.status).not.toBe(200);

@@ -30,10 +30,16 @@ import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
+import { configureRuntime as configureIncomeRuntime } from '@/lib/income/configure';
 import '@/security/registry';
 import libraries from '../../libraries.json';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
+// This tier has no expense database, and the qbo-posting admission case asserts only the gate.
+jest.mock('@checkin/expense', () => ({
+    ...jest.requireActual('@checkin/expense'),
+    runExpenseQbPosting: jest.fn().mockResolvedValue({ failedParts: [] }),
+}));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
 
@@ -75,17 +81,17 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer') {
         return { gate: 'program-scoped', requiredRoles: null };
     }
-    // Catalog (#1286 §6): 'catalog-viewer' admits any staff relationship (a plain
+    // Catalog: 'catalog-viewer' admits any staff relationship (a plain
     // authenticated user is rejected); 'inventory-manager' admits the role only.
     if (authorize === 'catalog-viewer') return { gate: 'catalog-viewer', requiredRoles: null };
     // Receipt submission: an adult with an ACTIVE membership; a non-member adult, youth or unknown age is rejected.
     if (authorize === 'receipt-submitter') return { gate: 'receipt-submitter', requiredRoles: null };
     if (authorize === 'inventory-manager') return { gate: 'inventory-manager', requiredRoles: null };
-    // Finance (#1272 §6): neither admits a plain authenticated user or a sysadmin.
+    // Finance: neither admits a plain authenticated user or a sysadmin.
     if (authorize === 'finance') return { gate: 'finance', requiredRoles: null };
     if (authorize === 'finance-or-board') return { gate: 'finance-or-board', requiredRoles: null };
     if (authorize === 'expense-approver') return { gate: 'expense-approver', requiredRoles: null };
-    // Sign-off (#1272 §6): catalog-viewer OR expense-approver; a plain user is neither.
+    // Sign-off: catalog-viewer OR expense-approver; a plain user is neither.
     if (authorize === 'expense-signer') return { gate: 'expense-signer', requiredRoles: null };
     // A scheduled job: only a Bearer of the route's own named secret admits.
     if (typeof authorize === 'object' && authorize !== null && 'cronSecret' in authorize) {
@@ -102,11 +108,13 @@ const PLANS: RoutePlan[] = Array.from(allRoutes()).map(([endpoint, spec]) => {
     return { endpoint, method, routePath, ...planAuthorize(spec.authorize) };
 });
 
-// GETs whose admitted answer depends on the Shopify mirror, which this in-process
-// test has no database for: they answer 503 "not wired" after admission.
-const MIRROR_GATED_GETS = new Set([
+// GETs whose admitted answer depends on an outside service this in-process test
+// has none of — the Shopify mirror, or QuickBooks: they answer 503 after admission.
+const EXTERNAL_GATED_GETS = new Set([
     'GET /api/finance-ops/s-read/sync',
     'GET /api/finance-ops/s-read/match-audit',
+    'GET /api/budget-owners/quickbooks-classes',
+    'GET /api/books-map/quickbooks-accounts',
 ]);
 
 function importPathFor(routePath: string): string {
@@ -125,6 +133,7 @@ describe('Registry route admission gates', () => {
     let plainUser: AuthenticatedUser;
     let programId: number;
     let eventId: number;
+    let bucketId: number;
     let otherPersonId: number;
     const householdIds: number[] = [];
     const participantIds: number[] = [];
@@ -138,6 +147,7 @@ describe('Registry route admission gates', () => {
         // Bind the library runtimes the routes call into, as server boot (instrumentation.ts) does.
         configureBulkDonationRuntime();
         configureExpenseRuntime();
+        configureIncomeRuntime();
 
         const plain = await prisma.person.create({
             data: {
@@ -175,7 +185,7 @@ describe('Registry route admission gates', () => {
 
         // For the public route's 2xx sanity (programs/[id]). orgMemberOnly defaults
         // false, so an anonymous caller is admitted and sees it.
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Authz Program ${TAG}` } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Authz Program ${TAG}` } });
         programId = program.id;
 
         // For event routes ('GET /api/events/[id]' etc.) whose [id] is an EVENT
@@ -186,6 +196,11 @@ describe('Registry route admission gates', () => {
             data: { programId, name: `Authz Event ${TAG}`, startAt: new Date(), endAt: new Date() },
         });
         eventId = event.id;
+
+        // For bucket routes ('GET /api/budget-owners/[id]/approvers' etc.) whose
+        // [id] is a BUCKET id.
+        const bucket = await prisma.budgetOwner.create({ data: { name: `Authz Bucket ${TAG}` } });
+        bucketId = bucket.id;
     });
 
     beforeEach(() => {
@@ -200,6 +215,9 @@ describe('Registry route admission gates', () => {
             else process.env[k] = v;
         }
         await prisma.event.deleteMany({ where: { id: eventId } });
+        // A driven PUT may have named the other person a treasurer or owner; RESTRICT FKs go first.
+        await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwnerId: bucketId } });
+        await prisma.budgetOwner.deleteMany({ where: { id: bucketId } });
         await prisma.program.deleteMany({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { id: { in: participantIds } } });
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
@@ -211,9 +229,13 @@ describe('Registry route admission gates', () => {
         if (typeof verb !== 'function') {
             throw new Error(`${plan.endpoint}: no ${plan.method} export — registry/route out of sync`);
         }
-        // Event routes carry an EVENT id in [id]; [personId] is the other
-        // person; everything else uses the program id.
-        const idValue = String(plan.routePath.startsWith('/api/events/') ? eventId : programId);
+        // Event routes carry an EVENT id in [id] and bucket routes a BUCKET id;
+        // [personId] is the other person; everything else uses the program id.
+        const idValue = String(
+            plan.routePath.startsWith('/api/events/') ? eventId
+                : plan.routePath.startsWith('/api/budget-owners/') ? bucketId
+                    : programId,
+        );
         const valueFor = (name: string) => (name === 'personId' ? String(otherPersonId) : idValue);
         const url = `http://localhost${plan.routePath.replace(/\[(\w+)\]/g, (_, name: string) => valueFor(name))}`;
         const hasParams = /\[(\w+)\]/.test(plan.routePath);
@@ -376,7 +398,7 @@ describe('Registry route admission gates', () => {
                 // A write verb can't be driven with an empty body and no owned
                 // row, so admission is all that's assertable: a 400 from
                 // validation or a 404 from an ownership check both cleared authz.
-                if (MIRROR_GATED_GETS.has(plan.endpoint)) expect([200, 503]).toContain(res.status);
+                if (EXTERNAL_GATED_GETS.has(plan.endpoint)) expect([200, 503]).toContain(res.status);
                 else if (plan.method === 'GET') expect(res.status).toBeLessThan(400);
                 else expect([401, 403]).not.toContain(res.status);
             });

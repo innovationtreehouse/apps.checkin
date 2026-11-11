@@ -7,9 +7,13 @@ export * from "./db/schema";
 export * from "./lib/apply-receipt";
 export * from "./lib/parse-receipt";
 export * from "./workflows";
-export * from "./services/receiptIntakeService";
+export { ingestReceipt, type IngestResult } from "./services/receiptIntakeService";
 export * from "./services/receiptService";
 export * from "./services/lineItemService";
+export { receivingOutcomes, type ReceivingOutcome } from "./services/receivingOutcomes";
+export { receivingStateCounts, type ReceivingStateCount } from "./services/stateCounts";
 export { orgEventConsumer, catchUpOrgEvents } from "./services/orgEventConsumer";
 export * as routes from "./routes";
 export type { WorkflowRouteCtx, WorkflowBag, WorkflowRouteHandler } from "./routes";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

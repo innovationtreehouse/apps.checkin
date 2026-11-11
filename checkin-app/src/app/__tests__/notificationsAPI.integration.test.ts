@@ -26,7 +26,7 @@ describe('Membership notifications API', () => {
         const hhs = await prisma.household.findMany({ where: { OR: [{ name: { contains: TAG } }, { householdMembers: { some: { email: { contains: TAG } } } }] }, select: { id: true } });
         const ids = hhs.map((h) => h.id);
         if (ids.length) {
-            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+            await prisma.orgMembershipProcess.deleteMany({ where: { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] } });
             await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -40,13 +40,10 @@ describe('Membership notifications API', () => {
         boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
         plainId = (await prisma.person.create({ data: { email: `plain-${TAG}@example.com`, name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
 
-        // An application awaiting review (eligible for the reviewer — different household).
-        // It needs a lead: reviewers attest per adult, so a household with nobody to name
-        // has nothing for them to do and drops out of the queue.
+        // A check review a household's consent opened, awaiting review (eligible for the reviewer — different household).
         const appHh = await prisma.household.create({ data: { name: `App HH ${TAG}` } });
         await prisma.person.create({ data: { name: 'App Lead', email: `applead-${TAG}@example.com`, householdId: appHh.id, isHouseholdLead: true } });
-        const m1 = await prisma.orgMembership.create({ data: { householdId: appHh.id, status: 'NONE' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m1.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' } });
+        await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', requestedForHouseholdId: appHh.id, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() } });
 
         // A blocked application (for the board).
         const blkHh = await prisma.household.create({ data: { name: `Blk HH ${TAG}` } });

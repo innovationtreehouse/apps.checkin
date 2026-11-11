@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Box, Button, Group, Modal, Stack, Switch, Text, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { modals } from "@mantine/modals";
 import { roleLabel } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
@@ -18,7 +19,7 @@ export type RolesEditTarget = {
   isOperations?: boolean;
   isInventoryManager?: boolean;
   isFinance?: boolean;
-  // ops-stg access gate escape hatch. NOT one of the five ROLE_FLAGS above —
+  // ops-stg access gate escape hatch. NOT one of the ROLE_FLAGS above —
   // sysadmin-settable only (see PATCH /api/roles), so it is edited separately
   // below rather than folded into the ROLE_FLAGS loop's board-symmetric switches.
   canAccessStaging?: boolean;
@@ -47,10 +48,8 @@ function flagsFromTarget(t: RolesEditTarget | null): Record<RoleFlag, boolean> {
 }
 
 /**
- * Extracted, verbatim (#1104 -> roles-foundation rework §6.1): the five-switch role editor +
- * its confirm-delta modal + PATCH /api/roles call. Shared by the holders-first
- * `/membership-ops/roles` page (the sole editor) — the participants page renders role pills
- * read-only and no longer opens this.
+ * The role editor: one switch per ROLE_FLAGS entry, its confirm-delta modal and the
+ * PATCH /api/roles call. Opened only from the holders-first `/membership-ops/roles` page.
  */
 export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalProps) {
   const [rolesForm, setRolesForm] = useState<Record<RoleFlag, boolean>>(() => flagsFromTarget(null));
@@ -69,11 +68,7 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
     }
   }
 
-  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    notifications.show({ message, color: type === 'error' ? 'red' : 'green', autoClose: type === 'error' ? false : 4000 });
-  };
-
-  // Client-side mirror of the server's authority matrix (§4.3) — UX only, so
+  // Client-side mirror of the server's authority matrix — UX only, so
   // switches the actor can't legally flip are disabled with an explanation.
   // The endpoint enforces the real rule regardless of what this renders.
   const roleSwitchState = (field: RoleFlag): { disabled: boolean; reason?: string } => {
@@ -92,26 +87,18 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
   const saveRoles = async (t: RolesEditTarget, delta: Delta) => {
     setSavingRoles(true);
     try {
-      const res = await fetch('/api/roles', {
+      const data = await api<{ user: RolesEditTarget }>('/api/roles', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUserId: t.id, ...delta }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        showNotification("Roles updated.");
-        onSaved(data.user);
-        onClose();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        // Revert the form to the target's last-known-good state.
-        setRolesForm(flagsFromTarget(t));
-        setStagingForm(!!t.canAccessStaging);
-        showNotification(data.error || "Failed to update roles", "error");
-      }
+      showSuccess("Roles updated.");
+      onSaved(data.user);
+      onClose();
     } catch (err) {
-      console.error("Failed to update roles:", err);
-      showNotification("Network error updating roles", "error");
+      // Revert the form to the target's last-known-good state.
+      setRolesForm(flagsFromTarget(t));
+      setStagingForm(!!t.canAccessStaging);
+      showError(errorMessage(err));
     } finally {
       setSavingRoles(false);
     }

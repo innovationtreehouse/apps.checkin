@@ -1,5 +1,5 @@
 /**
- * #4 (part 1) — Workflow state machine and its invariants.
+ * Workflow state machine and its invariants.
  *
  * Every state mutation in the app is gated by these invariants
  * (assertLegalTransition / assertExpectedState). Tests cover both legal branches
@@ -140,6 +140,22 @@ describe("invariants — legal vs illegal transitions", () => {
     expect(isLegalTransition("qb_pending", "QB_ERROR")).toBe(true);
     expect(isLegalTransition("qb_pending", "FLOW_STARTED")).toBe(false);
     expect(legalEventTypes("owner_approval")).toContain("ALL_APPROVALS_TERMINAL");
+  });
+
+  it("returns an expense past owner approval to it when an approval reopens", () => {
+    for (const state of ["capital_review", "set_depreciation_cycle", "qb_pending", "qb_on_hold", "qb_error"]) {
+      expect(isLegalTransition(state, "APPROVAL_REOPENED")).toBe(true);
+    }
+    expect(
+      run([
+        { type: "FLOW_STARTED", allOwnersResolved: true },
+        { type: "ALL_APPROVALS_TERMINAL", hasCapital: false, anyRejected: false },
+        { type: "APPROVAL_REOPENED" },
+      ]),
+    ).toBe("owner_approval");
+    for (const state of ["pending", "assign_ownership", "owner_approval", "qb_complete", "qb_skipped", "rejected"]) {
+      expect(isLegalTransition(state, "APPROVAL_REOPENED")).toBe(false);
+    }
   });
 
   it("recognizes the terminal state", () => {

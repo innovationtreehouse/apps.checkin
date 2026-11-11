@@ -2,26 +2,27 @@ import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
-import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL } from "@/lib/membership/lifecycle";
+import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
-import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
+import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
 
 /**
- * Board "Grant Membership" for the current year: money only (owner, 2026-10-12).
+ * Board grant of one membership year: money only.
  *
  * Pays the household's in-flight application through the same certify path a
  * board-recorded payment takes, so the household goes ACTIVE only when that
  * application converges — paid AND background check cleared. It never writes the
  * household's status itself and never skips the check.
  *
- * - An in-flight application at PENDING_PAYMENT is certified paid (with the reason).
- *   That supersedes the family's own checkout: nothing is left payable.
+ * - An in-flight application at PENDING_PAYMENT, joining or renewing, is certified
+ *   paid for `year` (with the reason). That supersedes the family's own checkout: nothing is left payable.
  * - An in-flight application at an earlier step can't be paid yet (the family still
  *   owes details, the signature or the check consent): refused with the step.
- * - No in-flight application: an INITIAL one is opened at INTAKE for the family to
- *   complete, and the board grants again once it reaches payment. An ACTIVE
- *   household is never given a joining application (it renews instead).
+ * - No in-flight application: one is opened for the family to complete, and the
+ *   board grants again once it reaches payment. An ACTIVE household that hasn't
+ *   paid for the live year gets a renewal, in or out of renewal season; any other
+ *   household gets an INITIAL at INTAKE.
  * - A BLOCKED application: refused. Only a board reset or override moves it on.
  * - DENIED: refused, and raised to the board.
  */
@@ -36,7 +37,7 @@ const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
     ],
 };
 
-/** Refuse any board grant, current or coming year, on a DENIED household, and raise it to the board. */
+/** Refuse any board grant on a DENIED household, and raise it to the board. */
 export async function refuseGrantIfDenied(householdId: number, actorId: number): Promise<void> {
     const membership = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
     if (membership?.status === "DENIED") await refuseDenied(householdId, actorId);
@@ -47,9 +48,10 @@ async function refuseDenied(householdId: number, actorId: number): Promise<never
     throw new PaymentError("wrong_phase", "This household is denied. Restore it before granting membership.");
 }
 
-export async function grantCurrentYear(
+export async function grantMembership(
     householdId: number,
     actor: { actorId: number; reason: string },
+    year: number,
 ): Promise<GrantResult> {
     await refuseGrantIfDenied(householdId, actor.actorId);
     const membership = await ensureHouseholdMembership(prisma, householdId);
@@ -67,7 +69,7 @@ export async function grantCurrentYear(
         if (existing.status !== "PENDING_PAYMENT") {
             throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
         }
-        await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason });
+        await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
         await prisma.auditLog.create({
             data: {
                 actorId: actor.actorId,
@@ -75,13 +77,15 @@ export async function grantCurrentYear(
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: existing.id,
                 secondaryAffectedEntity: householdId,
-                newData: { currentYearGrant: true, reason: actor.reason },
+                newData: { grantedYear: year, reason: actor.reason },
             },
         });
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };
     }
 
-    const opened = membership.status === "ACTIVE" ? "active" : await openInitial(membership.id, householdId, actor);
+    if (membership.status === "ACTIVE") return openRenewal(membership.id);
+
+    const opened = await openInitial(membership.id, householdId, actor);
     if (opened === "active") {
         throw new PaymentError("wrong_phase", "This household is already an active member; there is no application to pay.");
     }
@@ -90,6 +94,17 @@ export async function grantCurrentYear(
         throw new PaymentError("wrong_phase", "This household has a blocked application. Reset or override it before granting membership.");
     }
     return { paid: false, ...opened };
+}
+
+/** A lapsed ACTIVE household renews; one already paid for the live year has nothing to pay. */
+async function openRenewal(orgMembershipId: number): Promise<GrantResult> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    const settled = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId, ...settledThisCycleWhere(liveYear) }, select: { id: true } });
+    if (settled) throw new PaymentError("wrong_phase", "This household has already paid for the current membership year.");
+    const process = await createRenewalProcess(orgMembershipId);
+    if (!process) throw new PaymentError("wrong_phase", "This household's membership changed while you were looking at it. Reload and try again.");
+    return { paid: false, process, opened: true };
 }
 
 /**

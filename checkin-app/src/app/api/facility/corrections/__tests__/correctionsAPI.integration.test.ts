@@ -2,17 +2,10 @@
  * @jest-environment node
  */
 /**
- * Integration test for GET /api/facility/corrections (AT12, #1258).
- *
- * NOTE: this route depends on its `defineRoute` registry entry, which ships in
- * its own boundary-isolation PR ahead of this one (AGENTS.md). Until that PR
- * merges, `handler()` has no registry entry to resolve and every case here
- * gets a 500 instead of its expected status — that is the intended sequencing,
- * not a bug in this file.
+ * Integration test for GET /api/facility/corrections.
  *
  * Covers: auth rejection (401/403), the tableName='Visit' pin (a Person audit
- * row must never appear), the flagged filter (first JSON-path filter in the
- * repo), the synthesized bag (oldData never rides; newData is rebuilt to
+ * row must never appear), the flagged JSON-path filter, the synthesized bag (oldData never rides; newData is rebuilt to
  * {type, significance}; before/after Visit times are extracted from the raw
  * blobs), and Person name resolution.
  */

@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { LoadError, useSetUrlFilters, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { normalizeAuditData } from "@/lib/auditPayload";
+import { useLoad } from "@/lib/api";
 import {
   Badge,
+  Box,
   Center,
   Code,
   Group,
@@ -51,44 +54,28 @@ const ACTION_COLOR: Record<AuditLog["action"], string> = {
 const ACTIONS = ["CREATE", "EDIT", "DELETE", "BECOME_ADMIN"];
 
 export function AuditLogPanel() {
-  const [data, setData] = useState<AuditResponse | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [page, setPage] = useState(1);
-  const [action, setAction] = useState<string | null>(null);
-  const [table, setTable] = useState<string | null>(null);
-  const [actor, setActor] = useState<string | null>(null);
+  const [action, setAction] = useUrlFilter("action");
+  const [table, setTable] = useUrlFilter("table");
+  const [actor, setActor] = useUrlFilter("actor");
+  const [from, setFrom] = useUrlFilter("from");
+  const [to, setTo] = useUrlFilter("to");
+  const setFilters = useSetUrlFilters();
+  // Typed text stays out of the URL; a change still starts again on page 1.
   const [entityId, setEntityId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // The total arrives with the rows, so a page past the end clamps once the first answer is in.
+  const [knownLast, setKnownLast] = useState<number | null>(null);
+  const [page, setPage] = useUrlPage(knownLast);
 
-  useEffect(() => {
-    const qs = new URLSearchParams({ page: String(page) });
-    if (action) qs.set("action", action);
-    if (table) qs.set("table", table);
-    if (actor) qs.set("actor", actor);
-    if (entityId.trim()) qs.set("entityId", entityId.trim());
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
-
-    fetch(`/api/system-status/audit-log?${qs}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((d) => {
-        setData(d);
-        setFailed(false);
-      })
-      .catch(() => setFailed(true));
-  }, [page, action, table, actor, entityId, from, to]);
-
-  // Filter changes reset to page 1.
-  const onFilter =
-    <T,>(setter: (v: T) => void) =>
-    (v: T) => {
-      setter(v);
-      setPage(1);
-    };
+  const qs = new URLSearchParams({ page: String(page) });
+  if (action) qs.set("action", action);
+  if (table) qs.set("table", table);
+  if (actor) qs.set("actor", actor);
+  if (entityId.trim()) qs.set("entityId", entityId.trim());
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  // Keeps the filter options and the rows on screen while the next page or filter loads.
+  const { data, error, loading, retrying, reload } = useLoad<AuditResponse>(`/api/system-status/audit-log?${qs}`, { keepPrevious: true });
+  const stale = loading || retrying;
 
   // People by name, then the named automated paths — one control over two columns
   // (a person's value is their id, a system path's value is its own name).
@@ -98,6 +85,7 @@ export function AuditLogPanel() {
   ];
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  if (data && totalPages !== knownLast) setKnownLast(totalPages);
 
   return (
     <Stack gap="sm">
@@ -107,8 +95,8 @@ export function AuditLogPanel() {
           placeholder="All"
           clearable
           data={ACTIONS}
-          value={action}
-          onChange={onFilter(setAction)}
+          value={action || null}
+          onChange={(v) => setAction(v ?? "")}
           w={150}
         />
         <Select
@@ -117,8 +105,8 @@ export function AuditLogPanel() {
           clearable
           searchable
           data={data?.tables ?? []}
-          value={table}
-          onChange={onFilter(setTable)}
+          value={table || null}
+          onChange={(v) => setTable(v ?? "")}
           w={180}
         />
         <Select
@@ -127,8 +115,8 @@ export function AuditLogPanel() {
           clearable
           searchable
           data={actorOptions}
-          value={actor}
-          onChange={onFilter(setActor)}
+          value={actor || null}
+          onChange={(v) => setActor(v ?? "")}
           w={220}
         />
         <TextInput
@@ -136,16 +124,19 @@ export function AuditLogPanel() {
           placeholder="id"
           type="number"
           value={entityId}
-          onChange={(e) => onFilter(setEntityId)(e.currentTarget.value)}
+          onChange={(e) => {
+            setEntityId(e.currentTarget.value);
+            if (page > 1) setFilters({});
+          }}
           w={100}
         />
-        <DateField label="From" value={from} onChange={onFilter(setFrom)} />
-        <DateField label="To" value={to} onChange={onFilter(setTo)} />
+        <DateField label="From" value={from} onChange={setFrom} />
+        <DateField label="To" value={to} onChange={setTo} />
       </Group>
 
-      {failed ? (
-        <Text c="red">Failed to load audit log.</Text>
-      ) : !data ? (
+      {error ? (
+        <LoadError what="the audit log" message={error} onRetry={reload} />
+      ) : !data || (stale && data.logs.length === 0) ? (
         <Center mih="30vh">
           <Loader />
         </Center>
@@ -160,6 +151,7 @@ export function AuditLogPanel() {
               {data.total} change{data.total === 1 ? "" : "s"} — forensic trail, read-only.
             </Text>
           </Group>
+          <Box aria-busy={stale} style={{ opacity: stale ? 0.5 : 1 }}>
           <Table.ScrollContainer minWidth={760}>
             <Table striped highlightOnHover withTableBorder verticalSpacing={4} fz="xs">
               <Table.Thead>
@@ -216,9 +208,10 @@ export function AuditLogPanel() {
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
+          </Box>
           {totalPages > 1 && (
             <Group justify="center">
-              <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
+              <Pagination total={totalPages} value={page} onChange={setPage} size="sm" disabled={stale} />
             </Group>
           )}
         </>

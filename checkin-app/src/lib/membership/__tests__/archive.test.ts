@@ -4,6 +4,7 @@
 import prisma from '@/lib/prisma';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
+import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 
 const tx = {
     $queryRaw: jest.fn(),
@@ -22,9 +23,14 @@ jest.mock('@/lib/prisma', () => ({
 jest.mock('@/lib/membership/review', () => ({
     ...jest.requireActual('@/lib/membership/review'),
     applicantHousehold: jest.fn().mockResolvedValue(5),
+    reviewHouseholds: jest.fn().mockResolvedValue([5]),
 }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
-jest.mock('@/lib/membership/external', () => ({ advanceExternalIfComplete: jest.fn().mockResolvedValue(null) }));
+jest.mock('@/lib/membership/external', () => ({
+    advanceExternalIfComplete: jest.fn().mockResolvedValue(null),
+    pickUpMissedSignature: jest.fn().mockResolvedValue(undefined),
+}));
 
 const findUnique = jest.mocked(prisma.orgMembershipProcess.findUnique);
 jest.mocked(prisma.$transaction).mockImplementation(((cb: (t: typeof tx) => unknown) => cb(tx)) as unknown as typeof prisma.$transaction);
@@ -81,5 +87,7 @@ describe('unarchiveApplication (Reopen)', () => {
         tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
         tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
+        // Reopen settles the household on its people's check standing.
+        expect(settleHouseholdBg).toHaveBeenCalledWith(5);
     });
 });

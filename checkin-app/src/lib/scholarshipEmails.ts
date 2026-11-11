@@ -1,5 +1,5 @@
 import { sendEmail } from "@/lib/email";
-import { emailBoardMembers } from "@/lib/emailRecipients";
+import { emailBoardMembersHtml } from "@/lib/emailRecipients";
 import type { HouseholdRecipient as ScholarshipRecipient } from "@/lib/emailRecipients";
 import { parseEmailHeaderList } from "@/lib/emailHeader";
 import { logger } from "@/lib/logger";
@@ -63,7 +63,7 @@ export async function notifyReviewTeam(subject: string, html: string, errorLabel
             await Promise.all(list.map((to) => sendEmail(to, subject, html)));
             return;
         }
-        await emailBoardMembers(subject, html, errorLabel); // UNSET (or unparseable) → board is the review team
+        await emailBoardMembersHtml(subject, html, errorLabel); // UNSET (or unparseable) → board is the review team
     } catch (e) {
         logger.error(errorLabel, e);
     }

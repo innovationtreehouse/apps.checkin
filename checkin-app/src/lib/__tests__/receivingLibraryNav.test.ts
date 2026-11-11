@@ -1,6 +1,6 @@
 import { visibleLinks } from "@/lib/nav/gates";
 import { INVENTORY } from "@/lib/nav/sections/inventory";
-import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
+import { LIBRARY_COUNT_PROVIDERS, collectLibraryCounts } from "../navLibraryCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
@@ -26,7 +26,7 @@ const member: SessionUser = { id: 4 };
 const hrefs = (tabs: { href: string }[]) => tabs.map((t) => t.href);
 const tabs = (u: SessionUser, c: TodoCounts) => hrefs(visibleLinks(INVENTORY, u, c));
 
-describe("Inventory Receiving tab", () => {
+describe("Inventory Part mapping tab", () => {
   it("shows to an inventory manager, FINANCE and Board", () => {
     for (const u of [manager, finance, board]) {
       expect(tabs(u, released)).toContain("/inventory/receiving");
@@ -42,7 +42,7 @@ describe("Inventory Receiving tab", () => {
     expect(tabs(finance, unreleased)).not.toContain("/inventory/receiving");
   });
 
-  it("admits FINANCE to the Inventory section with only Receiving when only workflow-mapping is released", () => {
+  it("admits FINANCE to the Inventory section with only Part mapping when only workflow-mapping is released", () => {
     expect(tabs(finance, counts(["workflow-mapping"]))).toEqual(["/inventory/receiving"]);
   });
 
@@ -51,29 +51,55 @@ describe("Inventory Receiving tab", () => {
     const c = counts([...LIBRARY_KEYS], { "workflow-mapping": { pending_review: 2, apply_failed: 1, applying: 5 } });
     expect(tab?.badge?.(c)).toEqual({ count: 3, color: "red", label: "3 receipts awaiting mapping or apply" });
     expect(tab?.badge?.(released)).toBeNull();
+    const waiting = counts([...LIBRARY_KEYS], { "workflow-mapping": { pending_review: 1 } });
+    expect(tab?.badge?.(waiting)).toEqual({ count: 1, color: "treehouseGreen", label: "1 receipt awaiting mapping or apply" });
   });
 
-  it("runs the workflow-mapping count provider only for the tab's audience", () => {
+  it("badges unlocated items", () => {
+    const tabs = INVENTORY.links.flatMap((l) => l.subLinks ?? []);
+    const tab = tabs.find((l) => l.href === "/inventory/unlocated");
+    const c = counts([...LIBRARY_KEYS], { "local-inventory": { unlocated: 1 } });
+    expect(tab?.badge?.(c)).toEqual({ count: 1, color: "treehouseGreen", label: "1 item needs a location" });
+    expect(tab?.badge?.(released)).toBeNull();
+  });
+
+  it("badges pending merge conflicts", () => {
+    const tab = INVENTORY.links.flatMap((l) => l.subLinks ?? []).find((l) => l.href === "/inventory/merge-conflicts");
+    const c = counts([...LIBRARY_KEYS], { "local-inventory": { pendingMergeConflicts: 2 } });
+    expect(tab?.badge?.(c)).toEqual({ count: 2, color: "treehouseGreen", label: "2 merge conflicts to resolve" });
+    expect(tab?.badge?.(released)).toBeNull();
+  });
+
+  it("runs the workflow-mapping count provider only for an inventory manager, the one role that maps or applies", () => {
     const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "workflow-mapping");
-    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, true, true, false]);
+    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false]);
+  });
+
+  it("keeps the tab for FINANCE and Board while their nav payload carries no receiving count", async () => {
+    const providers = LIBRARY_COUNT_PROVIDERS.filter((p) => p.library === "workflow-mapping");
+    for (const u of [finance, board]) {
+      expect(await collectLibraryCounts(u, [...LIBRARY_KEYS], providers)).toBeUndefined();
+      expect(tabs(u, released)).toContain("/inventory/receiving");
+    }
+    expect(await collectLibraryCounts(manager, [...LIBRARY_KEYS], providers)).toEqual({ "workflow-mapping": {} });
   });
 });
 
-describe("Inventory In-kind gifts tab", () => {
-  const operations: SessionUser = { id: 5, isOperations: true };
+describe("Inventory Receive queue subtab", () => {
+  const tab = () => INVENTORY.links.flatMap((l) => l.subLinks ?? []).find((l) => l.href === "/inventory/receive-queue");
+  const subtabs = (u: SessionUser) => visibleLinks(INVENTORY, u, released).flatMap((l) => hrefs([...(l.subLinks ?? [])]));
 
-  it("shows to FINANCE, Board, operations and an inventory manager once bulk-donation is released", () => {
-    for (const u of [finance, board, operations, manager]) {
-      expect(tabs(u, released)).toContain("/inventory/in-kind");
-    }
+  it("badges open backorders green", () => {
+    const c = counts([...LIBRARY_KEYS], { "local-inventory": { openBackorders: 3 } });
+    expect(tab()?.badge?.(c)).toEqual({ count: 3, color: "treehouseGreen", label: "3 backorders wait to be received" });
+    const one = counts([...LIBRARY_KEYS], { "local-inventory": { openBackorders: 1 } });
+    expect(tab()?.badge?.(one)?.label).toBe("1 backorder waits to be received");
+    expect(tab()?.badge?.(released)).toBeNull();
   });
 
-  it("hides from a plain member", () => {
-    expect(tabs(member, released)).not.toContain("/inventory/in-kind");
-  });
-
-  it("hides from operations until bulk-donation is released", () => {
-    const unreleased = counts(LIBRARY_KEYS.filter((k) => k !== "bulk-donation"));
-    expect(tabs(operations, unreleased)).not.toContain("/inventory/in-kind");
+  it("shows to FINANCE and Board, but runs the count provider only for an inventory manager", () => {
+    for (const u of [manager, finance, board]) expect(subtabs(u)).toContain("/inventory/receive-queue");
+    const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "local-inventory");
+    expect([manager, finance, board, member].map((u) => provider?.visible(u))).toEqual([true, false, false, false]);
   });
 });

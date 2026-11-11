@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for Phase 2 PERSON_BG obligations: the two triggers that OPEN
+ * Integration tests for PERSON_BG obligations: the two triggers that OPEN
  * the obligation (annual cohort + new-member activation), the subject-scoped
  * clear (stamps ONLY the subject person), and the two-reviewer gate keyed off the
  * SUBJECT's household. Warn-only — nothing blocks participation here.
@@ -56,14 +56,14 @@ async function makePerson(slug: string, householdId: number, data: Partial<{ dat
 
 /** Attach a person to a fresh program as a participant so they count as program-attached. */
 async function attachToProgram(slug: string, personId: number) {
-    const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} ${slug} program` } });
+    const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} ${slug} program` } });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
 }
 
 /** Attach a person to a program that ended well outside the 12-month lookback. */
 async function attachToStaleProgram(slug: string, personId: number) {
-    const program = await prisma.program.create({ data: { startAt: new Date('2020-01-01'), endAt: new Date('2020-12-31'), name: `${TAG} ${slug} program` } });
+    const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2020-01-01'), endAt: new Date('2020-12-31'), name: `${TAG} ${slug} program` } });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
 }
@@ -204,7 +204,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
     it('clearBackgroundCheck stamps ONLY the subject person — a household-mate is untouched', async () => {
         const hh = await makeHousehold('subjectHh');
         const subject = await makePerson('subject', hh.id, { dateOfBirth: ADULT_DOB });
-        // A household-mate (also a lead) with no check — the old blanket-stamp would have
+        // A household-mate (also a lead) with no check — a blanket stamp would
         // hit them; the subject-scoped clear must NOT.
         const mate = await makePerson('mate', hh.id, { dateOfBirth: ADULT_DOB });
         await prisma.person.update({ where: { id: mate.id }, data: { isHouseholdLead: true } });
@@ -234,32 +234,33 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         const subject = await makePerson('subj-rev-subject', hh.id, { dateOfBirth: ADULT_DOB });
         const insider = await makePerson('subj-rev-insider', hh.id, { isBackgroundCheckReviewer: true });
         const proc = await prisma.orgMembershipProcess.create({
-            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
         });
         await expect(attest(insider.id, proc.id, { result: 'APPROVE' })).rejects.toMatchObject({
             code: 'same_household_applicant',
         } as Partial<ReviewError>);
     });
 
-    it('PERSON_BG is non-actionable in the reviewer queue (excluded from the listing) though attest() still gates it', async () => {
+    it('the reviewer queue lists a PERSON_BG only once submitted, and never a household application', async () => {
         // Subject in a household distinct from the reviewers → would otherwise be eligible.
         const subjHh = await makeHousehold('queueSubjHh');
         const subject = await makePerson('queue-subject', subjHh.id, { dateOfBirth: ADULT_DOB });
         const personBg = await prisma.orgMembershipProcess.create({
             data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
         });
-        // Control: a household INITIAL at the same review status DOES surface.
+        // A household application waiting on its check is decided by its people's reviews, not listed itself.
         const appHh = await makeHousehold('queueAppHh');
         const appLead = await makePerson('queue-app-lead', appHh.id);
         await prisma.person.update({ where: { id: appLead.id }, data: { isHouseholdLead: true } });
         const appMembership = await prisma.orgMembership.create({ data: { householdId: appHh.id, status: 'NONE' } });
         const household = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: appMembership.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' },
+            data: { orgMembershipId: appMembership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() },
         });
 
-        const ids = await eligibleReviewProcessIds(rev1);
-        expect(ids).not.toContain(personBg.id); // never offered as an actionable queue row
-        expect(ids).toContain(household.id); // household review is unaffected
+        expect(await eligibleReviewProcessIds(rev1)).not.toContain(personBg.id); // not submitted yet
+        expect(await eligibleReviewProcessIds(rev1)).not.toContain(household.id);
+        await prisma.orgMembershipProcess.update({ where: { id: personBg.id }, data: { bgConsentAt: new Date() } });
+        expect(await eligibleReviewProcessIds(rev1)).toContain(personBg.id);
     });
 
     /** A household lead — a signing adult, whether or not they join a program. */

@@ -13,7 +13,6 @@ export type {
   DisbursementEvent,
   DisbursementSnapshot,
   WorkflowEvent,
-  DonationQbMatchExclusion,
   ManualInKindDonation,
   ManualInKindDonationLine,
   InKindDonationLine,
@@ -24,8 +23,10 @@ export * from "./lib/csv-parser";
 export * from "./lib/disbursement-processor";
 export * from "./lib/domain-rules";
 export * from "./lib/qb-match";
-export * from "./lib/qb-poster";
-export { recordEvent, recordDonorDataRead, type EntityType, type WorkflowEventInput, type DonorReadContext } from "./repositories/audit";
+export * from "./lib/in-kind-poster";
+export * from "./lib/deposit-handover";
+export { recordEvent, type EntityType, type WorkflowEventInput } from "./repositories/audit";
+export * from "./services/settingsService";
 export { accountMapService } from "./services/accountMapService";
 export { commentRuleService } from "./services/commentRuleService";
 export { disbursementService } from "./services/disbursementService";
@@ -37,6 +38,7 @@ export {
   type InKindOutcome,
   type InKindSource,
   type WaitingOn,
+  spreadToTotal,
 } from "./services/inKindAcceptService";
 export {
   manualInKindService,
@@ -54,3 +56,5 @@ export { disbursementMachine, STATES } from "./workflows/disbursement.machine";
 export { sendDisbursementEvent, type AuditContext } from "./workflows/disbursement.actor";
 export { WorkflowTransitionError } from "@checkin/workflows";
 export * as routes from "./routes";
+
+export { retryStuckItem, stuckItems } from "./stuckItems";

@@ -2,15 +2,14 @@
 import { screen, waitFor, fireEvent, within } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import AdminParticipantsIndex from "../page";
-import { ModalsProvider } from "@mantine/modals";
 
 beforeEach(() => {
     resetRtl();
-    // Default actor for the pre-existing tests below: a board member, who holds
+    // Default actor for the tests below: a board member, who holds
     // every affordance this suite exercises (Details/Household/Assign/Bulk
     // Import/+New Person/+ Add contact).
     setSession({ id: 999, isBoardMember: true });
@@ -62,37 +61,47 @@ describe("AdminParticipantsIndex", () => {
         expect(await screen.findByText("Edit Person")).toBeInTheDocument();
         expect(screen.getByText(/Printed on name badges exactly as typed/)).toBeInTheDocument();
         const emailInput = screen.getByLabelText("Email Address");
+        expect(screen.queryByLabelText(/Reason for the email change/)).not.toBeInTheDocument();
         fireEvent.change(emailInput, { target: { value: "alice@new.com" } });
+        fireEvent.change(screen.getByLabelText(/Reason for the email change/), { target: { value: "Alice asked by phone" } });
         fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
 
         await waitFor(() => expect(screen.queryByText("Edit Person")).not.toBeInTheDocument());
         expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" }));
+        const put = (global.fetch as jest.Mock).mock.calls.find(([url]) => String(url).endsWith("/api/membership-ops/participants/1"));
+        expect(JSON.parse(String(put?.[1]?.body))).toEqual(expect.objectContaining({ email: "alice@new.com", emailChangeReason: "Alice asked by phone" }));
     });
 
-    it("asks for confirmation before saving a lead's check that would no longer be valid", async () => {
-        const warning = "Alice A's background check covers the membership year starting 2027-08-01, and will not after this change.";
-        const puts: unknown[] = [];
-        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = input.toString();
-            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [alice] }) } as Response;
-            const body = JSON.parse(String(init?.body));
-            puts.push(body);
-            return body.confirmBgStale
-                ? { ok: true, status: 200, json: async () => ({ participant: alice }) } as Response
-                : { ok: false, status: 409, json: async () => ({ error: warning, warning, requiresConfirmation: true }) } as Response;
-        }) as unknown as typeof fetch;
-        renderWithProviders(<ModalsProvider><AdminParticipantsIndex /></ModalsProvider>);
+    it("a sysadmin who is not on the board cannot edit the email", async () => {
+        setSession({ id: 999, isSysadmin: true });
+        mockFetchJson({ "/api/people/search": { people: [alice] } });
+        renderWithProviders(<AdminParticipantsIndex />);
 
         fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
         const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
         fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
-        fireEvent.click(await screen.findByRole("button", { name: "Save Details" }));
 
-        expect(await screen.findByText(warning)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+        expect(await screen.findByLabelText("Email Address")).toBeDisabled();
+        expect(screen.getByText("Only a board member can change a person's email.")).toBeInTheDocument();
+    });
 
+    it("offers no background-check date field and never sends a date", async () => {
+        const fetchMock = mockFetchJson({
+            "/api/people/search": { people: [{ ...alice, lastBackgroundCheck: "2025-01-10T00:00:00.000Z" }] },
+            "/api/membership-ops/participants/1": { participant: alice },
+        });
+        renderWithProviders(<AdminParticipantsIndex />);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        expect(await screen.findByText("Edit Person")).toBeInTheDocument();
+        expect(screen.queryByLabelText("Last Background Check Review")).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" })));
-        expect(puts).toEqual([expect.objectContaining({ confirmBgStale: false }), expect.objectContaining({ confirmBgStale: true })]);
+        const put = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/membership-ops/participants/1"));
+        expect(JSON.parse(String(put?.[1]?.body))).not.toHaveProperty("lastBackgroundCheck");
     });
 
     it("assigns a new household to a participant with none", async () => {
@@ -288,7 +297,7 @@ describe("AdminParticipantsIndex", () => {
                 } as Response;
             }
             if (url.includes("/api/membership-ops/households/20")) {
-                return { ok: true, status: 200, json: async () => ({ household: { id: 20, name: "The B Family Updated" } }) } as Response;
+                return { ok: true, status: 200, text: async () => JSON.stringify({ household: { id: 20, name: "The B Family Updated" } }) } as Response;
             }
             return { ok: false, status: 404, json: async () => ({}) } as Response;
         });
@@ -380,7 +389,7 @@ describe("AdminParticipantsIndex", () => {
                 expect.objectContaining({ method: "POST" }),
             );
 
-            // The exact regression path (thpr #3): create -> prepend -> select ->
+            // The path under test: create -> prepend -> select ->
             // canSubmitAssign/canChangeHousehold. Those two are computed at component
             // top level off selectedParticipant.household.householdMembers, so opening
             // the Assign flow for the freshly-created row (via Details -> "Move to

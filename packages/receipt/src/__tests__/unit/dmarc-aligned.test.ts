@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dmarcAligned } from "../../services/mailIntake";
+import { dmarcAligned, dmarcVerdict } from "../../services/mailIntake";
 
 const header = (name: string) => (value: string) => ({ name, value });
 
@@ -18,7 +18,7 @@ describe("dmarcAligned", () => {
   it("accepts Google's real header shape", () => {
     expect(aligned(GMAIL)).toBe(true);
     expect(aligned("mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org")).toBe(true);
-    expect(aligned("MX.Google.com 1; DMARC/1=PASS header.from=Example.ORG")).toBe(true);
+    expect(aligned("MX.Google.com 1; DKIM/1=PASS header.d=Example.ORG; DMARC/1=PASS header.from=Example.ORG")).toBe(true);
   });
 
   it("rejects a failed, misaligned, or missing DMARC result", () => {
@@ -27,6 +27,27 @@ describe("dmarcAligned", () => {
     expect(aligned("mx.google.com; spf=pass smtp.mailfrom=alice@example.org")).toBe(false);
     expect(aligned("mx.google.com; none")).toBe(false);
     expect(aligned()).toBe(false);
+  });
+
+  it("requires a passing DKIM signature by the From domain itself", () => {
+    const dmarcPass = "dmarc=pass (p=NONE) header.from=example.org";
+    expect(aligned(`mx.google.com; spf=pass smtp.mailfrom=alice@example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=fail header.i=@example.org; spf=pass; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@mailer.example.net; spf=pass; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@sub.example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@example.org.evil.net; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass (header.i=@example.org) header.s=s1; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@mailer.example.net; dkim=pass header.i=alice@example.org; ${dmarcPass}`)).toBe(true);
+    expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.s=s1; ${dmarcPass}`)).toBe(true);
+  });
+
+  it("fails a DKIM result whose signer properties disagree or are malformed", () => {
+    const dmarcPass = "dmarc=pass header.from=example.org";
+    expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.i=@sub.example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=@evil.net header.i=@example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.i=example.org; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.s=s1; ${dmarcPass}`)).toBe(false);
+    expect(aligned(`mx.google.com; dkim=pass header.d=example.org header.i=alice@example.org; ${dmarcPass}`)).toBe(true);
   });
 
   it("reads only the topmost header, and only Google's", () => {
@@ -87,5 +108,26 @@ describe("dmarcAligned", () => {
       expect(withReturnPath("<prvs=1234abcd=alice@example.org>", GMAIL)).toBe(true);
       expect(withReturnPath("<>", GMAIL)).toBe(true);
     });
+  });
+});
+
+describe("dmarcVerdict", () => {
+  const verdict = (auth: string, address: string | null = "alice@example.org") => dmarcVerdict([header("Authentication-Results")(auth)], address);
+
+  it("passes only what dmarcAligned passes", () => {
+    expect(verdict(GMAIL)).toBe("pass");
+    expect(verdict("mx.google.com; spf=pass smtp.mailfrom=alice@example.org; dmarc=pass header.from=example.org")).toBe("fail");
+  });
+
+  it("is none only when Google reports no record for the From domain", () => {
+    expect(verdict("mx.google.com; spf=pass; dmarc=none header.from=example.org")).toBe("none");
+    expect(verdict("mx.google.com; dmarc=none header.from=example.net")).toBe("fail");
+    expect(verdict("evil.example; dmarc=none header.from=example.org")).toBe("fail");
+  });
+
+  it("fails everything else", () => {
+    expect(verdict(GMAIL.replace("dmarc=pass (p", "dmarc=fail (p"))).toBe("fail");
+    expect(verdict(GMAIL, null)).toBe("fail");
+    expect(dmarcVerdict(undefined, "alice@example.org")).toBe("fail");
   });
 });

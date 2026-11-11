@@ -1,9 +1,12 @@
-/** Card-charge rules (Financial Policy §XII.4, owner rulings of 2026-10-16), pure — no database. */
+/** Card-charge rules (Financial Policy §XII.4), pure — no database. */
 import { describe, it, expect } from "vitest";
 import {
+  blockedSeats,
   boardAuthorizationRefusal,
   isEveryday,
-  needsBoardAuthorization,
+  missingSeats,
+  needsBoardApproval,
+  needsBoardSeat,
   signoffRefusal,
   withinEverydayLimits,
   type EverydayAmounts,
@@ -14,7 +17,7 @@ import { DEFAULT_EXPENSE_SETTINGS } from "../../services/settingsService";
 
 const limits = DEFAULT_EXPENSE_SETTINGS;
 const amounts: EverydayAmounts = { receiptTotalCents: 10_000, unitPricesCents: [10_000] };
-const plain: EverydayFacts = { withinLimits: true, singleSource: false, financeNotEveryday: false };
+const plain: EverydayFacts = { withinLimits: true };
 
 describe("Everyday", () => {
   it("defaults to under $500 in total and no item over $250", () => {
@@ -40,52 +43,55 @@ describe("Everyday", () => {
     expect(withinEverydayLimits(amounts, tighter)).toBe(false);
   });
 
-  it("within the limits and unmarked is Everyday; outside them is not", () => {
+  it("the amounts alone decide it: within the limits is Everyday, outside them is not", () => {
     expect(isEveryday(plain)).toBe(true);
     expect(isEveryday({ ...plain, withinLimits: false })).toBe(false);
   });
-
-  it("a single-source purchase is never Everyday", () => {
-    expect(isEveryday({ ...plain, singleSource: true })).toBe(false);
-  });
-
-  it("FINANCE's not-Everyday mark overrides the limits", () => {
-    expect(isEveryday({ ...plain, financeNotEveryday: true })).toBe(false);
-  });
 });
 
-describe("Board authorization", () => {
-  it("a non-Everyday card charge needs it until recorded", () => {
-    expect(needsBoardAuthorization("card_charge", false, null)).toBe(true);
-    expect(needsBoardAuthorization("card_charge", false, "Board vote 2026-10-01: laser cutter tube")).toBe(false);
+describe("which lines take the Board seat", () => {
+  it("a non-Everyday card-charge line outside a program bucket takes it until an authorization is recorded", () => {
+    expect(needsBoardSeat("card_charge", false, false, null)).toBe(true);
+    expect(needsBoardSeat("card_charge", false, false, "Board vote 2026-10-01: laser cutter tube")).toBe(false);
+  });
+
+  it("a program bucket's approved budget is written authorization", () => {
+    expect(needsBoardSeat("card_charge", false, true, null)).toBe(false);
   });
 
   it("a blank authorization counts as none", () => {
-    expect(needsBoardAuthorization("card_charge", false, "")).toBe(true);
-    expect(needsBoardAuthorization("card_charge", false, "   ")).toBe(true);
+    expect(needsBoardSeat("card_charge", false, false, "")).toBe(true);
+    expect(needsBoardSeat("card_charge", false, false, "   ")).toBe(true);
   });
 
-  it("an Everyday card charge and any reimbursement need none", () => {
-    expect(needsBoardAuthorization("card_charge", true, null)).toBe(false);
-    expect(needsBoardAuthorization("reimbursement", false, null)).toBe(false);
+  it("an Everyday card charge and any reimbursement take none", () => {
+    expect(needsBoardSeat("card_charge", true, false, null)).toBe(false);
+    expect(needsBoardSeat("reimbursement", false, false, null)).toBe(false);
   });
 });
 
-// 1 purchaser · 2 program leader · 3,4 FINANCE · 5,6 Board · 8 purchaser's spouse
+// 1 purchaser · 2 bucket owner · 3,4 FINANCE · 5,6 Board · 8 purchaser's spouse
 const card: SignoffFacts = {
   kind: "card_charge",
   submitterId: 1,
+  reimburseeId: null,
   approvers: [2],
   orgLevel: false,
   reimburseeIsMember: true,
+  reimburseeUnknown: false,
   finance: [3, 4],
   board: [5, 6],
   conflicted: [1, 8],
-  leaderHousehold: [],
+  ownerHousehold: [],
   reimburseeSetter: null,
   seatedHouseholds: [],
-  needsBoardAuthorization: true,
+  boardSeat: true,
+  conflictedFinal: false,
+  approved: true,
+  approver: 2,
+  expenseSigners: [],
 };
+const treasurer = [{ seat: "TREASURER" as const, signerUserId: 3 }];
 
 describe("who records the Board authorization", () => {
   it("a FINANCE holder without a conflict records it; nobody else does while one exists", () => {
@@ -96,21 +102,30 @@ describe("who records the Board authorization", () => {
 
   it("a FINANCE holder who made the purchase, or is in the purchaser's household, is refused", () => {
     const self = { ...card, conflicted: [3, 8] };
-    expect(boardAuthorizationRefusal([self], 3)).toMatch(/conflicted Treasurer/);
+    expect(boardAuthorizationRefusal([self], 3)).toMatch(/conflicted/);
     expect(boardAuthorizationRefusal([self], 4)).toBeNull();
   });
 
-  it("a FINANCE holder in any line's Program Leader household is refused", () => {
-    const led = { ...card, leaderHousehold: [2, 4] };
-    expect(boardAuthorizationRefusal([card, led], 4)).toMatch(/conflicted Treasurer/);
-    expect(boardAuthorizationRefusal([card, led], 3)).toBeNull();
+  it("recording is not an approval: the Treasurer seat's bucket owner conflict does not apply", () => {
+    const led = { ...card, ownerHousehold: [2, 4] };
+    expect(boardAuthorizationRefusal([card, led], 4)).toBeNull();
   });
 
   it("with every FINANCE holder conflicted, a Board member without a conflict records it", () => {
-    const allConflicted = { ...card, conflicted: [1, 3, 8], leaderHousehold: [2, 4] };
+    const allConflicted = { ...card, conflicted: [1, 3, 4, 8] };
     expect(boardAuthorizationRefusal([allConflicted], 5)).toBeNull();
-    expect(boardAuthorizationRefusal([{ ...allConflicted, conflicted: [1, 3, 5, 8] }], 5)).toMatch(/conflicted Treasurer/);
-    expect(boardAuthorizationRefusal([allConflicted], 2)).toMatch(/conflicted Treasurer/);
+    expect(boardAuthorizationRefusal([{ ...allConflicted, conflicted: [1, 3, 4, 5, 8] }], 5)).toMatch(/conflicted/);
+    expect(boardAuthorizationRefusal([allConflicted], 2)).toMatch(/Board member/);
+  });
+});
+
+describe("recording the Board authorization comes after every other step", () => {
+  it("whoever signs another step on the expense, or shares a household with them, does not record it", () => {
+    const signed = { ...card, expenseSigners: [{ step: "APPROVAL" as const, userId: 2 }, { step: "TREASURER" as const, userId: 3 }], seatedHouseholds: [4] };
+    expect(boardAuthorizationRefusal([signed], 3)).toMatch(/earlier step/);
+    expect(boardAuthorizationRefusal([signed], 4)).toMatch(/earlier step/);
+    expect(boardAuthorizationRefusal([signed], 5)).toBeNull();
+    expect(boardAuthorizationRefusal([signed], 2)).toMatch(/earlier step/);
   });
 });
 
@@ -123,7 +138,59 @@ describe("the Treasurer seat on a card charge", () => {
   });
 
   it("with no FINANCE holder free, a Board member without a conflict signs", () => {
-    const none = { ...card, conflicted: [1, 3, 8], leaderHousehold: [2, 4] };
+    const none = { ...card, conflicted: [1, 3, 8], ownerHousehold: [2, 4] };
     expect(signoffRefusal(none, [], "TREASURER", 5)).toBeNull();
+  });
+});
+
+describe("the Board seat on a card charge", () => {
+  it("is missing on a line that takes it, and absent otherwise", () => {
+    expect(missingSeats(card, [])).toEqual(["TREASURER", "BOARD"]);
+    expect(missingSeats({ ...card, boardSeat: false }, [])).toEqual(["TREASURER"]);
+  });
+
+  it("a Board member without a conflict with the purchaser signs it, alongside the Treasurer", () => {
+    expect(signoffRefusal(card, treasurer, "BOARD", 5)).toBeNull();
+    expect(signoffRefusal(card, treasurer, "BOARD", 3)).toMatch(/another seat/);
+    expect(signoffRefusal(card, treasurer, "BOARD", 4)).toMatch(/Board member/);
+  });
+
+  it("a Board member in the purchaser's household is refused", () => {
+    expect(signoffRefusal({ ...card, conflicted: [1, 5, 8] }, treasurer, "BOARD", 5)).toMatch(/household/);
+  });
+
+  it("the bucket owner's household conflict is the Treasurer seat's, not the Board seat's", () => {
+    expect(signoffRefusal({ ...card, ownerHousehold: [2, 5] }, treasurer, "BOARD", 5)).toBeNull();
+  });
+
+  it("a line that takes no Board seat refuses it", () => {
+    expect(signoffRefusal({ ...card, boardSeat: false }, [], "BOARD", 5)).toMatch(/no Board seat/);
+  });
+
+  it("an org-level line approved by a Board member still takes the Board seat from another", () => {
+    const org = { ...card, orgLevel: true, approvers: [], approver: 6 };
+    expect(signoffRefusal(org, treasurer, "BOARD", 5)).toBeNull();
+    expect(blockedSeats(org, treasurer)).toEqual([]);
+  });
+
+  it("is blocked when no Board member without a conflict is free", () => {
+    expect(blockedSeats({ ...card, conflicted: [1, 5, 6, 8] }, [])).toEqual(["BOARD"]);
+  });
+});
+
+describe("a purchase of $2,000 or more", () => {
+  it("is held until the Board's approval is recorded, whatever its kind or bucket", () => {
+    expect(needsBoardApproval(199_999, 200_000, null)).toBe(false);
+    expect(needsBoardApproval(200_000, 200_000, null)).toBe(true);
+    expect(needsBoardApproval(200_000, 200_000, "FY27 robotics budget, line 12: competition kit")).toBe(false);
+  });
+
+  it("follows the Board-review total setting, not a fixed $2,000", () => {
+    expect(needsBoardApproval(150_000, 100_000, null)).toBe(true);
+    expect(needsBoardApproval(200_000, 250_000, null)).toBe(false);
+  });
+
+  it("a blank record counts as none", () => {
+    expect(needsBoardApproval(200_000, 200_000, "  ")).toBe(true);
   });
 });

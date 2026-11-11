@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { apiError } from "@/lib/api-response";
+import { isYouth } from "@/lib/time";
 
 export const POST = withAuth(
     {},
@@ -18,14 +19,16 @@ export const POST = withAuth(
 
             const user = await prisma.person.findUnique({
                 where: { id: userId },
-                select: { householdId: true, isHouseholdLead: true }
+                select: { householdId: true, isHouseholdLead: true, dateOfBirth: true }
             });
 
             if (!user) {
                 return apiError("User not found", 404);
             }
-
             if (phone !== undefined) {
+                if (isYouth(user.dateOfBirth)) {
+                    return apiError("Youth profiles are read-only.", 403);
+                }
                 if (phone !== "" && !isValidPhone(phone)) {
                     return apiError(PHONE_ERROR, 400);
                 }

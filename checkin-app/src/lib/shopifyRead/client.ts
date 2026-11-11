@@ -47,7 +47,7 @@ function getPool(url: string): Pool {
             connectionString: url,
             max: 3,
             connectionTimeoutMillis: 10_000,
-            // Scale-to-zero invariant (same rule as lib/prisma.ts, see PR #1030):
+            // Scale-to-zero invariant (same rule as lib/prisma.ts):
             // idle connections MUST be reaped and `min` MUST stay 0, or this pool
             // alone keeps the shared Aurora cluster from ever auto-pausing — it
             // pauses only after ~5 minutes with zero connections and zero queries.
@@ -99,22 +99,24 @@ export interface MirrorOrder {
     totalCents: number;
     subtotalCents: number;
     totalRefundedCents: number;
-    /** Coupon amount Shopify took off the order (pre-existing column). Added back to
+    /** Coupon amount Shopify took off the order. Added back to
      * reconstruct the gross figure when amount-gating a couponed order. */
     discountCents: number;
     /**
-     * Coupon codes applied at checkout, mirrored since #1048. Empty [] for orders
-     * synced before that shipped (until a backfill re-pull) AND for genuinely
+     * Coupon codes applied at checkout, mirrored from Shopify. Empty [] for orders
+     * synced before code mirroring (until a backfill re-pull) AND for genuinely
      * un-couponed orders — absence is not distinguishable, so treat non-empty as
      * "a coupon explains a sub-fee total", never empty as "definitely no coupon".
      */
     discountCodes: string[];
     cancelledAt: Date | null;
+    /** When Shopify processed the order; a membership line without its own year row sells the live year at this moment. */
+    processedAt: Date | null;
     updatedAt: Date | null;
     /**
      * The cart attributes we set on the checkout link (Membership_Process_ID,
-     * CheckMeIn_Account_ID, Program_ID), mirrored since #1029. Null for orders
-     * synced before that shipped — callers must handle absence.
+     * CheckMeIn_Account_ID, Program_ID), mirrored from Shopify. Null for orders
+     * synced before attribute mirroring — callers must handle absence.
      */
     noteAttributes: { key: string; value: string | null }[] | null;
 }
@@ -130,6 +132,7 @@ const ORDER_SELECT = {
     discountCents: true,
     discountCodes: true,
     cancelledAt: true,
+    processedAt: true,
     updatedAt: true,
     noteAttributes: true,
 } as const;
@@ -161,7 +164,7 @@ function apiSource() {
     return { OR: [{ source: null }, { source: { in: ["BACKFILL", "INCREMENTAL"] as ("BACKFILL" | "INCREMENTAL")[] } }] };
 }
 
-/** Read one cart attribute off a mirrored order. Null when absent (or pre-#1029). */
+/** Read one cart attribute off a mirrored order. Null when absent. */
 export function orderAttr(o: MirrorOrder, key: string): string | null {
     return o.noteAttributes?.find((a) => a.key === key)?.value ?? null;
 }
@@ -206,12 +209,11 @@ export async function ordersByLegacyIds(legacyIds: string[]): Promise<MirrorOrde
 
 /**
  * Distinct variant legacy ids on one order's lines — the join key checkin owns
- * (BoardSettings/Program shopify*VariantId), mirrored onto shop_order_line since
- * #1048. This is the reconciler's replica of the webhook's membership/program-item
+ * (BoardSettings/Program shopify*VariantId), mirrored onto shop_order_line.
+ * This is the reconciler's replica of the webhook's membership/program-item
  * check ("lines whose variant is one of checkin's known ids"). Lines with a null
- * variant_legacy_id (custom/deleted product, or a row synced before #1048 and not
- * yet backfilled) are dropped, so an EMPTY result means "no attributable variant
- * ids" — the reconciler reads that as pre-backfill and falls back to its amount gate.
+ * variant_legacy_id (custom/deleted product, or a row synced before variant mirroring and not
+ * yet backfilled) are dropped, so an EMPTY result means the order carries no item checkin sells.
  */
 export async function orderLineVariantIds(orderGid: string): Promise<string[]> {
     const db = await getClient();
@@ -225,15 +227,18 @@ export async function orderLineVariantIds(orderGid: string): Promise<string[]> {
 }
 
 /** One order's attributable lines with their quantities — the program seat count.
- *  Lines an order edit removed are excluded; they were not paid for. */
-export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number }[]> {
+ *  Lines an order edit removed are excluded; they were not paid for. `quantity` is the
+ *  original count; `currentQuantity` excludes units an edit or refund took off the line. */
+export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number; currentQuantity: number }[]> {
     const db = await getClient();
     if (!db) return [];
     const rows = await db.shopOrderLine.findMany({
         where: { orderGid, variantLegacyId: { not: null }, removed: false },
-        select: { variantLegacyId: true, quantity: true },
+        select: { variantLegacyId: true, quantity: true, currentQuantity: true },
     });
-    return rows.flatMap((r) => (r.variantLegacyId === null ? [] : [{ variantId: r.variantLegacyId, quantity: r.quantity }]));
+    return rows.flatMap((r) =>
+        r.variantLegacyId === null ? [] : [{ variantId: r.variantLegacyId, quantity: r.quantity, currentQuantity: r.currentQuantity ?? r.quantity }],
+    );
 }
 
 /** The `sync_run` columns the board needs to judge how fresh the mirror is. */
@@ -289,7 +294,7 @@ export async function countSyncRuns(): Promise<number> {
 
 /**
  * How much of the mirror's line data carries a variant id. Rows synced before
- * s-read's variant columns shipped are null until a BACKFILL run repopulates
+ * s-read carried the variant columns are null until a BACKFILL run repopulates
  * them — the audit reports that state explicitly instead of concluding "no
  * membership orders exist" from a mirror that simply predates the column.
  */
@@ -317,7 +322,7 @@ export interface MirrorAuditOrder {
     totalCents: number;
     totalRefundedCents: number;
     cancelledAt: Date | null;
-    /** Order-level coupon codes (shop_order.discount_codes text[] @default([]), #1048). */
+    /** Order-level coupon codes (shop_order.discount_codes text[] @default([])). */
     discountCodes: string[];
     /** Which of the requested variant ids this order's lines matched. */
     matchedVariantIds: string[];
@@ -379,16 +384,17 @@ export async function orderLegacyIdsPresent(legacyIds: string[]): Promise<Set<st
 }
 
 /**
- * Order GIDs that have a chargeback/dispute balance transaction, among the given
- * GIDs. Shopify Payments surfaces a dispute as a signed balance transaction whose
- * `type` names the dispute — this distinguishes a chargeback (CRITICAL) from an
- * ordinary refund. Case-insensitive match so 'dispute'/'chargeback'/'adjustment'
- * variants all match. Only API-synced disputes on real, API-synced orders count.
+ * Chargeback/dispute balance transactions per order, among the given GIDs; an order
+ * with none is absent. Shopify Payments surfaces a dispute as a signed balance
+ * transaction whose `type` names the dispute — this distinguishes a chargeback
+ * (CRITICAL) from an ordinary refund, and a rising count is a new dispute event.
+ * Case-insensitive match so 'dispute'/'chargeback'/'adjustment' variants all match.
+ * Only API-synced disputes on real, API-synced orders count.
  */
-export async function disputedOrderGids(orderGids: string[]): Promise<Set<string>> {
-    if (orderGids.length === 0) return new Set();
+export async function orderDisputeCounts(orderGids: string[]): Promise<Map<string, number>> {
+    if (orderGids.length === 0) return new Map();
     const db = await getClient();
-    if (!db) return new Set();
+    if (!db) return new Map();
     const txns = await db.shopBalanceTransaction.findMany({
         where: {
             orderGid: { in: orderGids },
@@ -398,16 +404,19 @@ export async function disputedOrderGids(orderGids: string[]): Promise<Set<string
                 { type: { contains: "chargeback", mode: "insensitive" } },
             ],
         },
-        distinct: ["orderGid"],
         select: { orderGid: true },
     });
-    const disputed = txns.flatMap((t) => (t.orderGid === null ? [] : [t.orderGid]));
-    if (disputed.length === 0) return new Set();
+    const counts = new Map<string, number>();
+    for (const { orderGid } of txns) {
+        if (orderGid !== null) counts.set(orderGid, (counts.get(orderGid) ?? 0) + 1);
+    }
+    if (counts.size === 0) return counts;
     const real = await db.shopOrder.findMany({
-        where: { test: false, ...apiSource(), shopifyGid: { in: disputed } },
+        where: { test: false, ...apiSource(), shopifyGid: { in: [...counts.keys()] } },
         select: { shopifyGid: true },
     });
-    return new Set(real.map((o) => o.shopifyGid));
+    const realGids = new Set(real.map((o) => o.shopifyGid));
+    return new Map([...counts].filter(([gid]) => realGids.has(gid)));
 }
 
 /**
@@ -465,6 +474,8 @@ export interface IncomeMirrorLineRow {
     title: string | null;
     sku: string | null;
     quantity: number;
+    /** Units still on the line after edits and refunds; `quantity` when the row predates the column. */
+    currentQuantity: number;
     priceCents: number;
     discountCents: number;
 }
@@ -547,9 +558,21 @@ export async function incomeOrderLines(orderGids: string[]): Promise<IncomeMirro
     const rows = await db.shopOrderLine.findMany({
         where: { orderGid: { in: orderGids }, removed: false },
         orderBy: [{ orderGid: "asc" }, { lineGid: "asc" }],
-        select: { orderGid: true, variantLegacyId: true, title: true, sku: true, quantity: true, priceCents: true, discountCents: true },
+        select: { orderGid: true, variantLegacyId: true, title: true, sku: true, quantity: true, currentQuantity: true, priceCents: true, discountCents: true },
     });
-    return rows.map(({ variantLegacyId, ...l }) => ({ ...l, variantId: variantLegacyId }));
+    return rows.map(({ variantLegacyId, currentQuantity, ...l }) => ({ ...l, variantId: variantLegacyId, currentQuantity: currentQuantity ?? l.quantity }));
+}
+
+/** The given orders' current subtotals. */
+export async function incomeOrderSubtotals(orderGids: string[]): Promise<{ orderGid: string; subtotalCents: number }[]> {
+    if (orderGids.length === 0) return [];
+    const db = await getClient();
+    if (!db) return [];
+    const rows = await db.shopOrder.findMany({
+        where: { shopifyGid: { in: orderGids } },
+        select: { shopifyGid: true, subtotalCents: true },
+    });
+    return rows.map((r) => ({ orderGid: r.shopifyGid, subtotalCents: r.subtotalCents }));
 }
 
 /** Every variant on a real order's line, with the title and SKU of its newest order. */

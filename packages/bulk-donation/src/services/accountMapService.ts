@@ -7,9 +7,8 @@ interface AccountMapData {
   corporatePeerCampaign: string;
   donationMethod?: string | null;
   donationType?: string | null;
-  donationAccount: string;
-  matchAccount: string;
-  feesAccount: string;
+  donationAccountId?: string | null;
+  matchAccountId?: string | null;
 }
 
 interface AuditActor {
@@ -32,9 +31,11 @@ export const accountMapService = {
           corporatePeerCampaign: data.corporatePeerCampaign,
           donationMethod: data.donationMethod ?? null,
           donationType: data.donationType ?? null,
-          donationAccount: data.donationAccount,
-          matchAccount: data.matchAccount,
-          feesAccount: data.feesAccount,
+          // The name columns hold what finance typed before rules named accounts; a new rule has none.
+          donationAccount: "",
+          matchAccount: "",
+          donationAccountId: data.donationAccountId ?? null,
+          matchAccountId: data.matchAccountId ?? null,
         },
       });
 
@@ -65,9 +66,8 @@ export const accountMapService = {
           corporatePeerCampaign: data.corporatePeerCampaign,
           donationMethod: data.donationMethod ?? null,
           donationType: data.donationType ?? null,
-          donationAccount: data.donationAccount,
-          matchAccount: data.matchAccount,
-          feesAccount: data.feesAccount,
+          donationAccountId: data.donationAccountId ?? null,
+          matchAccountId: data.matchAccountId ?? null,
         },
       });
 

@@ -2,18 +2,18 @@
  * @jest-environment node
  */
 /**
- * Concurrency regression tests for POST /api/scan.
+ * Concurrency tests for POST /api/scan.
  *
  * Steps 4–6 of the scan route (debounce read → record badge event → find open
  * visit → check-in/out) are a read-modify-write on a participant's visit state.
- * Before the per-participant advisory lock, two near-simultaneous scans for the
- * same participant could both pass the debounce read and both observe the same
- * visit state before either wrote, producing:
+ * Without the per-participant advisory lock, two near-simultaneous scans for the
+ * same participant can both pass the debounce read and both observe the same
+ * visit state before either writes, producing:
  *   - two open visits for one participant (double check-in), or
  *   - a double check-out that 500s on Prisma P2025 when the second deletes the
  *     visit the first already removed.
  *
- * The fix wraps steps 4–6 in a single $transaction that takes
+ * The route wraps steps 4–6 in a single $transaction that takes
  * `pg_advisory_xact_lock(participantId)` first, so same-participant scans
  * serialize. These tests fire two concurrent POSTs with Promise.all and assert
  * the committed state and the response pair.

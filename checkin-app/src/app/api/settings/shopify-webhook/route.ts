@@ -7,6 +7,12 @@ import { SHOPIFY_WEBHOOK_RECEIPT_TABLE, type ShopifyWebhookReceipt } from "@/lib
 
 export const dynamic = "force-dynamic";
 
+// Older receipts carry no delivery-id fields; report them as null.
+function toReceipt(id: number, newData: unknown): ShopifyWebhookReceipt & { id: number } {
+    const receipt = normalizeAuditData(newData) as ShopifyWebhookReceipt;
+    return { id, ...receipt, deliveryId: receipt.deliveryId ?? null, triggeredAt: receipt.triggeredAt ?? null, retry: receipt.retry ?? null };
+}
+
 /**
  * GET /api/settings/shopify-webhook — webhook-wiring status for the Shopify
  * Webhook settings tab. Returns:
@@ -29,6 +35,6 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
         storeDomain: config.shopifyStoreDomain(),
         // normalizeAuditData tolerates legacy string-encoded newData; receipts are
         // written as raw objects, so this is belt-and-suspenders.
-        receipts: rows.map((r) => ({ id: r.id, ...(normalizeAuditData(r.newData) as ShopifyWebhookReceipt) })),
+        receipts: rows.map((r) => toReceipt(r.id, r.newData)),
     });
 });

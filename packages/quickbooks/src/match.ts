@@ -1,6 +1,13 @@
 import { dollarsToCents } from "@checkin/money";
 import { qboDate } from "./client";
-import type { QboBill, QboDeposit, QboPurchase } from "./types";
+import type { QboBill, QboDeposit, QboJournalEntry, QboPurchase } from "./types";
+
+/** A YYYY-MM-DD day moved by whole days, in UTC so it never crosses a zone. */
+export function shiftDate(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 /** One QuickBooks entry offered for a match, reduced to what matching compares. */
 export interface MatchCandidate {
@@ -43,7 +50,8 @@ export type MatchResult =
  * callers should pad the window with a grace on both sides; this function adds none.
  * A key hit that fails any check, an entry carrying the key beside another key, or a
  * matching entry carrying another record's key goes to a person: a copied or edited memo must never be taken as the app's own entry,
- * and must never fall through to a create.
+ * and must never fall through to a create. A voided entry keeps its memo at a zero total, so a $0
+ * entry does not count as the record's own unless the record's amount is $0 too.
  */
 export function findMatch(candidates: readonly MatchCandidate[], req: MatchRequest): MatchResult {
   qboDate(req.date);
@@ -58,7 +66,7 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
     (req.ref === undefined || c.ref === req.ref);
   const free = (c: MatchCandidate) => !req.excludedIds.has(c.id) && !req.claimedIds.has(c.id);
 
-  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key));
+  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key) && (c.amountCents !== 0 || req.amountCents === 0));
   if (own.length === 1 && own[0].appKey === req.key && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
   if (own.length > 0) return { kind: "ambiguous", ids: own.map((c) => c.id) };
 
@@ -82,4 +90,8 @@ export function purchaseCandidate(p: QboPurchase, appKeyOf?: AppKeyOf<QboPurchas
 
 export function billCandidate(b: QboBill, appKeyOf?: AppKeyOf<QboBill>): MatchCandidate {
   return { id: b.Id, date: b.TxnDate, amountCents: dollarsToCents(b.TotalAmt), ref: b.VendorRef?.value, appKey: appKeyOf?.(b) };
+}
+
+export function journalCandidate(j: QboJournalEntry, appKeyOf?: AppKeyOf<QboJournalEntry>): MatchCandidate {
+  return { id: j.Id, date: j.TxnDate, amountCents: dollarsToCents(j.TotalAmt), appKey: appKeyOf?.(j) };
 }

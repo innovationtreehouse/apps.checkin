@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 
 // Registry-governed (GET /api/system-status/unsynced-scans): admission anyRole
-// sysadmin/board/keyholder (Q15; operations stay out — #1633); envelope 'scans'.
+// sysadmin/board/keyholder (operations stay out); envelope 'scans'.
 //
 // The review queue (docs/rules/attendance-checkin.md, kiosk resilience):
 // RawBadgeLog rows a replay

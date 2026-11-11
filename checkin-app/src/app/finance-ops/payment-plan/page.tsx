@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Badge, Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, Modal, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
+import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
+import { PAYMENT_PLAN_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -42,9 +43,28 @@ type PaymentPlanRequest = {
   };
 };
 
+type PastProgramDecision = PaymentPlanDecisionRow & {
+  personName: string | null;
+  personEmail: string | null;
+  programName: string | null;
+};
+
+const PAST_IDENTITY_COLUMNS: DataTableColumn<PastProgramDecision>[] = [
+  {
+    header: 'Participant',
+    render: (row) => (
+      <>
+        <Text fw={500}>{row.personName}</Text>
+        <Text size="sm" c="dimmed">{row.personEmail}</Text>
+      </>
+    ),
+  },
+  { header: 'Program', render: (row) => <Text fw={500}>{row.programName}</Text> },
+];
+
 export default function PendingParticipantsPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
+  const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
   // Conflict of interest: no actor may approve their OWN household member's plan
   // (mirrors the server guard). UX only — server enforces.
   const ownHousehold = (req: PaymentPlanRequest) =>
@@ -53,6 +73,7 @@ export default function PendingParticipantsPage() {
   const [requests, setRequests] = useState<PaymentPlanRequest[]>([]);
   const [cutoff, setCutoff] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'pending' | 'past'>('pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<{ programId: number; participantId: number } | null>(null);
@@ -101,7 +122,7 @@ export default function PendingParticipantsPage() {
       } else {
         const data = await res.json();
         if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
@@ -140,7 +161,7 @@ export default function PendingParticipantsPage() {
       } else {
         const data = await res.json();
         if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to refuse.", autoClose: false });
@@ -227,10 +248,10 @@ export default function PendingParticipantsPage() {
       sortBy: (req) => req.pendingSince, // ISO string sorts chronologically
       render: (req) => <Text size="sm" c="dimmed">{formatDateTime(req.pendingSince)}</Text>,
     },
-    {
+    ...(!me?.isBoardMember ? [] : [{
       header: 'Actions',
-      align: 'right',
-      render: (req) => (
+      align: 'right' as const,
+      render: (req: PaymentPlanRequest) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button
             size="xs" fz={15} color="red" variant="light"
@@ -250,25 +271,36 @@ export default function PendingParticipantsPage() {
           </Button>
         </Group>
       ),
-    },
+    }]),
   ];
 
   return (
     <Stack>
       <Text c="dimmed">
         Review pending participants who have requested a scholarship or payment plan.
-        Approving a request marks the user as ACTIVE and exempts them from the 7-day automated
-        removal cron job.
+        Approving a request sets the participant&apos;s enrollment to ACTIVE without a payment, and
+        they keep the seat they took when they asked.
       </Text>
 
       <AlertBanner message={message} tone="error" />
 
-      <DataTable
-        columns={columns}
-        rows={requests}
-        getRowKey={(req) => `${req.programId}-${req.personId}`}
-        emptyMessage="No pending scholarship or payment plan requests."
+      <SegmentedControl
+        value={view}
+        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
+        style={{ alignSelf: 'flex-start' }}
       />
+
+      {view === 'past' ? (
+        <PastPaymentPlanDecisions<PastProgramDecision> endpoint="/api/finance-ops/payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={requests}
+          getRowKey={(req) => `${req.programId}-${req.personId}`}
+          emptyMessage="No pending scholarship or payment plan requests."
+        />
+      )}
 
       <Modal
         opened={confirmApproveOpened}
@@ -277,8 +309,8 @@ export default function PendingParticipantsPage() {
         centered
       >
         <Text mb="lg">
-          Approve this scholarship or payment plan? This sets the participant&apos;s status to ACTIVE and stops
-          automated unpaid warning emails.
+          Approve this scholarship or payment plan? This sets the participant&apos;s enrollment to ACTIVE without a
+          payment, and they keep the seat they took when they asked.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmApprove}>Cancel</Button>

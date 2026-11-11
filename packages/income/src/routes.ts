@@ -4,13 +4,16 @@
  * each value by the model the host classifies it as.
  */
 import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
+import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
-import { getIncomeConfig, getOrgId, getPrincipal } from "./runtime";
+import { getIncomeConfig, getOrgId, getPrincipal, getQuickBooksAccounts } from "./runtime";
 import { runReconcile } from "./lib/reconcile";
+import { DEPOSIT_SOURCE } from "./lib/sources";
 import { reconciliationService, type Actor, type ResolveAction } from "./services/reconciliationService";
 import { itemCategoryService } from "./services/itemCategoryService";
+import { getIncomeSettings, updateIncomeSettings } from "./services/settingsService";
 
 const NOT_AN_OBJECT = "Expected a JSON object";
 
@@ -32,9 +35,14 @@ const resolveBody = z.discriminatedUnion(
 );
 
 const positiveIntOrNull = { error: "budgetOwnerId must be a positive integer or null" };
+const qbAccountIdOrNull = { error: "quickBooksAccountId must be a QuickBooks id (digits only) or null" };
 // null is finance's choice of general income.
 const setCategoryBody = z.object(
-  { budgetOwnerId: z.number(positiveIntOrNull).int(positiveIntOrNull).positive(positiveIntOrNull).nullable() },
+  {
+    budgetOwnerId: z.number(positiveIntOrNull).int(positiveIntOrNull).positive(positiveIntOrNull).nullable(),
+    // Absent leaves the item's account as it is; null clears it.
+    quickBooksAccountId: z.string(qbAccountIdOrNull).regex(/^\d+$/, qbAccountIdOrNull).nullable().optional(),
+  },
   { error: NOT_AN_OBJECT },
 );
 
@@ -65,7 +73,7 @@ export const getPayout: IncomeRouteHandler = async ({ params }) => {
   const orgId = await getOrgId();
   const [transactions, reconciliation] = await Promise.all([
     mirror.transactions(gid),
-    db.payoutReconciliation.findUnique({ where: { orgId_payoutGid: { orgId, payoutGid: gid } } }),
+    db.payoutReconciliation.findUnique({ where: { orgId_source_payoutGid: { orgId, source: DEPOSIT_SOURCE.SHOPIFY, payoutGid: gid } } }),
   ]);
   return { IncomePayoutView: payout, IncomeBalanceTxnView: transactions, PayoutReconciliation: reconciliation };
 };
@@ -112,10 +120,15 @@ function variantId(raw: string | undefined): string {
 
 export const setItemCategory: IncomeRouteHandler = async ({ req, params }) => {
   const variant = variantId(params.variantId);
-  const { budgetOwnerId } = await parseBody(req, setCategoryBody);
+  const { budgetOwnerId, quickBooksAccountId } = await parseBody(req, setCategoryBody);
+  if (typeof quickBooksAccountId === "string") {
+    const accounts = await mapServiceErrors(getQuickBooksAccounts());
+    const refusal = accountTypeRefusal(accounts, quickBooksAccountId, LINE_ACCOUNT_TYPES.storeSale, "An item's account");
+    if (refusal) throw httpError(400, refusal);
+  }
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {
-    IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.setCategory(orgId, variant, budgetOwnerId, who)),
+    IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.setCategory(orgId, variant, budgetOwnerId, who, quickBooksAccountId)),
   };
 };
 
@@ -123,6 +136,19 @@ export const clearItemCategory: IncomeRouteHandler = async ({ params }) => {
   const variant = variantId(params.variantId);
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return { IncomeItemCategory: await mapServiceErrors(() => itemCategoryService.clearCategory(orgId, variant, who)) };
+};
+
+export const getSettings: IncomeRouteHandler = async () => {
+  const orgId = await getOrgId();
+  return { IncomeOrgSettings: { orgId, ...(await getIncomeSettings(orgId)) } };
+};
+
+/** The roles come from the host's auth context, because the library's principal carries none. */
+export const updateSettings = (roles: { isFinance: boolean; isBoard: boolean }): IncomeRouteHandler => async ({ req }) => {
+  const patch = await parseBody(req, z.unknown());
+  const [orgId, who] = await Promise.all([getOrgId(), actor()]);
+  const next = await mapServiceErrors(() => updateIncomeSettings(orgId, patch, { ...who, ...roles }));
+  return { IncomeOrgSettings: { orgId, ...next } };
 };
 
 export const listExclusions: IncomeRouteHandler = async () => ({

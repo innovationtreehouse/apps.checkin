@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
-import { Anchor, Badge, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
+import type { ReactNode } from "react";
+import { Anchor, Badge, Checkbox, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import type { ExpenseWaitingOn } from "../lib/waiting-on";
 import { PAGE_SIZE, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
-import ExpenseSubNav from "../components/ExpenseSubNav";
+import { lastPage, LoadError, useUrlChoice, useUrlFilter, useUrlPage } from "@checkin/component-ui";
+import { EXPENSE_LIST_VIEWS } from "../nav";
 
 interface ExpenseRow {
   id: string;
@@ -18,48 +19,114 @@ interface ExpenseRow {
   needsReimbursement: boolean;
 }
 
+/** The rows alone, or beside each row's state label. */
+type ListAnswer = ExpenseRow[] | { Expense: ExpenseRow[]; ExpenseWaitingOn?: ExpenseWaitingOn[] };
+
 const VIEWS = [
-  { value: "all", label: "All" },
-  { value: "assign_ownership", label: "Assign ownership" },
-  { value: "resolve_ownership", label: "Resolve ownership" },
-  { value: "owner_approval", label: "Owner approval" },
-  { value: "owner_exception", label: "Exceptions" },
-  { value: "capital_review", label: "Capital review" },
-  { value: "set_depreciation_cycle", label: "Depreciation" },
-  { value: "qb_pending", label: "QB pending" },
+  { value: "all", label: "All", description: "Every expense you can see, newest first. Open one to act on it." },
+  { value: "awaiting_me", label: "Waiting on you", description: "Expenses with lines waiting on your approval." },
+  {
+    value: "assign_ownership",
+    label: "Assign ownership",
+    description: "Expenses with lines that have no owner yet. FINANCE assigns each line an owner.",
+  },
+  {
+    value: "resolve_ownership",
+    label: "Resolve ownership",
+    description: "Lines the submitter marked as owner unknown. FINANCE picks an owner for each.",
+  },
+  {
+    value: "owner_approval",
+    label: "Owner approval",
+    description: "Lines waiting on their bucket's approval. The bucket owner or a treasurer approves each or raises an exception.",
+  },
+  {
+    value: "owner_exception",
+    label: "Exceptions",
+    description: "Lines an approver raised an exception on. FINANCE settles each one.",
+  },
+  {
+    value: "capital_review",
+    label: "Capital review",
+    description: "Expenses at or over the capital thresholds. FINANCE decides which lines are capital assets.",
+  },
+  {
+    value: "set_depreciation_cycle",
+    label: "Depreciation",
+    description: "Capital expenses with no depreciation schedule yet. FINANCE sets the cycle and owner bucket.",
+  },
+  {
+    value: "qb_pending",
+    label: "QB pending",
+    description: "Approved expenses waiting on their last signatures or on posting to QuickBooks.",
+  },
 ];
 
 /** /expense/expenses — FINANCE and Board's expense queue. */
 export default function ExpensesPage() {
-  return <ExpenseList detailBase="/expense/expenses" defaultView="all" subNav />;
+  return <ExpenseList detailBase="/expense/expenses" defaultView="all" />;
 }
 
 /**
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
- * same list serves Expense Ops and the approver's Programs I Lead tab.
+ * same list serves Finance and the approver's Programs I Lead tab. `views` are the views the
+ * viewer can act in (expenseViewsFor); the routes refuse the others. `viewBadge` is the host's
+ * pill beside a view's label, given the view's total and whether it is selected; without it the
+ * label carries the total.
  */
-export function ExpenseList({ detailBase, defaultView, subNav = false }: { detailBase: string; defaultView: string; subNav?: boolean }) {
-  const [view, setView] = useState(defaultView);
-  const [page, setPage] = useState(1);
+export function ExpenseList({
+  detailBase,
+  defaultView,
+  views = EXPENSE_LIST_VIEWS,
+  viewBadge,
+}: {
+  detailBase: string;
+  defaultView: string;
+  views?: readonly string[];
+  viewBadge?: (view: string, total: number | undefined, selected: boolean) => ReactNode;
+}) {
+  const shown = VIEWS.filter((v) => views.includes(v.value));
+  const fallbackView = (shown.find((v) => v.value === defaultView) ?? shown.find((v) => v.value === "all") ?? VIEWS[0]).value;
+  const [view, setView] = useUrlChoice("view", shown.map((v) => v.value), fallbackView);
+  const current = VIEWS.find((v) => v.value === view) ?? VIEWS[0];
+  // Only the All view lists closed expenses; the other views are work still in progress.
+  const [active, setActive] = useUrlFilter("active");
+  const onlyActive = active !== "0";
+  const activeOnly = view === "all" && onlyActive;
   const counts = useLoad<Record<string, number>>("/counts");
-  const rows = useLoad<ExpenseRow[]>(`/expenses?view=${view}&page=${page}&limit=${PAGE_SIZE}`);
-  const total = useLoad<{ total: number }>(`/expenses/count?view=${view}`);
+  const filter = `view=${view}${activeOnly ? "&active=1" : ""}`;
+  const total = useLoad<{ total: number }>(`/expenses/count?${filter}`, { keepPrevious: true });
+  const [page, setPage] = useUrlPage(total.data ? lastPage(total.data.total) : null);
+  const rows = useLoad<ListAnswer>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const answer = rows.data;
+  const list = answer === null ? null : Array.isArray(answer) ? answer : answer.Expense;
+  const labels = new Map((answer && !Array.isArray(answer) ? (answer.ExpenseWaitingOn ?? []) : []).map((w) => [w.expenseId, w.label]));
+  const listHref = `${detailBase}?view=${view}&page=${page}${onlyActive ? "" : "&active=0"}`;
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];
-    return n ? `${v.label} (${n})` : v.label;
+    if (!viewBadge) return n ? `${v.label} (${n})` : v.label;
+    return <Group gap={6} wrap="nowrap" justify="center">{v.label}{viewBadge(v.value, n, v.value === view)}</Group>;
   };
 
   return (
     <>
-      {subNav && <ExpenseSubNav current="/expense/expenses" />}
       <Title order={3} mb="md">Expenses</Title>
       <SegmentedControl
         mb="md"
         value={view}
-        onChange={(v) => { setView(v); setPage(1); }}
-        data={VIEWS.map((v) => ({ value: v.value, label: label(v) }))}
+        onChange={setView}
+        data={shown.map((v) => ({ value: v.value, label: label(v) }))}
       />
+      <Text c="dimmed" size="sm" mb="md">{current.description}</Text>
+      {view === "all" && (
+        <Checkbox
+          mb="md"
+          label="Only show active"
+          checked={onlyActive}
+          onChange={(e) => setActive(e.currentTarget.checked ? "" : "0")}
+        />
+      )}
       {rows.error && <LoadError what="expenses" message={rows.error} onRetry={rows.reload} />}
       <Table striped highlightOnHover>
         <Table.Thead>
@@ -71,24 +138,24 @@ export function ExpenseList({ detailBase, defaultView, subNav = false }: { detai
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {(rows.data ?? []).map((e) => (
+          {(list ?? []).map((e) => (
             <Table.Tr key={e.id}>
               <Table.Td>
-                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}`}>{e.vendorName ?? e.id}</Anchor>
+                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}?from=${encodeURIComponent(listHref)}`}>{e.vendorName ?? e.id}</Anchor>
                 {e.needsReimbursement && <Badge ml="xs" size="xs" variant="light">Reimbursement</Badge>}
               </Table.Td>
               <Table.Td>{e.receiptDate ?? "—"}</Table.Td>
               <Table.Td>{formatCents(e.receiptTotalCents, e.currency)}</Table.Td>
               <Table.Td>
-                <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>
+                <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{labels.get(e.id) ?? STATE_LABELS[e.state] ?? e.state}</Badge>
               </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
-      {rows.data?.length === 0 && <Text c="dimmed" mt="md">Nothing in this view.</Text>}
+      {list?.length === 0 && <Text c="dimmed" mt="md">Nothing in this view.</Text>}
       <Group justify="center" mt="md">
-        <Pagination value={page} onChange={setPage} total={Math.max(1, Math.ceil((total.data?.total ?? 0) / PAGE_SIZE))} />
+        <Pagination value={page} onChange={setPage} total={lastPage(total.data?.total ?? 0)} />
       </Group>
     </>
   );

@@ -1,28 +1,31 @@
 #!/usr/bin/env python3
-"""Route one PR's AI review with TypeSafe Jev 1.14, a structured decision model.
+"""Route one PR's AI review with a Jev-like decision model (default: TypeSafe Jev 1.14).
 
-`route` (before the review) makes two Jev calls: the first decides which review
+A Jev-like model takes a state plus typed questions on OpenRouter's `systemone` endpoint.
+`DECISION_MODEL` picks the model. The `jev*` names below name that protocol, not one model.
+
+`route` (before the review) makes two decision calls: the first decides which review
 profiles apply (one yes/no per profile; file-path matches are a hint), the second
 picks the review model from LADDER given those profiles. Each falls back on its
 own: path matches for profiles, a fixed ladder for the model.
 
-`adjudicate` (after the review) asks Jev whether the posted review is complete and,
+`adjudicate` (after the review) asks the decision model whether the posted review is complete and,
 if not, which stronger model on LADDER should rerun it.
 """
 import functools, json, os, re, subprocess, sys, urllib.request, uuid
 
 # The workflow points this at the default branch's copy, so a PR cannot edit its own reviewer.
 CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
-JEV = "typesafe/jev-1.14"
+# The decision model and its state cap come from the workflow so a swap is one env edit.
+JEV = os.environ.get("DECISION_MODEL", "typesafe/jev-1.14")
 # Ordered cheapest to strongest; a rerun only moves up.
 LADDER = [
-    # Fields: name, model, max tool rounds, max diff KB, description for Jev, reasoning effort.
+    # Fields: name, model, max tool rounds, max diff KB, description for the decision model, reasoning effort.
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
-    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free", "50", "300",
-     "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
-    # Evaluating deepseek-v4-pro as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
-    # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
-    # risks. On glm's own token mix deepseek lists at ~45% of glm's price; judge it by fixed bugs.
+    ("free", "nvidia/nemotron-3-ultra-550b-a55b:free,recursive/flint-v1.0:free", "50", "300",
+     "A cent or two a review (two lanes plus a judge). Routine changes: docs, tests, small refactors, config, renames.", "medium"),
+    # deepseek-v4-pro is on trial as the mid rung; judge it by fixed bugs. On glm-5.3's token mix it lists
+    # at ~45% of glm's price, and glm-5.3 ended about half its lanes without a usable review.
     ("mid", "deepseek/deepseek-v4-pro", "30", "300",
      "Dimes a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
     # ponytail: per-review spend caps via tool rounds and diff size on the two costliest rungs.
@@ -38,11 +41,13 @@ BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
-# Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
+# Calibrated on Jev: clean verify reviews scored 0.31-0.39 and a failed one 0.06.
+# Recalibrate from the decision log after a model swap.
 COMPLETE_THRESHOLD = 0.2
 SMALL_DELTA = 300
-# Jev's full-context request ceiling (~375K tokens): oldest round diffs are dropped first above it.
-JEV_STATE_MAX = 1_500_000
+# State cap in bytes. The default is Jev's full-context ceiling (~375K tokens).
+# DECISION_STATE_MAX sets it per model. Oldest round diffs drop first above it.
+JEV_STATE_MAX = int(os.environ.get("DECISION_STATE_MAX", "1500000"))
 # Below this many dollars left on the key, paid rungs only collect HTTP 402s: route to the free rung.
 MIN_CREDIT_USD = 5.0
 # The free rung's nits are mostly rejected, so it raises bugs and risks only; adjudicate tells the judge.
@@ -161,18 +166,25 @@ def lane_rung(body):
     """Highest rung index among the review's lanes that finished ok; -1 when none maps to today's ladder."""
     lanes = re.search(r"^### Lanes\n(.*?)(?=^#{1,3} |\Z)", body or "", re.M | re.S)  # never model-written text
     models = re.findall(r"^- `([^`]+)`: ok\b", lanes.group(1) if lanes else "", re.M)
-    return max((ORDER.index(r[0]) for r in LADDER if r[1] in models), default=-1)
+    return max((ORDER.index(r[0]) for r in LADDER if set(r[1].split(",")) & set(models)), default=-1)
 
 
 def pr_state(pr, repo):
-    meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions"))
+    meta = json.loads(gh("pr", "view", pr, "-R", repo, "--json", "title,files,additions,deletions,baseRefOid,headRefOid"))
     files = [f["path"] for f in meta["files"]]
-    # Jev always gets the whole diff: it is cheap, and over ~32 KB it only switches to a slower long-context mode.
+    # The decision model gets the whole diff; fit_rounds trims older rounds to the state cap.
+    # On Jev the whole diff is cheap: over ~32 KB it only switches to a slower long-context mode.
     try:
         diff = gh("pr", "diff", pr, "-R", repo)
     except Exception as e:
-        print(f"::warning::could not read the diff ({e}); deciding on the file list", file=sys.stderr)
-        diff = ""
+        # GitHub refuses a diff over 300 files or 20,000 lines (HTTP 406). The checkout has full history.
+        try:
+            diff = subprocess.check_output(["git", "diff", "--no-color", "--no-ext-diff",
+                                            f"{meta['baseRefOid']}...{meta['headRefOid']}"], text=True)
+            print(f"::notice::GitHub refused the PR diff ({e}); used git diff base...head", file=sys.stderr)
+        except Exception as e2:
+            print(f"::warning::could not read the diff ({e}; then {e2}); deciding on the file list", file=sys.stderr)
+            diff = ""
     # PR text is untrusted; it only ever appears here as data, never as instructions.
     return files, {"untrusted_pr_title": meta["title"], "changed_files": files,
                    "changed_lines": meta["additions"] + meta["deletions"], "file_count": len(files),
@@ -213,12 +225,12 @@ def prior_rounds(pr, repo, skip_id=None):
     base = gh("pr", "view", pr, "-R", repo, "--json", "baseRefName", "--jq", ".baseRefName").strip()
     comments = {}
     for c in api(repo, f"pulls/{pr}/comments?per_page=100"):
-        if not _trusted(c):  # anyone can comment on a public PR; only the bot and members reach Jev
+        if not _trusted(c):  # anyone can comment on a public PR; only the bot and members reach the decision model
             continue
         comments.setdefault(c.get("pull_request_review_id"), []).append(
             {"path": c["path"], "line": c.get("line") or c.get("original_line"), "body": c["body"]})
     rounds = []
-    for rid, (a, b), entry in round_entries(api(repo, f"pulls/{pr}/reviews?per_page=100"), base, skip_id):
+    for rid, (a, b), entry in round_entries(pr_reviews(repo, pr), base, skip_id):
         entry["inline_comments"] = comments.get(rid, [])
         if entry["diff_status"] == "unavailable":
             try:
@@ -237,7 +249,7 @@ def prior_rounds(pr, repo, skip_id=None):
 
 
 def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
-    """Blank the oldest rounds' diffs until the Jev state fits `limit` bytes; bodies and markers stay."""
+    """Blank the oldest rounds' diffs until the decision state fits `limit` bytes; bodies and markers stay."""
     for entry in rounds:
         if len(json.dumps(dict(state, untrusted_prior_review_rounds=rounds)).encode()) <= limit:
             break
@@ -247,13 +259,41 @@ def fit_rounds(state, rounds, limit=JEV_STATE_MAX):
     return dict(state, untrusted_prior_review_rounds=rounds)
 
 
+TRIM_KEYS = ("untrusted_diff", "untrusted_review_output")
+TRIM_NOTE = "\n[cut here to fit the decision state cap]"
+
+
+def fit_state(state, limit=JEV_STATE_MAX):
+    """Last resort after fit_rounds, oldest first: blank prior round bodies and comments, then cut the
+    current diff, then the posted review, until the state fits. Every character is at least one JSON
+    byte, so cutting `over` characters always removes `over` bytes."""
+    rounds = [dict(r) for r in state.get("untrusted_prior_review_rounds") or []]
+    if rounds:
+        state = dict(state, untrusted_prior_review_rounds=rounds)
+    for entry in rounds:
+        if len(json.dumps(state).encode()) <= limit:
+            break
+        if entry.get("review_body") or entry.get("inline_comments"):
+            entry["review_body"], entry["inline_comments"], entry["body_status"] = "", [], "omitted_size"
+    for key in TRIM_KEYS:
+        over = len(json.dumps(state).encode()) - limit
+        if over <= 0:
+            break
+        if key not in state:
+            continue
+        text = state.get(key) or ""
+        keep = max(0, len(text) - over - len(TRIM_NOTE) - 8)
+        state = dict(state, **{key: text[:keep] + TRIM_NOTE})
+    return state
+
+
 def with_prior_rounds(state, pr, repo, skip_id=None):
-    # Earlier rounds are PR-derived text: data for Jev, never instructions.
+    # Earlier rounds are PR-derived text: data for the decision model, never instructions.
     try:
-        return fit_rounds(state, prior_rounds(pr, repo, skip_id))
+        return fit_state(fit_rounds(state, prior_rounds(pr, repo, skip_id)))
     except Exception as e:
         print(f"::warning::could not read prior review rounds ({e}); deciding without them", file=sys.stderr)
-        return state
+        return fit_state(state)
 
 
 def pick(probs, rungs):
@@ -284,8 +324,8 @@ def route_selftest():
     assert pick({"free": 0.0, "mid": 0.7, "high": 0.3}, ORDER) == "mid"
     assert pick({"free": 0.0, "mid": 0.05, "high": 0.9, "top": 0.05}, ORDER) == "high"
     assert pick({"free": 0.0, "mid": 0.25, "high": 0.7, "top": 0.05}, ORDER) == "mid"
-    assert pick({"free": 0.05, "mid": 0.03, "high": 0.92}, ORDER) == "free"  # was high
-    assert pick({"free": 0.006, "mid": 0.594, "high": 0.4}, ORDER) == "mid"  # was free
+    assert pick({"free": 0.05, "mid": 0.03, "high": 0.92}, ORDER) == "free"  # P(paid) misses FREE_EXIT
+    assert pick({"free": 0.006, "mid": 0.594, "high": 0.4}, ORDER) == "mid"  # P(paid) clears FREE_EXIT
     assert pick({"free": 0.004, "mid": 0.096, "high": 0.9}, ORDER) == "high"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.06) == "mid"
     assert rerun_gate({"mid": 0.8, "high": 0.2}, ["mid", "high", "top"], 0.15) == "mid"
@@ -311,6 +351,20 @@ def route_selftest():
         assert with_prior_rounds({"k": 1}, "1", "o/r") == {"k": 1}
     finally:
         prior_rounds = saved
+    big = {"k": 1, "untrusted_diff": "d" * 300, "untrusted_review_output": "r" * 300}
+    assert fit_state(dict(big), 10 ** 6) == big
+    cut = fit_state(dict(big), 500)
+    assert len(json.dumps(cut).encode()) <= 500 and cut["untrusted_diff"].endswith(TRIM_NOTE)
+    assert cut["untrusted_review_output"] == big["untrusted_review_output"]
+    tiny = fit_state(dict(big), 160)
+    assert len(json.dumps(tiny).encode()) <= 160 and tiny["untrusted_review_output"].endswith(TRIM_NOTE)
+    route_only = fit_state({"k": 1, "untrusted_diff": "d" * 300}, 100)
+    assert "untrusted_review_output" not in route_only and route_only["untrusted_diff"].endswith(TRIM_NOTE)
+    assert len(json.dumps(route_only).encode()) <= 100
+    rs = [{"round": i, "review_body": "b" * 200, "inline_comments": [{"body": "c"}], "diff": "", "diff_status": "ok"} for i in (1, 2, 3)]
+    st = fit_state({"k": 1, "untrusted_diff": "d" * 100, "untrusted_prior_review_rounds": rs}, 560)
+    assert len(json.dumps(st).encode()) <= 560 and st["untrusted_diff"] == "d" * 100
+    assert st["untrusted_prior_review_rounds"][0]["body_status"] == "omitted_size" and rs[0]["review_body"]
     assert out_of_credit("- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
@@ -379,6 +433,7 @@ def route_selftest():
         gh = real
         pr_reviews.cache_clear()
     assert lane_rung(f"### Lanes\n- `{RUNG['mid'][1]}`: ok (1)\n\n### Round 2 resolution\n- `{RUNG['high'][1]}`: ok") == 1
+    assert lane_rung("### Lanes\n- `" + RUNG["free"][1].split(",")[1] + "`: ok (1)") == 0  # one lane of a multi-lane rung
     assert lane_rung("- `x/unknown`: ok (1)") == -1 and lane_rung(f"- `{RUNG['high'][1]}`: failed-open") == -1
     assert verify_cap("high", True, True, 0, False) == "free"
     assert verify_cap("high", True, False, 0, False) == "high"  # redo of a failed review keeps its tier
@@ -387,7 +442,7 @@ def route_selftest():
     assert verify_cap("high", False, True, 120, True) == "high"  # delta touches a migration or the security boundary
     assert verify_cap("high", False, True, 900, False) == "high"
     assert verify_cap("high", False, True, None, False) == "high"  # rebased: no clean delta
-    assert round_plan(1, False, "synchronize") == ("rebase", "none", False)  # round 2: Jev's tier, verbatim history
+    assert round_plan(1, False, "synchronize") == ("rebase", "none", False)  # round 2: the decision model's tier, verbatim history
     assert round_plan(1, False, "labeled") == (None, None, False)  # initial mode cannot take rebase scope
     assert round_plan(2, False, "synchronize") == (None, None, True)
     assert round_plan(0, False, "synchronize") == (None, None, True)  # no ledger yet
@@ -545,7 +600,7 @@ def verify_cap(tier, same_commit, prior_ok, delta_lines, delta_high):
 
 def round_plan(rounds, same_commit, event):
     """(review_scope, compaction, apply_cap). rounds = commits the bot reviewed before head (0 without a ledger).
-    Round 2 is a full-PR rebase review with verbatim history at Jev's tier; review_mode is auto only on push."""
+    Round 2 is a full-PR rebase review with verbatim history at the decision model's tier; review_mode is auto only on push."""
     if same_commit:
         return None, None, event != "labeled"
     if rounds == 1:
@@ -616,7 +671,7 @@ def route():
         p_by = f"{JEV} " + ", ".join(f"{n}={v:.2f}" for n, v in probs.items())
         applied = [dict(p, paths=["**"]) for p in profiles if p["name"] in chosen]
     except Exception as e:
-        print(f"::warning::Jev profile call failed ({e}); using path matches", file=sys.stderr)
+        print(f"::warning::Decision-model profile call failed ({e}); using path matches", file=sys.stderr)
         chosen, p_by, applied, probs = hits, "fallback: path matches", profiles, None
 
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
@@ -635,7 +690,7 @@ def route():
             tier = pick(a["probabilities"], ORDER)
             t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
         except Exception as e:
-            print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
+            print(f"::warning::Decision-model tier call failed ({e}); using the fixed ladder", file=sys.stderr)
             tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
     head_sha = os.environ.get("HEAD_SHA", "")
@@ -742,7 +797,7 @@ def adjudicate():
         except OutOfCredit:
             by = "out of credit: a rerun would get HTTP 402 too"
         except Exception as e:
-            print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
+            print(f"::warning::Decision-model completeness call failed ({e}); using the review verdict", file=sys.stderr)
             if verdict in ("", "partial", "error") and tier != "high":  # fallback never escalates to the top rung
                 nxt = higher[0]
             by = f"fallback: verdict {verdict or 'missing'}"
@@ -750,7 +805,7 @@ def adjudicate():
     print(summary)
     log_decision("completeness", tier=tier, model=RUNG[tier][1], verdict=verdict or None, mode=mode,
                  complete=None if p is None else round(p, 3), threshold=COMPLETE_THRESHOLD,
-                 rerun_probs=rerun_probs, rerun=nxt, decided_by="jev" if p is not None else "fallback")
+                 rerun_probs=rerun_probs, rerun=nxt, decided_by="model" if p is not None else "fallback")
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"rerun_tier={nxt}\n")
         if nxt != "none":

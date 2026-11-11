@@ -45,6 +45,8 @@ const orderLineSchema = z
     title: z.string().nullish(),
     name: z.string().nullish(),
     quantity: z.number().nullish(),
+    // Excludes units an order edit removed or a refund took back; `quantity` keeps them.
+    currentQuantity: z.number().nullish(),
     // Null for custom/deleted-product lines — Shopify's LineItem.variant is nullable.
     // legacyResourceId may arrive as number or string depending on the API surface.
     variant: z
@@ -104,7 +106,14 @@ export const orderNodeSchema = z
     totalDiscountsSet: moneyBag.nullish(),
     currentTotalPriceSet: moneyBag.nullish(),
     totalRefundedSet: moneyBag.nullish(),
-    lineItems: z.object({ nodes: z.array(orderLineSchema).nullish(), edges: z.array(z.object({ node: orderLineSchema })).nullish() }).passthrough().nullish(),
+    lineItems: z
+      .object({
+        nodes: z.array(orderLineSchema).nullish(),
+        edges: z.array(z.object({ node: orderLineSchema })).nullish(),
+        pageInfo: z.object({ hasNextPage: z.boolean().nullish() }).passthrough().nullish(),
+      })
+      .passthrough()
+      .nullish(),
     refunds: z.array(refundSchema).nullish(),
   })
   .passthrough();
@@ -116,6 +125,8 @@ export interface NormalizedOrderLine {
   sku?: string;
   title?: string;
   quantity: number;
+  /** Units still on the order after edits and refunds. Absent when the payload predates the field. */
+  currentQuantity?: number;
   /** Shopify ProductVariant GID (gid://shopify/ProductVariant/N). Absent for custom/deleted-product lines. */
   variantGid?: string;
   /** Numeric variant id — what checkin stores in BoardSettings/Program shopify*VariantId, so this is the reconciliation join key. */
@@ -155,6 +166,8 @@ export interface NormalizedOrder {
   /** Coupon codes applied at checkout, verbatim. Empty for undiscounted orders. */
   discountCodes: string[];
   lines: NormalizedOrderLine[];
+  /** False when the payload may omit lines the order still has, so absence does not mean removal. */
+  linesComplete: boolean;
   refunds: NormalizedRefund[];
 }
 
@@ -164,6 +177,7 @@ export function normalizeOrder(node: OrderNode): NormalizedOrder {
     sku: l.sku ?? undefined,
     title: l.title ?? l.name ?? undefined,
     quantity: l.quantity ?? 1,
+    currentQuantity: l.currentQuantity ?? undefined,
     variantGid: l.variant?.id ?? undefined,
     variantLegacyId:
       l.variant?.legacyResourceId != null
@@ -206,6 +220,7 @@ export function normalizeOrder(node: OrderNode): NormalizedOrder {
       : undefined,
     discountCodes: node.discountCodes ?? [],
     lines,
+    linesComplete: !node.lineItems?.pageInfo?.hasNextPage,
     refunds,
   };
 }

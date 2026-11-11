@@ -10,8 +10,8 @@
  *
  * ORDERING CONTRACT: orders are newest-wins on Shopify's `updatedAt` (see projectOrder), so the
  * order in which order nodes arrive does not matter. Payouts and balance transactions carry no
- * Shopify version field; they are only ever fetched live (never bulk-exported), so their raw-log
- * id order is fetch order and last-write-wins is newest-wins.
+ * Shopify version field and are never bulk-exported, so raw-log id order is fetch order: they are
+ * newest-wins on `rawEventId`, and an event with a later one for its gid is skipped.
  */
 import type { DbClient } from "../ingest/rawLog.js";
 import { EventSource, ObjectType } from "../generated/prisma/client.js";
@@ -34,16 +34,17 @@ export async function projectNode(
   objectType: ObjectType,
   node: unknown,
   source: EventSource,
+  rawEventId: bigint,
 ): Promise<void> {
   switch (objectType) {
     case ObjectType.ORDER:
       await projectOrder(db, storeId, normalizeOrder(orderNodeSchema.parse(node)), source);
       return;
     case ObjectType.PAYOUT:
-      await projectPayout(db, storeId, normalizePayout(payoutNodeSchema.parse(node)), source);
+      await projectPayout(db, storeId, normalizePayout(payoutNodeSchema.parse(node)), source, rawEventId);
       return;
     case ObjectType.BALANCE_TXN:
-      await projectBalanceTxn(db, storeId, normalizeBalanceTxn(balanceTxnNodeSchema.parse(node)), source);
+      await projectBalanceTxn(db, storeId, normalizeBalanceTxn(balanceTxnNodeSchema.parse(node)), source, rawEventId);
       return;
     case ObjectType.REFUND: {
       const r = normalizeStandaloneRefund(refundSchemaWithOrder.parse(node));

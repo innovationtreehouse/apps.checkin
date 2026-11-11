@@ -1,0 +1,8 @@
+[Unit]
+Description=Hourly kiosk update check, 23:00-05:00
+
+[Timer]
+OnCalendar=*-*-* 23,00..05:00:00
+
+[Install]
+WantedBy=timers.target

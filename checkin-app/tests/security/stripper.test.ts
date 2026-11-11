@@ -350,7 +350,7 @@ describe('stripValue — _count gating', () => {
 
     it('passes that same _count to an authorized view', () => {
         // `their_own:personal` on the caller's own row grants RawBadgeLog's
-        // personal-tier fields (time/location), so the count is now visible.
+        // personal-tier fields (time/location), so the count is visible.
         const row = { id: 5, name: 'Me', _count: { rawBadgeLogs: 9 } };
         const out = stripValue('Person', row, ['their_own:personal', 'public'], ctx({ selfId: 5 })) as Record<string, unknown>;
         expect(out._count).toEqual({ rawBadgeLogs: 9 });
@@ -425,7 +425,6 @@ describe('Event roster strip (events/[id] view)', () => {
     const EVENTS_VIEW = [
         'their_program_participants:pii',
         'their_program_participants:personal',
-        'their_program_participants:internal',
         'their_own:pii',
         'their_own:personal',
         'member',
@@ -440,7 +439,7 @@ describe('Event roster strip (events/[id] view)', () => {
         id: 9,
         programId: PROGRAM_ID,
         name: 'Build Night',
-        attendanceConfirmedAt: new Date('2026-01-01'), // internal tier
+        attendanceConfirmedAt: new Date('2026-01-01'), // personal tier
         program: {
             id: PROGRAM_ID,
             name: 'Robotics',
@@ -467,7 +466,7 @@ describe('Event roster strip (events/[id] view)', () => {
         return participants[0].person as Record<string, unknown>;
     }
 
-    it('lead mentor of the event\'s program sees roster pii/personal + internal', () => {
+    it('lead mentor of the event\'s program sees roster pii/personal', () => {
         const leadCtx = ctx({
             selfId: 1,
             programsLed: new Set([PROGRAM_ID]),
@@ -479,7 +478,7 @@ describe('Event roster strip (events/[id] view)', () => {
         expect(kid.phone).toBe('555-0100');
         expect(kid.dateOfBirth).toBe('2012-05-01');
         expect(kid.allergies).toBe('peanuts');
-        // internal Event field reaches this event's staff (UI renders it).
+        // the staff-only Event field reaches this event's staff (UI renders it).
         expect((out as Record<string, unknown>).attendanceConfirmedAt).toBeInstanceOf(Date);
     });
 

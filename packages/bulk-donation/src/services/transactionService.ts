@@ -1,10 +1,11 @@
 import { db, type DbOrTx } from "../db";
-import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
+import { recordEvent } from "../repositories/audit";
 import { getOwnerDirectory } from "../runtime";
 import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { handOverDeposit, handOverDeposits } from "../lib/deposit-handover";
 import { ServiceError } from "@checkin/component-kit";
 
-// Owner decisions return the row without donor identity, so the writes need no donor-read audit row.
+// Owner decisions return the row without donor identity.
 const DECISION_SELECT = {
   id: true,
   orgId: true,
@@ -50,7 +51,7 @@ async function claimUndecided(
 }
 
 export const transactionService = {
-  async listTransactions(orgId: string, reader: DonorReadContext, assigned?: "true" | "false", page?: { skip: number; take: number }) {
+  async listTransactions(orgId: string, assigned?: "true" | "false", page?: { skip: number; take: number }) {
     let where;
     if (assigned === "true") {
       where = { orgId, OR: [{ ownerId: { not: null } }, { isOrganizationalLevel: true }] };
@@ -59,26 +60,20 @@ export const transactionService = {
     } else {
       where = { orgId };
     }
-    const rows = await db.transaction.findMany({ where, select: TRANSACTION_SELECT, orderBy: [{ importedAt: "asc" }, { id: "asc" }], ...page });
-    await recordDonorDataRead(db, orgId, "transaction", reader, { filter: { assigned: assigned ?? null }, count: rows.length });
-    return rows;
+    return db.transaction.findMany({ where, select: TRANSACTION_SELECT, orderBy: [{ importedAt: "asc" }, { id: "asc" }], ...page });
   },
 
-  async listUnassignedTransactions(orgId: string, reader: DonorReadContext, page?: { skip: number; take: number }) {
-    const rows = await db.transaction.findMany({
+  async listUnassignedTransactions(orgId: string, page?: { skip: number; take: number }) {
+    return db.transaction.findMany({
       where: { orgId, ownerId: null, isOrganizationalLevel: false },
       select: TRANSACTION_SELECT,
       orderBy: [{ importedAt: "asc" }, { id: "asc" }],
       ...page,
     });
-    await recordDonorDataRead(db, orgId, "transaction", reader, { filter: { unassigned: true }, count: rows.length });
-    return rows;
   },
 
-  async getTransaction(orgId: string, id: number, reader: DonorReadContext) {
-    const row = await db.transaction.findFirst({ where: { id, orgId } });
-    if (row) await recordDonorDataRead(db, orgId, "transaction", reader, { ids: [row.id], count: 1 });
-    return row;
+  async getTransaction(orgId: string, id: number) {
+    return db.transaction.findFirst({ where: { id, orgId } });
   },
 
   async assignOwner(
@@ -99,7 +94,8 @@ export const transactionService = {
     const now = new Date();
     const useCommentRule = Boolean(assignFutureMatchingComment && existing.donorComment);
 
-    return db.$transaction(async (tx) => {
+    const cycled: string[] = [];
+    const saved = await db.$transaction(async (tx) => {
       await claimUndecided(tx, orgId, transactionId, { ownerId, ownerAssignedAt: now, ownerAssignedByUserId: audit.actorUserId });
       const row = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: DECISION_SELECT });
 
@@ -156,9 +152,12 @@ export const transactionService = {
       for (const disbId of [...affectedDisbursementIds].sort()) {
         await runOwnerAssignedCycleTx(tx, orgId, disbId, audit);
       }
+      cycled.push(...affectedDisbursementIds);
 
       return row;
     });
+    await handOverDeposits(orgId, cycled);
+    return saved;
   },
 
   async markOrganizationalLevel(orgId: string, transactionId: number, audit: AuditContext) {
@@ -167,7 +166,7 @@ export const transactionService = {
     if (existing.ownerId !== null) throw new ServiceError(400, "Owner already assigned — record is finalized");
     if (existing.isOrganizationalLevel) throw new ServiceError(400, "Already marked Organizational Level");
 
-    return db.$transaction(async (tx) => {
+    const marked = await db.$transaction(async (tx) => {
       await claimUndecided(tx, orgId, transactionId, { isOrganizationalLevel: true });
       const row = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: DECISION_SELECT });
 
@@ -188,5 +187,7 @@ export const transactionService = {
 
       return row;
     });
+    if (existing.disbursementId) await handOverDeposit(orgId, existing.disbursementId);
+    return marked;
   },
 };

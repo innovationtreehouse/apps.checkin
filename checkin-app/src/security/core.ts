@@ -8,8 +8,8 @@
  *                             Granted to authenticated-session views, NOT to
  *                             anonymous/kiosk views. A member view holds BOTH
  *                             'member' and 'public'; anon holds only 'public'.
- *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal}; the grant
- *                             applies on rows where the caller holds <scope>
+ *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal, hardship}; the
+ *                             grant applies on rows where the caller holds <scope>
  *
  * Sensitive-tier SEMANTICS (which fields go where):
  *   'pii'      — contact-identity band (email, phone, googleId). Routinely
@@ -22,6 +22,11 @@
  *                own program participants).
  *   'internal' — org/system bookkeeping (role flags, process state, audit
  *                fields). Board/sysadmin, plus narrow self-scoped grants.
+ *   'hardship' — whether a person or household asked for, holds, was granted
+ *                or was refused help with a fee (a payment plan, a scholarship,
+ *                a comp). Board and finance views only, plus the family's own
+ *                rows; never a sysadmin or another staff role by default
+ *                (docs/rules/revenue.md, Ownership).
  *   scope = 'everyones'     — broad grant; held on every row by default, but a
  *                             row-scoped model missing its scope key fails
  *                             closed and does NOT hold it (see scopesHeld)
@@ -34,7 +39,7 @@
  *   - field.tier === 'secret'        → never
  *   - field.tier === 'public'        → iff view includes 'public'
  *   - field.tier === 'member'        → iff view includes 'member'
- *   - otherwise (pii/personal/internal):
+ *   - otherwise (pii/personal/internal/hardship):
  *       iff view includes 'everyones:<tier>',
  *       OR view includes '<scope>:<tier>' for some <scope> the caller holds
  *       on this row.
@@ -47,14 +52,17 @@
 import {
     classifications as checkinClassifications,
     relations as checkinRelations,
+    marks as checkinMarks,
 } from './generated/classifications';
 import {
     classifications as catalogClassifications,
     relations as catalogRelations,
+    marks as catalogMarks,
 } from './generated/catalog-classifications';
 import {
     classifications as catalogSyntheticClassifications,
     relations as catalogSyntheticRelations,
+    marks as catalogSyntheticMarks,
 } from './catalogSyntheticClassifications';
 import * as inventoryGenerated from './generated/inventory-classifications';
 import * as inventorySynthetic from './inventorySyntheticClassifications';
@@ -69,6 +77,9 @@ import * as workflowSynthetic from './workflowSyntheticClassifications';
 import * as receiptGenerated from './generated/receipt-classifications';
 import * as receiptSynthetic from './receiptSyntheticClassifications';
 import * as programSynthetic from './programSyntheticClassifications';
+import * as budgetOwnerSynthetic from './budgetOwnerSyntheticClassifications';
+import * as keyVolunteerSynthetic from './keyVolunteerSyntheticClassifications';
+import * as problemsSynthetic from './problemsSyntheticClassifications';
 import * as shopifyReadGenerated from './generated/shopify-read-classifications';
 import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
@@ -83,24 +94,27 @@ import { assertNever } from '@/lib/lifecycle/classify';
 // silently overwrites an earlier one; __tests__/classification-sources.test.ts
 // enforces that.
 export const CLASSIFICATION_SOURCES = [
-    { source: 'checkin', classifications: checkinClassifications, relations: checkinRelations },
-    { source: 'global-catalog', classifications: catalogClassifications, relations: catalogRelations },
-    { source: 'catalog-synthetic', classifications: catalogSyntheticClassifications, relations: catalogSyntheticRelations },
-    { source: 'inventory', classifications: inventoryGenerated.classifications, relations: inventoryGenerated.relations },
-    { source: 'inventory-synthetic', classifications: inventorySynthetic.classifications, relations: inventorySynthetic.relations },
-    { source: 'expense', classifications: expenseGenerated.classifications, relations: expenseGenerated.relations },
-    { source: 'expense-synthetic', classifications: expenseSynthetic.classifications, relations: expenseSynthetic.relations },
-    { source: 'income', classifications: incomeGenerated.classifications, relations: incomeGenerated.relations },
-    { source: 'income-synthetic', classifications: incomeSynthetic.classifications, relations: incomeSynthetic.relations },
-    { source: 'donation', classifications: donationGenerated.classifications, relations: donationGenerated.relations },
-    { source: 'donation-synthetic', classifications: donationSynthetic.classifications, relations: donationSynthetic.relations },
-    { source: 'workflow', classifications: workflowGenerated.classifications, relations: workflowGenerated.relations },
-    { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
-    { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
-    { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
-    { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
-    { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations },
-    { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations },
+    { source: 'checkin', classifications: checkinClassifications, relations: checkinRelations, marks: checkinMarks },
+    { source: 'global-catalog', classifications: catalogClassifications, relations: catalogRelations, marks: catalogMarks },
+    { source: 'catalog-synthetic', classifications: catalogSyntheticClassifications, relations: catalogSyntheticRelations, marks: catalogSyntheticMarks },
+    { source: 'inventory', classifications: inventoryGenerated.classifications, relations: inventoryGenerated.relations, marks: inventoryGenerated.marks },
+    { source: 'inventory-synthetic', classifications: inventorySynthetic.classifications, relations: inventorySynthetic.relations, marks: inventorySynthetic.marks },
+    { source: 'expense', classifications: expenseGenerated.classifications, relations: expenseGenerated.relations, marks: expenseGenerated.marks },
+    { source: 'expense-synthetic', classifications: expenseSynthetic.classifications, relations: expenseSynthetic.relations, marks: expenseSynthetic.marks },
+    { source: 'income', classifications: incomeGenerated.classifications, relations: incomeGenerated.relations, marks: incomeGenerated.marks },
+    { source: 'income-synthetic', classifications: incomeSynthetic.classifications, relations: incomeSynthetic.relations, marks: incomeSynthetic.marks },
+    { source: 'donation', classifications: donationGenerated.classifications, relations: donationGenerated.relations, marks: donationGenerated.marks },
+    { source: 'donation-synthetic', classifications: donationSynthetic.classifications, relations: donationSynthetic.relations, marks: donationSynthetic.marks },
+    { source: 'workflow', classifications: workflowGenerated.classifications, relations: workflowGenerated.relations, marks: workflowGenerated.marks },
+    { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations, marks: workflowSynthetic.marks },
+    { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations, marks: receiptGenerated.marks },
+    { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations, marks: receiptSynthetic.marks },
+    { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations, marks: programSynthetic.marks },
+    { source: 'budget-owner-synthetic', classifications: budgetOwnerSynthetic.classifications, relations: budgetOwnerSynthetic.relations, marks: budgetOwnerSynthetic.marks },
+    { source: 'key-volunteer-synthetic', classifications: keyVolunteerSynthetic.classifications, relations: keyVolunteerSynthetic.relations, marks: keyVolunteerSynthetic.marks },
+    { source: 'problems-synthetic', classifications: problemsSynthetic.classifications, relations: problemsSynthetic.relations, marks: problemsSynthetic.marks },
+    { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations, marks: shopifyReadGenerated.marks },
+    { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations, marks: shopifyReadSynthetic.marks },
 ] as const;
 
 type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
@@ -109,7 +123,7 @@ type MergeSources<S extends readonly ClassificationSource[], K extends 'classifi
         ? Head[K] & MergeSources<Rest, K>
         : unknown;
 
-function mergeSources(key: 'classifications' | 'relations'): Record<string, unknown> {
+function mergeSources(key: 'classifications' | 'relations' | 'marks'): Record<string, unknown> {
     const merged: Record<string, unknown> = {};
     for (const s of CLASSIFICATION_SOURCES) Object.assign(merged, s[key]);
     return merged;
@@ -117,29 +131,34 @@ function mergeSources(key: 'classifications' | 'relations'): Record<string, unkn
 
 export const classifications = mergeSources('classifications') as MergeSources<typeof CLASSIFICATION_SOURCES, 'classifications'>;
 export const relations = mergeSources('relations') as MergeSources<typeof CLASSIFICATION_SOURCES, 'relations'>;
+/** Finance marks per model: a response carrying one of these fields is a logged finance view. */
+export const marks = mergeSources('marks') as Readonly<Record<string, readonly string[]>>;
 
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 
-export type SensitiveTier = 'pii' | 'personal' | 'internal';
+export type SensitiveTier = 'pii' | 'personal' | 'internal' | 'hardship';
 export type Tier = 'public' | 'member' | SensitiveTier | 'secret';
 
-export type Scope =
-    | 'everyones'
-    | 'their_own'
-    | 'their_households'
+const SCOPES = [
+    'everyones',
+    'their_own',
+    'their_households',
     // Caller LEADS the household the row belongs to. Deliberately distinct from
     // their_households, which is household-WIDE (a non-lead member holds it):
     // this one is the "may act for another member" relationship, so it is the
     // right token wherever sharing a home is not by itself enough.
-    | 'led_households'
-    | 'their_program_participants'
+    'led_households',
+    'their_program_participants',
     // Caller leads/core-vols a program that a child of this row's household is
     // enrolled in (used for Trusted Adult pickup notes).
-    | 'their_program_households'
+    'their_program_households',
     // Caller is a isKeyholder (global — front-desk staff). Unconditional per-row.
-    | 'keyholders'
-    | 'all_current_visitors';
+    'keyholders',
+    'all_current_visitors',
+] as const;
+
+export type Scope = (typeof SCOPES)[number];
 
 export type Token = 'public' | 'member' | `${Scope}:${SensitiveTier}`;
 
@@ -147,43 +166,7 @@ export type Token = 'public' | 'member' | `${Scope}:${SensitiveTier}`;
  * Role vocabulary. Roles are properties of the caller (sometimes parameterised
  * by request params), not of any row. Per-row data scoping lives in `Scope`.
  */
-export type Role =
-    | 'anyone'
-    | 'unauthenticated'
-    | 'authenticated'
-    | 'kiosk'
-    | 'isSysadmin'
-    | 'isBoardMember'
-    | 'isKeyholder'
-    | 'isBackgroundCheckReviewer'
-    | 'isOperations'
-    // Curates the global catalog. A Person role boolean, stamped on
-    // the session like the others; grants the manager view on catalog routes.
-    | 'isInventoryManager'
-    // Finance staff. A Person role boolean, stamped on the session
-    // like the others; grants the finance view on finance-library routes.
-    | 'isFinance'
-    // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
-    // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
-    | 'certifier'
-    | 'householdLead'
-    | 'programLeadMentor'
-    | 'programCoreVolunteer';
-
-const VALID_SCOPES = new Set<Scope>([
-    'everyones',
-    'their_own',
-    'their_households',
-    'led_households',
-    'their_program_participants',
-    'their_program_households',
-    'keyholders',
-    'all_current_visitors',
-]);
-const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal']);
-// Exported so a guard test can assert BusinessRole (types/auth.ts) ⊆ VALID_ROLES:
-// a role added to BusinessRole must be added here too.
-export const VALID_ROLES = new Set<Role>([
+export const ROLES = [
     'anyone',
     'unauthenticated',
     'authenticated',
@@ -193,13 +176,24 @@ export const VALID_ROLES = new Set<Role>([
     'isKeyholder',
     'isBackgroundCheckReviewer',
     'isOperations',
+    // Curates the global catalog. A Person role boolean, stamped on
+    // the session like the others; grants the manager view on catalog routes.
     'isInventoryManager',
+    // Finance staff. A Person role boolean, stamped on the session
+    // like the others; grants the finance view on finance-library routes.
     'isFinance',
+    // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
+    // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     'certifier',
     'householdLead',
     'programLeadMentor',
     'programCoreVolunteer',
-]);
+] as const;
+
+export type Role = (typeof ROLES)[number];
+
+const SCOPE_NAMES: ReadonlySet<string> = new Set(SCOPES);
+const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal', 'hardship']);
 
 export function parseToken(
     t: string,
@@ -210,13 +204,16 @@ export function parseToken(
     if (colon < 1) return null;
     const scope = t.slice(0, colon);
     const tier = t.slice(colon + 1);
-    if (!VALID_SCOPES.has(scope as Scope)) return null;
+    if (!SCOPE_NAMES.has(scope)) return null;
     if (!VALID_SENSITIVE_TIERS.has(tier as SensitiveTier)) return null;
     return { scope: scope as Scope, tier: tier as SensitiveTier };
 }
 
+// Fails to compile if a session flag, BusinessRole included, is not a Role.
+type RoleSubset<T extends Role> = T;
+
 /** Roles backed by a Person role flag on the session — what `anyRole` checks. */
-export type SessionFlagRole = BusinessRole | 'isInventoryManager' | 'isFinance';
+export type SessionFlagRole = RoleSubset<BusinessRole | 'isInventoryManager' | 'isFinance'>;
 
 /**
  * Admission gate — who is allowed to *call* the endpoint. Distinct from
@@ -246,9 +243,9 @@ export type Authorize =
     // FINANCE or BOARD: the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.
     | 'finance-or-board'
-    // A budget-bucket approver: FINANCE, BOARD, a program leader,
-    // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
-    // to the buckets the caller approves.
+    // A budget-bucket approver: FINANCE, BOARD, or anyone who approves
+    // some bucket. No sysadmin auto-admit. Rows stay handler-filtered to the
+    // buckets the caller approves.
     | 'expense-approver'
     // Expense sign-off admission: `receipt-submitter` (an adult member or
     // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
@@ -286,6 +283,31 @@ export type Envelope = string | null;
 
 export type OrderedViewEntry = readonly [Role, readonly Token[]];
 
+/** Records that live only in another system, named by system and record type. */
+export const OUTSIDE_RECORD_NAMES = ['QuickBooks.Transaction', 'Benevity.Disbursement'] as const;
+
+/**
+ * A declared record id: a field of the row, a nested path (`members[].id`, or `dismissed[]`
+ * for a list of ids), several fields joined into one id, or a path param.
+ */
+export type FinanceViewId = string | readonly string[] | { readonly param: string };
+
+/** The model an id belongs to, or a field of the row whose value picks the model. */
+export type FinanceViewModel = string | { readonly field: string; readonly map: Readonly<Record<string, string>> };
+
+export interface FinanceViewRecordSpec {
+    /** The bag key whose rows hold the records. */
+    readonly key: Models;
+    readonly id: FinanceViewId;
+    readonly model: FinanceViewModel;
+}
+
+export interface FinanceViewSpec {
+    readonly records?: readonly FinanceViewRecordSpec[];
+    /** The query parameters that pick the screen; any other parameter stays out of the log. */
+    readonly query?: readonly string[];
+}
+
 export interface RouteSpec {
     endpoint: string;
     authorize: Authorize;
@@ -305,6 +327,14 @@ export interface RouteSpec {
      * runtime stripper (that gates per-field regardless of this list).
      */
     returns?: readonly Models[];
+    /**
+     * Which records a finance view on this route names, where the default (each top-level
+     * row by its own model and `id`) is wrong, and which query parameters pick the screen.
+     * GET only. Checked at registration by {@link financeViewErrors}.
+     */
+    financeView?: FinanceViewSpec;
+    /** Admits a session with an open household question, which every other route refuses. */
+    allowJoinPending?: true;
 }
 
 /**
@@ -342,6 +372,8 @@ export interface CtxNeeds {
     activeVisitors: boolean;
     /** ledHouseholdMemberIds (fetched only for household leads) */
     ledHouseholdMembers: boolean;
+    /** householdMemberIds: the finance-view own-record check for household-owned records */
+    householdMembers: boolean;
 }
 
 export const ALL_CTX_NEEDS: CtxNeeds = Object.freeze({
@@ -350,6 +382,7 @@ export const ALL_CTX_NEEDS: CtxNeeds = Object.freeze({
     programEvents: true,
     activeVisitors: true,
     ledHouseholdMembers: true,
+    householdMembers: true,
 });
 
 function scopeNeeds(scope: Scope): Partial<CtxNeeds> {
@@ -428,13 +461,22 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
     }
 }
 
-export function deriveCtxNeeds(spec: Pick<RouteSpec, 'authorize' | 'orderedView'>): CtxNeeds {
+/**
+ * Models a household owns for the finance-view own-record check: any member's view of
+ * their household's rows is a view of their own (docs/in-design/FINANCE_VIEW_RECORD_IDS.md).
+ */
+export const HOUSEHOLD_OWNED_FINANCE_MODELS: ReadonlySet<string> = new Set(['ProgramParticipant', 'OrgMembershipProcess']);
+
+export function deriveCtxNeeds(
+    spec: Pick<RouteSpec, 'authorize' | 'orderedView'> & { returns?: readonly string[] },
+): CtxNeeds {
     const needs: CtxNeeds = {
         programs: false,
         programHouseholds: false,
         programEvents: false,
         activeVisitors: false,
         ledHouseholdMembers: false,
+        householdMembers: (spec.returns ?? []).some(model => HOUSEHOLD_OWNED_FINANCE_MODELS.has(model)),
     };
     Object.assign(needs, authorizeNeeds(spec.authorize));
     for (const [role, tokens] of spec.orderedView) {
@@ -499,7 +541,7 @@ function assertValidRegistration(endpoint: string, orderedView: readonly Ordered
     }
     const seenRoles = new Set<string>();
     for (const [role, tokens] of orderedView) {
-        if (!VALID_ROLES.has(role)) {
+        if (!ROLES.includes(role)) {
             throw new Error(`Route ${endpoint}: unknown role '${role}'`);
         }
         if (seenRoles.has(role)) {
@@ -516,6 +558,10 @@ function assertValidRegistration(endpoint: string, orderedView: readonly Ordered
 
 export function defineRoute(spec: RouteSpec): RouteSpec {
     assertValidRegistration(spec.endpoint, spec.orderedView);
+    const declarationErrors = financeViewErrors(spec);
+    if (declarationErrors.length > 0) {
+        throw new Error(`Route ${spec.endpoint}: bad finance-view declaration:\n  ${declarationErrors.join('\n  ')}`);
+    }
     // Derived AFTER validation (deriveCtxNeeds assumes tokens parse). The spread
     // order means an (illegally) author-supplied ctxNeeds is overwritten.
     _routes.set(spec.endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
@@ -539,7 +585,7 @@ export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
     if (tier === 'secret') {
         throw new Error(`File route ${endpoint}: ${file.model}.${file.field} is secret and never leaves`);
     }
-    _fileRoutes.set(endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
+    _fileRoutes.set(endpoint, { ...spec, ctxNeeds: deriveCtxNeeds({ ...spec, returns: [file.model] }) });
     _fileOnlyFields.add(`${file.model}.${file.field}`);
     return spec;
 }
@@ -610,4 +656,144 @@ export function fieldVisible(
         if (scopesHeld.has(parsed.scope)) return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// Finance-view declarations (docs/in-design/FINANCE_VIEW_RECORD_IDS.md §2)
+// ---------------------------------------------------------------------------
+
+type RelationMap = Readonly<Record<string, Readonly<Record<string, { model: string; isList: boolean }>>>>;
+type TierMap = Readonly<Record<string, Readonly<Record<string, Tier>>>>;
+const tierMap = classifications as unknown as TierMap;
+const relationMap = relations as unknown as RelationMap;
+const ALL_SCOPES: ReadonlySet<Scope> = new Set(SCOPES);
+
+/** A declared id path: `list[].field`, `list[]`, or a plain `field`. */
+export function parseIdPath(path: string): { list: string | null; field: string | null } {
+    const at = path.indexOf('[]');
+    if (at === -1) return { list: null, field: path };
+    const rest = path.slice(at + 2);
+    return { list: path.slice(0, at), field: rest.startsWith('.') ? rest.slice(1) : null };
+}
+
+export function modelRelations(model: string): Readonly<Record<string, { model: string; isList: boolean }>> {
+    return relationMap[model] ?? {};
+}
+
+function tierOf(model: string, field: string): Tier | undefined {
+    return tierMap[model]?.[field];
+}
+
+function anyScopeSees(tokens: readonly Token[], model: string, field: string): boolean {
+    const tier = tierOf(model, field);
+    return tier !== undefined && fieldVisible(tier, tokens, ALL_SCOPES);
+}
+
+/**
+ * True when some role holding `tokens` can be sent a marked field on `model` or its nested
+ * rows in a JSON response. A field a file route serves never leaves as JSON, so it is skipped.
+ */
+export function marksVisible(tokens: readonly Token[], model: string, seen: Set<string> = new Set()): boolean {
+    if (seen.has(model)) return false;
+    seen.add(model);
+    if ((marks[model] ?? []).some(field => !isFileOnlyField(model, field) && anyScopeSees(tokens, model, field))) return true;
+    return Object.values(modelRelations(model)).some(rel => marksVisible(tokens, rel.model, seen));
+}
+
+/** Every marked field is classified on its model. */
+export function markErrors(): string[] {
+    const errors: string[] = [];
+    for (const [model, fields] of Object.entries(marks)) {
+        for (const field of fields) {
+            if (tierOf(model, field) === undefined) errors.push(`${model}.${field} is marked but not classified`);
+        }
+    }
+    return errors;
+}
+
+function recordModelErrors(model: FinanceViewModel, elementModel: string): string[] {
+    const known = (name: string) => name in tierMap || (OUTSIDE_RECORD_NAMES as readonly string[]).includes(name);
+    if (typeof model === 'string') return known(model) ? [] : [`model '${model}' is neither classified nor an outside name`];
+    const errors: string[] = [];
+    if (tierOf(elementModel, model.field) === undefined) errors.push(`model field ${elementModel}.${model.field} is not classified`);
+    const values = Object.values(model.map);
+    if (values.length === 0) errors.push(`model map on '${model.field}' is empty`);
+    for (const name of values) if (!known(name)) errors.push(`model '${name}' is neither classified nor an outside name`);
+    return errors;
+}
+
+function recordErrors(spec: Pick<RouteSpec, 'endpoint' | 'orderedView' | 'returns'>, record: FinanceViewRecordSpec): string[] {
+    const { key, id, model } = record;
+    if (!(key in tierMap)) return [`key '${key}' is not a classified model`];
+    const errors: string[] = [];
+    if (spec.returns && !spec.returns.includes(key)) errors.push(`key '${key}' is not in the route's returns`);
+
+    // The fields that must reach every role that can see a marked field: [model, field].
+    const needed: [string, string][] = [];
+    let elementModel: string = key;
+    if (typeof id === 'object' && !Array.isArray(id) && 'param' in id) {
+        if (!spec.endpoint.includes(`[${id.param}]`)) errors.push(`param '${id.param}' is not in the endpoint path`);
+    } else {
+        const paths: readonly string[] = typeof id === 'string' ? [id] : (id as readonly string[]);
+        if (paths.length === 0) errors.push('id lists no field');
+        const parsed = paths.map(parseIdPath);
+        const lists = new Set(parsed.map(p => p.list));
+        if (lists.size > 1) errors.push(`id fields ${paths.join(', ')} are not on one row`);
+        const list = parsed[0]?.list ?? null;
+        if (list !== null) {
+            const rel = modelRelations(key)[list];
+            if (rel) {
+                elementModel = rel.model;
+            } else if (tierOf(key, list) !== undefined) {
+                needed.push([key, list]);
+                if (parsed.some(p => p.field !== null)) errors.push(`'${list}' is a field of ${key}, not a nested row`);
+            } else {
+                errors.push(`'${list}' is neither a relation nor a field of ${key}`);
+            }
+        }
+        for (const p of parsed) {
+            if (p.field === null) continue;
+            if (tierOf(elementModel, p.field) === undefined) errors.push(`id field ${elementModel}.${p.field} is not classified`);
+            else needed.push([elementModel, p.field]);
+        }
+    }
+    errors.push(...recordModelErrors(model, elementModel));
+    if (typeof model === 'object' && tierOf(elementModel, model.field) !== undefined) needed.push([elementModel, model.field]);
+
+    for (const [role, tokens] of spec.orderedView) {
+        if (!marksVisible(tokens, key)) continue;
+        for (const [m, f] of needed) {
+            if (!anyScopeSees(tokens, m, f)) errors.push(`role '${role}' can see a marked field on ${key} but not ${m}.${f}`);
+        }
+    }
+    return errors;
+}
+
+/**
+ * Why a route's finance-view declaration is unsound, or [] when it is sound. A route
+ * that can send a marked field on top-level rows with no `id` must declare their records.
+ */
+export function financeViewErrors(spec: Pick<RouteSpec, 'endpoint' | 'orderedView' | 'returns' | 'financeView'>): string[] {
+    const declaration = spec.financeView;
+    if (!spec.endpoint.startsWith('GET ')) {
+        return declaration ? ['financeView is allowed only on a GET endpoint'] : [];
+    }
+    const errors: string[] = [];
+    const returns = spec.returns ?? [];
+    const nested = new Set(returns.flatMap(model => Object.values(modelRelations(model)).map(rel => rel.model)));
+    const declared = new Set((declaration?.records ?? []).map(r => r.key));
+    for (const model of returns) {
+        if (nested.has(model) || declared.has(model) || tierOf(model, 'id') !== undefined) continue;
+        if (spec.orderedView.some(([, tokens]) => marksVisible(tokens, model))) {
+            errors.push(`${model} can carry a marked field on rows with no id; declare its records`);
+        }
+    }
+    for (const record of declaration?.records ?? []) {
+        errors.push(...recordErrors(spec, record).map(e => `${record.key}: ${e}`));
+    }
+    const query = declaration?.query ?? [];
+    if (query.some(q => q.length === 0) || new Set(query).size !== query.length) {
+        errors.push('query names must be non-empty and distinct');
+    }
+    return errors;
 }

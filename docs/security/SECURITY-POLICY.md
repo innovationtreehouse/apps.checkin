@@ -40,6 +40,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 | `pii` | Personally identifying (email, phone, dob, googleId) |
 | `personal` | Private but not identifying (Household.address, emergency contacts) |
 | `internal` | Role/audit metadata (sysadmin flag, lastBackgroundCheck, audit logs) |
+| `hardship` | Whether a person or household asked for, holds, was granted or was refused help with a fee: a payment plan, a scholarship, a comp. Granted only to Board and finance views, and to a family on its own rows |
 | `secret` | Cryptographic — never returned to any client (oauth tokens) |
 
 **Scope** (per-row, computed by the handler for each row in the response):
@@ -55,7 +56,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 
 **Token grammar:**
 - `'public'` — bare. Public-tier fields, no row gate.
-- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal}`. Grant applies on rows where the caller holds `<scope>`.
+- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal, hardship}`. Grant applies on rows where the caller holds `<scope>`.
 - `'secret'` — never appears in any view (type error at registration).
 
 **Field visibility per row:** a field is exposed iff one of:
@@ -94,7 +95,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
     });
     ```
 
-3. Add the endpoint key to `scripts/migrated-routes.txt`.
+3. Add the endpoint key to `checkin-app/scripts/migrated-routes.txt`.
 
 4. Open the PR. CI will:
     - Run `prisma generate` and assert no diff in `src/security/generated/`.
@@ -107,6 +108,11 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 1. Add the field in `prisma/schema.prisma` with a `/// @sensitivity:<tier>` comment above it.
 2. Run `npx prisma generate` and commit the regenerated `src/security/generated/classifications.ts`.
 3. If the field should be exposed: nothing else to do unless its tier isn't already covered. Every existing view that grants `*:<that-tier>` will now expose it automatically. A schema tier change is the policy change; maintainer reviews under CODEOWNERS.
+4. If the field is a finance amount actually charged, paid, given or moved, or names a person or company tied to money (the list is in `docs/in-design/FINANCE_VIEW_RECORD_IDS.md`), add `/// @financeMark` beside its `@sensitivity`. A synthetic view model lists its marked fields in its file's `marks` export. A GET response that carries a marked field on a row that is not the viewer's own writes a finance view log row; nothing on the route needs flagging. Book prices, fee schedules and thresholds are not marked.
+
+### Declaring a finance view's records
+
+By default a logged row names its own model and `id`. Where that is wrong (a view model, a pointer to another record, a composite id, an id in the path or nested), declare `financeView.records` on the route; `financeView.query` lists the query parameters that pick the screen. Registration refuses a route that can send a marked field on top-level rows with no `id` and no declaration, a declared field that is not classified, a model that is neither classified nor an outside name (`QuickBooks.Transaction`, `Benevity.Disbursement`), and an id that a role able to see a marked field cannot see. A page whose panels should fold into one log entry goes in `src/security/pageViewFolds.ts`.
 
 ### Sending data to a third party
 
@@ -124,6 +130,8 @@ export async function createShopifyOrder(participant, program) {
 
 Register the surface in `src/security/registry.ts` with the tier list you actually need on the wire — anything else (and `secret` regardless) is stripped before `fetch` ever sees it.
 
+A surface is enforced only where its caller goes through `outboundCall`, and its registry entry says so. Many existing callers, in the app as well as the packages, still build their request and call `fetch` or an SDK directly; for those, the entry's tiers are not applied at runtime. Check an entry's comment before relying on its tiers.
+
 ```ts
 defineOutbound({
     surface: 'shopify.order.create',
@@ -131,7 +139,9 @@ defineOutbound({
 });
 ```
 
-A library in `packages/*` or a Lambda in a root-level `*-function` dir cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and map the file (path from the repo root) to that surface in `PACKAGE_EGRESS_FILES` in `scripts/check-route-coverage.ts`. The lint fails on any non-loopback URL literal, named third-party host or listed API SDK in `.ts`/`.tsx`/`.js`/`.mjs`/`.cjs` source there outside those files (tests, fixtures and generated code excluded), and on a mapped surface with no `defineOutbound` entry. An SDK hides its host, so a new one goes into `THIRD_PARTY_SDK_RE` in the same PR as its surface. AWS SDK clients are not listed: they reach only AWS, where the code runs.
+A library in `packages/*` or a Lambda in a root-level `*-function` dir cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and map the file (path from the repo root) to that surface in `PACKAGE_EGRESS_FILES` in `src/security/egressAllowlist.ts`. The lint fails on any non-loopback URL literal, named third-party host or listed API SDK in `.ts`/`.tsx`/`.js`/`.mjs`/`.cjs` source there outside those files (tests, fixtures and generated code excluded), and on a mapped surface with no `defineOutbound` entry. An SDK hides its host, so a new one goes into `THIRD_PARTY_SDK_RE` in the same PR as its surface. AWS SDK clients are not listed: they reach only AWS, where the code runs.
+
+An unenforced surface, in a package or in the app, is an inventory, not a guarantee. Nothing strips its payload by tier, so its `defineOutbound` tiers record what the code sends today; re-tiering the entry changes nothing on the wire, and adding a field to its payload changes no test or stripper. Review such a payload change against its entry's comment. The lint also cannot see a host built from config, and an OAuth scope named in a comment (Gmail's `gmail.readonly`) is not checked at runtime. The allowlists and patterns live in `src/security/egressAllowlist.ts`, which is in the security boundary set: widening one ships in its own PR.
 
 ### Serving a stored file
 
@@ -168,15 +178,29 @@ export const GET = fileHandler('GET /api/things/[id]/file', async ({ params }) =
 | `application/pdf` | `inline` | none (Chrome's PDF viewer refuses a sandboxed document) |
 | `text/plain` (sent as `; charset=utf-8`) | `attachment` | none |
 
-The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `scripts/migrated-routes.txt`. The handler does not audit, check magic bytes, or stream from storage; those are the route's job (see `docs/in-design/1265_RECEIPT_INTEGRATION.md` §3).
+The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `checkin-app/scripts/migrated-routes.txt`. When the served field carries `/// @financeMark` and the row is not the caller's own, the handler records the view in the finance view log, and a failed write is an opaque 500. The handler does not check magic bytes or stream from storage; those are the route's job (see `docs/architecture/RECEIPT.md`, "File storage").
 
 ## What this layer does NOT cover (yet)
 
-- **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work.
+- **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work. An `ApiResponseError` renders as `{ error }`, plus `code` and `fields` when its thrower passed them; nothing derives a code from any other error. `fields` holds the names of refused inputs, never their submitted values. An error body skips the stripper, so its thrower answers for what it holds.
 - **AuditLog content.** `oldData`/`newData` JSON blobs can carry any field — they're written before this layer sees them.
 - **Server Components.** All pages are currently `"use client"` and hit `/api/`, so the registry covers everything. A future Server Component reading Prisma directly needs to register too.
 - **Per-row scope correctness in the generic contract test.** The generic contract asserts every visible field has a grantable tier, but doesn't verify per-row scope-holding (that would require route-specific personas). Route-specific tests (e.g. `programsIdAPI.test.ts`) cover those.
 - **Inbound webhook signature verification.** Already handled at `src/app/api/webhooks/shopify/route.ts`.
+
+## Accepted risks
+
+### Page navigation can admit a revoked staging exception
+
+Accepted 2026-07-21. After a sysadmin revokes someone's staging exception (`canAccessStaging`), their browser can keep opening ops-stg pages for up to 8 hours after its session cookie was last refreshed. That can run past 8 hours from sign-in, because each refresh gives the cookie a new 8-hour lifetime.
+
+This happens because the middleware gates pages by decoding the cookie, which holds the claims from the last refresh, and never consults the database. API routes do not share this window for the exception: they rebuild the session from the database on every request, so the revocation applies to the next API call. A page that opens during the window therefore has its data calls refused.
+
+### Lost org standing keeps API access on ops-stg
+
+Acceptance confirmed by the owner 2026-10-30. Someone admitted to ops-stg as a verified org member (`hd`, `emailVerified`) keeps that admission after losing org standing at Google, on API routes as well as pages.
+
+Both claims are written to the token only at sign-in or at a dev persona mint, and the rebuild on each API request does not refresh them. API access therefore lasts until the session ends, at most 8 hours from sign-in. Page access lasts until the cookie's own expiry, which the refreshes described above can push past that point.
 
 ## What to do if you hit a wall
 

@@ -64,12 +64,10 @@ export const PATCH = withAuth(
                     name: nameWrite(name),
                     nickname: nicknameWrite(nickname),
                     phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                    // #1165: a self-entered DoB for a 26+ member is stripped and the
-                    // over-25 flag set instead; with no DoB the over-25 checkbox owns
-                    // the flag. Only touched when the profile form submits age fields,
-                    // so notification-only PATCHes leave DoB/flag unchanged.
+                    // The profile form always submits both age fields, so either one
+                    // stands for both; notification-only PATCHes leave them unchanged.
                     ...(dob !== undefined || over25 !== undefined
-                        ? { ...normalizeAdultDob(dob || null), ...(dob ? {} : { isDeclaredAdult: !!over25 }) }
+                        ? normalizeAdultDob(dob || null, !!over25)
                         : {}),
                     notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
                     emailSuppressed: emailSuppressed !== undefined ? !!emailSuppressed : undefined,

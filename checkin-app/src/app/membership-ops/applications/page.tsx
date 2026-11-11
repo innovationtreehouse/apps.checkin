@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Modal, Radio, Stack, Switch, Text, Textarea } from "@mantine/core";
+import { useState, Suspense } from "react";
+import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { useSession } from "next-auth/react";
+import { useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { ARCHIVABLE_STATUSES, awaitingBgReview, type ProcessStatus } from "@/lib/membership/lifecycle";
-import { clearingApprovals } from "@/lib/membership/approvals";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -37,6 +38,8 @@ interface ProcessRow {
   bgClearedAt: string | null;
   paidAt: string | null;
   attestations: Attestation[];
+  requestedForHouseholdId: number | null;
+  subjectPerson: { id: number; name: string | null; householdId: number | null } | null;
   orgMembership: {
     householdId: number;
     isVolunteerFamily: boolean;
@@ -55,18 +58,31 @@ const STATUS_COLORS: Record<string, string> = {
   RENEWAL_PENDING_BG: "grape",
 };
 
+const KIND_LABELS: Record<string, string> = {
+  INITIAL: "New membership",
+  RENEWAL: "Renewal",
+  PERSON_AGREEMENT: "Membership agreement",
+  PERSON_BG: "Background check",
+  KEY_VOLUNTEER_AGREEMENT: "Key Volunteer agreement",
+};
+
+const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
+
 const statusColor = (status: string) => STATUS_COLORS[status] || "gray";
 const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " "));
 
-// The background check is a parallel track: an application still needs review
-// when it hasn't cleared and is past consent. ONE definition, shared with the
-// server (fix #1): awaitingBgReview.has — client-safe (booleans in, no Prisma).
+// A check review in the reviewer queue. ONE definition, shared with the server:
+// awaitingBgReview.has — client-safe (booleans in, no Prisma).
 const awaitingBg = (r: ProcessRow) =>
-  awaitingBgReview.has({ status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
+  awaitingBgReview.has({ kind: r.kind as ProcessKind, status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
 
-// Mirrors archiveApplication's gate; the server re-checks.
-const closable = (r: ProcessRow) => !r.paidAt && (ARCHIVABLE_STATUSES as readonly string[]).includes(r.status);
-const refundable = (r: ProcessRow) => !!r.paidAt && (r.status === "PENDING_BG_CLEARANCE" || r.status === "BLOCKED");
+// A household application past consent whose check has not cleared waits on its people's check reviews.
+const waitingOnCheckReview = (r: ProcessRow) =>
+  r.kind !== "PERSON_BG" && !!r.orgMembership && !!r.bgConsentAt && !r.bgClearedAt && r.status !== "BLOCKED";
+
+// Mirror archiveApplication's and recordRefund's gates; the server re-checks.
+const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
+const refundable = (r: ProcessRow) => !!r.paidAt && refundLandsIn(r.status as ProcessStatus) != null;
 
 export default function AdminMembershipPage() {
   return (
@@ -79,14 +95,12 @@ export default function AdminMembershipPage() {
 function ApplicationsBoard() {
   const { data: session } = useSession();
   const me = session?.user;
-  // Conflict of interest: no actor may advance/certify/override their OWN household's
-  // application (mirrors the server guards in certifyPaymentPlan, overrideBlocked and
+  // Conflict of interest: no actor may advance/certify/reset their OWN household's
+  // application (mirrors the server guards in certifyPaymentPlan, boardResetReview and
   // the EXTERNAL-phase route).
   // The disabled state is UX only — the server is the real enforcement.
   const ownHousehold = (r: ProcessRow) =>
-    sharesHousehold(me?.householdId, r.orgMembership?.householdId);
-  const [rows, setRows] = useState<ProcessRow[]>([]);
-  const [loading, setLoading] = useState(true);
+    [r.orgMembership?.householdId, r.subjectPerson?.householdId, r.requestedForHouseholdId].some((h) => sharesHousehold(me?.householdId, h ?? null));
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [messageId, setMessageId] = useState<number | null>(null);
@@ -98,21 +112,11 @@ function ApplicationsBoard() {
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
-  // processId -> the lead a force-approve asserts was checked. The board asserts it
-  // because a blocked review has no second approval to count.
-  const [overrideSubjects, setOverrideSubjects] = useState<Record<number, number>>({});
 
-  const fetchRows = useCallback((archived: boolean) =>
-    fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`)
-      .then(async (res) => { if (res.ok) setRows((await res.json()).processes || []); })
-      .finally(() => setLoading(false)), []);
-
-  const load = (archived: boolean) => {
-    setLoading(true);
-    return fetchRows(archived);
-  };
-
-  useEffect(() => { fetchRows(showArchived); }, [fetchRows, showArchived]);
+  const { data, error: loadError, reload } = useLoad<{ processes?: ProcessRow[] }>(
+    `/api/membership-ops/applications${showArchived ? "?archived=1" : ""}`,
+  );
+  const rows = data?.processes ?? [];
 
   const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
     setBusyId(processId);
@@ -127,7 +131,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Updated." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         setMessage(data.error || "Action failed.");
@@ -139,7 +143,12 @@ function ApplicationsBoard() {
     }
   };
 
-  const override = async (processId: number, action: "reset" | "approve") => {
+  const resetReview = (processId: number, reason: string, wrongPerson: boolean) =>
+    overrideReview(processId, { action: "reset", reason, wrongPerson }, "Sent back for re-review.", "Reset failed.");
+  const releaseApplication = (processId: number, reason: string) =>
+    overrideReview(processId, { action: "release", reason }, "Released — the application moves on.", "Release failed.");
+
+  const overrideReview = async (processId: number, body: Record<string, unknown>, done: string, failed: string) => {
     setBusyId(processId);
     setMessageId(processId);
     setMessage("");
@@ -147,18 +156,19 @@ function ApplicationsBoard() {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action, subjectPersonIds: overrideSubjects[processId] === undefined ? [] : [overrideSubjects[processId]] }),
+        body: JSON.stringify({ processId, ...body }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: action === "reset" ? "Sent back for re-review." : "Overridden to payment." });
-        await load(showArchived);
+        notifications.show({ message: done });
+        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
+        await reload();
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: 4000 });
-        await load(showArchived);
+        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
+        reload();
       } else {
-        setMessage(data.error || "Override failed.");
+        setMessage(data.error || failed);
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -180,7 +190,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Application closed." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         setMessage(data.error || "Couldn't close the application.");
@@ -192,23 +202,73 @@ function ApplicationsBoard() {
     }
   };
 
-  // An awaiting row only ever holds APPROVE attestations (any REJECT blocks it).
+  // An awaiting review only ever holds APPROVE attestations (any REJECT blocks it).
   const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
-  // Approvals that count toward clearing; unnamed or other-adult approvals don't.
-  const counted = (r: ProcessRow) => clearingApprovals(r.attestations, r.kind === "PERSON_BG");
 
+  // Every reset takes a reason. A review a household asked for can also be reset as
+  // naming the wrong person, which returns it to no person.
   const confirmResetReview = (r: ProcessRow) => {
-    modals.openConfirmModal({
+    let reason = "";
+    let wrongPerson = false;
+    const modalId = modals.openConfirmModal({
       title: "Start this background-check review over?",
       children: (
-        <Text size="sm">
-          This discards the {approvals(r)} approval(s) recorded for <strong>{householdLabel(r)}</strong>{" "}
-          and asks the reviewers to start again. Use it when an approval was recorded by
-          mistake — the check itself has not cleared yet, so nothing else changes.
-        </Text>
+        <Stack gap="xs">
+          <Text size="sm">
+            This discards the {r.attestations.length} decision(s) recorded for <strong>{processLabel(r)}</strong>{" "}
+            and asks the reviewers to start again. The check itself has not cleared, so nothing else changes.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+          {r.kind === "PERSON_BG" && r.requestedForHouseholdId !== null && r.subjectPerson && (
+            <Switch
+              label="The review names the wrong person — the next reviewer names again"
+              onChange={(e) => { wrongPerson = e.currentTarget.checked; }}
+            />
+          )}
+        </Stack>
       ),
-      labels: { confirm: "Discard approvals", cancel: "Cancel" },
-      onConfirm: () => override(r.id, "reset"),
+      labels: { confirm: "Start over", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to start a review over.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        resetReview(r.id, reason.trim(), wrongPerson);
+      },
+    });
+  };
+
+  // A blocked household application with nobody in its household under a blocked check
+  // review: whoever's rejection blocked it has left. The server re-checks.
+  const releasable = (r: ProcessRow) =>
+    r.kind !== "PERSON_BG" && r.status === "BLOCKED" && !!r.orgMembership &&
+    !rows.some((p) => p.kind === "PERSON_BG" && p.status === "BLOCKED" && p.subjectPerson?.householdId === r.orgMembership?.householdId);
+
+  const confirmRelease = (r: ProcessRow) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Release this household from a departed person's rejection?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            The person whose check was rejected has left <strong>{processLabel(r)}</strong>. Releasing lets this
+            application move on. Their rejection stays on them and still blocks any household they are in.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Release", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to release a household.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        releaseApplication(r.id, reason.trim());
+      },
     });
   };
 
@@ -219,7 +279,7 @@ function ApplicationsBoard() {
       title: "Close this application?",
       children: (
         <Text size="sm">
-          This removes <strong>{householdLabel(r)}</strong> (application #{r.id}) from the board list.
+          This removes <strong>{processLabel(r)}</strong> (application #{r.id}) from the board list.
           A record is kept in the audit log, and the board can reopen it. Only do this for
           applications that have sat idle and unpaid.
         </Text>
@@ -245,10 +305,10 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Application reopened." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: false });
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -270,11 +330,11 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Certified — membership activated." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: 4000 });
-        await load(showArchived);
+        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: false });
+        reload();
       } else {
         setMessage(data.error || "Certification failed.");
       }
@@ -298,7 +358,7 @@ function ApplicationsBoard() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         notifications.show({ message: "Refund recorded." });
-        await load(showArchived);
+        reload();
         notifyNavRefresh();
       } else {
         setMessage(data.error || "Couldn't record the refund.");
@@ -339,12 +399,10 @@ function ApplicationsBoard() {
     await certify(processId, reason);
   };
 
-  const leads = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
 
-  const pickOverrideSubject = (processId: number, personId: number) =>
-    setOverrideSubjects((s) => ({ ...s, [processId]: personId }));
-
-  const householdLabel = (r: ProcessRow) => {
+  // A per-person process has no household; it is named for its subject person.
+  const processLabel = (r: ProcessRow) => {
+    if (!r.orgMembership && r.subjectPerson) return r.subjectPerson.name || `Person #${r.subjectPerson.id}`;
     const hh = r.orgMembership?.household;
     if (!hh) return `Household #${r.orgMembership?.householdId ?? "?"}`;
     const parents = (hh.householdMembers || []).filter((p) => p.isHouseholdLead).map((p) => p.name || p.email).filter(Boolean);
@@ -367,10 +425,10 @@ function ApplicationsBoard() {
       <Switch
         label="Show closed applications"
         checked={showArchived}
-        onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
+        onChange={(e) => setShowArchived(e.currentTarget.checked)}
       />
 
-      {!loading && rows.length > 0 && !showArchived && (
+      {rows.length > 0 && !showArchived && (
         <>
           {rows.some((r) => r.status === "BLOCKED") && (
             <Alert
@@ -397,8 +455,10 @@ function ApplicationsBoard() {
 
       {!showArchived && <ActiveFilterNotice active={active} label={statusLabel} onClear={clear} />}
 
-      {loading ? (
-        <Center py="xl"><Loader /></Center>
+      {loadError && <LoadError what="applications" message={loadError} onRetry={reload} />}
+
+      {data === null ? (
+        !loadError && <Center py="xl"><Loader /></Center>
       ) : rows.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
           <Text c="dimmed">{showArchived ? "No closed applications." : "No in-flight membership applications."}</Text>
@@ -418,9 +478,9 @@ function ApplicationsBoard() {
             <Card key={r.id} withBorder radius="md" padding="lg">
               <Group justify="space-between" align="center" wrap="wrap">
                 <div>
-                  <Text fw={700} fz="lg">{householdLabel(r)}</Text>
+                  <Text fw={700} fz="lg">{processLabel(r)}</Text>
                   <Text size="xs" c="dimmed">
-                    {r.kind} · application #{r.id}
+                    {kindLabel(r.kind)} · application #{r.id}
                     {r.orgMembership?.isVolunteerFamily && <Text component="span" c="green"> · volunteer</Text>}
                   </Text>
                 </div>
@@ -460,17 +520,23 @@ function ApplicationsBoard() {
               {awaitingBg(r) && (
                 <Group mt="md" gap="md" wrap="wrap" align="center">
                   <Text size="sm" c="dimmed">
-                    Background check (in parallel) — <Text component="span" fw={600}>{counted(r)}/2</Text> approvals toward clearance.
-                    {approvals(r) > counted(r) && ` ${approvals(r) - counted(r)} more recorded that name no one or a different adult — start the review over to clear it.`}
+                    Background check — <Text component="span" fw={600}>{approvals(r)}/2</Text> approvals toward clearance
+                    {r.subjectPerson ? "." : "; the first reviewer names the person."}
                   </Text>
                   {/* The board's way back from a reviewer's misclick: the review is still
                       open, so discarding the attestations undoes it with nothing to unwind. */}
-                  {approvals(r) > 0 && (
+                  {me?.isBoardMember && approvals(r) > 0 && (
                     <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
                       Discard approvals — start the review over
                     </Button>
                   )}
                 </Group>
+              )}
+
+              {waitingOnCheckReview(r) && (
+                <Text size="sm" c="dimmed" mt="md">
+                  Background check (in parallel) — waiting on the household&apos;s check review.
+                </Text>
               )}
 
               {r.status === "PENDING_PAYMENT" && (
@@ -500,41 +566,32 @@ function ApplicationsBoard() {
                       💸 This household already paid — a refund is likely needed (membership was not activated).
                     </Text>
                   )}
-                  {/* A force-approve must say which adult it covers: a blocked review has
-                      no second approval to count, so an unnamed override would set
-                      bgClearedAt with nobody recorded as checked. */}
-                  <Stack gap={4} mb="sm">
-                    {leads(r).length === 0 ? (
-                      <Text size="sm" c="dimmed">No household leads on file — this application cannot be overridden.</Text>
-                    ) : (
-                      <Radio.Group
-                        label="Whose background check does an override cover?"
-                        value={String(overrideSubjects[r.id] ?? "")}
-                        onChange={(v) => pickOverrideSubject(r.id, Number(v))}
-                      >
-                        <Stack gap={4} mt={4}>
-                          {leads(r).map((p) => (
-                            <Radio key={p.id} size="xs" value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
-                          ))}
-                        </Stack>
-                      </Radio.Group>
-                    )}
-                  </Stack>
-                  <Group gap="sm" wrap="wrap">
-                    <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => override(r.id, "reset")}>
-                      Reset for re-review
-                    </Button>
-                    <Button
-                      size="xs"
-                      fz={15}
-                      disabled={busyId === r.id || ownHousehold(r) || overrideSubjects[r.id] === undefined}
-                      onClick={() => override(r.id, "approve")}
-                    >
-                      Override → {r.paidAt ? "activate" : "payment"}
-                    </Button>
-                  </Group>
-                  {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed" mt="sm">You can&apos;t override your own household&apos;s application — someone outside your household must.</Text>
+                  {me?.isBoardMember ? (
+                    <>
+                      <Text size="sm" mb="sm">
+                        A reset sends the review back for two new approvals. The reviewer who rejected
+                        may also change their answer to approve, which does the same and counts as the first.
+                        An application blocked by a person&apos;s check review moves on when that review is reset.
+                      </Text>
+                      <Group gap="xs">
+                        <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
+                          Reset for re-review
+                        </Button>
+                        {releasable(r) && (
+                          <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmRelease(r)}>
+                            Release
+                          </Button>
+                        )}
+                      </Group>
+                      {releasable(r) && (
+                        <Text size="xs" c="dimmed" mt="sm">Nobody in this household is under a rejected check review now, so the Board can release it.</Text>
+                      )}
+                      {ownHousehold(r) && (
+                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t reset or release your own household&apos;s application — someone outside your household must.</Text>
+                      )}
+                    </>
+                  ) : (
+                    <Text size="sm" c="dimmed">A board member can reset this review.</Text>
                   )}
                 </Alert>
               )}

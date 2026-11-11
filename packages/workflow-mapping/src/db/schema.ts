@@ -2,7 +2,6 @@ export type {
   ReceivedReceipt,
   ReceivedReceiptLineStatus as ReceivedReceiptLineStatusRow,
   WorkflowAuditLog as WorkflowAuditLogRow,
-  WorkflowSystemData,
 } from "../generated/prisma/client";
 
 // ── Enum arrays (runtime values used for validation) ──────────────────────────
@@ -15,16 +14,13 @@ export const receivedReceiptStateEnum = [
 ] as const;
 export type ReceivedReceiptState = (typeof receivedReceiptStateEnum)[number];
 
-/** States whose lines a manager may still edit (and the S5 remap may touch). */
-export const EDITABLE_RECEIPT_STATES: ReceivedReceiptState[] = ["pending_review", "apply_failed"];
+/** Lines are editable only before the receipt is sent to apply; the S5 remap edits only these. */
+export const EDITABLE_RECEIPT_STATES: ReceivedReceiptState[] = ["pending_review"];
 
-/** A receipt's lines are editable in an editable state, even after a leg applied (that edit is logged as late). */
-export const EDITABLE_RECEIPT_WHERE = {
-  state: { in: EDITABLE_RECEIPT_STATES },
-};
+export const EDITABLE_RECEIPT_WHERE = { state: { in: EDITABLE_RECEIPT_STATES } };
 
-/** The apply-failed queue also lists `applying`, so a receipt whose push never landed is visible. */
-export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed", "applying"];
+/** The apply-failed queue: receipts that need a person. `applying` is listed apart, as in progress. */
+export const APPLY_FAILED_QUEUE_STATES: ReceivedReceiptState[] = ["apply_failed"];
 
 export const receivedReceiptLineStatusEnum = [
   "unrecognized",
@@ -45,12 +41,47 @@ export const workflowAuditEventTypeEnum = [
   "line_marked_non_inventory",
   "line_proposed",
   "line_remapped",
+  // Nothing writes it now; earlier rows still carry it.
   "line_edited_late",
   "provisional_rejected",
   "org_event_rejected",
   "auto_proceed_triggered",
+  "matching_deferred",
+  "line_matched",
+  "matching_ran",
+  "matching_gave_up",
 ] as const;
 export type WorkflowAuditEventType = (typeof workflowAuditEventTypeEnum)[number];
+
+export const AUDIT_EVENT_LABEL: Record<WorkflowAuditEventType, string> = {
+  receipt_created: "Receipt received",
+  receipt_proceeded: "Sent to apply",
+  receipt_apply_started: "Apply started",
+  receipt_apply_succeeded: "Apply succeeded",
+  receipt_apply_failed: "Apply failed",
+  receipt_retry_started: "Apply retried",
+  line_associated: "Line associated with catalog item",
+  line_marked_non_inventory: "Line marked non-inventory",
+  line_proposed: "New catalog item proposed for line",
+  line_remapped: "Line moved to approved catalog item",
+  line_edited_late: "Line edited after apply",
+  provisional_rejected: "Proposed catalog item rejected",
+  org_event_rejected: "Catalog event from another org skipped",
+  auto_proceed_triggered: "Sent to apply automatically (every line mapped)",
+  matching_deferred: "Matching pending: the catalog was unavailable",
+  line_matched: "Line matched to catalog item",
+  matching_ran: "Matching ran",
+  matching_gave_up: "Matching stopped retrying after 5 days; map the lines by hand",
+};
+
+function isAuditEventType(eventType: string): eventType is WorkflowAuditEventType {
+  return (workflowAuditEventTypeEnum as readonly string[]).includes(eventType);
+}
+
+/** The plain-word label for an audit event, or the raw code for one this library doesn't know. */
+export function auditEventLabel(eventType: string): string {
+  return isAuditEventType(eventType) ? AUDIT_EVENT_LABEL[eventType] : eventType;
+}
 
 export type NewWorkflowAuditEvent = {
   orgId: string;

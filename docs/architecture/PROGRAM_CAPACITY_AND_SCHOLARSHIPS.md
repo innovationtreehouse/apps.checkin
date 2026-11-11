@@ -143,6 +143,10 @@ denial fired a `+1` — that let the seat resell out from under a denied-but-not
 applicant, silently drifting DB capacity and Shopify's count apart.) Sends no automatic
 email — see §5.
 
+A request whose hold failed has no seat to keep, so denying it stamps nothing: the flag
+clears, the row is an ordinary unpaid claim with its non-payment notices and no grace
+clock, and the denial is kept in the audit log.
+
 ### Approval (`POST /api/finance-ops/payment-plans`)
 
 No Shopify operation either (the seat was already taken out of the pool at application
@@ -154,14 +158,24 @@ below. Sends no automatic email — see §5.
 
 ### Release, exactly once — three paths
 
-All three share one implementation, `withdrawAndReleaseHold`
-(`lib/program/capacity.ts`): delete the `PENDING` row, and if the deleted row's
-`inventoryHeldAt` was set, fire the compensating `+1`. `delete()` is the atomicity
-boundary — a given row can be deleted at most once, so double-release across concurrent
-callers isn't possible; a second delete attempt hits Prisma P2025 and is treated as an
-idempotent no-op by every caller.
+A participant leaves by one of two exits in `lib/program/capacity.ts`, and both
+release a held seat the same way:
 
-**Withdrawing a comped place.** The same function returns the seat (`+1`) when the deleted
+- `deleteAndReleaseHold` removes a place nobody took up: it deletes the row, and if the
+  deleted row's `inventoryHeldAt` was set, fires the compensating `+1`. `delete()` is the
+  atomicity boundary — a given row can be deleted at most once, so a second delete hits
+  Prisma P2025 and is treated as an idempotent no-op by every caller.
+- `withdrawParticipant` records someone who took part and left: it keeps the row as
+  `WITHDRAWN` with `endedAt` set. The status flip (`status ≠ WITHDRAWN → WITHDRAWN`) is
+  the atomicity boundary; a second compare-and-set then clears `inventoryHeldAt`, and the
+  `+1` fires only when that clear matched. Once the row is `WITHDRAWN`, no `PENDING`-gated
+  hold guard can match it, so the hold cannot change between the two steps.
+
+Re-enrolling a withdrawn person reactivates the same row (the key is one row per person
+per program) and clears the last stint's order, plan request, denial, approval snapshot
+and seat stamp.
+
+**Withdrawing a comped place.** Both exits return the seat (`+1`) when the deleted
 row is `ACTIVE` with `seatTakenWithoutSaleAt` set. That stamp records a `-1` actually taken
 without a sale: a confirmed admin comp whose decrement succeeded, or approval of a request
 whose hold was held (a request whose hold failed is approved without one). A paid place, a
@@ -186,7 +200,9 @@ against *failed calls* but not against *crashes between the two steps*:
   practice.
 
 - **(a) Withdrawal** — `DELETE /api/programs/[id]/participants` (self, admin, or
-  board removal; the same route handles all three) funnels through this, and is
+  board removal; the same route handles all three) funnels through this. The caller
+  picks `mode: "remove"` or `mode: "withdraw"`; unchosen, a `PENDING` place is removed and
+  an `ACTIVE` one withdrawn. It is
   the *only* path a non-payment kick takes: `cron/pending-participants` never
   removes anyone itself (§5.5).
 - **(b) Normal payment** — the `orders/paid` webhook's activation path. A denied
@@ -208,7 +224,9 @@ before being auto-withdrawn. The cron sweep (`GET /api/cron/scholarship-grace-ex
 the past, then auto-withdraws each one (reusing release path (a) — semantically, expiry
 *is* auto-withdrawal + seat restore) and audit-logs with a distinct
 `reason: "scholarship_grace_expired"` context so it reads differently from a manual
-withdrawal in the audit trail. Each row is processed independently (a per-row failure
+withdrawal in the audit trail. The delete repeats the sweep's query as its own condition,
+so a row that was paid, approved, re-applied for or removed after the select is skipped:
+it stays as it is, with no +1 and no audit entry. Each row is processed independently (a per-row failure
 doesn't block the rest of the sweep), and the sweep never touches non-`PENDING` rows —
 an approved (`ACTIVE`) participant's hold was already consumed, not left outstanding, so
 it can never match this query regardless of how old `paymentPlanDeniedAt` is.
@@ -273,7 +291,7 @@ service, not a job for a computer).** Day-1/3/6 household warnings send to leads
 participant, ungated (previously `[EMAIL DISPATCH]` log stubs while the kick really fired —
 now real sends). Day-7+ rows are classified `overdue`, not deleted; removal is a manual
 board action via `DELETE /api/programs/[id]/participants` (§3(a)), which routes through
-`withdrawAndReleaseHold` for the hold-ledger release. Any accompanying communication is
+`deleteAndReleaseHold` or `withdrawParticipant` for the hold-ledger release. Any accompanying communication is
 manual too (§5.2) — no automatic "you've been removed" email. The cron also sends **one
 leadership digest per run** (`emailBoardMembers`, subject `Non-payment digest: <a>
 approaching deadline, <b> overdue`) whenever there's ≥1 day-3 ("approaching deadline") or

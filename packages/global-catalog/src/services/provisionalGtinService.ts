@@ -43,7 +43,7 @@ const ALREADY_REVIEWED = "Proposal was already reviewed";
 /** A provisional GTIN is accepted only in its canonical form and only for a sequence this catalog allocated. */
 async function assertAllocatedProvisionalGtin(gtin13: string): Promise<void> {
   const seq = isProvisionalGtin13(gtin13) ? parseProvisionalSequence(gtin13) : NaN;
-  const canonical = Number.isInteger(seq) && buildProvisionalGtin13(seq) === gtin13;
+  const canonical = Number.isInteger(seq) && seq >= 0 && buildProvisionalGtin13(seq) === gtin13;
   const allocated = canonical && (await db.provisionalPartSequence.findUnique({ where: { id: seq } })) !== null;
   if (!allocated) throw new ServiceError(400, "provisionalGtin13 is not an allocated provisional GTIN");
 }

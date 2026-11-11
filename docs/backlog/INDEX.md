@@ -134,7 +134,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| FE1 | Expense + line-item model; per-line **owner approval** workflow | PORT | NEEDS-DESIGN | L | ? | A,B | #1272 (open) |
+| FE1 | Expense + line-item model; per-line **owner approval** workflow | PORT | NEEDS-DESIGN | L | ? | A,B | #1272 (closed) |
 | FE2 | Budget owners; owner↔PN associations; owner-conflict resolution | PORT | NEEDS-DESIGN | M | ? | A,B | #1273 (open) |
 | FE3 | **QuickBooks posting** + account mapping + vendor mapping/normalization + ambiguity resolution (heavy external coupling) | PORT | NEEDS-DESIGN | XL | ? | A,B | #1274 (open) |
 | FE4 | Capital-asset queuing / identification / depreciation cycle. **NET-NEW beyond the port** (Q66): closing the loop per asset — assign an **asset number**, log it in **QB**, and **remind finance to put the sticker on the physical item** — an endpoint that doesn't exist in Inventory yet | PORT+CREATE | NEEDS-DESIGN | M | ? | A,B,owner | #1275 (open) |
@@ -147,7 +147,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| FD1 | **Benevity** bulk-import + dedup + comment-rule engine + restricted-condition mapping + GL account map | PORT | NEEDS-DESIGN | L | ? | A,B | #1280 (open) |
+| FD1 | **Benevity** bulk-import + dedup + comment-rule engine + restricted-condition mapping + GL account map | PORT | NEEDS-DESIGN | L | ? | A,B | #1280 (closed) |
 | FD2 | Disbursement holds + resubmit; disbursement events/snapshots | PORT | NEEDS-DESIGN | M | ? | A | #1281 (open) |
 | FD3 | Donation entry: online (Shopify), check/cash [board], in-kind [ops]; auto donation-receipt email | PORT | NEEDS-DESIGN | M | ? | A,B | #1282 (open) |
 | FD4 | Income-app **QB reconciliation + conflict resolution** on already-ingested Shopify data (reuse s-read) | PORT | NEEDS-DESIGN | M | ? | A,B | #1283 (open) |
@@ -158,7 +158,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/rules/inventory.md` + `docs/designs/COMPONENT_ARCHITECTURE.md` (#1814) |
+| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/rules/inventory.md` + `docs/architecture/COMPONENT_ARCHITECTURE.md` (#1814) |
 | CI2 | **Org inventory**: locations, receive queue, delta apply, merge-conflict resolution, provisional resolution | PORT | NEEDS-DESIGN | L | ? | A,B | #1287 (open) |
 | CI3 | Receipt line-item → **part association** (auto + manual exceptions); UoM conversion/quantity challenge | PORT | NEEDS-DESIGN | L | ? | A,B | #1288 (open) |
 | CI4 | **workflow-mapping** orchestrator (receipt→catalog→inventory→expense glue; collapses in monolith) | PORT | NEEDS-DESIGN | M | ? | A | #1289 (open) |
@@ -171,7 +171,7 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
 | CO1 | **Shopify member-segment pricing** (#929): auto-managed customer segment gates who redeems member/volunteer variants. NOTE: unentitled redemption of the minted `PRG{programId}-XXXXXXXX` member-discount code is now flagged `DISCOUNT_UNAUTHORIZED` at the money event — the orders/paid webhook, and the reconciler's forward pass recovering a missed one (`lib/programs/memberDiscountCode.ts`); flagged orders are not activated, and entitlement is never re-judged afterwards, so a later deactivation doesn't retro-flag settled orders. Interim, detection-only stand-in for this segment-gated design. Accepted window: codes live 48h, so entitlement can move between mint and checkout — judged at checkout | ENHANCE | IN-DESIGN | L | ? | C,D2,F | #270, #278 (open) |
-| CO2 | **Validate payment webhook** before activation: amount/discount/product/code gate (`Membership_Process_ID` customer-controlled). **Design MERGED to main (#929 segment-pricing, which scopes #278 = segment-gated discount + webhook validation).** | FIX/ENHANCE | IN-DESIGN | M | honor system (the current state) | C,D,D2,F | #278 (open, security) |
+| CO2 | **Validate payment webhook** before activation: amount/discount/product/code gate (`Membership_Process_ID` customer-controlled, tracked in #2694). **Design MERGED to main (#929 segment-pricing, which scopes #278 = segment-gated discount + webhook validation).** | FIX/ENHANCE | IN-DESIGN | M | honor system (the current state) | C,D,D2,F | #278 (open, security), #2694 (open) |
 | CO3 | Guest-checkout failure: member charged full price silently — nudge / post-purchase refund path. **DECIDED: accept risk FOR NOW** (2026-07-22), low priority; may revisit (nudge/refund) later — stays in backlog, not near-term | ENHANCE | NEEDS-DESIGN | S | member re-checks out / board refunds by hand | C | #1291 (open) |
 | CO4 | In-flight-checkout cutover: old cart permalinks never expire; dual variant-id recognition + deprecation window | ENHANCE | NEEDS-DESIGN | S | ? | C | #1292 (open) |
 | CO5 | **DiscountCodeRule registry** (board-managed coupon eligibility rules) | CREATE | NEEDS-DESIGN | M | ? | D2 | #1085-ref |

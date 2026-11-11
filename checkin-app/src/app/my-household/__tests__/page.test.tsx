@@ -4,10 +4,11 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
+import { settleAfter } from "@/test-helpers/settle";
 import HouseholdPage from "../page";
 
 // Successes toast via notifications.show (no inline banner); assert on the mock.
@@ -67,6 +68,58 @@ function mockRoutes(overrides: Record<string, unknown | (() => unknown)> = {}) {
   });
 }
 
+describe("HouseholdPage add member submit", () => {
+  const readRules = [
+    { url: "/api/household/emergency-contacts", result: { body: { contacts: [] } } },
+    { url: "/api/household", method: "GET", result: { body: { household: householdData } } },
+  ];
+
+  async function openAddForm() {
+    setSession({ id: 10, email: "sam@example.com" });
+    renderWithProviders(<HouseholdPage />);
+    await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Household Member" }));
+    fireEvent.change(screen.getByLabelText("Full Name"), { target: { value: "Robin Smith" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
+    return screen.getByRole("button", { name: "Save / Invite" });
+  }
+
+  it("sends one add while the first is in flight, from a second click or Enter", async () => {
+    let release: (res: Response) => void = () => {};
+    const writes = jest.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const reads = routedFetch(readRules);
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PATCH" ? writes() : reads(input, init)) as unknown as typeof fetch;
+
+    const save = await openAddForm();
+    fireEvent.click(save);
+    fireEvent.click(save);
+    fireEvent.submit(save.closest("form") as HTMLFormElement);
+
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(save).toBeDisabled();
+
+    await act(async () => { release({ ok: true, status: 200, json: async () => ({}) } as Response); });
+    await waitFor(() => expect(screen.queryByLabelText("Full Name")).not.toBeInTheDocument());
+  });
+
+  it.each([
+    ["the server refuses", { ok: false, status: 500, body: { error: "Refused" } }],
+    ["the network fails", { throws: true }],
+  ])("lets the lead submit again when %s", async (_name, result) => {
+    const fetchMock = routedFetch([...readRules, { url: "/api/household", method: "PATCH", result }]);
+    const writeCount = () => fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH").length;
+
+    const save = await openAddForm();
+    fireEvent.click(save);
+    await waitFor(() => expect(writeCount()).toBe(1));
+    await waitFor(() => expect(save).toBeEnabled());
+
+    fireEvent.click(save);
+    await waitFor(() => expect(writeCount()).toBe(2));
+  });
+});
+
 describe("HouseholdPage", () => {
   pinTimezone();
 
@@ -91,6 +144,16 @@ describe("HouseholdPage", () => {
     expect(screen.getByText("Jamie Smith")).toBeInTheDocument();
     expect(screen.getByText("Household Lead")).toBeInTheDocument();
     expect(screen.getByText("No emergency contact on file. Add at least one.")).toBeInTheDocument();
+  });
+
+  it("does not load emergency contacts for a member who is not the household lead", async () => {
+    setSession({ id: 11, email: "" });
+    const fetchMock = mockRoutes();
+    renderWithProviders(<HouseholdPage />);
+
+    expect(await screen.findByText("Jamie Smith")).toBeInTheDocument();
+    expect(screen.queryByText("Emergency Contacts")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/household/emergency-contacts");
   });
 
   it("adds a household member", async () => {
@@ -198,25 +261,6 @@ describe("HouseholdPage", () => {
 
     expect(screen.getByText("✓ Member")).toBeInTheDocument();
     expect(screen.getByText("Volunteer-only family")).toBeInTheDocument();
-  });
-
-  it("shows a fallback message when the household fails to load", async () => {
-    setSession({ id: 10, email: "sam@example.com" });
-    mockFetchJson({ "/api/household/emergency-contacts": { contacts: [] } }); // no /api/household route -> 404
-    renderWithProviders(<HouseholdPage />);
-
-    expect(await screen.findByText(/couldn't load your household/)).toBeInTheDocument();
-  });
-
-  it("shows a network-error message when the household fetch throws", async () => {
-    setSession({ id: 10, email: "sam@example.com" });
-    routedFetch([
-      { url: "/api/household/emergency-contacts", result: { ok: true, body: { contacts: [] } } },
-      { url: "/api/household", result: { throws: true } },
-    ]);
-    renderWithProviders(<HouseholdPage />);
-
-    await waitFor(() => expectToast("Network error loading household."));
   });
 
   it("validates required fields, then adds a member and surfaces a contact-collision warning", async () => {
@@ -381,6 +425,21 @@ describe("HouseholdPage", () => {
       expect(screen.getByLabelText("Email")).not.toBeDisabled();
       expect(screen.queryByText(/This is the address you sign in with/)).not.toBeInTheDocument();
     });
+  });
+
+  it("offers a youth no Edit on their own card, and a lead Edit on a youth's", async () => {
+    setSession({ id: 11, email: "jamie@example.com" });
+    mockRoutes();
+    const { unmount } = renderWithProviders(<HouseholdPage />);
+    await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    unmount();
+
+    setSession({ id: 10, email: "sam@example.com" });
+    mockRoutes();
+    renderWithProviders(<HouseholdPage />);
+    await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
   });
 
   it("promotes a household member to lead, and shows a server error on failure", async () => {
@@ -614,5 +673,75 @@ describe("HouseholdPage", () => {
 
     await waitFor(() => expectToast("Network error promoting household member."));
     expect(fetchMock).toHaveBeenCalledWith("/api/household/lead", expect.objectContaining({ method: "POST" }));
+  });
+});
+
+describe("HouseholdPage failed load", () => {
+  it("shows an error with a retry when the household fails to load", async () => {
+    setSession({ id: 10 });
+    mockFetchJson({ "/api/membership/renewal-status": { renewalDue: false } });
+    renderWithProviders(<HouseholdPage />);
+
+    expect(await screen.findByText("Couldn't load your household")).toBeInTheDocument();
+
+    mockRoutes({ "/api/membership/renewal-status": { renewalDue: false } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Smith Household")).toBeInTheDocument();
+  });
+
+  it("shows an error with a retry, never the no-contact warning, when contacts fail to load", async () => {
+    setSession({ id: 10 });
+    routedFetch([
+      { url: "/api/household/emergency-contacts", result: { ok: false, status: 404 } },
+      { url: "/api/household", method: "GET", result: { body: { household: householdData } } },
+      { url: "/api/membership/renewal-status", result: { body: { renewalDue: false } } },
+    ]);
+    renderWithProviders(<HouseholdPage />);
+
+    await settleAfter("/api/household/emergency-contacts");
+    expect(screen.queryByText(/No emergency contact on file/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load emergency contacts")).toBeInTheDocument();
+
+    mockRoutes({ "/api/membership/renewal-status": { renewalDue: false } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(/No emergency contact on file/)).toBeInTheDocument();
+  });
+
+  it("shows no no-contact warning before contacts have loaded", async () => {
+    setSession({ id: 10 });
+    routedFetch([
+      { url: "/api/household/emergency-contacts", result: { ok: false, status: 503 } },
+      { url: "/api/household", method: "GET", result: { body: { household: householdData } } },
+    ]);
+    renderWithProviders(<HouseholdPage />);
+
+    expect(await screen.findByText("Emergency Contacts")).toBeInTheDocument();
+    expect(screen.queryByText(/No emergency contact on file/)).not.toBeInTheDocument();
+  });
+
+  it("keeps an edited address when another card's write reloads the household", async () => {
+    setSession({ id: 10 });
+    const withAdult = { ...householdData, householdMembers: [...householdData.householdMembers, { id: 12, name: "Alex Smith", dateOfBirth: "1982-01-01", isHouseholdLead: false }] };
+    mockRoutes({ "/api/household": { household: withAdult } });
+    renderWithProviders(<HouseholdPage />);
+
+    const street = await screen.findByPlaceholderText("123 Main St");
+    fireEvent.change(street, { target: { value: "9 New Rd" } });
+    fireEvent.click(screen.getByRole("button", { name: "Make Lead" }));
+
+    await waitFor(() => expectToast("Household member promoted to lead successfully!"));
+    expect(screen.getByPlaceholderText("123 Main St")).toHaveValue("9 New Rd");
+  });
+
+  it("shows an error with a retry when the renewal status fails to load", async () => {
+    setSession({ id: 10 });
+    mockRoutes();
+    renderWithProviders(<HouseholdPage />);
+
+    expect(await screen.findByText("Couldn't load your renewal status")).toBeInTheDocument();
+
+    mockRoutes({ "/api/membership/renewal-status": { renewalDue: true } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Renew your membership now!")).toBeInTheDocument();
   });
 });

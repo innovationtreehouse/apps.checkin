@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
+import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError, HouseholdLeadDeniedError } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
 export const POST = withAuth(
     {},
@@ -39,6 +41,15 @@ export const POST = withAuth(
                 return apiError("Only household leads, board members, or sysadmins can promote members", 403);
             }
 
+            // A lead promotes within their own household; the board and sysadmin path
+            // into any other household may not reach the actor's own.
+            if (!isLeadOfTarget && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId: targetHouseholdId }, {
+                table: "Person",
+                attempted: { isHouseholdLead: true },
+            })) {
+                return apiError("You cannot make yourself or someone in your own household a lead — someone outside your household must.", 403);
+            }
+
             const { created } = await addHouseholdLead(prisma, targetHouseholdId, participantId);
 
             if (!created) {
@@ -65,6 +76,10 @@ export const POST = withAuth(
             }
             if (error instanceof HouseholdLeadYouthError) {
                 return apiError(error.message, 400);
+            }
+            if (error instanceof HouseholdLeadDeniedError) {
+                await raiseDeniedHouseholdActivity({ householdId: error.householdId, personId: error.personId, what: "household lead promotion refused" });
+                return apiError(error.message, 409);
             }
             logger.error("Household Lead POST Error:", error);
             return apiError("Internal Server Error", 500);

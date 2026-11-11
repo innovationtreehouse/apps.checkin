@@ -12,9 +12,8 @@ import { httpError } from '@checkin/component-kit';
 import { routes } from '@checkin/expense';
 import type { AuthenticatedUser } from '@/types/auth';
 import { POST as boardAuthorization } from '../expenses/[id]/board-authorization/route';
-import { POST as notEveryday } from '../expenses/[id]/not-everyday/route';
 
-jest.mock('@checkin/expense', () => ({ routes: { expenses: { boardAuthorization: jest.fn(), notEveryday: jest.fn() } } }));
+jest.mock('@checkin/expense', () => ({ routes: { expenses: { boardAuthorization: jest.fn() } } }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
@@ -26,7 +25,6 @@ const BOARD = { ...member, isBoardMember: true };
 const STATUS = { ExpenseLineSignoffStatus: [{ lineItemId: 1, filled: ['SUBMITTER'], missing: [], blocked: [] }] };
 
 const boardFactory = jest.mocked(routes.expenses.boardAuthorization);
-const notEverydayFactory = jest.mocked(routes.expenses.notEveryday);
 
 async function post(route: typeof boardAuthorization, path: string, user: Partial<AuthenticatedUser>, body: unknown) {
     jest.mocked(getServerSession).mockResolvedValueOnce({ user, expires: '2099-01-01T00:00:00.000Z' });
@@ -36,7 +34,6 @@ async function post(route: typeof boardAuthorization, path: string, user: Partia
 
 beforeEach(() => {
     boardFactory.mockReset().mockResolvedValue(STATUS);
-    notEverydayFactory.mockReset().mockResolvedValue(STATUS);
 });
 
 describe('POST /api/expense/expenses/[id]/board-authorization', () => {
@@ -63,20 +60,5 @@ describe('POST /api/expense/expenses/[id]/board-authorization', () => {
     test('a conflicted recorder is refused with 403', async () => {
         boardFactory.mockRejectedValue(httpError(403, 'conflicted'));
         expect((await call(FINANCE)).status).toBe(403);
-    });
-});
-
-describe('POST /api/expense/expenses/[id]/not-everyday', () => {
-    const call = (user: Partial<AuthenticatedUser>) => post(notEveryday, 'not-everyday', user, { reason: 'single_source' });
-
-    test('FINANCE is admitted and gets the sign-off status', async () => {
-        const res = await call(FINANCE);
-        expect(res.status).toBe(200);
-        expect(await res.json()).toEqual(STATUS.ExpenseLineSignoffStatus);
-    });
-
-    test.each([['Board', BOARD], ['a plain member', member]])('%s is refused before the library runs', async (_who, user) => {
-        expect((await call(user)).status).toBe(403);
-        expect(notEverydayFactory).not.toHaveBeenCalled();
     });
 });

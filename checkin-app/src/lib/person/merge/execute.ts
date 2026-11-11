@@ -1,13 +1,17 @@
 import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
-import type { TxClient } from "@/lib/db-client";
+import type { DbClient, TxClient } from "@/lib/db-client";
 import { personBgOpen } from "@/lib/membership/lifecycle";
-import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
+import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
+import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
+import { logBackendError } from "@/lib/logger";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
-import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError } from "@/lib/roles";
+import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { bgSubjectKey } from "./guard";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import { anyMergedAway } from "@/lib/person/archivedPeople";
+import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
     MERGE_INCLUDE,
@@ -24,7 +28,7 @@ import {
     type MergeSubject,
 } from "./plan";
 
-/** Thrown when the tombstone CAS loses the race (concurrent/repeat merge). */
+/** Thrown when either subject is gone under the lock: a concurrent or repeat merge won. */
 export class AlreadyMergedError extends Error {}
 
 /** Thrown when a subject refusal that passed in prepareMerge applies under the lock. */
@@ -34,13 +38,46 @@ export class MergeRefusedError extends Error {
     }
 }
 
+const ALREADY_MERGED: MergeRefusal = { status: 409, error: "Cannot merge: one of these participants has already been merged." };
+
+/** A row landed on the merged-away record between the plan and the move. */
+const CHANGED_WHILE_MERGING: MergeRefusal = {
+    status: 409,
+    error: "Cannot merge: one of these participants changed while merging. Reload and try again.",
+};
+
+type LiveSubjects = { keep: KeepSubject; merge: MergeSubject; keeperUpdate: Record<string, unknown> };
+
 export type MergePlan = {
     keep: KeepSubject;
     merge: MergeSubject;
     choices: FieldChoices;
-    keeperUpdate: Record<string, unknown>;
-    bgFreshBeforeMerge: boolean;
+    emailChangeReason: string;
 };
+
+/**
+ * A trusted person's login email changes only by Board action, with a reason. A
+ * merge changes it when the trusted person is the merged-away side, whose roles
+ * land on the keeper's login, or when a trusted keeper takes the other side's identity
+ * or its linked sign-in accounts, which then sign in as the keeper.
+ */
+async function trustedLoginRefusal(
+    db: DbClient,
+    plan: Pick<MergePlan, "emailChangeReason"> & { keepId: number; mergeId: number; keeperUpdate: Record<string, unknown> },
+    actor: AuthenticatedUser | null,
+): Promise<MergeRefusal | null> {
+    const changesTrustedLogin = (await trustStatus(db, plan.mergeId)).isTrusted
+        || (("email" in plan.keeperUpdate || await db.account.count({ where: { userId: plan.mergeId } }) > 0)
+            && (await trustStatus(db, plan.keepId)).isTrusted);
+    if (!changesTrustedLogin) return null;
+    if (!actor?.isBoardMember) {
+        return { status: 403, error: "This merge changes the sign-in email of someone in a position of trust. Only a board member can do that." };
+    }
+    if (!plan.emailChangeReason) {
+        return { status: 400, error: "This merge changes the sign-in email of someone in a position of trust. Give a reason." };
+    }
+    return null;
+}
 
 /**
  * Load both people and run every pre-transaction refusal, in the order a
@@ -51,24 +88,21 @@ export async function prepareMerge(
     keepId: number,
     mergeId: number,
     fieldChoices: unknown,
+    emailChangeReason?: unknown,
 ): Promise<{ plan: MergePlan } | { refused: MergeRefusal }> {
     const keep = await prisma.person.findUnique({ where: { id: keepId }, include: KEEP_INCLUDE });
     const merge = await prisma.person.findUnique({ where: { id: mergeId }, include: MERGE_INCLUDE });
 
     if (!keep || !merge) {
+        if (await anyMergedAway(prisma, [keepId, mergeId])) return { refused: ALREADY_MERGED };
         return { refused: { status: 404, error: "Participant(s) not found." } };
-    }
-
-    // Double-merge / merge-a-tombstone guard — either side, before opening the tx.
-    if (keep.mergedIntoId != null || merge.mergedIntoId != null) {
-        return { refused: { status: 409, error: "Cannot merge: one of these participants has already been merged." } };
     }
 
     // Conflict of interest: no actor may merge a record in their OWN household.
     // The merge takes the newer of the two lastBackgroundCheck dates
     // (resolveKeeperUpdate), so without this an actor can seat a background-check
     // date on their own family with no second actor — the thing attest() and
-    // overrideBlocked refuse. Both subjects count: the tombstone's household is
+    // boardResetReview refuse. Both subjects count: the tombstone's household is
     // where the carried date comes from, the keeper's is where it lands, and the
     // two need not be the same household. No role bypasses this, and an actor
     // whose household can't be resolved is refused (fail closed).
@@ -85,15 +119,8 @@ export async function prepareMerge(
     const subjectBlock = subjectRefusal(keep, merge, actor);
     if (subjectBlock) return { refused: subjectBlock };
 
-    const [keeperOpenVisit, mergeOpenVisit] = await Promise.all([
-        prisma.visit.findFirst({ where: { personId: keepId, departedAt: null, deletedAt: null }, select: { id: true } }),
-        prisma.visit.findFirst({ where: { personId: mergeId, departedAt: null, deletedAt: null }, select: { id: true } }),
-    ]);
-    const collisions = findCollisions(keep, merge, { keep: !!keeperOpenVisit, merge: !!mergeOpenVisit }, new Date());
-    if (collisions.length > 0) {
-        const detail = collisions.map(c => c.message).join('; ');
-        return { refused: { status: 409, error: `Cannot merge: ${detail}`, collisions } };
-    }
+    const collisionBlock = await collisionRefusal(prisma, keep, merge);
+    if (collisionBlock) return { refused: collisionBlock };
 
     const parsed = parseFieldChoices(keep, merge, fieldChoices);
     if ('error' in parsed) return { refused: { status: 400, error: parsed.error } };
@@ -101,12 +128,49 @@ export async function prepareMerge(
     const keeperUpdate = planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) return { refused: { status: 400, error: keeperUpdate.error } };
 
-    // The post-commit carryover acts only on a household THIS merge made
-    // background-check fresh, so it needs the pre-merge answer: afterwards the
-    // keeper already carries the merged date and the two are indistinguishable.
-    const bgFreshBeforeMerge = await householdBgFresh(keep.householdId);
+    const disputedBlock = await disputedCheckRefusal(prisma, keep, merge, keeperUpdate.data);
+    if (disputedBlock) return { refused: disputedBlock };
 
-    return { plan: { keep, merge, choices: parsed.choices, keeperUpdate: keeperUpdate.data, bgFreshBeforeMerge } };
+    const reason = typeof emailChangeReason === "string" ? emailChangeReason.trim() : "";
+    const trustBlock = await trustedLoginRefusal(prisma, { keepId, mergeId, keeperUpdate: keeperUpdate.data, emailChangeReason: reason }, actor);
+    if (trustBlock) return { refused: trustBlock };
+
+    return { plan: { keep, merge, choices: parsed.choices, emailChangeReason: reason } };
+}
+
+/** A merge that would change a disputed person's check facts, as a refusal, or null. */
+async function disputedCheckRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject, keeperUpdate: Record<string, unknown>): Promise<MergeRefusal | null> {
+    const reviews = await loadCheckReviews(db, [keep.id, merge.id]);
+    const blocked = await blockedApplicationsByLead(db, [keep, merge]);
+    const side = (personId: number): CheckSide => {
+        const own = reviews.get(personId) ?? [];
+        return { disputing: [...disputingReviews(own), ...(blocked.get(personId) ?? [])], openReviews: own.length };
+    };
+    const error = disputedCheckBlock(side(keep.id), side(merge.id), "lastBackgroundCheck" in keeperUpdate);
+    return error ? { status: 409, error } : null;
+}
+
+/**
+ * A household application BLOCKED by a household attestation names nobody, so it
+ * disputes every lead of its household.
+ */
+async function blockedApplicationsByLead(db: DbClient, people: { id: number; householdId: number; isHouseholdLead: boolean }[]): Promise<Map<number, { id: number }[]>> {
+    const leads = people.filter(p => p.isHouseholdLead);
+    if (leads.length === 0) return new Map();
+    const rows = await db.orgMembershipProcess.findMany({
+        where: { status: "BLOCKED", orgMembership: { householdId: { in: leads.map(p => p.householdId) } } },
+        select: { id: true, orgMembership: { select: { householdId: true } } },
+    });
+    return new Map(leads.map(p => [p.id, rows.filter(r => r.orgMembership?.householdId === p.householdId)]));
+}
+
+/** The decision-bearing collisions between the two subjects, as a refusal, or null. */
+async function collisionRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject): Promise<MergeRefusal | null> {
+    const openVisit = (personId: number) => db.visit.findFirst({ where: { personId, departedAt: null, deletedAt: null }, select: { id: true } });
+    const openVisits = { keep: !!(await openVisit(keep.id)), merge: !!(await openVisit(merge.id)) };
+    const collisions = findCollisions(keep, merge, openVisits, new Date());
+    if (collisions.length === 0) return null;
+    return { status: 409, error: `Cannot merge: ${collisions.map(c => c.message).join('; ')}`, collisions };
 }
 
 /** Per-relation tallies recorded in the merge's audit row. */
@@ -123,6 +187,7 @@ function emptyTallies() {
         trustedAdultDecisions: 0,
         archivedMerges: 0,
         roleGrants: 0,
+        bucketOwners: 0,
         roles: { migrated: 0, deduped: 0 },
         bgAttestationSubjects: { migrated: 0, left: 0 },
         programParticipants: { migrated: 0, left: 0 },
@@ -132,53 +197,61 @@ function emptyTallies() {
         bgAttestations: { migrated: 0, left: 0 },
         corporationLeads: { migrated: 0, deduped: 0 },
         corporationMembers: { migrated: 0, deduped: 0 },
+        bucketTreasurers: { migrated: 0, deduped: 0 },
+        mailAliases: { migrated: [] as number[], deduped: [] as number[] },
     };
 }
 type Tallies = ReturnType<typeof emptyTallies>;
 
 /**
- * Run the merge transaction, then the post-commit membership carryover.
- * Throws AlreadyMergedError on a lost race, and the lib/roles errors when a
- * role move is refused.
+ * Run the merge transaction, then settle both households. The
+ * transaction moves everything off the merged-away record, archives it as a
+ * PersonMerge row and deletes its Person row. Throws AlreadyMergedError on a
+ * lost race, MergeRefusedError when a refusal applies under the locks or a row
+ * is still left on the merged-away record, and the lib/roles errors when a role
+ * move is refused.
  */
 export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | null): Promise<void> {
     const { keep, merge } = plan;
     const keepId = keep.id;
     const mergeId = merge.id;
 
-    await prisma.$transaction(async (tx) => {
-        await lockAndRecheckKeeper(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
-        await recheckSubjects(tx, plan, actor);
-        await clearTombstoneIdentity(tx, mergeId, keepId);
-        await applyKeeperChoices(tx, keepId, plan.keeperUpdate);
+    const personMergeId = await prisma.$transaction(async (tx) => {
+        await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
+        const live = await recheckSubjects(tx, plan, actor);
+        await clearMergedIdentity(tx, mergeId);
+        await applyKeeperChoices(tx, keepId, live.keeperUpdate);
 
         const moved = emptyTallies();
         await moveVisits(tx, keepId, mergeId, moved);
-        await moveJoinTables(tx, keep, merge, moved);
+        await moveJoinTables(tx, live.keep, live.merge, moved);
         await moveRemainingRelations(tx, keepId, mergeId, actor, moved);
         await moveRoles(tx, keepId, mergeId, actor, moved);
-        await moveAttestations(tx, keep, merge, moved);
-        await moveCorporations(tx, keep, merge, moved);
+        await moveAttestations(tx, live.keep, live.merge, moved);
+        await moveCorporations(tx, live.keep, live.merge, moved);
+        await moveBucketTreasurers(tx, keepId, mergeId, moved);
+        await moveMailAliases(tx, keepId, mergeId, moved);
+        refuseLeftRows(moved);
 
-        // 6. The household lead guard ran pre-tx. householdId stays pointing at
-        // the old household: every participant must belong to one, and merged-away
-        // records are tombstoned rather than deleted. Leadership was cleared in
-        // step 1's CAS.
+        // 6. The household lead guard ran pre-tx. The merged-away record's
+        // household loses a member with the delete below; a household left with
+        // nobody in it stays, as one whose last member was removed does.
 
-        await archiveMerge(tx, keepId, merge);
-        await auditMerge(tx, plan, actor, moved);
+        const archiveId = await archiveMerge(tx, keepId, live.merge);
+        await deleteMergedPerson(tx, mergeId);
+        await auditMerge(tx, plan, live, actor, moved);
+        return archiveId;
     });
 
-    // The keeper may have just inherited a still-valid background check, which
-    // can leave the household's parked application covered. Post-commit: the
-    // survivor's live leads are only final once the tombstone's lead flag and
-    // the keeper's date have landed. Never throws.
-    //
-    // Session actors only: this advances membership state, and the conflict-of-
-    // interest guard — the thing that stops an actor clearing their own
-    // household — can only be applied to a session.
-    if (actor) {
-        await advanceHouseholdBgAfterMerge(keep.householdId, actor.id, mergeId, plan.bgFreshBeforeMerge);
+    // The keeper may now carry a newer check date or another person's review, and the
+    // merged-away record has left its household: settle both on their people's checks.
+    // Post-commit, so a failure is logged rather than reported as a failed merge.
+    for (const householdId of new Set([keep.householdId, merge.householdId])) {
+        try {
+            await settleHouseholdBg(householdId, { trigger: { kind: "merge", personMergeId } });
+        } catch (error) {
+            await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
+        }
     }
 
     invalidateAttendanceCache();
@@ -186,71 +259,88 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 
 /**
  * Lock order: BOARD roles, then the application rows this merge writes, then both
- * households' membership rows, then the keeper. BOARD first is the order a role
+ * households' membership rows, then both Person rows in id order. BOARD first is the order a role
  * change takes. Application before membership is the order payment, clearance
  * and reset take, so a merge never holds a household row while it waits on an
  * application. The membership rows serialize a deny with the merge even when
  * there are no BOARD rows to lock.
  */
-async function lockAndRecheckKeeper(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
+async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
         WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId} OR "noteAckById" = ${mergeId}
         ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
-    const [keeper] = await tx.$queryRaw<{ mergedIntoId: number | null }[]>`SELECT "mergedIntoId" FROM "Person" WHERE id = ${keepId} FOR UPDATE`;
-    if (!keeper || keeper.mergedIntoId !== null) throw new AlreadyMergedError();
+    await lockBothSubjects(tx, keepId, mergeId);
 }
 
 /**
- * Re-run the subject refusals on a live read, under the households' membership
- * locks: a household denied after prepareMerge is seen here and refuses the
- * merge. A subject that changed household since the plan refuses too, since the
- * locks cover the planned households only.
+ * Lock both Person rows, in id order so two merges of the same pair in opposite
+ * directions cannot deadlock. A merge that commits deletes its merged-away row,
+ * so a merge waiting on that lock finds the row gone and loses with
+ * AlreadyMergedError: of two concurrent merges sharing a subject, one wins.
  */
-async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: AuthenticatedUser | null): Promise<void> {
-    const keep = await tx.person.findUniqueOrThrow({ where: { id: plan.keep.id }, include: KEEP_INCLUDE });
-    const merge = await tx.person.findUniqueOrThrow({ where: { id: plan.merge.id }, include: MERGE_INCLUDE });
+async function lockBothSubjects(tx: TxClient, keepId: number, mergeId: number): Promise<void> {
+    const locked = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "Person"
+        WHERE id IN (${keepId}, ${mergeId}) ORDER BY id FOR UPDATE`;
+    if (locked.length !== 2) throw new AlreadyMergedError();
+}
+
+/**
+ * Re-run the subject, collision and disputed-check refusals on a live read, under the
+ * households' membership locks: a household denied after prepareMerge is seen
+ * here and refuses the merge. A subject that changed household since the plan
+ * refuses too, since the locks cover the planned households only. Returns the
+ * live read, which the moves work from so a row added since the plan moves too,
+ * and the keeper's update rebuilt from it, so a date or field written since the
+ * plan is never overwritten. The admin's choices name a side and apply to that
+ * side's live value; a conflict they never decided refuses the merge.
+ */
+async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: AuthenticatedUser | null): Promise<LiveSubjects> {
+    const keep = await tx.person.findUnique({ where: { id: plan.keep.id }, include: KEEP_INCLUDE });
+    const merge = await tx.person.findUnique({ where: { id: plan.merge.id }, include: MERGE_INCLUDE });
+    if (!keep || !merge) throw new AlreadyMergedError();
     if (keep.householdId !== plan.keep.householdId || merge.householdId !== plan.merge.householdId) {
         throw new MergeRefusedError({ status: 409, error: "One of these participants changed household while merging. Reload and try again." });
     }
-    const refusal = subjectRefusal(keep, merge, actor);
+    const refusal = subjectRefusal(keep, merge, actor) ?? await collisionRefusal(tx, keep, merge);
     if (refusal) throw new MergeRefusedError(refusal);
+    const parsed = parseFieldChoices(keep, merge, plan.choices);
+    const keeperUpdate = 'error' in parsed ? parsed : planKeeperUpdate(keep, merge, parsed.choices);
+    if ('error' in keeperUpdate) throw new MergeRefusedError(CHANGED_WHILE_MERGING);
+    const disputedBlock = await disputedCheckRefusal(tx, keep, merge, keeperUpdate.data);
+    if (disputedBlock) throw new MergeRefusedError(disputedBlock);
+    const trustBlock = await trustedLoginRefusal(tx, { emailChangeReason: plan.emailChangeReason, keeperUpdate: keeperUpdate.data, keepId: keep.id, mergeId: merge.id }, actor);
+    if (trustBlock) throw new MergeRefusedError(trustBlock);
+    return { keep, merge, keeperUpdate: keeperUpdate.data };
 }
 
 /**
- * 1. Clear tombstone identity first (CAS) — frees the tombstone's unique
- * email/googleId so the keeper can adopt them without a P2002. updateMany (not
- * update) so `mergedIntoId: null` is part of the write: two concurrent merges
- * targeting the same mergeId race on this row, and exactly one wins — the
- * loser's count is 0 and its tx rolls back.
+ * 1. Clear the merged-away identity before the keeper update: it frees the
+ * unique email/googleId so the keeper can adopt them without a P2002.
  */
-async function clearTombstoneIdentity(tx: TxClient, mergeId: number, keepId: number): Promise<void> {
-    const cas = await tx.person.updateMany({
-        where: { id: mergeId, mergedIntoId: null },
+async function clearMergedIdentity(tx: TxClient, mergeId: number): Promise<void> {
+    await tx.person.update({
+        where: { id: mergeId },
         data: {
-            mergedIntoId: keepId,
             googleId: null,
             email: `merged-${mergeId}@deleted.invalid`,
-            // Null the verified stamp with the identity: no tombstone
-            // row should carry a "verified" mark for the sentinel address.
+            // Null the verified stamp with the identity, so the sentinel
+            // address never carries a "verified" mark.
             emailVerified: null,
             phone: null,
             isHouseholdLead: false,
-            // Every PersonRole row moves off the tombstone in moveRoles, so its
-            // legacy role mirrors must go with them. Zeroed here rather than
-            // derived after the loop for the same reason isHouseholdLead is: a
-            // merged-away record holds no authority, so `false` is the right
-            // value even if a row raced in.
+            // Every PersonRole row moves off the merged-away record in
+            // moveRoles, so its legacy role mirrors must go with them. Zeroed
+            // here rather than derived after the loop for the same reason
+            // isHouseholdLead is: a merged-away record holds no authority, so
+            // `false` is the right value even if a row raced in.
             ...roleMirrors(new Set()),
-            // Name is NOT mangled — mergedIntoId carries the semantics; the UI
-            // shows a "merged" badge wherever tombstones surface.
         },
     });
-    if (cas.count !== 1) throw new AlreadyMergedError();
 }
 
-/** 2. Apply the keeper field choices computed before the transaction. */
+/** 2. Apply the keeper update built from the live rows. */
 async function applyKeeperChoices(tx: TxClient, keepId: number, data: Record<string, unknown>): Promise<void> {
     if (Object.keys(data).length > 0) {
         await tx.person.update({ where: { id: keepId }, data });
@@ -258,21 +348,26 @@ async function applyKeeperChoices(tx: TxClient, keepId: number, data: Record<str
 }
 
 /**
- * 3. Move visits. Both-open was pre-refused; the keeper-open guard here covers
- * a visit opened between that check and the CAS.
+ * 3. Move visits. Both-open was refused under the locks; a visit opened since
+ * then would give the keeper two open visits, so it refuses the merge instead
+ * of moving.
  */
 async function moveVisits(tx: TxClient, keepId: number, mergeId: number, moved: Tallies): Promise<void> {
     const keeperHasOpenVisit = await tx.visit.findFirst({ where: { personId: keepId, departedAt: null, deletedAt: null }, select: { id: true } });
     moved.visits = (await tx.visit.updateMany({
-        where: { personId: mergeId, ...(keeperHasOpenVisit ? { departedAt: { not: null } } : {}) },
+        where: { personId: mergeId, ...(keeperHasOpenVisit ? { NOT: { departedAt: null, deletedAt: null } } : {}) },
         data: { personId: keepId },
     })).count;
+    if (await tx.visit.findFirst({ where: { personId: mergeId }, select: { id: true } })) {
+        throw new MergeRefusedError({ status: 409, error: "Cannot merge: both records now have an open visit. Close one of them, then merge." });
+    }
 }
 
 /**
  * 4. Move join tables. Decision-bearing collisions (ProgramParticipant,
- * ToolStatus) were pre-refused; the `left` fallback covers a race. Bare-join
- * collisions (ProgramVolunteer) auto-dedupe.
+ * ToolStatus, future RSVP) were refused under the locks; a `left` row means one
+ * raced in since, and refuseLeftRows refuses the merge. Bare-join collisions
+ * (ProgramVolunteer) auto-dedupe.
  */
 async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubject, moved: Tallies): Promise<void> {
     const keepId = keep.id;
@@ -338,11 +433,11 @@ async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubje
 /** 5. Move the remaining MOVE relations — single updateMany each, no delete. */
 async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
     await tx.account.updateMany({ where: { userId: mergeId }, data: { userId: keepId } });
-    // DELIBERATE exception to the no-deletion principle: sessions are auth
-    // artifacts, not person data, and there's no reason for the keeper to
-    // inherit the tombstone's login session. Sessions are JWT-strategy, so this
-    // row is not what ends the tombstone's access — the LIVE_PERSON filter on
-    // the jwt() re-sync (auth-options.ts) collapses that token on next refresh.
+    // Sessions are auth artifacts, not person data, and there's no reason for
+    // the keeper to inherit the merged-away login session. Sessions are
+    // JWT-strategy, so this row is not what ends that access — the jwt()
+    // re-sync (auth-options.ts) finds no live row and collapses the token on
+    // next refresh.
     await tx.session.deleteMany({ where: { userId: mergeId } });
     await tx.orgMembershipProcess.updateMany({ where: { subjectPersonId: mergeId }, data: { subjectPersonId: keepId } });
     // Both sides can have owed a check — the survivor keeps exactly one.
@@ -352,28 +447,27 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     await tx.trustedAdult.updateMany({ where: { trustedAdultPersonId: mergeId }, data: { trustedAdultPersonId: keepId } });
     await tx.trustedAdult.updateMany({ where: { disclosedById: mergeId }, data: { disclosedById: keepId } });
 
-    // RawBadgeLog.personId is RESTRICT: a scan left on the tombstone pins
-    // that Person row in place forever.
+    // RawBadgeLog.personId is RESTRICT: a scan left behind blocks the delete.
     moved.rawBadgeLogs = (await tx.rawBadgeLog.updateMany({ where: { personId: mergeId }, data: { personId: keepId } })).count;
     // PresenceEvent.personId is CASCADE: the append-only log follows the
     // survivor so later flushes project against the live record.
     moved.presenceEvents = (await tx.presenceEvent.updateMany({ where: { personId: mergeId }, data: { personId: keepId } })).count;
 
-    // "Which staff member did this" facts, all SET NULL — left on the
-    // tombstone they read as nobody the moment the row goes.
+    // "Which staff member did this" facts, all SET NULL — left behind they
+    // read as nobody once the row is deleted.
     moved.noteAcks = (await tx.orgMembershipProcess.updateMany({ where: { noteAckById: mergeId }, data: { noteAckById: keepId } })).count;
     moved.zohoSigners = (await tx.orgMembershipProcess.updateMany({ where: { zohoSignerPersonId: mergeId }, data: { zohoSignerPersonId: keepId } })).count;
     moved.attendanceConfirmations = (await tx.event.updateMany({ where: { attendanceConfirmedById: mergeId }, data: { attendanceConfirmedById: keepId } })).count;
     moved.facilityCloses = (await tx.facilityClose.updateMany({ where: { closedById: mergeId }, data: { closedById: keepId } })).count;
     moved.trustedAdultDecisions = (await tx.trustedAdultReview.updateMany({ where: { decidedById: mergeId }, data: { decidedById: keepId } })).count;
 
-    // Earlier merges that named THIS record as their survivor. Repointed rather
-    // than chained, unlike Person.mergedIntoId: the archive answers "where is
-    // this person now", and its toId is RESTRICT, so leaving it would pin the
-    // tombstone row in place. Collapsing the chain here is also why compliance
-    // §6 attributes a date inherited two merges back. No unique constraint on
-    // toId, so a plain updateMany.
+    // Earlier merges that named THIS record as their survivor: the archive
+    // answers "where is this person now", and its toId is RESTRICT, so leaving
+    // it would block the delete. Collapsing the chain here is also why
+    // compliance attributes a date inherited two merges back. No unique
+    // constraint on toId, so a plain updateMany.
     moved.archivedMerges = (await tx.personMerge.updateMany({ where: { toId: mergeId }, data: { toId: keepId } })).count;
+    moved.bucketOwners = (await tx.budgetOwner.updateMany({ where: { ownerId: mergeId }, data: { ownerId: keepId } })).count;
 }
 
 /**
@@ -488,23 +582,93 @@ async function moveCorporations(tx: TxClient, keep: KeepSubject, merge: MergeSub
     }
 }
 
-/**
- * 7. Archive the merge. Same transaction as the tombstone write, so the two can
- * never disagree: fromId is @unique and the step-1 CAS already serialises
- * concurrent merges of the same id, so a create here cannot collide without
- * the CAS having failed first.
- */
-async function archiveMerge(tx: TxClient, keepId: number, merge: MergeSubject): Promise<void> {
-    await tx.personMerge.create({
-        data: { fromId: merge.id, toId: keepId, snapshot: mergeSnapshot(merge) },
-    });
+/** Bucket treasurers: a bare join, auto-dedupe. */
+async function moveBucketTreasurers(tx: TxClient, keepId: number, mergeId: number, moved: Tallies): Promise<void> {
+    const keepBuckets = new Set(
+        (await tx.budgetOwnerTreasurer.findMany({ where: { personId: keepId }, select: { budgetOwnerId: true } })).map(t => t.budgetOwnerId),
+    );
+    const mergeRows = await tx.budgetOwnerTreasurer.findMany({ where: { personId: mergeId }, select: { budgetOwnerId: true } });
+    for (const { budgetOwnerId } of mergeRows) {
+        const where = { budgetOwnerId_personId: { budgetOwnerId, personId: mergeId } };
+        if (keepBuckets.has(budgetOwnerId)) {
+            await tx.budgetOwnerTreasurer.delete({ where });
+            moved.bucketTreasurers.deduped++;
+        } else {
+            await tx.budgetOwnerTreasurer.update({ where, data: { personId: keepId } });
+            moved.bucketTreasurers.migrated++;
+        }
+    }
 }
 
 /**
- * 8. Audit — tallies: migrated (repointed), deduped (bare-join duplicate
- * deleted), left (decision-bearing collision, race fallback).
+ * Receipt mail aliases follow the survivor, as its email does. An alias equal to
+ * the survivor's final sign-in address is deleted: that address already
+ * identifies it. Read after applyKeeperChoices, which may have swapped the email.
  */
-async function auditMerge(tx: TxClient, plan: MergePlan, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
+async function moveMailAliases(tx: TxClient, keepId: number, mergeId: number, moved: Tallies): Promise<void> {
+    const keeper = await tx.person.findUniqueOrThrow({ where: { id: keepId }, select: { email: true } });
+    const signIn = keeper.email?.trim().toLowerCase();
+    const aliases = await tx.personMailAlias.findMany({ where: { personId: { in: [keepId, mergeId] } }, select: { id: true, personId: true, address: true } });
+    for (const alias of aliases) {
+        if (alias.address === signIn) {
+            await tx.personMailAlias.delete({ where: { id: alias.id } });
+            moved.mailAliases.deduped.push(alias.id);
+        } else if (alias.personId === mergeId) {
+            await tx.personMailAlias.update({ where: { id: alias.id }, data: { personId: keepId } });
+            moved.mailAliases.migrated.push(alias.id);
+        }
+    }
+}
+
+/**
+ * A `left` row is a collision that raced in after the in-lock recheck. The
+ * delete cannot leave it behind: the RESTRICT ones would block it and
+ * BackgroundCheckAttestation.subjectPersonId (SET NULL) would lose its subject.
+ */
+function refuseLeftRows(moved: Tallies): void {
+    const left = moved.programParticipants.left + moved.rsvps.left + moved.toolStatuses.left
+        + moved.bgAttestations.left + moved.bgAttestationSubjects.left;
+    if (left > 0) throw new MergeRefusedError(CHANGED_WHILE_MERGING);
+}
+
+/**
+ * 7. Archive the merge, in the same transaction as the delete, so a deleted id
+ * always has an archive row to resolve through. The row lock already serialises
+ * merges of the same id; fromId @unique backs it, and a collision there means
+ * another merge of this record won.
+ */
+async function archiveMerge(tx: TxClient, keepId: number, merge: MergeSubject): Promise<number> {
+    try {
+        const archive = await tx.personMerge.create({
+            data: { fromId: merge.id, toId: keepId, snapshot: mergeSnapshot(merge) },
+            select: { id: true },
+        });
+        return archive.id;
+    } catch (error) {
+        if (isPrismaError(error, "P2002")) throw new AlreadyMergedError();
+        throw error;
+    }
+}
+
+/**
+ * 8. Delete the merged-away Person row. A RESTRICT reference still on it — a
+ * row written since the moves read their sources — fails the delete, and the
+ * whole merge is refused rather than committed half-moved.
+ */
+async function deleteMergedPerson(tx: TxClient, mergeId: number): Promise<void> {
+    try {
+        await tx.person.delete({ where: { id: mergeId } });
+    } catch (error) {
+        if (isPrismaError(error, "P2003")) throw new MergeRefusedError(CHANGED_WHILE_MERGING);
+        throw error;
+    }
+}
+
+/**
+ * 9. Audit — tallies: migrated (repointed), deduped (bare-join duplicate
+ * deleted), left (always 0 on a committed merge; see refuseLeftRows).
+ */
+async function auditMerge(tx: TxClient, plan: MergePlan, live: LiveSubjects, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
     if (!actor) return;
     await tx.auditLog.create({
         data: {
@@ -513,14 +677,19 @@ async function auditMerge(tx: TxClient, plan: MergePlan, actor: AuthenticatedUse
             tableName: "Person",
             affectedEntityId: plan.keep.id,
             secondaryAffectedEntity: plan.merge.id,
-            // Both pre-images, captured before either update ran: the merged-away
+            // Both pre-images, read under the locks before either update ran: the merged-away
             // Person at the top level, the keeper — whose name/email/DOB a field
             // choice can overwrite — under `keeper`.
             oldData: {
-                ...personPreImage(plan.merge),
-                keeper: personPreImage(plan.keep),
+                ...personPreImage(live.merge),
+                keeper: personPreImage(live.keep),
             },
-            newData: { keepId: plan.keep.id, fieldChoices: plan.choices, moved },
+            newData: {
+                keepId: plan.keep.id,
+                fieldChoices: plan.choices,
+                moved,
+                ...(plan.emailChangeReason && { emailChangeReason: plan.emailChangeReason }),
+            },
         },
     });
 }
@@ -540,7 +709,7 @@ async function auditMerge(tx: TxClient, plan: MergePlan, actor: AuthenticatedUse
  * row keeps the record. The audit row matches archiveApplication's shape, so the
  * board can unarchive one archived by mistake.
  *
- * No new lifecycle edge: this is the declared §13 archive transition
+ * No new lifecycle edge: this is the declared archive transition
  * ({PENDING_BG_REVIEW,BLOCKED}→ARCHIVED) driven from a second site, and the CAS
  * from-state comes from the definition (`personBgOpen.where` covers both).
  */

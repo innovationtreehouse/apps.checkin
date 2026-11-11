@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * all_current_visitors must not count a tombstoned visit (#1503).
+ * all_current_visitors must not count a tombstoned visit.
  *
  * A Visit is tombstoned, never removed (deletedAt + deletedById). Deleting an
  * OPEN visit therefore leaves departedAt null forever, so `departedAt: null`
@@ -14,13 +14,12 @@
  *     (buildCallerContext, access-resolvers.ts), and
  *   - the per-row Visit predicate (SCOPE_BINDINGS, scopeBindings.ts).
  *
- * Person.all_current_visitors keys on ctx.activeVisitorIds, so it is fixed by
- * the prefetch rather than by its own binding — the last describe pins that so
+ * Person.all_current_visitors keys on ctx.activeVisitorIds, so the prefetch
+ * excludes the visit rather than its own binding — the last describe pins that so
  * the transitive path cannot silently regress.
  */
 import prisma from '@/lib/prisma';
 import { buildCallerContext, scopesHeld, type CallerContext } from '../access-resolvers';
-import { LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import type { CtxNeeds } from '../core';
 import type { AuthResult } from '@/types/auth';
@@ -47,6 +46,7 @@ const VISITORS_ONLY: CtxNeeds = {
     programEvents: false,
     activeVisitors: true,
     ledHouseholdMembers: false,
+    householdMembers: false,
 };
 
 function ctx(opts: Partial<CallerContext> = {}): CallerContext {
@@ -66,8 +66,8 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
     };
 }
 
-describe('activeVisitorIds prefetch excludes tombstoned visits and merged-away people', () => {
-    it('filters the query by LIVE_VISIT and LIVE_PERSON, not departedAt alone', async () => {
+describe('activeVisitorIds prefetch excludes tombstoned visits', () => {
+    it('filters the query by LIVE_VISIT, not departedAt alone', async () => {
         // The prefetch is a single findMany, so the `where` IS the filter: a
         // tombstoned open visit reaches activeVisitorIds iff the database is
         // asked for it. Asserting the query is what makes this a unit test.
@@ -77,7 +77,7 @@ describe('activeVisitorIds prefetch excludes tombstoned visits and merged-away p
         const built = await buildCallerContext(keyholderAuth, VISITORS_ONLY);
 
         expect(findMany).toHaveBeenCalledWith({
-            where: { departedAt: null, ...LIVE_VISIT, person: LIVE_PERSON },
+            where: { departedAt: null, ...LIVE_VISIT },
             select: { personId: true },
         });
         expect([...built.activeVisitorIds]).toEqual([9]);
@@ -106,7 +106,7 @@ describe('Visit.all_current_visitors — the per-row predicate', () => {
     });
 });
 
-describe('Person.all_current_visitors — fixed transitively by the prefetch', () => {
+describe('Person.all_current_visitors — scoped by the prefetch', () => {
     it('holds only for people the prefetch put in activeVisitorIds', () => {
         // The Person binding reads ctx.activeVisitorIds and nothing else, so a
         // person whose only open visit was tombstoned is absent from the set

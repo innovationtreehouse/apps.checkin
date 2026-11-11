@@ -52,6 +52,9 @@ export const classifications = {
         ownerAssignedAt: 'internal',
         ownerAssignedByUserId: 'internal',
         isOrganizationalLevel: 'internal',
+        feeReleasedAt: 'internal',
+        feeReleasedByUserId: 'internal',
+        feeReleasedByName: 'internal',
     },
     TransactionCommentRule: {
         id: 'internal',
@@ -70,7 +73,8 @@ export const classifications = {
         donationType: 'internal',
         donationAccount: 'internal',
         matchAccount: 'internal',
-        feesAccount: 'internal',
+        donationAccountId: 'internal',
+        matchAccountId: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -91,14 +95,6 @@ export const classifications = {
         disbursementId: 'internal',
         payload: 'internal',
         createdAt: 'internal',
-        qbMatchState: 'internal',
-        qbTxnId: 'internal',
-        qbDepositTotalCents: 'internal',
-        qbDepositTxnDate: 'internal',
-        qbDriftedTxnId: 'internal',
-        qbDriftCause: 'internal',
-        qbCreateAttemptedAt: 'internal',
-        qbNote: 'internal',
     },
     DisbursementSnapshot: {
         orgId: 'internal',
@@ -121,17 +117,11 @@ export const classifications = {
         payload: 'internal',
         occurredAt: 'internal',
     },
-    DonationQbMatchExclusion: {
-        id: 'internal',
-        orgId: 'internal',
-        qbTxnId: 'internal',
-        reason: 'internal',
-        excludedByUserId: 'internal',
-        excludedAt: 'internal',
-    },
     DonationOrgSettings: {
         orgId: 'internal',
-        qbPostingOnAt: 'internal',
+        inKindQbPostingOnAt: 'internal',
+        qbMatchWindowDays: 'internal',
+        qbMaxCreatesPerRun: 'internal',
     },
     InKindDonation: {
         id: 'internal',
@@ -156,6 +146,12 @@ export const classifications = {
         budgetOwnerId: 'internal',
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
+        capitalSubmittedAt: 'internal',
+    },
+    InKindSyncMark: {
+        orgId: 'internal',
+        receiptId: 'internal',
+        seq: 'internal',
     },
     ManualInKindDonation: {
         id: 'internal',
@@ -175,6 +171,7 @@ export const classifications = {
         budgetOwnerId: 'internal',
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
+        capitalSubmittedAt: 'internal',
     },
     ManualInKindDonationLine: {
         id: 'internal',
@@ -184,6 +181,7 @@ export const classifications = {
         description: 'internal',
         valueCents: 'internal',
         suggestedValueCents: 'internal',
+        quickBooksAccountId: 'internal',
     },
     InKindDonationLine: {
         id: 'internal',
@@ -194,6 +192,7 @@ export const classifications = {
         gtin13: 'internal',
         quantity: 'internal',
         valueCents: 'internal',
+        quickBooksAccountId: 'internal',
     },
     InKindBooking: {
         id: 'internal',
@@ -202,7 +201,27 @@ export const classifications = {
         giftId: 'internal',
         side: 'internal',
         matchState: 'internal',
+        qbEntity: 'internal',
         qbTxnId: 'internal',
+        bookedTxnDate: 'internal',
+        createdAt: 'internal',
+        updatedAt: 'internal',
+    },
+    InKindPosting: {
+        id: 'internal',
+        orgId: 'internal',
+        source: 'internal',
+        giftId: 'internal',
+        matchState: 'internal',
+        claimedAt: 'internal',
+        qbCreateAttemptedAt: 'internal',
+        qbPostAttempts: 'internal',
+        qbFailureKind: 'internal',
+        qbFirstFailedAt: 'internal',
+        qbLastError: 'internal',
+        qbNote: 'internal',
+        bookedTotalCents: 'internal',
+        bookedTxnDate: 'internal',
         createdAt: 'internal',
         updatedAt: 'internal',
     },
@@ -227,12 +246,12 @@ export const relations = {
     },
     WorkflowEvent: {
     },
-    DonationQbMatchExclusion: {
-    },
     DonationOrgSettings: {
     },
     InKindDonation: {
         lines: { model: 'InKindDonationLine', isList: true },
+    },
+    InKindSyncMark: {
     },
     ManualInKindDonation: {
         lines: { model: 'ManualInKindDonationLine', isList: true },
@@ -245,6 +264,20 @@ export const relations = {
     },
     InKindBooking: {
     },
+    InKindPosting: {
+    },
+} as const;
+
+export const marks = {
+    UploadedFile: ['fileBlob'],
+    Transaction: ['companyName', 'donationAmountCents', 'matchAmountCents', 'causeSupportFeeCents', 'merchantFeeCents', 'checkFeeCents', 'donorFirstName', 'donorLastName', 'donorComment'],
+    TransactionCommentRule: ['comment'],
+    DisbursementEvent: ['payload'],
+    InKindDonation: ['receiptTotalCents', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'uploadedByUserId'],
+    ManualInKindDonation: ['donorFirstName', 'donorLastName', 'donorCompanyName'],
+    ManualInKindDonationLine: ['valueCents', 'suggestedValueCents'],
+    InKindDonationLine: ['valueCents'],
+    InKindPosting: ['bookedTotalCents'],
 } as const;
 
 export type Models = keyof typeof classifications;

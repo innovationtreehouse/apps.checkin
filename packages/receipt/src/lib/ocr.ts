@@ -1,5 +1,16 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { OcrDataSchema, type OcrData, type OcrProvider, type OcrResult } from "../contract";
+import Anthropic, {
+  APIConnectionError,
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  InternalServerError,
+  PermissionDeniedError,
+  RateLimitError,
+  UnprocessableEntityError,
+} from "@anthropic-ai/sdk";
+import type { FailureKind } from "@checkin/component-kit";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
+import { OCR_FILE_REFUSED, OcrDataSchema, type OcrData, type OcrProvider, type OcrResult } from "../contract";
 
 const MODEL = "claude-opus-5-5";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
@@ -21,6 +32,7 @@ const lineItemSchema = {
     manufacturer: { type: "string", description: "Manufacturer name if shown" },
     quantity: { type: "number", description: "Quantity, default 1" },
     unitPrice: { type: "number", description: "Price per unit" },
+    totalPrice: { type: "number", description: "The line's total as printed; omit if the receipt prints none" },
     isDelayed: { type: "boolean", description: "True if item is marked backordered or delayed" },
   },
   required: ["description", "quantity", "unitPrice", "isDelayed"],
@@ -30,10 +42,10 @@ export const EXTRACT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
-    retailer: { type: "string", description: "Store or vendor name" },
+    retailer: { type: "string", description: "Store or vendor name, empty if not shown" },
     receiptNumber: { type: "string", description: "Receipt or invoice number printed on the receipt, if present" },
     orderNumber: { type: "string", description: "Order number or confirmation number, if present" },
-    receiptDate: { type: "string", description: "Date in YYYY-MM-DD format" },
+    receiptDate: { type: "string", description: "Date in YYYY-MM-DD format, empty if not shown" },
     currency: { type: "string", description: "3-letter currency code, default USD" },
     shipping: { type: "number", description: "Shipping cost, 0 if not present" },
     tax: { type: "number", description: "Tax amount, 0 if not present" },
@@ -42,10 +54,10 @@ export const EXTRACT_SCHEMA = {
       type: "string",
       description: 'The receipt/order total copied VERBATIM as printed, e.g. "$69.89" — digits and decimal exactly as shown',
     },
-    receiptTotal: { type: "number", description: "Total amount paid" },
+    receiptTotal: { type: "number", description: "Total amount paid; omit if no total is shown" },
     lineItems: { type: "array", description: "All line items on the receipt", items: lineItemSchema },
   },
-  required: ["retailer", "receiptDate", "currency", "shipping", "tax", "discount", "receiptTotal", "lineItems"],
+  required: ["retailer", "receiptDate", "currency", "shipping", "tax", "discount", "lineItems"],
 };
 
 const INSTRUCTION =
@@ -60,12 +72,12 @@ export function mapRawToOcrData(raw: Record<string, unknown>): OcrData {
     receiptNumber: raw.receiptNumber ? String(raw.receiptNumber) : undefined,
     orderNumber: raw.orderNumber ? String(raw.orderNumber) : undefined,
     receiptDate: String(raw.receiptDate ?? ""),
-    currency: String(raw.currency ?? "USD"),
+    currency: String(raw.currency ?? "").trim().toUpperCase() || DEFAULT_CURRENCY,
     shipping: Number(raw.shipping ?? 0),
     tax: Number(raw.tax ?? 0),
     discount: Number(raw.discount ?? 0),
     receiptTotalText: raw.receiptTotalText ? String(raw.receiptTotalText) : undefined,
-    receiptTotal: totalFromText ?? Number(raw.receiptTotal ?? 0),
+    receiptTotal: totalFromText ?? (raw.receiptTotal == null ? null : Number(raw.receiptTotal)),
     lineItems: lines.map((item: unknown) => {
       const li = (item ?? {}) as Record<string, unknown>;
       return {
@@ -74,6 +86,7 @@ export function mapRawToOcrData(raw: Record<string, unknown>): OcrData {
         manufacturer: li.manufacturer ? String(li.manufacturer) : undefined,
         quantity: Number(li.quantity ?? 1),
         unitPrice: Number(li.unitPrice ?? 0),
+        totalPrice: li.totalPrice == null ? undefined : Number(li.totalPrice),
         isDelayed: Boolean(li.isDelayed ?? false),
       };
     }),
@@ -99,13 +112,34 @@ export function buildContent(file: Buffer, mimeType: string): ContentBlock[] {
   throw new Error(`Unsupported MIME type: ${mimeType}`);
 }
 
+/** A reading without its retailer, date or total still lands, for its submitter to fill in; one without lines does not. */
 function complete(data: OcrData): boolean {
-  return !!data.retailer && !!data.receiptDate && data.lineItems.length > 0;
+  return data.lineItems.length > 0;
 }
+
+/** The kind of a failed model call, from the SDK's error classes. Rate limits arrive after the SDK's own retries. */
+export function ocrKind(err: unknown): FailureKind {
+  if (err instanceof AuthenticationError || err instanceof PermissionDeniedError) return "connection";
+  // Billing is ours to fix, not the file's. A used-up credit balance can arrive as a 400 named only by its wording.
+  if (err instanceof APIError && err.type === "billing_error") return "connection";
+  if (err instanceof BadRequestError && /credit balance/i.test(err.message)) return "connection";
+  if (err instanceof RateLimitError || err instanceof InternalServerError || err instanceof APIConnectionError) return "system";
+  // The request's content: a bad or unprocessable file, or one too large.
+  if (err instanceof BadRequestError || err instanceof UnprocessableEntityError || (err instanceof APIError && err.status === 413)) return "data";
+  return "bug";
+}
+
+const CALL_FAILED: Record<FailureKind, string> = {
+  system: "the reading service did not answer",
+  connection: "the reading service refused our account",
+  settings: "OCR is not configured",
+  data: OCR_FILE_REFUSED,
+  bug: "the call to the reading service failed unexpectedly",
+};
 
 /** The real provider. Without a key it fails closed into ocr_failed; manual entry keeps working. */
 export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
-  if (!apiKey) return { extract: async () => ({ success: false, error: "OCR is not configured" }) };
+  if (!apiKey) return { extract: async () => ({ success: false, kind: "settings", error: "OCR is not configured" }) };
   const client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 2 });
 
   return {
@@ -119,25 +153,29 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
           output_config: { effort: "medium", format: { type: "json_schema", schema: EXTRACT_SCHEMA } },
           messages: [{ role: "user", content: [...buildContent(file, mimeType), { type: "text", text: INSTRUCTION }] }],
         });
-        if (response.stop_reason === "refusal") return { success: false, error: "OCR refused the document" };
+        if (response.stop_reason === "refusal") return { success: false, kind: "data", error: "the reader refused it" };
 
         const text = response.content.find((b) => b.type === "text");
-        if (!text || text.type !== "text") return { success: false, error: "OCR returned no structured receipt data" };
+        if (!text || text.type !== "text") return { success: false, kind: "data", error: "the reader's answer could not be understood" };
         let raw: unknown;
         try {
           raw = JSON.parse(text.text);
         } catch {
-          return { success: false, error: "OCR returned unparseable receipt data" };
+          return { success: false, kind: "data", error: "the reader's answer could not be understood" };
         }
-        if (typeof raw !== "object" || raw === null) return { success: false, error: "OCR returned unparseable receipt data" };
+        if (typeof raw !== "object" || raw === null) return { success: false, kind: "data", error: "the reader's answer could not be understood" };
 
         const parsed = OcrDataSchema.safeParse(mapRawToOcrDataSafe(raw as Record<string, unknown>));
         if (!parsed.success || !complete(parsed.data)) {
-          return { success: false, error: "OCR returned incomplete receipt data (missing retailer, date, or line items)" };
+          return { success: false, kind: "data", error: "no line items were found" };
         }
         return { success: true, data: parsed.data };
       } catch (err) {
-        return { success: false, error: `OCR API error: ${err instanceof Error ? err.message : String(err)}` };
+        const kind = ocrKind(err);
+        // The API's message can echo the request; log only what identifies the call.
+        const id = err instanceof APIError ? { status: err.status, requestId: err.requestID } : { error: err instanceof Error ? err.name : typeof err };
+        console.error("[receipt] OCR call failed:", { kind, ...id });
+        return { success: false, kind, error: CALL_FAILED[kind] };
       }
     },
   };

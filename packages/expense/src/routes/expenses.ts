@@ -8,11 +8,13 @@ import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
-import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
+import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
-import { SEATS, type FilledSeat } from "../lib/signoff";
+import { liveIdOf, withLiveParties, withLiveParty } from "../lib/livePeople";
+import { APPROVABLE_STATUSES, CLOSED_STATES, SEATS, type FilledSeat } from "../lib/signoff";
 import {
   approveLine,
+  approveLines,
   assignOwner,
   financeAssign,
   raiseException,
@@ -21,8 +23,13 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
-import { markNotEveryday, recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
+import { recordBoardAuthorization, reimburseeOptions, setReimbursee, signLine, signLines, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
+import { allExpensesAwaitingMyApproval } from "../services/badgeCounts";
+import { EXPENSE_LIST_VIEWS, expenseViewsFor, type ExpenseListView, type ExpenseViewer } from "../nav";
+import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
+import { approveTax } from "../services/taxApprovalService";
+import { waitingOnLabels } from "../services/waitingOnService";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
 const SUMMARY = {
@@ -42,19 +49,13 @@ const SUMMARY = {
   backfill: true,
 } as const;
 
-export const QUEUE_VIEWS = [
-  "all",
-  "assign_ownership",
-  "resolve_ownership",
-  "owner_approval",
-  "owner_exception",
-  "capital_review",
-  "set_depreciation_cycle",
-  "qb_pending",
-] as const;
-type QueueView = (typeof QUEUE_VIEWS)[number];
+export const QUEUE_VIEWS = EXPENSE_LIST_VIEWS;
+type QueueView = ExpenseListView;
 
-function viewWhere(view: QueueView, scope: ViewerScope): Prisma.ExpenseWhereInput {
+/** The views whose rows are a fixed set of expenses, counted in the database. */
+type StateView = Exclude<QueueView, "awaiting_me">;
+
+function viewWhere(view: StateView, scope: ViewerScope): Prisma.ExpenseWhereInput {
   switch (view) {
     case "all":
       return {};
@@ -65,7 +66,7 @@ function viewWhere(view: QueueView, scope: ViewerScope): Prisma.ExpenseWhereInpu
     case "owner_approval":
       return scope.all
         ? { state: "owner_approval", approvals: { none: { status: "exception_raised" } } }
-        : { state: "owner_approval", approvals: { some: { status: "pending", ...scopedApprovals(scope) } } };
+        : { state: "owner_approval", approvals: { some: { status: { in: [...APPROVABLE_STATUSES] }, ...scopedApprovals(scope) } } };
     case "owner_exception":
       return { approvals: { some: { status: "exception_raised" } } };
     default:
@@ -73,18 +74,36 @@ function viewWhere(view: QueueView, scope: ViewerScope): Prisma.ExpenseWhereInpu
   }
 }
 
-function parseView(raw: string | null, fallback?: QueueView): QueueView {
+/** The roles the services check, for the views the caller can act in. */
+async function viewerOf(principal: ExpensePrincipal): Promise<ExpenseViewer> {
+  const approver = (await getExpenseRuntime().signoff.bucketsApprovedBy(callerId(principal))).length > 0;
+  return { approver, isFinance: principal.isFinance, isBoard: principal.isBoard };
+}
+
+/** The view, refused when it is unknown or one the caller cannot act in. */
+async function parseView(principal: ExpensePrincipal, raw: string | null, fallback?: QueueView): Promise<QueueView> {
   const view = raw ?? fallback;
   if (!view || !(QUEUE_VIEWS as readonly string[]).includes(view)) {
     throw httpError(400, `view must be one of: ${QUEUE_VIEWS.join(", ")}`);
   }
+  if (!expenseViewsFor(await viewerOf(principal)).includes(view as QueueView)) throw httpError(403, "You cannot act in this view");
   return view as QueueView;
 }
 
-async function listWhere(principal: ExpensePrincipal, view: QueueView): Promise<Prisma.ExpenseWhereInput> {
+/** "Waiting on you" lists every expense with a line waiting on the caller's approval. */
+async function listWhere(principal: ExpensePrincipal, view: QueueView, activeOnly = false): Promise<Prisma.ExpenseWhereInput> {
   const scope = await viewerScope(principal);
-  return { AND: [scopedExpenses(await getOrgId(), scope), viewWhere(view, scope)] };
+  const viewFilter =
+    view === "awaiting_me"
+      ? { id: { in: (await allExpensesAwaitingMyApproval(principal)).map((e) => e.expenseId) } }
+      : viewWhere(view, scope);
+  const where = [scopedExpenses(await getOrgId(), scope), viewFilter];
+  if (activeOnly) where.push({ state: { notIn: [...CLOSED_STATES] } });
+  return { AND: where };
 }
+
+/** `active=1` drops closed expenses from the list and its count. */
+const activeOnly = (sp: URLSearchParams) => sp.get("active") === "1";
 
 /** The expense, or 404 when it is not in this org or not in the caller's scope. */
 async function visibleExpense(principal: ExpensePrincipal, id: string) {
@@ -94,60 +113,62 @@ async function visibleExpense(principal: ExpensePrincipal, id: string) {
   return { expense, scope };
 }
 
-export const list: ExpenseRouteHandler = async ({ req }) => {
+export const list: ExpenseRouteHandler = async ({ req, principal }) => {
   const sp = query(req);
-  const where = await listWhere(await getPrincipal(), parseView(sp.get("view"), "all"));
-  return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) }) };
+  const where = await listWhere(principal, await parseView(principal, sp.get("view"), "all"), activeOnly(sp));
+  const rows = await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) }));
+  return { Expense: rows, ExpenseWaitingOn: await waitingOnLabels(rows) };
 };
 
-export const count: ExpenseRouteHandler = async ({ req }) => {
-  const where = await listWhere(await getPrincipal(), parseView(query(req).get("view"), "all"));
+export const count: ExpenseRouteHandler = async ({ req, principal }) => {
+  const sp = query(req);
+  const where = await listWhere(principal, await parseView(principal, sp.get("view"), "all"), activeOnly(sp));
   return { ExpenseListCount: { total: await db.expense.count({ where }) } };
 };
 
-export const queue: ExpenseRouteHandler = async ({ req }) => {
+export const queue: ExpenseRouteHandler = async ({ req, principal }) => {
   const sp = query(req);
-  const where = await listWhere(await getPrincipal(), parseView(sp.get("view")));
-  return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) }) };
+  const where = await listWhere(principal, await parseView(principal, sp.get("view")));
+  const rows = await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) }));
+  return { Expense: rows, ExpenseWaitingOn: await waitingOnLabels(rows) };
 };
 
-export const counts: ExpenseRouteHandler = async () => {
-  const principal = await getPrincipal();
+export const counts: ExpenseRouteHandler = async ({ principal }) => {
   const scope = await viewerScope(principal);
   const base = scopedExpenses(await getOrgId(), scope);
   const n = (where: Prisma.ExpenseWhereInput) => db.expense.count({ where: { AND: [base, where] } });
-  const views = QUEUE_VIEWS.filter((v) => v !== "all");
-  const [values, holds] = await Promise.all([
-    Promise.all(views.map((v) => n(viewWhere(v, scope)))),
-    n({ holds: { some: { status: "PENDING" } } }),
-  ]);
-  return { ExpenseCounts: { ...Object.fromEntries(views.map((v, i) => [v, values[i]])), expense_holds: holds } };
+  const visible = expenseViewsFor(await viewerOf(principal));
+  const views = visible.filter((v): v is Exclude<StateView, "all"> => v !== "all" && v !== "awaiting_me");
+  const values = await Promise.all(views.map((v) => n(viewWhere(v, scope))));
+  return { ExpenseCounts: Object.fromEntries(views.map((v, i) => [v, values[i]])) };
 };
 
-export const detail: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const detail: ExpenseRouteHandler = async ({ params, principal }) => {
   const { scope } = await visibleExpense(principal, params.id);
   const lines = scopedLines(scope);
-  const Expense = await db.expense.findFirst({
+  const stored = await db.expense.findFirst({
     where: { id: params.id },
     include: {
       lineItems: { where: lines, orderBy: { lineNumber: "asc" }, include: { signoffs: true } },
       approvals: { where: scopedApprovals(scope), orderBy: { id: "asc" } },
-      // Holds, the audit trail and flags are FINANCE and Board's; an approver sees their lines only.
+      // Holds, the audit trail, reviews and reasons are FINANCE and Board's; an approver sees their lines only.
       ...(scope.all
         ? {
             holds: { orderBy: { id: "asc" } },
             auditLog: { orderBy: { changedAt: "asc" } },
-            flags: { orderBy: { raisedAt: "asc" } },
+            flags: { where: OPEN_REVIEWS_WHERE, orderBy: { raisedAt: "asc" } },
           }
         : {}),
     },
   });
-  return { Expense };
+  return {
+    Expense: await withLiveParty(stored),
+    ExpenseQueueReason: scope.all ? await expenseReasons(principal, params.id) : [],
+    ExpenseWaitingOn: stored ? await waitingOnLabels([stored]) : [],
+  };
 };
 
-export const lineItemApprovals: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const lineItemApprovals: ExpenseRouteHandler = async ({ params, principal }) => {
   const { scope } = await visibleExpense(principal, params.id);
   const approvals = await db.lineItemOwnerApproval.findMany({
     where: { expenseId: params.id, ...scopedApprovals(scope) },
@@ -163,10 +184,9 @@ function approvalAction<T>(
   schema: z.ZodType<T>,
   act: (principal: ExpensePrincipal, expenseId: string, approvalId: number, body: T) => Promise<void>,
 ): ExpenseRouteHandler {
-  return async ({ req, params }) => {
+  return async ({ req, params, principal }) => {
     const approvalId = parseId(params.approvalId, "approvalId");
     const body = await parseBody(req, schema);
-    const principal = await getPrincipal();
     await visibleExpense(principal, params.id);
     await mapServiceErrors(() => act(principal, params.id, approvalId, body));
     return { LineItemOwnerApproval: await db.lineItemOwnerApproval.findFirst({ where: { id: approvalId, expenseId: params.id } }) };
@@ -177,12 +197,24 @@ const notesSchema = z.object({ notes: z.string().trim().min(1, "notes are requir
 const ownerSchema = z.object({ ownerId: z.number().int().positive() });
 
 export const approve = approvalAction(
-  z.object({ overrideComment: z.string().nullish() }),
-  (p, e, a, b) => approveLine(p, e, a, b.overrideComment),
+  z.object({ reason: z.string().nullish() }),
+  (p, e, a, b) => approveLine(p, e, a, b.reason),
 );
-export const raise = approvalAction(notesSchema, (p, e, a, b) => raiseException(p, e, a, b.notes));
+/** Approve All: every listed line the caller approves, or none; the response is those approval rows. */
+export const approveAll: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const { approvalIds } = await parseBody(req, z.object({ approvalIds: z.array(z.number().int().positive()).min(1, "Name at least one line to approve") }));
+  await visibleExpense(principal, params.id);
+  await mapServiceErrors(() => approveLines(principal, params.id, approvalIds));
+  return {
+    LineItemOwnerApproval: await db.lineItemOwnerApproval.findMany({ where: { id: { in: approvalIds }, expenseId: params.id }, orderBy: { id: "asc" } }),
+  };
+};
+export const raise = approvalAction(notesSchema,(p, e, a, b) => raiseException(p, e, a, b.notes));
 export const reject = approvalAction(notesSchema, (p, e, a, b) => rejectException(p, e, a, b.notes));
-export const financeAssignOwner = approvalAction(ownerSchema, (p, e, a, b) => financeAssign(p, e, a, b.ownerId));
+export const financeAssignOwner = approvalAction(
+  ownerSchema.extend({ final: z.boolean().optional(), note: z.string().nullish() }),
+  (p, e, a, b) => financeAssign(p, e, a, b.ownerId, b.final ?? false, b.note),
+);
 export const assign = approvalAction(
   ownerSchema.extend({ permanent: z.boolean().optional() }),
   (p, e, a, b) => assignOwner(p, e, a, b.ownerId, b.permanent ?? false),
@@ -190,17 +222,16 @@ export const assign = approvalAction(
 export const resolve = approvalAction(ownerSchema, (p, e, a, b) => resolveUnknown(p, e, a, b.ownerId));
 
 /** Sign-off status as seat names only: who signed is pii and lives on ExpenseLineSignoff. */
-function seatsOnly(status: Awaited<ReturnType<typeof signoffStatus>>) {
-  return status.map((s) => ({ ...s, filled: s.filled.map((f: FilledSeat) => f.seat) }));
+function seatsOnly<T extends { filled: FilledSeat[] }>(status: T[]) {
+  return status.map((s) => ({ ...s, filled: s.filled.map((f) => f.seat) }));
 }
 
-export const signoffs: ExpenseRouteHandler = async ({ params }) => {
-  const principal = await getPrincipal();
+export const signoffs: ExpenseRouteHandler = async ({ params, principal }) => {
   const { scope } = await visibleExpense(principal, params.id);
   const visible = new Set(
     (await db.expenseLineItem.findMany({ where: { expenseId: params.id, ...scopedLines(scope) }, select: { id: true } })).map((l) => l.id),
   );
-  const status = await mapServiceErrors(() => signoffStatus(params.id));
+  const status = await mapServiceErrors(() => signoffStatusFor(principal, params.id));
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => visible.has(s.lineItemId))) };
 };
 
@@ -212,66 +243,76 @@ export const signoffs: ExpenseRouteHandler = async ({ params }) => {
 async function maySign(principal: ExpensePrincipal, line: { expense: { submitterId: number }; approvals: { ownerId: number | null }[] }) {
   if (principal.isFinance || principal.isBoard) return true;
   const me = callerId(principal);
-  if (line.expense.submitterId === me) return true;
+  if ((await liveIdOf(line.expense.submitterId)) === me) return true;
   const buckets = new Set(await getExpenseRuntime().signoff.bucketsApprovedBy(me));
   return line.approvals.some((a) => a.ownerId !== null && buckets.has(a.ownerId));
 }
 
 /** The library decides which seat the caller may fill; the response is that line's status. */
-export const sign: ExpenseRouteHandler = async ({ req, params }) => {
+export const sign: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");
   const { seat } = await parseBody(req, z.object({ seat: z.enum(SEATS) }));
-  const principal = await getPrincipal();
   const line = await db.expenseLineItem.findFirst({
     where: { id: lineItemId, expenseId: params.id, expense: { orgId: await getOrgId() } },
     select: { expense: { select: { submitterId: true } }, approvals: { select: { ownerId: true } } },
   });
   if (!line || !(await maySign(principal, line))) throw httpError(404, "Line item not found");
   await mapServiceErrors(() => signLine(principal, lineItemId, seat));
-  const status = await signoffStatus(params.id);
+  const status = await signoffStatusFor(principal, params.id);
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => s.lineItemId === lineItemId)) };
 };
 
-/** The library decides who may record the Board authorization; the response is every line's status. */
-export const boardAuthorization: ExpenseRouteHandler = async ({ req, params }) => {
-  const { authorization } = await parseBody(req, z.object({ authorization: z.string().trim().min(1, "Say what the Board authorized") }));
-  const principal = await getPrincipal();
-  await mapServiceErrors(() => recordBoardAuthorization(principal, params.id, authorization));
-  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatus(params.id)) };
+/** Sign all as Treasurer: every listed line the caller may sign, or none; the response is those lines' status. */
+export const signAll: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const { lineItemIds } = await parseBody(req, z.object({ lineItemIds: z.array(z.number().int().positive()).min(1, "Name at least one line to sign") }));
+  await mapServiceErrors(() => signLines(principal, params.id, lineItemIds));
+  const listed = new Set(lineItemIds);
+  return { ExpenseLineSignoffStatus: seatsOnly((await signoffStatusFor(principal, params.id)).filter((s) => listed.has(s.lineItemId))) };
 };
 
-/** FINANCE marks a card charge not Everyday; there is no route to unmark it. */
-export const notEveryday: ExpenseRouteHandler = async ({ req, params }) => {
-  const { reason } = await parseBody(req, z.object({ reason: z.enum(["single_source", "finance_override"]) }));
-  const principal = await getPrincipal();
-  await mapServiceErrors(() => markNotEveryday(principal, params.id, reason));
-  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatus(params.id)) };
+/** The library decides who may record the Board authorization; the response is every line's status. */
+export const boardAuthorization: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const { authorization } = await parseBody(req, z.object({ authorization: z.string().trim().min(1, "Say what the Board authorized") }));
+  await mapServiceErrors(() => recordBoardAuthorization(principal, params.id, authorization));
+  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatusFor(principal, params.id)) };
 };
 
 async function expenseWithLines(id: string) {
-  return db.expense.findFirst({ where: { id }, include: { lineItems: { orderBy: { lineNumber: "asc" } } } });
+  return withLiveParty(await db.expense.findFirst({ where: { id }, include: { lineItems: { orderBy: { lineNumber: "asc" } } } }));
 }
 
-export const capitalReview: ExpenseRouteHandler = async ({ req, params }) => {
+export const capitalReview: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const body = await parseBody(req, CapitalReviewSchema);
-  const principal = await getPrincipal();
   await mapServiceErrors(() => submitCapitalReview(principal, params.id, body));
   return { Expense: await expenseWithLines(params.id) };
 };
 
-export const depreciationCycle: ExpenseRouteHandler = async ({ req, params }) => {
+export const depreciationCycle: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const body = await parseBody(req, SetDepreciationCycleSchema);
-  const principal = await getPrincipal();
   await mapServiceErrors(() => setDepreciationCycle(principal, params.id, body));
   return { Expense: await expenseWithLines(params.id) };
 };
 
-export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
-  const { personId } = await parseBody(req, z.object({ personId: z.number().int().positive() }));
-  const principal = await getPrincipal();
+// A new person is added only with the adder's word that they are an adult.
+const reimburseeChoiceSchema = z.union([
+  z.object({ personId: z.number().int().positive() }).strict(),
+  z.object({ newPerson: z.object({ name: z.string().trim().min(1).max(200), isAdult: z.literal(true) }).strict() }).strict(),
+]);
+
+export const reimbursee: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const choice = await parseBody(req, reimburseeChoiceSchema);
   const orgId = await getOrgId();
-  await mapServiceErrors(() => setReimbursee(orgId, params.id, personId, principal));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+  await mapServiceErrors(() => setReimbursee(orgId, params.id, choice, principal));
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId } })) };
+};
+
+export const reimburseePeople: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const orgId = await getOrgId();
+  const people = await mapServiceErrors(async () => {
+    const text = z.string().max(100).parse(query(req).get("q") ?? "");
+    return reimburseeOptions(orgId, params.id, text, principal);
+  });
+  return { ExpenseReimburseeView: people };
 };
 
 const vendorChoiceSchema = z.union([
@@ -285,8 +326,7 @@ export const reimburseeVendor: ExpenseRouteHandler = async ({ params }) => {
   return { ExpenseReimburseeVendor: link, ExpenseReimburseeView: reimbursee };
 };
 
-export const reimburseeVendorOptions: ExpenseRouteHandler = async ({ req, params }) => {
-  const principal = await getPrincipal();
+export const reimburseeVendorOptions: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const orgId = await getOrgId();
   const options = await mapServiceErrors(async () => {
     const text = z.string().trim().min(2, "Type at least two letters").max(100).parse(query(req).get("q") ?? "");
@@ -295,16 +335,20 @@ export const reimburseeVendorOptions: ExpenseRouteHandler = async ({ req, params
   return { ExpenseQbVendorOption: options };
 };
 
-export const linkVendor: ExpenseRouteHandler = async ({ req, params }) => {
+export const linkVendor: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const choice = await parseBody(req, vendorChoiceSchema);
-  const principal = await getPrincipal();
   const orgId = await getOrgId();
   return { ExpenseReimburseeVendor: await mapServiceErrors(() => linkReimburseeVendor(orgId, params.id, choice, principal)) };
 };
 
-export const testData: ExpenseRouteHandler = async ({ req, params }) => {
+export const testData: ExpenseRouteHandler = async ({ req, params, principal }) => {
   const { isTestData } = await parseBody(req, z.object({ isTestData: z.boolean() }));
-  const principal = await getPrincipal();
   await mapServiceErrors(() => setTestData(principal, params.id, isTestData));
-  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
+};
+
+export const taxApproval: ExpenseRouteHandler = async ({ req, params, principal }) => {
+  const { note } = await parseBody(req, z.object({ note: z.string().nullish() }));
+  await mapServiceErrors(() => approveTax(principal, params.id, note?.trim() || null));
+  return { Expense: await withLiveParty(await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } })) };
 };

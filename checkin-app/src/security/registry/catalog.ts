@@ -1,8 +1,8 @@
 // Global catalog route policy. Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry } from '../core';
 
-// Reads admit any catalog viewer — the single read chokepoint; writes are
-// INVENTORY_MANAGER-only. Catalog reference data is `public`; the only non-public
+// Finished-catalog reads admit any catalog viewer; review-queue reads and writes
+// are INVENTORY_MANAGER-only. Catalog reference data is `public`; the only non-public
 // fields are `internal` (actor attribution, free text, cross-app plumbing),
 // granted to the manager view. The catalog schema has no pii/personal/member
 // tier, so the viewer view is `public` only and the manager view adds
@@ -36,10 +36,12 @@ defineRoute({ endpoint: 'GET /api/catalog/items/count', authorize: 'catalog-view
 defineRoute({ endpoint: 'GET /api/catalog/items/[gtin13]', authorize: 'catalog-viewer', envelope: null, returns: ['Item', 'Category', 'Subcategory'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/item-references', authorize: 'catalog-viewer', envelope: null, returns: ['ItemReference', 'Item'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/audit', authorize: 'catalog-viewer', envelope: null, returns: ['Item', 'ItemReference'], orderedView: CATALOG_VIEW });
-defineRoute({ endpoint: 'GET /api/catalog/proposals/item-references', authorize: 'catalog-viewer', envelope: null, returns: ['ItemReferenceProposal'], orderedView: CATALOG_VIEW });
-defineRoute({ endpoint: 'GET /api/catalog/provisional-items', authorize: 'catalog-viewer', envelope: null, returns: ['ProvisionalItem'], orderedView: CATALOG_VIEW });
-defineRoute({ endpoint: 'GET /api/catalog/reference-conflicts', authorize: 'catalog-viewer', envelope: null, returns: ['ReferenceConflict'], orderedView: CATALOG_VIEW });
-defineRoute({ endpoint: 'GET /api/catalog/conversion-challenges', authorize: 'catalog-viewer', envelope: null, returns: ['ConversionChallenge'], orderedView: CATALOG_VIEW });
+
+// Review-queue reads — INVENTORY_MANAGER only; the queues hold unfinished catalog data.
+defineRoute({ endpoint: 'GET /api/catalog/proposals/item-references', authorize: 'inventory-manager', envelope: null, returns: ['ItemReferenceProposal'], orderedView: CATALOG_MANAGER_VIEW });
+defineRoute({ endpoint: 'GET /api/catalog/provisional-items', authorize: 'inventory-manager', envelope: null, returns: ['ProvisionalItem'], orderedView: CATALOG_MANAGER_VIEW });
+defineRoute({ endpoint: 'GET /api/catalog/reference-conflicts', authorize: 'inventory-manager', envelope: null, returns: ['ReferenceConflict'], orderedView: CATALOG_MANAGER_VIEW });
+defineRoute({ endpoint: 'GET /api/catalog/conversion-challenges', authorize: 'inventory-manager', envelope: null, returns: ['ConversionChallenge'], orderedView: CATALOG_MANAGER_VIEW });
 
 // Writes — INVENTORY_MANAGER only.
 defineRoute({ endpoint: 'POST /api/catalog/categories', authorize: 'inventory-manager', envelope: null, returns: ['Category'], orderedView: CATALOG_MANAGER_VIEW });

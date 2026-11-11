@@ -1,5 +1,5 @@
-// Prisma 7 moved CLI/datasource configuration out of schema.prisma into this file.
-// The `url` no longer lives in the `datasource` block; the CLI (migrate/db) reads it
+// Prisma 7 reads CLI/datasource configuration from this file, not schema.prisma.
+// The `datasource` block holds no `url`; the CLI (migrate/db) reads it
 // from here, and the runtime client connects via the @prisma/adapter-pg driver adapter
 // (see src/db/client.ts). MONITORING_DATABASE_URL points at the dedicated monitoring
 // Postgres. `dotenv/config` loads the package-local .env so direct `prisma` invocations

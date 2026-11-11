@@ -1,18 +1,53 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Image } from "@mantine/core";
+import { ActionIcon, Group, Image, Stack } from "@mantine/core";
+
+const BOX = 600;
 
 /**
  * A file as its route serves it: an image or PDF displays from `src`; text is fetched and shown
- * as escaped text, never rendered as a page.
+ * as escaped text, never rendered as a page. An image shows turned by `rotation`; with
+ * `onRotate` it also offers buttons that turn it by a quarter either way.
  */
-export default function ReceiptFile({ src, mimeType }: { src: string; mimeType: string }) {
+export default function ReceiptFile({
+  src,
+  mimeType,
+  title = "Receipt",
+  rotation: turn = 0,
+  onRotate,
+}: {
+  src: string;
+  mimeType: string;
+  title?: string;
+  rotation?: number;
+  onRotate?: (by: number) => void;
+}) {
   const [text, setText] = useState<string | null>(null);
   useEffect(() => {
     if (mimeType !== "text/plain") return;
     void fetch(src).then((r) => (r.ok ? r.text() : `Couldn't load the file (HTTP ${r.status})`)).then(setText);
   }, [src, mimeType]);
-  if (mimeType === "application/pdf") return <iframe src={src} title="Receipt" style={{ width: "100%", height: 600, border: 0 }} />;
-  if (mimeType === "text/plain") return <pre style={{ whiteSpace: "pre-wrap", maxHeight: 600, overflow: "auto" }}>{text ?? "Loading…"}</pre>;
-  return <Image src={src} alt="Receipt" mah={600} fit="contain" />;
+  if (mimeType === "application/pdf") return <iframe src={src} title={title} style={{ width: "100%", height: BOX, border: 0 }} />;
+  if (mimeType === "text/plain") return <pre style={{ whiteSpace: "pre-wrap", maxHeight: BOX, overflow: "auto" }}>{text ?? "Loading…"}</pre>;
+
+  const sideways = turn === 90 || turn === 270;
+  const image = sideways ? (
+    // A sideways image swaps its width and height on screen, so it is bounded by the box's
+    // height across and the box's width down, and centred so the turn stays inside the box.
+    <div style={{ width: "100%", height: BOX, containerType: "size", display: "grid", placeItems: "center" }}>
+      <Image src={src} alt={title} fit="contain" style={{ maxWidth: "100cqh", maxHeight: "100cqw", width: "auto", transform: `rotate(${turn}deg)` }} />
+    </div>
+  ) : (
+    <Image src={src} alt={title} mah={BOX} fit="contain" style={turn ? { transform: `rotate(${turn}deg)` } : undefined} />
+  );
+  if (!onRotate) return image;
+  return (
+    <Stack gap={4}>
+      <Group gap={4} justify="flex-end">
+        <ActionIcon variant="default" aria-label="Rotate left" onClick={() => onRotate(-90)}>↺</ActionIcon>
+        <ActionIcon variant="default" aria-label="Rotate right" onClick={() => onRotate(90)}>↻</ActionIcon>
+      </Group>
+      {image}
+    </Stack>
+  );
 }

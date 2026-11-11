@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { Button, Paper, Stack, Table, Text, Textarea, Title } from "@mantine/core";
 import { api, errorMessage } from "../components/api";
-import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface SeedResult {
   created: number;
@@ -23,8 +22,15 @@ export default function CapitalSeedPage() {
 
   async function submit() {
     setError(null);
+    let seed: unknown;
     try {
-      setResult(await api<SeedResult>("/capital-assets/seed", { method: "POST", body: JSON.stringify(JSON.parse(text)) }));
+      seed = JSON.parse(text);
+    } catch {
+      setError("That isn't valid JSON.");
+      return;
+    }
+    try {
+      setResult(await api<SeedResult>("/capital-assets/seed", { method: "POST", body: JSON.stringify(seed) }));
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -32,7 +38,6 @@ export default function CapitalSeedPage() {
 
   return (
     <>
-      <ExpenseSubNav current="/expense/capital-seed" />
       <Title order={3} mb="md">Capital register seed</Title>
       <Paper withBorder p="md" maw={720}>
         <Stack>

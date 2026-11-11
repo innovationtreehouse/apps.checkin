@@ -1,6 +1,6 @@
 {
   "type": "visits",
-  "_note": "Each visit is recorded for the logged-in persona (self check-in via /api/attendance/manual). Use --persona-email to record for a specific person. Omit departedAt for an open (still-in-building) visit; the API only allows that for an arrival today or within the last 6 hours.",
+  "_note": "Each visit is recorded for the logged-in persona (self check-in via /api/attendance/manual). Use --persona-email to record for a specific person. Every visit needs a departedAt: the API records closed visits only.",
   "visits": [
     {
       "arrivedAt": "2026-06-30T09:00:00",

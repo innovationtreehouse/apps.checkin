@@ -25,7 +25,7 @@ export const GET = withAuth(
                 return apiError("Participant not found", 404);
             }
 
-            // Youth are never required to provide a phone number (issue #169)
+            // Youth are never required to provide a phone number
             const needsPhone = !user.phone && !isYouth(user.dateOfBirth);
             const isLead = user.isHouseholdLead;
 

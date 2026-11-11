@@ -29,11 +29,6 @@ RUN npm ci
 FROM public.ecr.aws/docker/library/node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-# npm does not hoist remote-tarball deps (xlsx is pinned to the SheetJS CDN
-# tarball, not the vulnerable registry build) to the root node_modules — they
-# stay in the workspace's own node_modules. Copy it too, or `next build` fails
-# with "Module not found: Can't resolve 'xlsx'".
-COPY --from=deps /app/checkin-app/node_modules ./checkin-app/node_modules
 COPY . .
 # Generate the Prisma client + security classifications inside the app workspace
 # (its schema lives at checkin-app/prisma; the security generator resolves its
@@ -80,6 +75,16 @@ ENV GOOGLE_CLIENT_ID=build-placeholder \
     GOOGLE_CLIENT_SECRET=build-placeholder \
     NEXTAUTH_SECRET=build-placeholder
 RUN npm -w checkin-app run build
+# The receipt file backfill and the dev data check run as one-off tasks in this image, which has no tsx
+# and no traced path to a script, so each ships as one self-contained file.
+RUN npx --no-install esbuild checkin-app/scripts/receipt-file-backfill.ts --bundle \
+      --platform=node --format=esm --tsconfig=checkin-app/tsconfig.json --log-level=warning \
+      --banner:js="import{createRequire}from'node:module';const require=createRequire(import.meta.url);" \
+      --outfile=/one-off/receipt-file-backfill.mjs
+RUN npx --no-install esbuild checkin-app/scripts/dev-data-check.ts --bundle \
+      --platform=node --format=esm --tsconfig=checkin-app/tsconfig.json --log-level=warning \
+      --banner:js="import{createRequire}from'node:module';const require=createRequire(import.meta.url);" \
+      --outfile=/one-off/dev-data-check.mjs
 # Self-contained prisma CLI tree for the runner stage (see the COPY there):
 # copying node_modules/prisma + @prisma alone is NOT enough — @prisma/config
 # requires hoisted transitive deps (e.g. `effect`), which the deploy-build
@@ -118,19 +123,18 @@ COPY --from=builder /app/checkin-app/.next/static ./checkin-app/.next/static
 COPY --from=builder /app/checkin-app/public ./checkin-app/public
 # The Rust-free `prisma-client` generator emits the client into src/generated/prisma,
 # which Next's standalone output tracing bundles automatically — there is no
-# node_modules/.prisma engine directory to copy as there was with prisma-client-js.
+# node_modules/.prisma engine directory to copy.
 COPY --from=builder /app/checkin-app/prisma ./checkin-app/prisma
-# Prisma 7 only reads the datasource URL from a config file (schema-level `url`
-# was removed), so the migrate ECS task — `cd checkin-app && npx prisma migrate
+# Prisma 7 only reads the datasource URL from a config file, not a schema-level
+# `url`, so the migrate ECS task — `cd checkin-app && npx prisma migrate
 # deploy` in this image — needs one. The repo's prisma.config.ts can't be
 # shipped: its dotenv / prisma/config imports don't resolve here. The deploy
 # variant has no imports.
 COPY --from=builder /app/checkin-app/prisma.config.deploy.ts ./checkin-app/prisma.config.ts
 # The prisma CLI is a devDependency, so Next's standalone file-trace never
-# includes it — `npx prisma migrate deploy` in the migrate ECS task was
-# fetching LATEST prisma from the npm registry at deploy time ("npm warn exec
-# ... will be installed: prisma@X"): version drift vs the lockfile plus a
-# registry dependency in the middle of a deploy. Ship the builder's isolated,
+# includes it — without a local copy, `npx prisma migrate deploy` in the migrate
+# ECS task fetches LATEST prisma from the npm registry at deploy time: version
+# drift vs the lockfile plus a registry dependency mid-deploy. Ship the builder's isolated,
 # lockfile-versioned CLI tree (full transitive closure — same alpine base, so
 # engine binaries match) under checkin-app/node_modules, where the migrate
 # command's cwd resolves it without touching the standalone /app/node_modules.
@@ -144,6 +148,8 @@ COPY --from=builder /libs/ ./
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/checkin-app/libraries.json ./checkin-app/libraries.json
 COPY --from=builder /app/scripts/each-library.sh ./scripts/each-library.sh
+COPY --from=builder /one-off/receipt-file-backfill.mjs ./checkin-app/receipt-file-backfill.mjs
+COPY --from=builder /one-off/dev-data-check.mjs ./checkin-app/dev-data-check.mjs
 
 EXPOSE 4000
 ENV PORT=4000

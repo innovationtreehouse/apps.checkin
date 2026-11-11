@@ -1,16 +1,13 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
-import { activateByProcessId, type ActivateOutcome } from "@/lib/membership/payment";
+import { activateByProcessId, type ActivateOutcome, type MembershipLine } from "@/lib/membership/payment";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isPaid, isReversed } from "./orderStatus";
-
-// A recovered payment may come in a cent or two under the recorded membership fee (rounding,
-// a stale settings copy). Only a shortfall beyond this is a real mismatch.
-export const AMOUNT_TOLERANCE_CENTS = 100;
 
 /**
  * Raise what a membership payment's outcome needs the board to see. Shared by the
@@ -32,35 +29,43 @@ export async function raiseMembershipPaymentOutcome(
 }
 
 /**
- * The membership variant-id set (BoardSettings variants + the dev-mock variant
- * when the Shopify mock is active) — the ONE "is this line a membership?" rule.
- * Exported so matchAudit.ts consumes the same set as the #1074 item gate; a
- * variant added here but missed in a private copy would silently VANISH from
- * the audit (filtered out in SQL), not show as a gap.
+ * Membership variant id → the year it sells: the ONE "is this line a membership?"
+ * rule. Exported so matchAudit.ts consumes the same keys as the item gate; a variant
+ * missed in a private copy would silently VANISH from the audit (filtered out in
+ * SQL), not show as a gap. The BoardSettings variant and the dev-mock variant (when
+ * the Shopify mock is active) sell the live year at `paidAt` unless a row claims them.
  */
-export function membershipVariantIdSet(settings: {
-    orgMembershipVariantId: string | null;
-} | null): Set<string> {
-    return new Set(
-        [
-            settings?.orgMembershipVariantId,
-            config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null,
-        ].filter((v): v is string => !!v),
-    );
+export async function membershipVariantYears(
+    settings: { orgMembershipVariantId: string | null; orgMembershipYearBoundary: Date | null } | null,
+    paidAt: Date,
+): Promise<Map<string, number | null>> {
+    const rows = await prisma.membershipYearVariant.findMany({ select: { shopifyVariantId: true, membershipYear: true } });
+    const years = new Map<string, number | null>(rows.map((r) => [r.shopifyVariantId, r.membershipYear]));
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt);
+    for (const variantId of [settings?.orgMembershipVariantId, config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null]) {
+        if (variantId && !years.has(variantId)) years.set(variantId, liveYear);
+    }
+    return years;
+}
+
+/** The order's membership line, or null when no line's variant sells a membership year. */
+export function findMembershipLine(years: Map<string, number | null>, lineVariantIds: string[]): MembershipLine | null {
+    const variantId = lineVariantIds.find((v) => years.has(v));
+    return variantId === undefined ? null : { appliesToYear: years.get(variantId) ?? null };
 }
 
 /**
  * Volunteer-coupon entitlement check. Shopify owns the discount ARITHMETIC
- * (variant-backed orders are never amount-gated); checkin owns the POLICY that
- * only volunteer households may use the volunteer-rate code — the #1074 variant
- * gate correctly stopped flagging couponed orders by amount, which also meant a
- * non-volunteer family redeeming the volunteer code activated cleanly with no flag.
+ * (membership orders are never amount-gated); checkin owns the POLICY that
+ * only volunteer households may use the volunteer-rate code. The variant gate
+ * doesn't flag couponed orders by amount, so without this check a non-volunteer
+ * family redeeming the volunteer code would activate cleanly with no flag.
  *
  * True iff the order's mirrored coupon list carries the board-configured volunteer
  * code (BoardSettings.volunteerFamilyDiscountCode — the same code the checkout link
  * appends for volunteer households) while the membership is NOT volunteer. Compared
  * case-insensitively (Shopify codes are). An EMPTY discountCodes list is never
- * evidence of anything — rows synced before #1048 mirror no codes — so only a
+ * evidence of anything — rows synced before code mirroring hold none — so only a
  * non-empty list can flag. Other codes (promos) are Shopify's business, not ours.
  */
 export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: string | null | undefined, isVolunteerFamily: boolean): boolean {
@@ -76,16 +81,16 @@ type ResolvedProcess = { id: number; orgMembershipId: number | null; awaiting: b
  * Which membership process (if any) is this order paying for?
  *
  * Preferred: the `Membership_Process_ID` cart attribute the checkout link itself
- * set — mirrored since #1029, and the exact same key the orders/paid webhook
+ * set — mirrored on the order, and the exact same key the orders/paid webhook
  * credits. Exact, so no ambiguity.
  *
  * Fallback: customer email → household lead → the family's single PENDING_PAYMENT
- * process. Only reached for orders synced before #1029 shipped (note_attributes is
+ * process. Only reached for orders synced before attribute mirroring (note_attributes is
  * null on those). Fuzzier, so it refuses to guess: zero or several pending
  * processes resolve to "none"/"ambiguous" rather than picking one.
  *
  * Either way the caller checks the order contains a membership variant before
- * activating (amount-gating only pre-#1048 orders). Only PENDING_PAYMENT and BLOCKED
+ * activating. Only PENDING_PAYMENT and BLOCKED
  * processes are `awaiting`; a paid order on any other process is raised, not recovered.
  */
 async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedProcess> {
@@ -182,66 +187,38 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
 
     // Membership-item gate, parity with the orders/paid webhook: recover only if the
     // order actually CONTAINS a membership product (its variant id), the same
-    // membershipVariantIdSet the webhook builds — mirrored
-    // onto order lines since #1048. A variant id is stable and can't drift; the old
-    // total-price gate false-raised AMOUNT_MISMATCH on every couponed order (volunteer
-    // rate, promo), whose sub-fee total is indistinguishable from an underpayment by
-    // amount alone. See the H2 note in payment.ts and the webhook route.
+    // membershipVariantYears the webhook builds — mirrored onto order lines. A variant
+    // id is stable and can't drift; the order total never decides (docs/rules/revenue.md).
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: {
-            orgMembershipVariantId: true,
-            standardMembershipFeeCents: true,
-            volunteerMembershipFeeCents: true,
-            volunteerFamilyDiscountCode: true,
-        },
+        select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
     });
-    const membershipVariantIds = membershipVariantIdSet(settings ?? null);
-    const lineVariantIds = await mirror.orderLineVariantIds(order.orderGid);
-    // Both branches below need the membership's volunteer flag: the amount-gate
-    // fallback for the expected membership fee, the coupon entitlement check for volunteerOnly.
+    const variantYears = await membershipVariantYears(settings ?? null, order.processedAt ?? new Date());
+    const line = findMembershipLine(variantYears, await mirror.orderLineVariantIds(order.orderGid));
+    if (!line) {
+        // Attributed to a pending process, paid, but no membership product on it (including an
+        // order of only custom or deleted products) — the webhook's NO_ITEM case.
+        await raisePaymentException("NO_ITEM", { shopifyOrderId: order.legacyId, processId: proc.id });
+        return true;
+    }
+
+    // Coupon entitlement: the item gate proves the order carries the membership product,
+    // but not that the family was ALLOWED the code that priced it. Volunteer code on a
+    // non-volunteer membership → tell the board, do NOT activate (parity with NO_ITEM).
     const membership = proc.orgMembershipId
         ? await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId }, select: { isVolunteerFamily: true } })
         : null;
-
-    if (lineVariantIds.length > 0) {
-        // Post-#1048 order: variant ids are mirrored, so the item check is authoritative.
-        if (!lineVariantIds.some((v) => membershipVariantIds.has(v))) {
-            // Attributed to a pending process, paid, but no membership product on it —
-            // the webhook's NO_ITEM case (activate() fails closed there).
-            await raisePaymentException("NO_ITEM", { shopifyOrderId: order.legacyId, processId: proc.id });
-            return true;
-        }
-    } else {
-        // TRANSITIONAL (remove once the #1048 backfill re-pull is universal): rows
-        // synced before #1048 carry no line variant ids, so the item check is
-        // impossible — fall back to the old membership fee amount gate, made discount-aware by
-        // adding the coupon back so a couponed pre-backfill order compares its GROSS
-        // figure to the gross membership fee and no longer false-raises AMOUNT_MISMATCH.
-        const expected = membership?.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
-        if (expected > 0 && order.totalCents + order.discountCents + AMOUNT_TOLERANCE_CENTS < expected) {
-            await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: order.legacyId, processId: proc.id });
-            return true;
-        }
-    }
-
-    // Coupon entitlement: the item gates above prove the order carries the membership
-    // product, but not that the family was ALLOWED the code that priced it. Volunteer
-    // code on a non-volunteer membership → tell the board, do NOT activate (parity
-    // with the NO_ITEM branch). Sits after both gates so a backfilled pre-#1048 row
-    // with codes is covered too; pre-backfill rows mirror [] and pass through unjudged.
     if (usesVolunteerCodeUnentitled(order, settings?.volunteerFamilyDiscountCode, membership?.isVolunteerFamily ?? false)) {
         logger.warn(`[reconcile] volunteer discount code on non-volunteer order ${order.legacyId} (process ${proc.id})`);
         await raisePaymentException("DISCOUNT_UNAUTHORIZED", { shopifyOrderId: order.legacyId, processId: proc.id });
         return true;
     }
 
-    // Recover: advance past the paid checkpoint. hasMembershipItem=true — the order
-    // contains a known membership variant (or, for a pre-backfill order, covers the membership fee)
-    // and is matched to this specific pending process (honest missed-webhook
-    // assumption; the reconciler is not the attack surface the public webhook is, and
+    // Recover: advance past the paid checkpoint, with the line found above — the order
+    // contains a known membership variant and is matched to this specific pending
+    // process (honest missed-webhook assumption; the reconciler is not the attack surface the public webhook is, and
     // it leaves a full AuditLog trail via activate()).
-    const { outcome } = await activateByProcessId(proc.id, order.legacyId ?? "", true);
+    const { outcome } = await activateByProcessId(proc.id, order.legacyId ?? "", line);
     logger.info(`[reconcile] recovered missed payment: process ${proc.id} ← order ${order.legacyId} (${outcome})`);
     await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId: order.legacyId, processId: proc.id });
     return true;

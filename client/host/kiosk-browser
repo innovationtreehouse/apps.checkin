@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Keeps Chromium on the kiosk page. Runs from Openbox autostart as the kiosk user.
+MARKER=/var/lib/kiosk/.chromium-bounce
+
+read_port() {
+  python3 -c "import json; print(json.load(open('/etc/kiosk/config.json')).get('listen_port', 8080))" 2>/dev/null
+}
+
+xset s noblank || true
+xset s off || true
+xset -dpms || true
+
+# Newer Pi OS uses 'chromium', older uses 'chromium-browser'
+if command -v chromium-browser >/dev/null; then
+  CHROME=chromium-browser
+else
+  CHROME=chromium
+fi
+
+while true; do
+  # Read each pass: the config can arrive after Openbox starts, as it does at cutover.
+  until PORT=$(read_port) && (exec 3<>"/dev/tcp/localhost/$PORT") 2>/dev/null; do
+    sleep 2
+  done
+  rm -f "$MARKER"
+  "$CHROME" \
+    --kiosk \
+    --noerrdialogs \
+    --disable-infobars \
+    --no-first-run \
+    --disable-session-crashed-bubble \
+    --password-store=basic \
+    "http://localhost:$PORT" &
+  CHROME_PID=$!
+  while kill -0 "$CHROME_PID" 2>/dev/null; do
+    if [ -f "$MARKER" ]; then
+      kill "$CHROME_PID" 2>/dev/null || true
+      break
+    fi
+    sleep 2
+  done
+  wait "$CHROME_PID" 2>/dev/null
+  sleep 2
+done

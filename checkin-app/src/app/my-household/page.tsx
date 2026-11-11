@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { LoadError } from '@checkin/component-ui';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { useSeedForm } from '@/hooks/useSeedForm';
+import { useLoad } from '@/lib/api';
 import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
-import { calculateAge, formatDateOnly } from '@/lib/time';
+import { calculateAge, formatDateOnly, isYouth } from '@/lib/time';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
 import { notifications } from '@mantine/notifications';
@@ -19,6 +22,7 @@ import { isValidPhone, formatPhone, PHONE_ERROR } from '@/lib/phone';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
 import { signInEmailHelp } from '@/lib/person/signInEmail';
+import { UNDER_18_DECLARATION_REFUSAL } from '@/lib/person/adultDob';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
@@ -55,7 +59,9 @@ type HouseholdData = {
   name?: string;
   householdMembers?: HouseholdMember[];
   orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean } | null;
+  intakeNotes?: string | null;
 } & Partial<StructuredAddress> | null;
+type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
 const blankContactForm = { id: null as number | null, name: "", phone: "", email: "", relationship: "" };
 
@@ -63,13 +69,14 @@ export default function HouseholdPage() {
   const { user: sessionUser, loading: authLoading, ready } = useRequireRole([]);
   const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
-  const [household, setHousehold] = useState<HouseholdData>(null);
-  const [boardReplyTo, setBoardReplyTo] = useState<string | null>(null);
+  const { data: householdAnswer, error: householdError, reload: fetchHousehold } = useLoad<HouseholdAnswer>(ready ? '/api/household' : null);
+  const household = householdAnswer?.household ?? null;
+  const boardReplyTo = householdAnswer?.boardReplyTo ?? null;
+  const validUntil = householdAnswer?.validUntil ?? null;
   // Open renewal for this household (lead-only, from /api/membership/renewal-status).
   // Drives the "Renew now" copy for a still-ACTIVE member whose renewal has opened.
-  const [renewalDue, setRenewalDue] = useState(false);
-  const [validUntil, setValidUntil] = useState<string | null>(null);
+  const { data: renewalAnswer, error: renewalError, reload: reloadRenewal } = useLoad<{ renewalDue?: boolean }>(ready ? '/api/membership/renewal-status' : null);
+  const renewalDue = !!renewalAnswer?.renewalDue;
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   // Explicit tone per outcome so a real error can never render green (was
   // decided by `message.includes('success')`).
@@ -79,6 +86,7 @@ export default function HouseholdPage() {
   const err = (text: string) => setMessage({ text, tone: "error" });
   const warn = (text: string) => setMessage({ text, tone: "warning" });
   const [addingHouseholdMember, setAddingHouseholdMember] = useState(false);
+  const [savingHouseholdMember, setSavingHouseholdMember] = useState(false);
 
   const [householdMemberForm, setHouseholdMemberForm] = useState({ name: "", email: "", dob: "", phone: "", over25: false, allergies: "" });
   const [householdMemberErrors, setHouseholdMemberErrors] = useState<{ name?: string; email?: string; dob?: string; phone?: string }>({});
@@ -100,7 +108,6 @@ export default function HouseholdPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   // Transient "Updated" confirmation shown in the Address card header for 5s.
 
-  const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [contactForm, setContactForm] = useState(blankContactForm);
   const [showContactForm, setShowContactForm] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
@@ -111,48 +118,29 @@ export default function HouseholdPage() {
   // so phone/email/name errors never flash while the user is still typing.
   const [contactErrors, setContactErrors] = useState<{ name?: string; phone?: string; email?: string }>({});
 
-  const fetchContacts = useCallback(() => fetch('/api/household/emergency-contacts')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setContacts(data.contacts || []);
-      }
-    }),
-  []);
+  // ponytail: guard ONLY the deferred Address card (committed by the "Update
+  // Address" button). The member add/edit forms, emergency-contact form, and the
+  // receipts toggle all submit instantly — intentionally excluded so they never
+  // raise a spurious unsaved-changes prompt.
+  const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
+  useUnsavedGuard(isDirty);
 
-  const fetchHousehold = useCallback(() => fetch('/api/household')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHousehold(data.household);
-        setBoardReplyTo(data.boardReplyTo ?? null);
-        setValidUntil(data.validUntil ?? null);
-        const a = pickAddress(data.household);
-        const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
-        setAddress(loaded);
-        setInitialAddress(loaded);
-        setNotes(data.household?.intakeNotes ?? "");
-        setInitialNotes(data.household?.intakeNotes ?? "");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading household.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
+  useSeedForm(householdAnswer, isDirty, (answer) => {
+    const a = pickAddress(answer.household);
+    const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
+    setAddress(loaded);
+    setInitialAddress(loaded);
+    setNotes(answer.household?.intakeNotes ?? "");
+    setInitialNotes(answer.household?.intakeNotes ?? "");
+  });
 
-  useEffect(() => {
-    if (ready) {
-      fetchHousehold();
-      fetchContacts();
-      fetch('/api/membership/renewal-status')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => setRenewalDue(!!d?.renewalDue))
-        .catch(() => {});
-    }
-  }, [ready, fetchHousehold, fetchContacts]);
+  const userId = (sessionUser as { id: number } | undefined)?.id;
+  const viewerIsLead = household?.householdMembers?.find((m) => m.id === userId)?.isHouseholdLead ?? false;
+  // The contacts card, and the API behind it, are the household lead's.
+  const { data: contactsAnswer, error: contactsError, reload: fetchContacts } = useLoad<{ contacts?: EmergencyContact[] }>(
+    viewerIsLead ? '/api/household/emergency-contacts' : null,
+  );
+  const contacts = contactsAnswer?.contacts ?? [];
 
   const handleSaveSettings = async () => {
     const errors = validateAddress(address);
@@ -168,6 +156,7 @@ export default function HouseholdPage() {
 
       if (householdRes.ok) {
         ok("Settings updated successfully!");
+        setInitialAddress(address);
         setInitialNotes(notes);
         fetchHousehold();
         notifyNavRefresh();
@@ -257,10 +246,12 @@ export default function HouseholdPage() {
 
   const handleAddHouseholdMember = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingHouseholdMember) return;
     setMessage(null);
     const errs = validateHouseholdMemberFields(householdMemberForm);
     setHouseholdMemberErrors(errs);
     if (Object.keys(errs).length > 0) return;
+    setSavingHouseholdMember(true);
     try {
       const res = await fetch('/api/household', {
         method: 'PATCH',
@@ -279,6 +270,8 @@ export default function HouseholdPage() {
       }
     } catch {
       notifications.show({ color: "red", message: "Network error adding household member.", autoClose: false });
+    } finally {
+      setSavingHouseholdMember(false);
     }
   };
 
@@ -332,25 +325,16 @@ export default function HouseholdPage() {
     }
   };
 
-  // ponytail: guard ONLY the deferred Address card (committed by the "Update
-  // Address" button). The member add/edit forms, emergency-contact form, and the
-  // receipts toggle all submit instantly with no pending state — intentionally
-  // excluded so they never raise a spurious unsaved-changes prompt.
-  const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
-  useUnsavedGuard(isDirty);
-
-  if (loading || authLoading) {
+  if ((householdAnswer === null && !householdError) || authLoading) {
     return <PageLoader />;
   }
 
   if (!ready) return null;
 
-  const userId = (sessionUser as { id: number })?.id;
   // Staff (@innovationtreehouse.org) accounts aren't real member families; the add-member
   // control is hidden for them (server also enforces this — see /api/household PATCH).
   const isStaffAccount = isOrgAccount(sessionUser as { hd?: string | null; email?: string | null });
   const isLead = (pid: number) => household?.householdMembers?.find((m) => m.id === pid)?.isHouseholdLead ?? false;
-  const viewerIsLead = isLead(userId);
 
   const sortedHouseholdMembers = (household?.householdMembers || []).slice().sort((a, b) => {
     const isLeadA = isLead(a.id) ? 1 : 0;
@@ -368,6 +352,8 @@ export default function HouseholdPage() {
         <TodoCard />
         <Card withBorder radius="md" padding="lg">
           <Title order={1} mb="md">{household?.name || 'My Household'}</Title>
+
+          {renewalError && <LoadError what="your renewal status" message={renewalError} onRetry={reloadRenewal} />}
 
           {household && (
             // An existing member — still ACTIVE with an open renewal, or already
@@ -406,8 +392,10 @@ export default function HouseholdPage() {
 
           <AlertBanner message={message?.text} tone={message?.tone} mb="lg" />
 
+          {householdError && <LoadError what="your household" message={householdError} onRetry={fetchHousehold} />}
+
           {!household ? (
-            <Stack align="center" py="md">
+            !householdError && <Stack align="center" py="md">
               <Text c="dimmed" ta="center">
                 We couldn&apos;t load your household. Please refresh to try again.
               </Text>
@@ -430,7 +418,7 @@ export default function HouseholdPage() {
                             <TextInput size="xs" label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." value={editForm.name} error={editErrors.name} onChange={(e) => { setEditForm({ ...editForm, name: e.currentTarget.value }); setEditErrors({ ...editErrors, name: undefined }); }} />
                             <TextInput size="xs" label="Nickname (optional)" description="Printed on the name badge in place of the first name." value={editForm.nickname} onChange={(e) => setEditForm({ ...editForm, nickname: e.currentTarget.value })} />
                             <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} disabled={p.hasSignIn} description={p.hasSignIn ? signInEmailHelp(boardReplyTo) : undefined} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
-                            <Checkbox size="xs" label="Individual is over 25" checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
+                            <Checkbox size="xs" label="Individual is over 25" disabled={isYouth(p.dateOfBirth)} description={isYouth(p.dateOfBirth) ? UNDER_18_DECLARATION_REFUSAL : undefined} checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                             {!editForm.over25 && (
                               <TextInput size="xs" type="date" label="Date of Birth" value={editForm.dob} error={editErrors.dob} onChange={(e) => { setEditForm({ ...editForm, dob: e.currentTarget.value }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                             )}
@@ -460,7 +448,7 @@ export default function HouseholdPage() {
                             {!householdMemberIsLead && isAdult && viewerIsLead && (
                               <Button size="compact-xs" variant="light" onClick={() => handleMakeLead(p.id)}>Make Lead</Button>
                             )}
-                            {(viewerIsLead || p.id === userId) && (
+                            {(p.id === userId ? !isYouth(p.dateOfBirth) : viewerIsLead) && (
                               <Button size="compact-xs" variant="subtle" color="gray" onClick={() => {
                                 setEditingHouseholdMemberId(p.id);
                                 setEditErrors({});
@@ -496,7 +484,7 @@ export default function HouseholdPage() {
                       <TextInput type="tel" label="Phone (optional)" value={householdMemberForm.phone} error={householdMemberErrors.phone} onChange={(e) => { setHouseholdMemberForm({ ...householdMemberForm, phone: e.currentTarget.value }); setHouseholdMemberErrors({ ...householdMemberErrors, phone: undefined }); }} />
                       <TextInput label="Allergies (optional)" value={householdMemberForm.allergies} onChange={(e) => setHouseholdMemberForm({ ...householdMemberForm, allergies: e.currentTarget.value })} />
                       <Group grow>
-                        <Button type="submit">Save / Invite</Button>
+                        <Button type="submit" disabled={savingHouseholdMember} loading={savingHouseholdMember}>Save / Invite</Button>
                         <Button type="button" variant="default" onClick={() => { setAddingHouseholdMember(false); setHouseholdMemberErrors({}); }}>Cancel</Button>
                       </Group>
                     </Stack>
@@ -551,7 +539,9 @@ export default function HouseholdPage() {
                   <Alert color="red" variant="light" mb="sm" withCloseButton onClose={() => setContactError("")}>{contactError}</Alert>
                 )}
 
-                {contacts.length === 0 && !showContactForm && (
+                {contactsError && <LoadError what="emergency contacts" message={contactsError} onRetry={fetchContacts} />}
+
+                {contactsAnswer !== null && contacts.length === 0 && !showContactForm && (
                   <Alert color="red" variant="light">No emergency contact on file. Add at least one.</Alert>
                 )}
 

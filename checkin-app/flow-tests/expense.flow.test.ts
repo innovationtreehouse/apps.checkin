@@ -1,12 +1,12 @@
 /**
- * Expense (#1272): the persona matrix over all 46 routes (anonymous, plain member, bucket
+ * Expense: the persona matrix over all 46 routes (anonymous, plain member, bucket
  * approver, Board, FINANCE), field stripping on the approver view, one FINANCE journey and one
  * approver sign-off journey. Real HTTP against the running dev server and the seeded expense DB
  * (docker-compose.flow.yml + packages/expense/prisma/seed.ts).
  *
  * The expense seed names checkin ids from a fresh baseline: bucket 2 is the first program's
  * ("Woodworking 101"), and person 10 (tool.certifier) submitted every seeded expense. The
- * approver is inventory.manager, made that program's lead for this suite and restored after.
+ * approver is inventory.manager, made that bucket's owner for this suite and cleared after.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -18,7 +18,8 @@ const BOARD = "boardmember@example.com";
 const APPROVER = "inventory.manager@example.com";
 const PLAIN = "parent.family@example.com";
 const SUBMITTER = "tool.certifier@example.com";
-const OTHER_ADULT = "certified.adult@example.com";
+const REIMBURSEE = "member.pricing@example.com"; // an adult by date of birth
+const MINOR = "child.family@example.com";
 const PROGRAM = "Woodworking 101";
 
 const PROGRAM_EXPENSE = "seed-expense-program";
@@ -43,7 +44,6 @@ const ROUTES: Route[] = [
   ["POST", `${E}/line-items/0/signoffs`, "signoff", {}],
   ["GET", "/api/expense/queue?view=all", "approver"],
   ["GET", "/api/expense/counts", "approver"],
-  ["GET", "/api/expense/expense-holds", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping", "financeOrBoard"],
   ["GET", "/api/expense/account-mapping/catalog", "financeOrBoard"],
   ["GET", "/api/expense/qb-accounts", "financeOrBoard"],
@@ -56,7 +56,8 @@ const ROUTES: Route[] = [
   ["GET", "/api/expense/qb-exclusions", "financeOrBoard"],
   ["GET", "/api/expense/org-settings", "financeOrBoard"],
   ["PUT", "/api/expense/org-settings", "financeOrBoard", { unknownField: 1 }],
-  ["GET", "/api/expense/flags", "financeOrBoard"],
+  ["GET", "/api/expense/finance-queue?tab=expenses", "financeOrBoard"],
+  ["GET", "/api/expense/finance-queue/counts", "financeOrBoard"],
   ["POST", "/api/expense/flags/0/check-off", "financeOrBoard", {}],
   ["POST", `${E}/line-item-approvals/0/reject`, "finance", {}],
   ["POST", `${E}/line-item-approvals/0/assign-owner`, "finance", {}],
@@ -85,33 +86,30 @@ const send = (s: Session | null, method: string, path: string, body?: unknown) =
 
 const denied = (status: number) => status === 401 || status === 403;
 
-type ProgramRow = { id: number; name: string; leadMentorId?: number | null };
+type BucketRow = { id: number; name: string };
 type ExpenseRow = { id: string; submitterId?: number; state: string; vendorName: string | null };
 type Approval = { id: number; lineItemId: number; ownerId: number | null; status: string };
 type SignoffStatus = { lineItemId: number; filled: string[]; missing: string[] };
 
-let program: ProgramRow;
-let originalLead: number;
+let bucketId: number;
 
-async function setLead(board: Session, personId: number): Promise<void> {
-  const res = await send(board, "PATCH", `/api/programs/${program.id}`, { leadMentorId: personId });
+async function setOwner(board: Session, personId: number | null): Promise<void> {
+  const res = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId });
   expect(res.status).toBe(200);
 }
 
 beforeAll(async () => {
   expect((await loginAs(SUBMITTER)).personaId).toBe(10); // the seed's submitter id
   const board = await loginAs(BOARD);
-  const programs = await api<ProgramRow[]>(board, "/api/programs");
-  program = programs.json.find((p) => p.name === PROGRAM)!;
-  expect(program).toBeDefined();
-  originalLead = program.leadMentorId ?? board.personaId;
-  await setLead(board, (await loginAs(APPROVER)).personaId);
+  const buckets = await api<BucketRow[]>(board, "/api/budget-owners");
+  const bucket = buckets.json.find((b) => b.name === PROGRAM);
+  expect(bucket).toBeDefined();
+  bucketId = bucket!.id;
+  await setOwner(board, (await loginAs(APPROVER)).personaId);
 });
 
 afterAll(async () => {
-  const board = await loginAs(BOARD);
-  // Nobody makes themself a program lead, so the board persona cannot take the seeded lead back.
-  if (originalLead !== board.personaId) await setLead(board, originalLead);
+  await setOwner(await loginAs(BOARD), null);
 });
 
 describe("expense — persona matrix", () => {
@@ -153,8 +151,8 @@ describe("expense — persona matrix", () => {
     for (const [method, path, , body] of ROUTES) {
       const { status } = await send(finance, method, path, body);
       expect([method, path, denied(status)]).toEqual([method, path, false]);
-      // A GET naming line 0 is admitted and then finds nothing.
-      if (method === "GET" && !path.includes("/0/")) expect([path, status]).toEqual([path, 200]);
+      // A GET naming line 0 is admitted and then finds nothing; QuickBooks is off here, so candidates answer 503.
+      if (method === "GET" && !path.includes("/0/")) expect([path, status]).toEqual([path, path.endsWith("/qb-candidates") ? 503 : 200]);
     }
   });
 });
@@ -163,24 +161,25 @@ describe("expense — field stripping", () => {
   it("serves an approver internal fields only, FINANCE the submitter too", async () => {
     const approver = await loginAs(APPROVER);
     const finance = await loginAs(FINANCE);
-    const asApprover = await api<ExpenseRow>(approver, E);
-    const asFinance = await api<ExpenseRow>(finance, E);
+    const asApprover = await api<{ Expense: ExpenseRow; ExpenseQueueReason: unknown[] }>(approver, E);
+    const asFinance = await api<{ Expense: ExpenseRow }>(finance, E);
     expect(asApprover.status).toBe(200);
-    expect(asApprover.json.vendorName).toBe("TEST-Lumber Co");
-    expect(asApprover.json.submitterId).toBeUndefined();
-    expect(asFinance.json.submitterId).toBe(10);
+    expect(asApprover.json.Expense.vendorName).toBe("TEST-Lumber Co");
+    expect(asApprover.json.Expense.submitterId).toBeUndefined();
+    expect(asApprover.json.ExpenseQueueReason).toEqual([]);
+    expect(asFinance.json.Expense.submitterId).toBe(10);
   });
 
   it("confines an approver's list to their bucket's expenses", async () => {
     const approver = await loginAs(APPROVER);
-    const { json } = await api<ExpenseRow[]>(approver, "/api/expense/expenses");
-    expect(json.map((e) => e.id)).toEqual([PROGRAM_EXPENSE]);
+    const { json } = await api<{ Expense: ExpenseRow[] }>(approver, "/api/expense/expenses");
+    expect(json.Expense.map((e) => e.id)).toEqual([PROGRAM_EXPENSE]);
     expect((await api(approver, `/api/expense/expenses/${HELD_EXPENSE}`)).status).toBe(404);
   });
 });
 
 describe("expense — approver sign-off journey", () => {
-  it("approves the program line, then signs the program-approver seat", async () => {
+  it("approves the program line, which is the program approver's sign-off, then FINANCE signs as Treasurer", async () => {
     const approver = await loginAs(APPROVER);
     const counts = await api<Record<string, number>>(approver, "/api/expense/counts");
     expect(counts.json.owner_approval).toBe(1);
@@ -189,24 +188,23 @@ describe("expense — approver sign-off journey", () => {
     const [line] = approvals.json.LineItemOwnerApproval;
     expect(line.status).toBe("pending");
 
+    // The Treasurer signs only after the line is approved.
+    const finance = await loginAs(FINANCE);
+    expect((await send(finance, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(403);
+
     const approved = await send(approver, "POST", `${E}/line-item-approvals/${line.id}/approve`, {});
     expect(approved.status).toBe(200);
     expect((approved.json as Approval).status).toBe("approved");
 
-    // Not the submitter, so not the submitter seat; not FINANCE, so not the Treasurer seat.
+    // There is no program-approver seat; a card charge takes no submitter seat; the approver never signs as Treasurer.
+    expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "PROGRAM_APPROVER" })).status).toBe(400);
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "SUBMITTER" })).status).toBe(403);
     expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(403);
-    const signed = await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "PROGRAM_APPROVER" });
-    expect(signed.status).toBe(200);
-    expect((signed.json as SignoffStatus[])[0].filled).toEqual(["PROGRAM_APPROVER"]);
-    // A filled seat cannot be signed again.
-    expect((await send(approver, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "PROGRAM_APPROVER" })).status).toBe(403);
 
-    // FINANCE fills the Treasurer seat; the submitter's seat is still open.
-    const finance = await loginAs(FINANCE);
+    // FINANCE fills the Treasurer seat; a card charge takes no submitter seat, so nothing is missing.
     expect((await send(finance, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(200);
     const status = await api<SignoffStatus[]>(approver, `${E}/signoffs`);
-    expect(status.json[0]).toMatchObject({ filled: expect.arrayContaining(["PROGRAM_APPROVER", "TREASURER"]), missing: ["SUBMITTER"] });
+    expect(status.json[0]).toMatchObject({ filled: ["TREASURER"], missing: [] });
     expect((await api(approver, "/programs-i-lead/expense-approvals")).status).toBe(200);
   });
 });
@@ -223,12 +221,16 @@ describe("expense — FINANCE journey", () => {
     expect(settings.json).toMatchObject({ boardReviewTotalCents: 150_000 });
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: -1 })).status).toBe(400);
 
-    // QuickBooks accounts and an account-mapping rule: create, edit, delete.
-    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: `6100-${stamp}` });
+    // QuickBooks accounts and an account-mapping rule: create, edit, delete. The ids are LOCAL_QUICKBOOKS_ACCOUNTS';
+    // a Bank account is refused, and a rule takes a Fixed Asset account only when it says it's capital.
+    expect((await send(f, "POST", "/api/expense/qb-accounts", { name: `Checking ${stamp}`, qbAccount: "8001" })).status).toBe(400);
+    const account = await send(f, "POST", "/api/expense/qb-accounts", { name: `Supplies ${stamp}`, qbAccount: "8006" });
     expect(account.status).toBe(200);
     const accountId = (account.json as { id: number }).id;
-    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: `6110-${stamp}` })).status).toBe(200);
-    const rule = { category: "*", subcategory: "*", partNumber: `P-${stamp}`, isDelayed: null, isCapital: null, qbAccount: `6110-${stamp}` };
+    expect((await send(f, "PUT", `/api/expense/qb-accounts/${accountId}`, { name: `Supplies ${stamp}`, qbAccount: "8007" })).status).toBe(200);
+    const rule = { category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "8006" };
+    expect((await send(f, "POST", "/api/expense/account-mapping", { ...rule, qbAccount: "8009" })).status).toBe(400);
+    expect((await send(f, "POST", "/api/expense/account-mapping", { ...rule, isCapital: true })).status).toBe(400);
     const mapping = await send(f, "POST", "/api/expense/account-mapping", rule);
     expect(mapping.status).toBe(200);
     const mappingId = (mapping.json as { id: number }).id;
@@ -239,51 +241,54 @@ describe("expense — FINANCE journey", () => {
     const buckets = await api<{ id: number; name: string }[]>(f, "/api/expense/local-owners");
     const facility = buckets.json.find((b) => b.name === "Facility")!;
     expect(facility).toBeDefined();
-    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(200);
+    const catalog = await api<Array<{ gtin13: string; name: string }>>(f, "/api/catalog/items?q=Power%20Distribution%20Hub");
+    const part = catalog.json.find((i) => i.name === "Power Distribution Hub")!.gtin13;
+    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(400);
+    expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: part, ownerId: facility.id })).status).toBe(200);
 
-    // Assign the unassigned line to the org-level bucket: assigning is the approval.
+    // Assign the unassigned line to the org-level bucket: assigning is not the approval, so it waits for a Board member's.
     const U = `/api/expense/expenses/${UNASSIGNED_EXPENSE}`;
     const [unassigned] = (await api<{ LineItemOwnerApproval: Approval[] }>(f, `${U}/line-item-approvals`)).json.LineItemOwnerApproval;
     const assigned = await send(f, "POST", `${U}/line-item-approvals/${unassigned.id}/assign-owner`, { ownerId: facility.id });
     expect(assigned.status).toBe(200);
-    expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "approved" });
+    expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "pending" });
+
+    // Finance queue: the unknown reimbursee and the unreviewed tax are reasons read from the expense.
+    type QueueRow = { expenseId: string | null; reasons: { code: string }[] };
+    const reasonsOf = async (id: string) =>
+      ((await api<QueueRow[]>(f, "/api/expense/finance-queue?tab=expenses")).json.find((r) => r.expenseId === id)?.reasons ?? []).map((x) => x.code);
+    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).toContain("REIMBURSEE_TO_NAME");
+    expect(await reasonsOf(HELD_EXPENSE)).toContain("TAX_NOT_REVIEWED");
+    expect((await api<{ expenses: { total: number } }>(f, "/api/expense/finance-queue/counts")).json.expenses.total).toBeGreaterThan(0);
 
     // Holds: set an account on the held line, then resubmit.
-    const holds = await api<{ expenseId: string; lineItemId: number }[]>(f, "/api/expense/expense-holds");
-    const hold = holds.json.find((h) => h.expenseId === HELD_EXPENSE)!;
+    const held = await api<{ Expense: { holds: { lineItemId: number }[] } }>(f, `/api/expense/expenses/${HELD_EXPENSE}`);
+    const [hold] = held.json.Expense.holds;
     expect(hold).toBeDefined();
     const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
-    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: `6110-${stamp}` })).status).toBe(200);
+    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: "8006" })).status).toBe(200);
     expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
 
-    // Flags: the reimbursee flag stays open while the hold applies; the tax flag checks off.
-    const flags = await api<{ id: number; kind: string; expenseId: string }[]>(f, "/api/expense/flags");
-    const unknown = flags.json.find((x) => x.kind === "REIMBURSEE_UNKNOWN")!;
-    const tax = flags.json.find((x) => x.kind === "TAX_ATTACHED")!;
-    expect((await send(f, "POST", `/api/expense/flags/${unknown.id}/check-off`, {})).status).toBe(409);
-    expect((await send(f, "POST", `/api/expense/flags/${tax.id}/check-off`, { notes: "seen" })).status).toBe(200);
-
-    // Reimbursee: FINANCE names the uploader, the only person it may name, which clears the hold's flag.
-    const reimbursee = (await loginAs(SUBMITTER)).personaId;
-    const other = (await loginAs(OTHER_ADULT)).personaId;
+    // Reimbursee: FINANCE names an adult other than the uploader, never itself or a minor, which clears the queue reason.
+    const reimbursee = (await loginAs(REIMBURSEE)).personaId;
+    const minor = (await loginAs(MINOR)).personaId;
     const R = `/api/expense/expenses/${REIMBURSEMENT_EXPENSE}/reimbursee`;
     expect((await send(f, "PUT", R, { personId: f.personaId })).status).toBe(403);
-    expect((await send(f, "PUT", R, { personId: other })).status).toBe(403);
+    expect((await send(f, "PUT", R, { personId: minor })).status).toBe(400);
     const set = await send(f, "PUT", R, { personId: reimbursee });
     expect(set.status).toBe(200);
     expect(set.json).toMatchObject({ reimburseePersonId: reimbursee });
     expect((await send(f, "PUT", R, { personId: reimbursee })).status).toBe(409);
-    const open = await api<{ kind: string }[]>(f, "/api/expense/flags");
-    expect(open.json.some((x) => x.kind === "REIMBURSEE_UNKNOWN")).toBe(false);
+    expect(await reasonsOf(REIMBURSEMENT_EXPENSE)).not.toContain("REIMBURSEE_TO_NAME");
 
-    // Capital seed, then QuickBooks: no candidates while unbound, exclusions record.
+    // Capital seed, then QuickBooks: exclusions record, and candidates answer "not connected" while QuickBooks is off.
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
     expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
-    const candidates = await send(f, "GET", `/api/expense/expenses/${hold.expenseId}/qb-candidates`);
-    expect(candidates.status).toBe(200);
-    expect(candidates.json).toEqual([]);
+    const candidates = await send(f, "GET", `/api/expense/expenses/${HELD_EXPENSE}/qb-candidates`);
+    expect(candidates.status).toBe(503);
+    expect(JSON.stringify(candidates.json)).toContain("QuickBooks is not connected");
   });
 
   it("server-renders an expense page (proves the library tsx transpiles)", async () => {

@@ -18,7 +18,7 @@ export default function MyReceiptsPage() {
         <Checkbox label="Hide completed" checked={hideCompleted} onChange={(e) => setHideCompleted(e.currentTarget.checked)} />
       </Group>
       {mine.error && <Alert color="red" mb="md">{mine.error}</Alert>}
-      {mine.data && <ReceiptTable rows={mine.data} paid />}
+      {mine.data && <ReceiptTable rows={mine.data} paid flagMine />}
     </>
   );
 }

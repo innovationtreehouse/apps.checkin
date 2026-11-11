@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { FIXTURE_MANIFEST, loadRaw, type Seam } from "./index";
 
 /**
- * Corpus guard (Phase P0). Every seam fixture must validate against the shared
+ * Corpus guard. Every seam fixture must validate against the shared
  * contract schema it claims, and every seam must keep a minimum set of branch
  * fixtures. This is what makes the corpus trustworthy: if a contract schema
  * changes in a way that orphans a fixture, this test fails loudly — before any
@@ -42,8 +42,9 @@ describe("contract fixture corpus", () => {
         "with-tax-shipping-discount",
         "reimbursement-flagged",
         "non-inventory-present",
+        "finance-approved-tax",
       ],
-      "S2-expense-receipt": ["all-recognized-gtin", "has-provisional"],
+      "S2-expense-receipt": ["all-recognized-gtin", "has-provisional", "finance-approved-tax", "has-non-inventory"],
       "S3-inventory-delta": ["recognized-only", "with-provisional"],
       "S4-catalog-submissions": ["item-reference-proposal", "reference-conflict", "items-lookup"],
       "S5-org-events": [

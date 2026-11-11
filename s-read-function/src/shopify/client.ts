@@ -100,7 +100,7 @@ export function createShopifyClient(cfg: ShopifyConfig): ShopifyClient {
   async function request<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
     let attempt = 0;
     // A warm Lambda can hold a token that's since expired/been rotated; allow exactly one
-    // invalidate-and-remint retry per request, not a loop (see token.ts / #237).
+    // invalidate-and-remint retry per request, not a loop (see token.ts).
     let authRetried = false;
 
     while (true) {

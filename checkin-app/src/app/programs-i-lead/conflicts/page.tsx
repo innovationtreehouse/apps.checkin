@@ -4,8 +4,9 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Badge, Button, Card, Group, Stack, Table, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
 import { IconTrash } from "@tabler/icons-react";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { useConflicts } from "@/hooks/useConflicts";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -19,27 +20,17 @@ import type { AttendanceConflict, ConflictVisit } from "@/lib/attendanceConflict
  */
 export default function ConflictsPage() {
   const { status } = useSession();
-  const { conflicts, refresh } = useConflicts(status === "authenticated");
+  const { conflicts, error, refresh } = useConflicts(status === "authenticated");
   const [deleting, setDeleting] = useState<number | null>(null);
 
   async function resolve(visitId: number) {
     setDeleting(visitId);
     try {
-      const res = await fetch("/api/my-programs/conflicts/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Duplicate visit deleted." });
-        refresh();
-        notifyNavRefresh();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Failed to delete visit.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api("/api/my-programs/conflicts/resolve", { method: "POST", body: JSON.stringify({ visitId }) });
+      showSuccess("Duplicate visit deleted.");
+      notifyNavRefresh();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setDeleting(null);
     }
@@ -55,13 +46,17 @@ export default function ConflictsPage() {
     });
   }
 
-  if (conflicts === null) return <Text c="dimmed">Loading conflicts…</Text>;
+  const loadError = error && <LoadError what="attendance conflicts" message={error} onRetry={refresh} />;
+
+  if (conflicts === null) return loadError || <Text c="dimmed">Loading conflicts…</Text>;
   if (conflicts.length === 0) {
+    if (loadError) return loadError;
     return <Text c="dimmed">No attendance conflicts. Duplicate or overlapping check-ins would show here.</Text>;
   }
 
   return (
     <Stack>
+      {loadError}
       <Text size="sm" c="dimmed">
         {conflicts.length} participant{conflicts.length === 1 ? "" : "s"} with overlapping visits. Delete the duplicate to leave one clean visit.
       </Text>

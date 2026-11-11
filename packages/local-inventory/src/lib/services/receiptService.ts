@@ -1,12 +1,13 @@
 import { z } from "zod";
+import type { Prisma } from "../../generated/prisma/client";
 import { isRecordNotFoundError, isUniqueConstraintError, type Db } from "../db/index";
 import type { InventoryProvisionalItem, OrgItem } from "../db/schema";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
-import { isProvisionalGtin13 } from "../gtin";
+import { formatGtinDisplay, isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
-import type { ProvisionalItemService } from "./provisionalItemService";
-import { isServiceError, ServiceError } from "@checkin/component-kit";
+import { receivingGtin13, reconcileRecorded, type ProvisionalItemService } from "./provisionalItemService";
+import { ServiceError } from "@checkin/component-kit";
 
 export type ApplyLineItem = {
   gtin13: string;
@@ -33,9 +34,17 @@ export type ApplyResult = {
   updatedItems: Array<{ gtin13: string; newQuantity: number }>;
 };
 
+/**
+ * A provisional item's name. A donation delta sends its raw GTIN when the line has no description, and
+ * that value stays in the delta because a replay must match the delta as first applied.
+ */
+function provisionalItemName(gtin13: string, provisionalName?: string): string {
+  return !provisionalName || provisionalName === gtin13 ? formatGtinDisplay(gtin13) : provisionalName;
+}
+
 /** Stock is held under a provisional GTIN only when the GTIN is in the provisional range. */
 function assertProvisionalGtin(gtin13: string): void {
-  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional GTIN: ${gtin13}`);
+  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional Part ID: ${formatGtinDisplay(gtin13)}`);
 }
 
 const positiveInt = z.number().int().positive();
@@ -60,6 +69,35 @@ const applyInputSchema = z.object({
     }),
   ),
 });
+
+/** A stored delta, read back to the apply input: the nulls `normalisedDeltaJson` writes become absent. */
+const nullable = <T extends z.ZodType>(t: T) => t.nullable().transform((v) => v ?? undefined);
+const storedDeltaSchema = z.object({
+  source: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("receipt"), receiptId: z.string(), retailer: nullable(z.string()) }),
+    z.object({ kind: z.literal("donation"), donationId: z.string() }),
+  ]),
+  lineItems: z.array(
+    z.object({
+      gtin13: z.string(),
+      quantityDelta: z.number(),
+      isDelayed: z.boolean(),
+      lineItemId: nullable(z.number()),
+      isProvisional: z.boolean(),
+      provisionalName: nullable(z.string()),
+      conversionFactor: z.number(),
+      conversionVersion: z.number(),
+    }),
+  ),
+});
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 function sourceKey(source: ApplySource): string {
   return source.kind === "receipt" ? `receipt:${source.receiptId}` : `donation:${source.donationId}`;
@@ -118,41 +156,43 @@ export function createReceiptService({
     );
   }
 
-  // Best effort: the apply error is what the caller needs, so a failure to record it is dropped.
+  /**
+   * Records the failure: the last error every time, the first failure time only while unset.
+   * Best effort: the apply error is what the caller needs, so a failure to record it is dropped.
+   */
   async function recordFailure(orgId: string, key: string, receiptId: string | null, deltaJson: string, err: unknown) {
     const failureReason = err instanceof Error ? err.message : String(err);
     try {
       await db.receivedInventoryDelta.create({
-        data: { orgId, sourceKey: key, receiptId, deltaJson, status: "failed", failureReason },
+        data: { orgId, sourceKey: key, receiptId, deltaJson, status: "failed", failureReason, firstFailedAt: new Date() },
       });
     } catch (createErr) {
       if (!isUniqueConstraintError(createErr)) return;
-      await db.receivedInventoryDelta
-        .updateMany({ where: { orgId, sourceKey: key, status: "failed" }, data: { deltaJson, failureReason } })
-        .catch(() => undefined);
+      const failed = { orgId, sourceKey: key, status: "failed" };
+      await db.receivedInventoryDelta.updateMany({ where: failed, data: { deltaJson, failureReason } }).catch(() => undefined);
+      await db.receivedInventoryDelta.updateMany({ where: { ...failed, firstFailedAt: null }, data: { firstFailedAt: new Date() } }).catch(() => undefined);
     }
   }
 
   /**
    * Reconcile-on-ingest, run after commit since it issues its own transactions: if a catalog
    * resolution for a new provisional GTIN already arrived (event-before-row), apply it now.
-   * The commit stands either way, so a failure is logged, not thrown; the daily org-event
-   * catch-up retries pending provisionals that have a stored resolution.
+   * The commit stands either way, so a failure is recorded on the provisional, not thrown.
    */
   async function reconcileAfterCommit(orgId: string, gtin13: string): Promise<void> {
     try {
-      await provisionalItemService.reconcileProvisionalOnCreate(orgId, gtin13);
+      await reconcileRecorded(db, provisionalItemService, orgId, gtin13);
     } catch (err) {
-      console.error(`[local-inventory/receipt] reconcile of provisional ${gtin13} failed; catch-up retries it`, err);
+      console.error(`[local-inventory/receipt] recording the reconcile of provisional ${gtin13} failed`, err);
     }
   }
 
   /**
    * Apply a source's line items at most once per (org, source key). The guard row in
    * ReceivedInventoryDelta and every stock change commit in one transaction, so a failed apply
-   * leaves nothing behind but a "failed" record, and a concurrent duplicate fails on the unique
-   * key (or the stock row it races on) and is answered as a replay. Replaying an applied source
-   * with a different delta is a 409.
+   * leaves nothing behind but a "failed" record with its reason, and a concurrent duplicate fails
+   * on the unique key (or the stock row it races on) and is answered as a replay. Replaying an
+   * applied source with a different delta is a 409, and the applied record stands.
    */
   async function apply(rawOrgId: string, rawSource: ApplySource, rawLineItems: ApplyLineItem[]): Promise<ApplyResult> {
     const parsed = applyInputSchema.safeParse({ orgId: rawOrgId, source: rawSource, lineItems: rawLineItems });
@@ -185,7 +225,7 @@ export function createReceiptService({
               await tx.inventoryProvisionalItem.create({
                 data: {
                   provisionalGtin13: li.gtin13,
-                  name: li.provisionalName ?? li.gtin13,
+                  name: provisionalItemName(li.gtin13, li.provisionalName),
                   usageBehavior: "Unknown",
                   orgId,
                   status: "pending",
@@ -216,17 +256,18 @@ export function createReceiptService({
             continue;
           }
 
-          const newQuantity = await applyQtyChangeIn(tx, orgId, li.gtin13, li.quantityDelta, {
+          const gtin13 = li.isProvisional ? await receivingGtin13(tx, orgId, li.gtin13) : li.gtin13;
+          const newQuantity = await applyQtyChangeIn(tx, orgId, gtin13, li.quantityDelta, {
             userId: null,
             changeType: "automatic",
             receiptId,
             conversionFactor: li.conversionFactor ?? 1,
             conversionVersion: li.conversionVersion ?? 1,
           });
-          updatedItems.push({ gtin13: li.gtin13, newQuantity });
+          updatedItems.push({ gtin13, newQuantity });
         }
 
-        const applied = { status: "applied", deltaJson, resultJson: JSON.stringify(updatedItems), failureReason: null };
+        const applied = { status: "applied", deltaJson, resultJson: JSON.stringify(updatedItems), failureReason: null, firstFailedAt: null };
         if (prior) {
           await tx.receivedInventoryDelta.update({ where: { id: prior.id, status: "failed" }, data: applied });
         } else {
@@ -235,7 +276,6 @@ export function createReceiptService({
         return { success: true, replayed: false, updatedItems };
       });
     } catch (err) {
-      if (isServiceError(err)) throw err;
       if (isUniqueConstraintError(err) || isRecordNotFoundError(err)) {
         const replay = await earlierResult(orgId, key, deltaJson);
         if (replay) return replay;
@@ -255,6 +295,28 @@ export function createReceiptService({
 
     async applyDonation(orgId: string, donationId: string, lineItems: DonationLineItem[]) {
       return apply(orgId, { kind: "donation", donationId }, lineItems);
+    },
+
+    /**
+     * Applies a failed delta once from its stored lines. 404 when this org has no such failed delta.
+     * A failure is recorded on the row, not thrown, so its error stays on the item's own page.
+     */
+    async retryFailedDelta(orgId: string, where: Prisma.ReceivedInventoryDeltaWhereInput): Promise<void> {
+      const row = await db.receivedInventoryDelta.findFirst({ where: { orgId, status: "failed", ...where }, select: { deltaJson: true } });
+      if (!row) throw new ServiceError(404, "No failed inventory delta for this item");
+      const stored = storedDeltaSchema.safeParse(parseJson(row.deltaJson));
+      if (!stored.success) throw new ServiceError(409, "The stored inventory delta can't be read");
+      const { source, lineItems } = stored.data;
+      await apply(orgId, source, lineItems).catch(() => undefined);
+    },
+
+    /** Why the donation's last apply failed; null once it applies, or if it never failed. */
+    async donationFailureReason(orgId: string, donationId: string): Promise<string | null> {
+      const row = await db.receivedInventoryDelta.findUnique({
+        where: { orgId_sourceKey: { orgId, sourceKey: sourceKey({ kind: "donation", donationId }) } },
+        select: { status: true, failureReason: true },
+      });
+      return row?.status === "failed" ? row.failureReason : null;
     },
 
     async getOrgItem(gtin13: string, orgId: string) {

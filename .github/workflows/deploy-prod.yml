@@ -39,10 +39,10 @@ permissions:
   contents: read    # checkout the released tag (validate + deploy)
   packages: write   # push the image to ghcr.io (deploy job)
   # checks: write is not used by THIS workflow — it's the ceiling for the
-  # reusable ci.yml call: its `test` job requests checks: write (dorny
-  # test-reporter), and a called job may never exceed the caller's grants.
-  # Without this line the run dies at startup_failure with zero jobs —
-  # which is exactly how v1.0.0's first deploy attempt failed (2026-07-14).
+  # reusable ci.yml call: its unit-tests/integration-tests jobs request
+  # checks: write (dorny/test-reporter), and a called job may never exceed the
+  # caller's grants. Without this line the run dies at startup_failure with
+  # zero jobs.
   checks: write
 
 concurrency:
@@ -51,17 +51,15 @@ concurrency:
 
 env:
   AWS_REGION: us-east-2
-  # The fleet standardized on ghcr.io (dev, arbor, s-read, bootstrap all push
-  # there; the prod task defs pull via the shared ghcr-pull-credentials
-  # secret). The ECR registry this workflow originally targeted is vestigial.
+  # The fleet uses ghcr.io (dev, arbor, s-read, bootstrap all push there; the
+  # prod task defs pull via the shared ghcr-pull-credentials secret).
   IMAGE_REPO: ghcr.io/innovationtreehouse/checkin-prod
   # Prod runs on the shared Managed-Instances cluster, not a dedicated
-  # checkin-prod cluster (infra #104 destroyed that one). Names below come from
-  # the infra repo — see the "prod infra" note in the PR description.
+  # checkin-prod cluster. Names below come from the infra repo.
   ECS_CLUSTER: treehouse-prod
   ECS_SERVICE: checkin-prod
   # Migrations run on FARGATE_SPOT, not the prepaid c6g (a one-off 512-MiB task
-  # can't place there while the wiki is awake — the v1.0.1 wedge). awsvpc needs
+  # can't place there while the wiki is awake). awsvpc needs
   # explicit networking: the default-VPC public subnets + the checkin-prod
   # service SG (Aurora ingress: infra network module, database_from_checkin_prod;
   # public IP for the ghcr pull — no NAT). Values come from the infra repo
@@ -76,9 +74,8 @@ env:
 
 jobs:
   # A release must ship from its OWN release line: v1.1.x may only be cut from
-  # rel/1.1. Supersedes the old branch-guard job (any rel/* branch) — matching
-  # the specific line implies containment in some rel/* line, so running both
-  # was redundant.
+  # rel/1.1. Matching the specific line implies containment in some rel/* line,
+  # so no separate any-rel/* guard runs.
   #
   # Checks ANCESTRY, not `release.target_commitish`. That field can be a branch
   # name OR a bare SHA, is chosen by whoever cut the release, and is re-taggable —
@@ -101,9 +98,8 @@ jobs:
 
   # Re-run the FULL CI pipeline (lint, type-check, migration-drift, Jest, the
   # security contract tests, AND the deploy build + boot/smoke) against the exact
-  # released tag. This is the H1 fix: a release tag can point at any commit, and
-  # we no longer trust whatever check status happened to exist there — we prove
-  # the released code green from scratch before a human is even asked to approve.
+  # released tag. A release tag can point at any commit, and whatever check
+  # status exists there is not trusted — we prove the released code green from scratch before a human is even asked to approve.
   # Needs release-branch-match so a mis-cut release fails with ONE error
   # instead of burning a full CI pass in parallel with the rejection.
   validate:
@@ -115,18 +111,13 @@ jobs:
     secrets: inherit
 
   # Migration COUNT is deliberately ungated here — no CI job blocks a release
-  # on how many new migrations it carries. The team manages coalescing
-  # manually per release (docs/ops/MIGRATION_COALESCE_FLOW.md is still the
-  # playbook and its script still works); this used to be enforced by a
-  # blocking release-time job (removed) plus an advisory PR-time check (also
-  # removed) — both judged a per-release human call, not CI's, after the old
-  # gate blocked the legitimate v1.0.4 deploy (4 additive migrations vs. its
-  # budget of 1).
+  # on how many new migrations it carries. Coalescing is a per-release human
+  # call, not CI's, because a batch of additive migrations can be legitimate
+  # (docs/ops/MIGRATION_COALESCE_FLOW.md is the playbook).
   #
-  # Historical warning, still true: `prisma migrate deploy` is not
-  # transactional across migrations, so a multi-migration release that fails
-  # mid-batch can leave prod partially migrated behind a P3009 (the
-  # 2026-07-02 incident). A human should still weigh coalescing before
+  # `prisma migrate deploy` is not transactional across migrations, so a
+  # multi-migration release that fails mid-batch can leave prod partially
+  # migrated behind a P3009. A human should weigh coalescing before
   # releasing a multi-migration batch.
 
   deploy:
@@ -255,13 +246,10 @@ jobs:
           }
           EOF
 
-          # treehouse-prod is ECS Managed Instances: the app + migrate task defs
-          # are host-networked/EC2-compatible here (modules/checkin/compute.tf),
-          # and the service itself has no networkConfiguration (its dynamic
-          # block is empty on Managed Instances) — unlike dev's Fargate/awsvpc
-          # path, there is no network config to copy and no FARGATE launch type
-          # to use. Launch via the cluster's capacity provider instead, with no
-          # --network-configuration at all.
+          # The migrate task runs on FARGATE_SPOT with awsvpc networking in
+          # MIGRATE_SUBNETS / MIGRATE_SG (see env above). The service has no
+          # networkConfiguration to copy, because the app runs on the cluster's
+          # Managed Instances.
           TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --task-definition "$MIGRATE_ARN" \
@@ -280,8 +268,7 @@ jobs:
 
           # Surface the container's own output either way — without this, a failure
           # only shows the exit code here and the real Prisma error (P3009 etc.)
-          # hides in CloudWatch, which is how the 2026-07-02 P3009 wedge went
-          # undiagnosed for a day (mirrors deploy-dev.yml).
+          # hides in CloudWatch (mirrors deploy-dev.yml).
           TASK_ID="${TASK_ARN##*/}"
           echo "--- migrate container logs (/ecs/checkin-migrate-prod) ---"
           ./scripts/dump-task-logs.sh /ecs/checkin-migrate-prod "ecs/checkin-migrate/$TASK_ID"
@@ -364,6 +351,12 @@ jobs:
         with:
           environment: prod
 
+      # The Gmail token refresher Lambda, on the same terms as qbo-refresher.
+      - name: Deploy gmail-refresher (prod)
+        uses: ./.github/actions/deploy-gmail-refresher
+        with:
+          environment: prod
+
       - name: Report result
         if: always()
         env:
@@ -389,3 +382,90 @@ jobs:
               echo "- The app rolls out before s-read: if the app step passed, prod runs the new image and only s-read needs a rerun; otherwise prod still runs the previous image."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # Runs only after a successful rollout, so kiosks never move ahead of the server,
+  # and as its own job, so a kiosk failure leaves the app deploy green. Pushes by
+  # digest, tests that digest, and only then tags it; re-run this job to retry.
+  publish-kiosk:
+    name: Publish kiosk image
+    needs: [deploy]
+    runs-on: ubuntu-24.04-arm  # native ARM64 — evdev compiles during the build
+    timeout-minutes: 90
+    # kiosk-publish trusts only this and the kiosk-force environment.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write   # assume kiosk-publish via OIDC
+    concurrency:
+      group: kiosk-tags
+      cancel-in-progress: false
+    env:
+      KIOSK_IMAGE: public.ecr.aws/q2q3l9k2/kiosk  # matches client/host/host.conf.example
+      KIOSK_RELEASE_TAG: kiosk-release
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout released tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0   # the flow tier builds its old image from a pinned commit
+
+      # One login serves the push and the flow stack's public base-image pulls.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::639595353568:role/kiosk-publish
+          aws-region: us-east-1  # ECR Public's API exists only here
+
+      - name: Log in to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Build and push image by digest
+        id: build
+        run: |
+          set -euo pipefail
+          # Provenance makes the image an index, whose digest survives a tag move
+          # with imagetools. Attestations need a builder other than the default.
+          docker buildx create --use
+          docker buildx build client/ \
+            --platform linux/arm64 \
+            --provenance=mode=min \
+            --output "type=image,name=$KIOSK_IMAGE,push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "$RUNNER_TEMP/kiosk-build.json"
+          DIGEST=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/kiosk-build.json")
+          if [[ ! $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Build reported no image digest"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Kiosk flow tier on the pushed digest
+        env:
+          KIOSK_IMAGE_REF: ${{ env.KIOSK_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: deploy/kiosk-flow.sh
+
+      - name: Kiosk browser tier on the pushed digest
+        env:
+          KIOSK_IMAGE_REF: ${{ env.KIOSK_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: deploy/kiosk-flow.sh e2e
+
+      - name: Tag the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "$KIOSK_IMAGE:$TAG" --tag "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" "$KIOSK_IMAGE@$DIGEST"
+          MOVED=$(docker buildx imagetools inspect "$KIOSK_IMAGE:$KIOSK_RELEASE_TAG" --format '{{.Manifest.Digest}}')
+          if [ "$MOVED" != "$DIGEST" ]; then
+            echo "::error::$KIOSK_RELEASE_TAG is at $MOVED, expected $DIGEST"
+            exit 1
+          fi
+          {
+            echo "### Kiosk image published"
+            echo "- \`$KIOSK_IMAGE:$TAG\`"
+            echo "- Digest: \`$DIGEST\`"
+            echo "- Flow and browser tiers passed on this digest; \`$KIOSK_RELEASE_TAG\` moved, so kiosks update overnight."
+          } >> "$GITHUB_STEP_SUMMARY"

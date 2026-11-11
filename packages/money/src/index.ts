@@ -47,9 +47,74 @@ export function centsToDollars(cents: number): number {
   return cents / 100;
 }
 
+/** Integer cents as a plain decimal string for a wire format that wants "12.50"; never for display. */
+export function centsToDecimalString(cents: number): string {
+  return centsToDollars(cents).toFixed(2);
+}
+
 /** Sum integer-cent amounts. Inputs must already be integer cents. */
 export function sumCents(...amounts: number[]): number {
   return amounts.reduce((acc, n) => acc + n, 0);
+}
+
+/**
+ * Split `totalCents` across parts in proportion to `weights`, in whole cents that sum to
+ * `totalCents` exactly. Each part takes the floor of its exact share; the leftover cents go one
+ * each to the largest fractional remainders, a tie to the larger weight, then the earlier part.
+ * Either sign works for the total and the weights. Weights that sum to zero (all-zero
+ * included) split the total equally; a caller that must refuse that case checks before calling.
+ * Arithmetic is BigInt so shares stay exact past the safe-integer product range.
+ */
+export function allocateCents(totalCents: number, weights: readonly number[]): number[] {
+  for (const n of [totalCents, ...weights]) {
+    if (!Number.isSafeInteger(n)) throw new Error(`Allocation amounts must be safe integers, got ${n}`);
+  }
+  if (weights.length === 0) {
+    if (totalCents !== 0) throw new Error(`Cannot allocate ${totalCents} cents across no parts`);
+    return [];
+  }
+  const zero = BigInt(0);
+  const one = BigInt(1);
+  const sum = weights.reduce((s, w) => s + BigInt(w), zero);
+  const ws = sum === zero ? weights.map(() => one) : weights.map(BigInt);
+  // A positive denominator keeps BigInt division a floor and remainders in [0, denom).
+  const denom = sum === zero ? BigInt(weights.length) : sum < zero ? -sum : sum;
+  const total = sum < zero ? -BigInt(totalCents) : BigInt(totalCents);
+  const shares = ws.map((w, i) => {
+    const num = total * w;
+    let floor = num / denom;
+    if (num % denom !== zero && num < zero) floor -= one;
+    return { i, floor, rem: num - floor * denom, w };
+  });
+  // Each floor drops less than one cent, so fewer than weights.length cents are left over.
+  let leftover = Number(BigInt(totalCents) - shares.reduce((s, p) => s + p.floor, zero));
+  const byFraction = [...shares].sort((a, b) =>
+    a.rem !== b.rem ? (b.rem > a.rem ? 1 : -1) : a.w !== b.w ? (b.w > a.w ? 1 : -1) : a.i - b.i,
+  );
+  for (const p of byFraction) {
+    if (leftover <= 0) break;
+    p.floor += one;
+    leftover -= 1;
+  }
+  return shares.map((p) => Number(p.floor));
+}
+
+// Floating-point noise in quantity × unit price, not a real fraction of a cent.
+const NOISE = 1e-6;
+
+/**
+ * How far a line's total may sit from quantity × unit price and still be that line: under a cent
+ * per unit, and under a cent for a quantity below one. A store may round or truncate the unit
+ * price (3 × $3.33 for $10.00 is 3 × $3.333…; $4.99 may be $4.989) or the line total
+ * (0.37 × $4.99 is 184.63¢, printed $1.84 or $1.85).
+ */
+function lineRoundingAllowance(quantity: number): number {
+  return Math.max(1, quantity);
+}
+
+/** Whether a line's total is quantity × unit price, rounded or truncated; a difference of the full allowance does not agree. */
+export function lineRoundingAgrees(totalCents: number, quantity: number, unitPriceCents: number): boolean {
+  return Math.abs(totalCents - quantity * unitPriceCents) < lineRoundingAllowance(quantity) - NOISE;
 }
 
 /**
@@ -65,7 +130,8 @@ export function formatCents(cents: number | null | undefined, currency = "USD"):
     currency: currency || "USD",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(cents / 100);
+    // Adding 0 turns -0 into 0, which Intl would print as "-$0.00".
+  }).format(cents / 100 + 0);
 }
 
 /** @deprecated Use `formatCents`. Retained as an identical alias for existing call sites. */

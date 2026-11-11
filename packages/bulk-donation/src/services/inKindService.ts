@@ -1,8 +1,8 @@
-// In-kind donations that arrived with a receipt (FR5, design #1280 §2.4). The money side (X9)
-// and the donor (X13) land on one row per (orgId, receiptId), in either order. The money side is
+// In-kind donations that arrived with a receipt. The money side
+// and the donor land on one row per (orgId, receiptId), in either order. The money side is
 // written once: a replay with the same values does nothing, and one that differs is kept out and
 // raised for finance.
-import { db } from "../db";
+import { db, type PrismaTransactionClient } from "../db";
 import type { InKindDonor } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
@@ -82,12 +82,27 @@ async function recordMoney(orgId: string, receiptId: string, money: InKindMoney)
 }
 
 /**
- * X13: record the donor; a later call replaces it, and a replacement that differs stamps
- * donorReplacedAt for the accept screen. The audit row carries no donor field.
+ * Raise the receipt's sync mark to `seq` and lock it for the rest of the transaction. False when
+ * a newer X13 call has already been seen: this one is stale. An equal seq is a resend of the same
+ * receipt state and goes through.
  */
-async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void> {
+async function claimSyncMark(tx: PrismaTransactionClient, orgId: string, receiptId: string, seq: number): Promise<boolean> {
+  const claimed = await tx.$queryRaw<unknown[]>`
+    INSERT INTO in_kind_sync_marks (org_id, receipt_id, seq) VALUES (${orgId}, ${receiptId}, ${seq})
+    ON CONFLICT (org_id, receipt_id) DO UPDATE SET seq = EXCLUDED.seq WHERE in_kind_sync_marks.seq <= EXCLUDED.seq
+    RETURNING seq`;
+  return claimed.length > 0;
+}
+
+/**
+ * X13: record the donor; a later call replaces it, and a replacement that differs stamps
+ * donorReplacedAt for the accept screen. A stale call changes nothing. The audit row carries no
+ * donor field.
+ */
+async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor, seq: number): Promise<void> {
   await db.$transaction(async (tx) => {
-    await tx.$executeRaw`
+    if (!(await claimSyncMark(tx, orgId, receiptId, seq))) return;
+    const written = await tx.$executeRaw`
       INSERT INTO in_kind_donations (org_id, receipt_id, donor_first_name, donor_last_name, donor_company_name, donor_recorded_at)
       VALUES (${orgId}, ${receiptId}, ${donor.firstName}, ${donor.lastName}, ${donor.companyName}, now())
       ON CONFLICT (org_id, receipt_id) DO UPDATE SET
@@ -101,60 +116,43 @@ async function recordDonor(orgId: string, receiptId: string, donor: InKindDonor)
         donor_last_name = EXCLUDED.donor_last_name,
         donor_company_name = EXCLUDED.donor_company_name,
         donor_recorded_at = EXCLUDED.donor_recorded_at`;
+    if (written === 0) return;
     await recordEvent(tx, { orgId, entityType: "in_kind", entityId: receiptId, eventType: "IN_KIND_DONOR_RECORDED" });
   });
 }
 
 /**
- * X13: the in-kind mark was cleared. Without a money side the row (and its donor pii) is
- * deleted; with one, nothing is deleted and the receipt is flagged as an anomaly for finance.
- * An unknown receipt is a no-op.
+ * X13: the in-kind mark was cleared. The row (and its donor pii) is deleted while it has no
+ * money side. The receipt sends its money only once it is finalized and its last in-kind state
+ * has landed here, and a finalized receipt's mark cannot change, so no withdrawal reaches a row
+ * with money. An unknown receipt, or a stale call, is a no-op.
  */
-async function withdraw(orgId: string, receiptId: string): Promise<void> {
+async function withdraw(orgId: string, receiptId: string, seq: number): Promise<void> {
   await db.$transaction(async (tx) => {
+    if (!(await claimSyncMark(tx, orgId, receiptId, seq))) return;
     const deleted = await tx.inKindDonation.deleteMany({ where: { orgId, receiptId, moneyReceivedAt: null } });
     if (deleted.count > 0) {
       await recordEvent(tx, { orgId, entityType: "in_kind", entityId: receiptId, eventType: "IN_KIND_WITHDRAWN" });
-      return;
-    }
-    const flagged = await tx.inKindDonation.updateMany({
-      where: { orgId, receiptId, withdrawnAfterMoneyAt: null },
-      data: { withdrawnAfterMoneyAt: new Date() },
-    });
-    if (flagged.count > 0) {
-      await recordEvent(tx, { orgId, entityType: "in_kind", entityId: receiptId, eventType: "IN_KIND_WITHDRAWN_AFTER_MONEY" });
     }
   });
 }
 
-export type SettleKind = "withdrawal" | "replay";
+export type SettleKind = "replay";
 
-/**
- * Finance settles a receipt gift's anomaly. Settling a withdrawal records that finance reversed
- * any booked side by hand and clears the donor; the gift and its money stay. Settling a replay
- * conflict keeps the first values. Nothing here touches QuickBooks.
- */
+/** Finance settles a receipt gift's replay conflict by keeping the first values. Nothing here touches QuickBooks. */
 async function settle(orgId: string, id: number, kind: SettleKind, audit: AuditContext & { actorUserId: number }) {
   return db.$transaction(async (tx) => {
     const gift = await tx.inKindDonation.findFirst({ where: { id, orgId }, select: { receiptId: true } });
     if (!gift) throw new ServiceError(404, "In-kind gift not found");
     const settledAt = new Date();
-    const updated =
-      kind === "withdrawal"
-        ? await tx.inKindDonation.updateMany({
-            where: { id, withdrawnAfterMoneyAt: { not: null }, withdrawalSettledAt: null },
-            data: { withdrawalSettledAt: settledAt, donorFirstName: null, donorLastName: null, donorCompanyName: null },
-          })
-        : await tx.inKindDonation.updateMany({ where: { id, replayConflictAt: { not: null } }, data: { replayConflictAt: null } });
-    if (updated.count === 0) {
-      throw new ServiceError(409, kind === "withdrawal" ? "This gift has no open withdrawal to settle" : "This gift has no replay conflict to settle");
-    }
+    const updated = await tx.inKindDonation.updateMany({ where: { id, replayConflictAt: { not: null } }, data: { replayConflictAt: null } });
+    if (updated.count === 0) throw new ServiceError(409, "This gift has no replay conflict to settle");
     const bookedSides = await tx.inKindBooking.findMany({ where: { orgId, source: "receipt", giftId: id }, select: { side: true, matchState: true } });
     await recordEvent(tx, {
       orgId,
       entityType: "in_kind",
       entityId: gift.receiptId,
-      eventType: kind === "withdrawal" ? "IN_KIND_WITHDRAWAL_SETTLED" : "IN_KIND_REPLAY_SETTLED",
+      eventType: "IN_KIND_REPLAY_SETTLED",
       ...audit,
       payload: { bookedSides },
     });

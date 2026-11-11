@@ -63,7 +63,7 @@ Three bugs shipped and were fixed individually:
 | [#1450](https://github.com/innovationtreehouse/checkin/pull/1450) | Tombstones leaked into the "needs a lead" household surfaces |
 | `review.ts:305` | The background-check blanket stamp (fixed under [#1260](https://github.com/innovationtreehouse/checkin/issues/1260)) |
 
-`livePersonDriftGuard.test.ts` exists to catch precisely this class and **missed all three** — its
+`livePersonDriftGuard.test.ts` (since retired) was written to catch precisely this class and **missed all three** — its
 matcher saw only read verbs on the `person` delegate, so a `person.updateMany` and a Person-typed
 relation named `householdMembers` were both invisible.
 
@@ -148,7 +148,7 @@ across mismatched household membership") is the same pattern already landing —
 **Refusal is only viable if every refusable condition has a cleanup path.** Verified present:
 `DELETE /api/programs/[id]/participants`, `/api/events/[id]/rsvp`, `/api/shop/certifications`,
 `/api/attendance/manual/[id]`. **One gap:** `BackgroundCheckAttestation` has no user-facing removal —
-attestations are deleted only by `overrideBlocked` in `reset`, and only for a `BLOCKED` process. A
+attestations are deleted only by `boardResetReview` and a rejector's change to approve. A
 refusal there is currently a dead end. Given what that collision signals, a sysadmin-only path with
 an audit trail is probably right, but it must be built or those merges become impossible.
 
@@ -184,15 +184,16 @@ model PersonMerge {
   ([`lib/person/mergeChain.ts`](../../checkin-app/src/lib/person/mergeChain.ts)), which already
   follows both `mergedIntoId` and `PersonMerge`; dropping the tombstone leaves only the archive arm.
 
-On `main` the `PersonMerge` model exists and every merge writes one (#1729); the tombstone row and
-its `mergedIntoId` are still kept alongside it.
+On `main` every merge writes a `PersonMerge` row (#1729) and deletes the merged-away `Person` row
+in the same transaction (2b-3). A data migration deletes each existing tombstone that has an
+archive row and no remaining reference.
 - **`AuditLog.affectedEntityId`** is a bare `Int` with no FK, so historical audit references survive
   a deleted `Person`.
 - `Person.mergedIntoId`, `mergedInto`, and `mergedFrom` are dropped.
 
 ### 4. Delete the guard
 
-`LIVE_PERSON`, `livePersonDriftGuard.test.ts`, and its 34-entry allowlist all go. Every one of the
+`LIVE_PERSON` goes. `livePersonDriftGuard.test.ts` and its 34-entry allowlist are already retired (pass D1: once merges delete the row, no tombstone can exist for the guard to protect against). Every one of the
 roughly 150 call sites loses its filter — mechanical, and `tsc` catches the import removals.
 
 ## Decisions needed (policy, not plumbing)

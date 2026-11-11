@@ -125,7 +125,7 @@ const taken = (pp: Rec) => (pp.status === "ACTIVE" || pp.inventoryHeldAt !== nul
 describe("scholarship hold vs concurrent readers (programs TLA+ model)", () => {
     beforeEach(seed);
 
-    it("F3: a Board approval right after the request flag still finds the hold, so the place keeps its store unit", async () => {
+    it("a Board approval right after the request flag still finds the hold, so the place keeps its store unit", async () => {
         let approved = false;
         mockDb.onCommit = async (db) => {
             if (approved || db.pp.isPaymentPlanRequested !== true) return;
@@ -140,7 +140,7 @@ describe("scholarship hold vs concurrent readers (programs TLA+ model)", () => {
         expect(mockDb.program.shopifyStockCarry).toBe(-1);
     });
 
-    it("F6: no committed state shows a held seat whose -1 is not yet owed", async () => {
+    it("no committed state shows a held seat whose -1 is not yet owed", async () => {
         const seen: { taken: number; carry: number }[] = [];
         mockDb.onCommit = async (db) => { seen.push({ taken: taken(db.pp), carry: db.program.shopifyStockCarry as number }); };
         expect((await requestHold()).status).toBe(200);

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, use, useCallback } from 'react';
+import { useState, use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Button, Card, Checkbox, Container, Group, Modal, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
+import { LoadError } from '@checkin/component-ui';
+import { useSeedForm } from '@/hooks/useSeedForm';
+import { useLoad } from '@/lib/api';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
@@ -65,8 +68,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const searchParams = useSearchParams();
   const fromProgramsILead = searchParams.get('from') === 'programs-i-lead';
 
-  const [eventData, setEventData] = useState<EventData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: eventData, error: loadError, reload } = useLoad<EventData>(ready ? `/api/events/${id}` : null);
   const [message, setMessage] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   // Action-confirmation notices rendered next to their triggering button, not
@@ -88,36 +90,10 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const [manualArrived, setManualArrived] = useState("");
   const [manualDeparted, setManualDeparted] = useState("");
 
-  const loadEvent = useCallback(() => fetch(`/api/events/${id}`)
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setEventData(data);
-
-        const startStr = toDatetimeLocal(data.startAt);
-        const endStr = toDatetimeLocal(data.endAt);
-        setNewStart(startStr);
-        setNewEnd(endStr);
-      } else {
-        setMessage("Failed to load event.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [id]);
-
-  const fetchEvent = useCallback(() => {
-    setLoading(true);
-    return loadEvent();
-  }, [loadEvent]);
-
-  useEffect(() => {
-    if (ready) loadEvent();
-  }, [ready, loadEvent]);
+  useSeedForm(eventData, editMode, (event) => {
+    setNewStart(toDatetimeLocal(event.startAt));
+    setNewEnd(toDatetimeLocal(event.endAt));
+  });
 
   const handleConfirmAttendance = async () => {
     setActionLoading(true);
@@ -136,7 +112,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
           return;
         }
         notifications.show({ message: "Attendance confirmed successfully!" });
-        fetchEvent();
+        reload();
       } else {
         const data = await res.json().catch(() => ({}));
         setAttendanceNotice({ ok: false, msg: data.error || "Failed to confirm attendance." });
@@ -163,13 +139,13 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
       if (res.ok) {
         notifications.show({ message: "Event time updated successfully!" });
         setEditMode(false);
-        fetchEvent();
+        reload();
       } else {
         const data = await res.json().catch(() => ({}));
         if (data.error === "Cannot edit a past event") {
-          notifications.show({ color: "red", message: data.error, autoClose: 4000 });
+          notifications.show({ color: "red", message: data.error, autoClose: false });
           setEditMode(false);
-          fetchEvent();
+          reload();
         } else {
           setTimeNotice({ ok: false, msg: data.error || "Failed to edit event." });
         }
@@ -184,6 +160,10 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const handleSaveManualAttendance = async () => {
     if (!editingAttendance) return;
     // Instant feedback only — server remains the trust boundary.
+    if (manualStatus === 'Present' && !manualDeparted) {
+      setManualNotice({ ok: false, msg: "Departure time is required for Present status" });
+      return;
+    }
     if (manualStatus === 'Present' && manualArrived && manualDeparted &&
         Date.parse(manualDeparted) <= Date.parse(manualArrived)) {
       setManualNotice({ ok: false, msg: "Departure time must be after arrival time" });
@@ -211,7 +191,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
       if (res.ok) {
         // Success closes the modal; the refreshed roster row shows the change.
         setEditingAttendance(null);
-        fetchEvent();
+        reload();
       } else {
         // Keep the modal open so the error is visible next to Save.
         const data = await res.json().catch(() => ({}));
@@ -246,17 +226,18 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
     }
   };
 
-  if (loading || authLoading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
   if (!ready) return null;
 
   if (!eventData) {
+    if (!loadError) return <PageLoader />;
     return (
       <Container size="sm" py="xl">
-        <Card withBorder radius="md" padding="xl" ta="center">
-          <Title order={3}>{message || "Not Found"}</Title>
+        <Card withBorder radius="md" padding="xl">
+          <LoadError what="the event" message={loadError} onRetry={reload} />
           <Group justify="center" mt="lg"><Button onClick={() => router.back()}>Go Back</Button></Group>
         </Card>
       </Container>
@@ -334,7 +315,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                           } else {
                             setManualStatus("Absent");
                             setManualArrived(toDatetimeLocal(eventData.startAt));
-                            setManualDeparted(toDatetimeLocal(eventData.endAt));
+                            setManualDeparted(toDatetimeLocal(new Date(Math.min(Date.parse(eventData.endAt), Date.now())).toISOString()));
                           }
                         }}>
                           Manual Edit
@@ -434,6 +415,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
         </Group>
 
         <AlertBanner message={message} tone="error" mb="lg" />
+        {loadError && <LoadError what="the event" message={loadError} onRetry={reload} />}
 
         {/* PAST EVENT: ATTENDANCE CONFIRMATION */}
         {isPastEvent && canManageAttendance && (
@@ -543,14 +525,14 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                 onChange={(v) => setManualStatus((v as "Present" | "Absent") ?? "Present")}
                 allowDeselect={false}
                 data={[{ value: "Present", label: "Present" }, { value: "Absent", label: "Absent", disabled: isCheckedIn }]}
-                description={isCheckedIn ? "Check them out first to mark Absent." : undefined}
+                description={isCheckedIn ? "Still checked in: they badge out at the kiosk, or the 11 PM close ends the visit." : undefined}
               />
             );
           })()}
           {manualStatus === "Present" && (
             <>
               <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => setManualArrived(e.currentTarget.value)} />
-              <TextInput type="datetime-local" label="Departed Time (Optional)" value={manualDeparted} onChange={(e) => setManualDeparted(e.currentTarget.value)} />
+              <TextInput type="datetime-local" label="Departed Time" value={manualDeparted} onChange={(e) => setManualDeparted(e.currentTarget.value)} />
             </>
           )}
           {manualNotice && (

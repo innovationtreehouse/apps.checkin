@@ -1,0 +1,137 @@
+import { expect, type Browser, type Page } from "@playwright/test";
+import { api, loginAs } from "../../flow-tests/helpers";
+import { persona } from "./kiosk";
+import { watchPage } from "./pageErrors";
+import { BOARD, send } from "./seedState";
+import { signIn } from "./session";
+
+export const REVIEWER = "bg.reviewer@example.com";
+
+const CONTACT = { emergencyContactName: "Pat Outside", emergencyContactPhone: "555-987-6543" };
+
+export const YOUTH_AGE = 10;
+
+/** A month past the birthday, so the age holds in the org's zone as well as the runner's. */
+export function youthBirthDate(): string {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - YOUTH_AGE, date.getMonth() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Mints a one-person household with no membership and returns its lead's email. */
+export async function newFamily(): Promise<string> {
+  const minted = await api<{ personaId: number }>(null, "/api/auth/dev-personas", { method: "POST" });
+  if (minted.status !== 200) throw new Error(`mint family: ${minted.status}`);
+  const { personaId } = minted.json;
+  // The mint answers with the id only; a bare number searches the directory by id.
+  const { json } = await api<{ people: Array<{ id: number; email: string }> }>(await loginAs(BOARD), `/api/people/search?q=${personaId}`);
+  const person = json.people.find((p) => p.id === personaId);
+  if (!person) throw new Error(`minted family ${personaId} not in the directory`);
+  return person.email;
+}
+
+/** A new family that has given its phone and emergency contact, so nothing prompts for them. */
+export async function settledFamily(): Promise<string> {
+  const email = await newFamily();
+  const onboarded = await send(await loginAs(email), "POST", "/api/profile/onboarding", { phone: "555-123-4567", ...CONTACT });
+  if (onboarded.status !== 200) throw new Error(`onboard family: ${onboarded.status}`);
+  return email;
+}
+
+let youthCount = 0;
+
+/** Has the family's lead add a youth to the household; returns the youth's id and name. */
+export async function addYouth(email: string): Promise<{ id: number; name: string }> {
+  const lead = await loginAs(email);
+  const name = `Youth ${Date.now()}-${++youthCount}`;
+  const added = await send(lead, "PATCH", "/api/household", { memberName: name, memberDob: youthBirthDate() });
+  if (added.status !== 200) throw new Error(`add youth: ${added.status}`);
+  const { json } = await api<{ household: { householdMembers: Array<{ id: number; name: string }> } }>(lead, "/api/household");
+  const youth = json.household.householdMembers.find((m) => m.name === name);
+  if (!youth) throw new Error(`added youth ${name} not in the household`);
+  return youth;
+}
+
+/** Opens the family's application with a saved address, still at intake; returns its id. */
+export async function applicationAtIntake(email: string): Promise<number> {
+  const family = await loginAs(email);
+  const started = await send(family, "POST", "/api/membership");
+  if (started.status !== 201) throw new Error(`start application: ${started.status}`);
+  const saved = await send(family, "PATCH", "/api/membership/intake", {
+    household: { line1: "123 Maker Lane", city: "Austin", state: "TX", postalCode: "78701", ...CONTACT },
+    primaryParent: { name: (await persona(email)).name },
+  });
+  if (saved.status !== 200) throw new Error(`save intake: ${saved.status}`);
+  const { json } = await api<{ process: { id: number } }>(family, "/api/membership");
+  return json.process.id;
+}
+
+/** Submits the family's intake, which leaves it waiting on its agreement and consent; returns its id. */
+export async function submittedApplication(email: string): Promise<number> {
+  const processId = await applicationAtIntake(email);
+  const submitted = await send(await loginAs(email), "POST", "/api/membership/intake/submit");
+  if (submitted.status !== 200) throw new Error(`submit intake: ${submitted.status}`);
+  return processId;
+}
+
+/** Has the Board record the agreement and consent, which opens payment; returns the application's id. */
+export async function applicationAtPayment(email: string): Promise<number> {
+  const processId = await submittedApplication(email);
+  const board = await loginAs(BOARD);
+  for (const action of ["mark-contract", "mark-bg-consent"]) {
+    const marked = await send(board, "POST", "/api/membership-ops/applications/external", { processId, action });
+    if (marked.status !== 200) throw new Error(`${action}: ${marked.status}`);
+  }
+  return processId;
+}
+
+type BoardRow = { id: number; kind: string; requestedForHouseholdId: number | null; orgMembership: { householdId: number } | null };
+
+/** The open check review the family's consent opened for its application `processId`. */
+export async function checkReviewOf(processId: number): Promise<number> {
+  const { json } = await api<{ processes: BoardRow[] }>(await loginAs(BOARD), "/api/membership-ops/applications");
+  const householdId = json.processes.find((p) => p.id === processId)?.orgMembership?.householdId;
+  const found = json.processes.find((p) => p.kind === "PERSON_BG" && householdId !== undefined && p.requestedForHouseholdId === householdId);
+  if (!found) throw new Error(`no open check review for application ${processId}`);
+  return found.id;
+}
+
+/** A reviewer's decision on the family's check review, naming the family's lead. */
+export async function review(reviewerEmail: string, processId: number, familyEmail: string, result: "APPROVE" | "REJECT" = "APPROVE"): Promise<void> {
+  const reviewId = await checkReviewOf(processId);
+  const body = { subjectPersonIds: [(await persona(familyEmail)).id], ...(result === "REJECT" ? { note: "The report needs a second look." } : {}) };
+  const reviewed = await send(await loginAs(reviewerEmail), "POST", "/api/membership/reviews", { processId: reviewId, result, ...body });
+  if (reviewed.status !== 200) throw new Error(`review ${result}: ${reviewed.status}`);
+}
+
+/** Runs `steps` on a page signed in as `email`, asserting after them that the page showed no problem but `expected`. */
+export async function asViewer(browser: Browser, email: string, steps: (page: Page) => Promise<void>, expected?: RegExp): Promise<void> {
+  const { context } = await signIn(browser, email);
+  const page = await context.newPage();
+  const watch = watchPage(page);
+  await steps(page);
+  const problems = await watch.problems();
+  expect(expected ? problems.filter((p) => !expected.test(p)) : problems).toEqual([]);
+  await context.close();
+}
+
+/**
+ * Signs the agreement through the dev Zoho mock from the membership page. The mock page renders
+ * its button on the server, and a click that lands before hydration does nothing, so the click
+ * repeats until the completion request goes out, and that request must answer 200.
+ */
+export async function signAgreement(page: Page): Promise<void> {
+  const isComplete = (url: string) => new URL(url).pathname === "/api/dev/zoho-sign/complete";
+  let sent = false;
+  page.on("request", (req) => { if (isComplete(req.url())) sent = true; });
+  const completed = page.waitForResponse((res) => isComplete(res.url()));
+
+  await page.getByRole("button", { name: "Sign your membership agreement →" }).click();
+  await page.waitForURL(/\/dev\/zoho-sign\?rid=/);
+  await expect(async () => {
+    if (!sent) await page.getByRole("button", { name: "Complete signing (DEV)" }).click({ timeout: 5_000 });
+    await expect.poll(() => sent, { timeout: 2_000 }).toBe(true);
+  }).toPass({ timeout: 30_000 });
+  expect((await completed).status()).toBe(200);
+  await expect(page.getByText(/^Signed/)).toBeVisible();
+}

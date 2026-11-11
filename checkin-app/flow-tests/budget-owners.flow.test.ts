@@ -1,8 +1,8 @@
 /**
- * Budget-owner buckets and program treasurers (#1280 §6): FINANCE manages
- * buckets, the BOARD alone sets treasurers, nobody sets themself or their own
- * household, and archive keeps the row. Real HTTP against the running dev server
- * and the seeded DB.
+ * Budget-owner buckets and their approvers: FINANCE manages buckets,
+ * the BOARD alone sets a bucket's owner and treasurers, nobody sets themself or
+ * their own household, an org-level bucket takes no approvers, and archive keeps
+ * the row. Real HTTP against the running dev server and the seeded DB.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -11,9 +11,8 @@ const BOARD = "boardmember@example.com";
 const OUTSIDER = "parent.family2@example.com";
 const OUTSIDER_HOUSEHOLD_PEER = "parent.family@example.com";
 
-type Bucket = { id: number; name: string; programId: number | null; archivedAt: string | null; quickBooksClassId: string | null };
-type ProgramOption = { id: number; name: string };
-type TreasurerRow = { personId: number; isTreasurer: boolean; person: { id: number; name: string } };
+type Bucket = { id: number; name: string; isOrgLevel: boolean; archivedAt: string | null; quickBooksClassId: string | null };
+type Approver = { budgetOwnerId: number; personId: number; name: string; role: "OWNER" | "TREASURER" };
 
 const send = (s: Session, method: string, path: string, body?: unknown) =>
   api(s, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -21,24 +20,17 @@ const send = (s: Session, method: string, path: string, body?: unknown) =>
 let finance: Session;
 let board: Session;
 let outsider: Session;
-let programId: number;
+let bucketId: number;
 
 beforeAll(async () => {
   [finance, board, outsider] = await Promise.all([loginAs(FINANCE), loginAs(BOARD), loginAs(OUTSIDER)]);
-  const programs = await api<ProgramOption[]>(board, "/api/budget-owners/program-options");
-  expect(programs.status).toBe(200);
-  const woodworking = programs.json.find((p) => p.name === "Woodworking 101");
-  if (!woodworking) throw new Error("seeded program Woodworking 101 not found");
-  programId = woodworking.id;
+  const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow approvers ${Date.now()}` });
+  expect(created.status).toBe(200);
+  bucketId = (created.json as Bucket).id;
 });
 
-const volunteer = async (personId: number) => {
-  const res = await send(board, "POST", `/api/programs/${programId}/volunteers`, { participantId: personId });
-  expect([200, 409]).toContain(res.status);
-};
-
-const treasurers = async (s: Session) => {
-  const res = await api<TreasurerRow[]>(s, `/api/programs/${programId}/treasurers`);
+const approvers = async (s: Session) => {
+  const res = await api<Approver[]>(s, `/api/budget-owners/${bucketId}/approvers`);
   expect(res.status).toBe(200);
   return res.json;
 };
@@ -46,10 +38,10 @@ const treasurers = async (s: Session) => {
 describe("budget-owner buckets", () => {
   it("finance creates, renames and maps a bucket; the board reads it", async () => {
     const name = `Flow bucket ${Date.now()}`;
-    const created = await send(finance, "POST", "/api/budget-owners", { name, programId });
+    const created = await send(finance, "POST", "/api/budget-owners", { name, isOrgLevel: true });
     expect(created.status).toBe(200);
     const bucket = created.json as Bucket;
-    expect(bucket).toMatchObject({ name, programId, archivedAt: null, quickBooksClassId: null });
+    expect(bucket).toMatchObject({ name, isOrgLevel: true, archivedAt: null, quickBooksClassId: null });
 
     const classId = String(Date.now());
     const edited = await send(finance, "PATCH", `/api/budget-owners/${bucket.id}`, { name: `${name} (renamed)`, quickBooksClassId: classId });
@@ -84,57 +76,103 @@ describe("budget-owner buckets", () => {
   });
 });
 
-describe("program treasurers", () => {
-  it("the board sets and clears a treasurer", async () => {
-    await volunteer(outsider.personaId);
+describe("changing a bucket", () => {
+  const create = async () => (await send(finance, "POST", "/api/budget-owners", { name: `Flow change ${Date.now()}` })).json as Bucket;
 
-    const set = await send(board, "PUT", `/api/programs/${programId}/treasurers/${outsider.personaId}`);
-    expect(set.status).toBe(200);
-    expect(set.json).toMatchObject({ personId: outsider.personaId, isTreasurer: true });
-    expect((await treasurers(finance)).find((r) => r.personId === outsider.personaId)?.isTreasurer).toBe(true);
+  it("finance restores an archived bucket with its Class", async () => {
+    const quickBooksClassId = String(Date.now());
+    const { id } = await create();
+    await send(finance, "PATCH", `/api/budget-owners/${id}`, { quickBooksClassId });
+    await send(finance, "POST", `/api/budget-owners/${id}/archive`);
+    const other = await create();
+    expect((await send(finance, "PATCH", `/api/budget-owners/${other.id}`, { quickBooksClassId })).status).toBe(409);
 
-    const cleared = await send(board, "DELETE", `/api/programs/${programId}/treasurers/${outsider.personaId}`);
-    expect(cleared.status).toBe(200);
-    expect(cleared.json).toMatchObject({ isTreasurer: false });
+    expect((await send(board, "PATCH", `/api/budget-owners/${id}`, { archived: false })).status).toBe(403);
+    const restored = await send(finance, "PATCH", `/api/budget-owners/${id}`, { archived: false });
+    expect(restored.status).toBe(200);
+    expect(restored.json).toMatchObject({ archivedAt: null, quickBooksClassId });
   });
 
-  // Neither can be seated as a volunteer by the board either; the treasurer
-  // route refuses on the household before it looks for a volunteer row.
-  const refusedVolunteer = async (personId: number) => {
-    const res = await send(board, "POST", `/api/programs/${programId}/volunteers`, { participantId: personId });
-    expect(res.status).toBe(403);
-  };
+  it("finance changes the flag, refused while the Board's owner or treasurer holds the bucket", async () => {
+    const { id } = await create();
+    await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId });
+    expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
 
-  it("the board cannot set themself or anyone in their own household", async () => {
-    await refusedVolunteer(board.personaId);
-    const self = await send(board, "PUT", `/api/programs/${programId}/treasurers/${board.personaId}`);
+    await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: null });
+    await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
+    expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
+
+    await send(board, "DELETE", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
+    const orgLevel = await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true });
+    expect(orgLevel.status).toBe(200);
+    expect(orgLevel.json).toMatchObject({ isOrgLevel: true });
+
+    const program = await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: false });
+    expect(program.status).toBe(200);
+    expect(program.json).toMatchObject({ isOrgLevel: false });
+  });
+});
+
+describe("bucket approvers", () => {
+  it("the board names an owner and adds and removes a treasurer; finance reads them", async () => {
+    const owner = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: outsider.personaId });
+    expect(owner.status).toBe(200);
+    expect(owner.json).toEqual([expect.objectContaining({ personId: outsider.personaId, role: "OWNER" })]);
+
+    const peer = await loginAs(OUTSIDER_HOUSEHOLD_PEER);
+    const added = await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${peer.personaId}`);
+    expect(added.status).toBe(200);
+    expect((await approvers(finance)).map((a) => [a.personId, a.role])).toEqual([
+      [outsider.personaId, "OWNER"],
+      [peer.personaId, "TREASURER"],
+    ]);
+
+    const removed = await send(board, "DELETE", `/api/budget-owners/${bucketId}/treasurers/${peer.personaId}`);
+    expect(removed.status).toBe(200);
+    const cleared = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: null });
+    expect(cleared.status).toBe(200);
+    expect(await approvers(board)).toEqual([]);
+  });
+
+  it("the board cannot name themself or anyone in their own household", async () => {
+    const self = await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${board.personaId}`);
     expect(self.status).toBe(403);
     expect(JSON.stringify(self.json)).toMatch(/own household/);
+    expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: board.personaId })).status).toBe(403);
 
-    const added = await send(board, "POST", "/api/membership-ops/participants", {
+    const memberEmail = `board.household.${Date.now()}@example.com`;
+    const adminAdd = await send(board, "POST", "/api/membership-ops/participants", {
       name: "Board Household Member",
-      email: `board.household.${Date.now()}@example.com`,
+      email: memberEmail,
       parentEmail: BOARD,
     });
-    expect(added.status).toBe(200);
-    const memberId = (added.json as { participant: { id: number } }).participant.id;
-    await refusedVolunteer(memberId);
+    expect(adminAdd.status).toBe(403);
 
-    const peer = await send(board, "PUT", `/api/programs/${programId}/treasurers/${memberId}`);
+    const added = await send(board, "PATCH", "/api/household", {
+      memberName: "Board Household Member",
+      memberEmail,
+      memberOver25: true,
+    });
+    expect(added.status).toBe(200);
+    const memberId = (added.json as { member: { id: number } }).member.id;
+    const peer = await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${memberId}`);
     expect(peer.status).toBe(403);
     expect(JSON.stringify(peer.json)).toMatch(/own household/);
-
-    const rows = await treasurers(board);
-    expect(rows.filter((r) => r.personId === board.personaId || r.personId === memberId).every((r) => !r.isTreasurer)).toBe(true);
+    expect(await approvers(board)).toEqual([]);
   });
 
-  it("refuses a treasurer change from anyone not on the board", async () => {
-    const peer = await loginAs(OUTSIDER_HOUSEHOLD_PEER);
-    await volunteer(peer.personaId);
+  it("an org-level bucket takes no approvers", async () => {
+    const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow org-level ${Date.now()}`, isOrgLevel: true });
+    const id = (created.json as Bucket).id;
+    expect((await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId })).status).toBe(409);
+  });
+
+  it("refuses an approver change from anyone not on the board", async () => {
     for (const s of [finance, outsider]) {
-      expect((await send(s, "PUT", `/api/programs/${programId}/treasurers/${peer.personaId}`)).status).toBe(403);
-      expect((await send(s, "DELETE", `/api/programs/${programId}/treasurers/${peer.personaId}`)).status).toBe(403);
+      expect((await send(s, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: outsider.personaId })).status).toBe(403);
+      expect((await send(s, "PUT", `/api/budget-owners/${bucketId}/treasurers/${outsider.personaId}`)).status).toBe(403);
     }
-    expect((await api(outsider, `/api/programs/${programId}/treasurers`)).status).toBe(403);
+    expect((await api(finance, "/api/budget-owners/approver-options")).status).toBe(403);
+    expect((await api(outsider, `/api/budget-owners/${bucketId}/approvers`)).status).toBe(403);
   });
 });

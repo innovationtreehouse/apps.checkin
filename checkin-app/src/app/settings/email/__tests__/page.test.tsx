@@ -2,9 +2,10 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
 import EmailSettingsPage from "../page";
@@ -31,6 +32,9 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: "Org <no-reply@org.test>",
       emailReplyToAddress: "board@org.test",
       scholarshipNotifyEmail: null,
+      alertEmailAddress: null,
+      boardEmailAddress: null,
+      financeContactEmail: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: null,
@@ -67,6 +71,9 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: "info@org.test, ops@org.test",
       scholarshipNotifyEmail: null,
+      alertEmailAddress: null,
+      boardEmailAddress: null,
+      financeContactEmail: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: null,
@@ -106,6 +113,9 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: null,
       scholarshipNotifyEmail: "board@org.test, ops@org.test",
+      alertEmailAddress: null,
+      boardEmailAddress: null,
+      financeContactEmail: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: null,
@@ -141,6 +151,9 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: null,
       scholarshipNotifyEmail: null,
+      alertEmailAddress: null,
+      boardEmailAddress: null,
+      financeContactEmail: null,
       scholarshipAckSubject: "Custom subject",
       scholarshipAckMembershipBody: null,
       scholarshipAckProgramBody: "Thanks for applying to {{programName}}!",
@@ -160,6 +173,55 @@ describe("EmailSettingsPage", () => {
     expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
   });
 
+  it("Alert address: saves one address, and a malformed one shows an inline error and blocks save", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, alertEmailAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    const alert = await screen.findByLabelText(/^Alert address/i);
+    fireEvent.change(alert, { target: { value: "a@org.test, b@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByText("Enter one email address.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
+
+    fireEvent.change(alert, { target: { value: " finance@org.test " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toMatchObject({ alertEmailAddress: "finance@org.test", boardEmailAddress: null });
+  });
+
+  it("shows a Not set pill beside each empty address, and none beside a saved one", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, alertEmailAddress: "alerts@org.test", boardEmailAddress: null, financeContactEmail: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    expect(await screen.findByLabelText(/^Board address/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Not set")).toHaveLength(2);
+    const labelOf = (name: RegExp) => document.querySelector(`label[for="${screen.getByLabelText(name).id}"]`);
+    expect(labelOf(/^Board address/i)).toHaveTextContent("Not set");
+    expect(labelOf(/^Finance contact address/i)).toHaveTextContent("Not set");
+    expect(labelOf(/^Alert address/i)).not.toHaveTextContent("Not set");
+  });
+
+  it("Finance contact address: a malformed value blocks save, a valid one is sent", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    const contact = await screen.findByLabelText(/^Finance contact address/i);
+    fireEvent.change(contact, { target: { value: "finance" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByText("Enter one email address.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
+
+    fireEvent.change(contact, { target: { value: "finance@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toMatchObject({ financeContactEmail: "finance@org.test" });
+  });
+
   it("redirects a user without board/sysadmin and never renders the form", async () => {
     setSession({ id: 9 }); // authenticated but no roles
     mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null } } });
@@ -167,5 +229,43 @@ describe("EmailSettingsPage", () => {
 
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
     expect(screen.queryByLabelText(/From address/i)).not.toBeInTheDocument();
+  });
+
+  describe("a refetch", () => {
+    const answer = (emailFromAddress: string) => ({ settings: { emailFromAddress, emailReplyToAddress: null } });
+    const refetch = async (fetchMock: jest.Mock) => {
+      const reads = fetchMock.mock.calls.length;
+      act(() => { void invalidateLoads(); });
+      await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(reads));
+    };
+
+    it("keeps unsaved input when the answer changes", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      let current = answer("first@example.com");
+      const fetchMock = mockFetchJson({ "/api/settings/email": () => current });
+      renderWithProviders(<EmailSettingsPage />);
+      await screen.findByDisplayValue("first@example.com");
+      fireEvent.click(screen.getByRole("checkbox"));
+      fireEvent.change(screen.getByLabelText("From address"), { target: { value: "typing@example.com" } });
+
+      current = answer("second@example.com");
+      await refetch(fetchMock);
+
+      await act(async () => {});
+      expect(screen.getByLabelText("From address")).toHaveValue("typing@example.com");
+    });
+
+    it("updates a clean form with the new answer", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      let current = answer("first@example.com");
+      const fetchMock = mockFetchJson({ "/api/settings/email": () => current });
+      renderWithProviders(<EmailSettingsPage />);
+      await screen.findByDisplayValue("first@example.com");
+
+      current = answer("second@example.com");
+      await refetch(fetchMock);
+
+      expect(await screen.findByDisplayValue("second@example.com")).toBeInTheDocument();
+    });
   });
 });

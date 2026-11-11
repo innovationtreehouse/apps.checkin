@@ -103,7 +103,7 @@ describe('AuditLog Integration Tests', () => {
         }
         if (createdParticipantIds.length > 0) {
             // A merge case here archives to PersonMerge, whose toId is RESTRICT — the
-            // archive row has to go before the survivor it names (#1456 2b).
+            // archive row has to go before the survivor it names.
             await prisma.personMerge.deleteMany({ where: { OR: [{ toId: { in: createdParticipantIds } }, { fromId: { in: createdParticipantIds } }] } });
             await prisma.person.deleteMany({ where: { id: { in: createdParticipantIds } } });
         }
@@ -148,7 +148,7 @@ describe('AuditLog Integration Tests', () => {
     beforeEach(() => {
         // Reset mocks and default to admin session
         (getServerSession as jest.Mock).mockResolvedValue({
-            user: { id: testAdminId, isSysadmin: true }
+            user: { id: testAdminId, isSysadmin: true, isBoardMember: true }
         });
     });
 
@@ -280,7 +280,7 @@ describe('AuditLog Integration Tests', () => {
         });
 
         expect(log).toBeDefined();
-        // newData is now a raw JSON object (legacy rows may still be strings).
+        // newData is a raw JSON object (older rows may hold strings).
         const newData = normalizeAuditData(log?.newData) as Record<string, unknown>;
         expect(newData.type).toBe('lead_attendance_correction');
         // The update branch leaves arrivedVia alone, so the audit must not claim
@@ -291,10 +291,12 @@ describe('AuditLog Integration Tests', () => {
 
     it('should generate an AuditLog when an Admin edits participant PII', async () => {
         await prisma.auditLog.deleteMany({ where: { tableName: 'Person' } });
+        // An email change is the board's.
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true, isBoardMember: true } });
 
         const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}`, {
             method: 'PUT',
-            body: JSON.stringify({ name: 'Edited Audit Name', email: 'edited-audit-test@example.com' })
+            body: JSON.stringify({ name: 'Edited Audit Name', email: 'edited-audit-test@example.com', emailChangeReason: 'New address' })
         });
 
         const res = await editParticipant(req as never, { params: Promise.resolve({ id: testParticipantId.toString() }) });

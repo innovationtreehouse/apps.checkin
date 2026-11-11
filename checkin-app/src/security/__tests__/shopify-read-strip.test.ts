@@ -16,7 +16,7 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { allRoutes, getRoute, VALID_ROLES, type Token } from '@/security/core';
+import { allRoutes, getRoute, ROLES, type Token } from '@/security/core';
 import { handler } from '@/security/handler';
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
@@ -25,6 +25,10 @@ import * as synthetic from '@/security/shopifyReadSyntheticClassifications';
 import '@/security/registry';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 
 const ENDPOINTS = [
@@ -168,7 +172,7 @@ describe('mirror registry — stripping', () => {
         const views: (readonly Token[])[] = [[]];
         for (const [endpoint, spec] of allRoutes()) {
             if (!ENDPOINTS.includes(endpoint)) continue;
-            for (const role of VALID_ROLES) {
+            for (const role of ROLES) {
                 views.push(spec.orderedView.find(([r]) => r === role)?.[1] ?? []);
             }
         }
@@ -183,7 +187,7 @@ describe('mirror registry — stripping', () => {
 
     it('secret columns are stripped even under every grant there is', () => {
         const scopes = ['everyones', 'their_own', 'their_households', 'led_households', 'their_program_participants', 'their_program_households', 'keyholders', 'all_current_visitors'];
-        const all = ['public', 'member', ...scopes.flatMap(s => ['pii', 'personal', 'internal'].map(t => `${s}:${t}`))] as Token[];
+        const all = ['public', 'member', ...scopes.flatMap(s => ['pii', 'personal', 'internal', 'hardship'].map(t => `${s}:${t}`))] as Token[];
         const bag = leakyBag();
         expect(stripValue('ShopifyRawEvent', bag.ShopifyRawEvent, all, ctx())).not.toHaveProperty('payload');
         expect(stripValue('ShopifyBulkExport', bag.ShopifyBulkExport, all, ctx())).not.toHaveProperty('jsonl');

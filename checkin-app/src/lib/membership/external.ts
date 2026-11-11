@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
+import { ServiceError } from "@checkin/component-kit";
+import { EXTERNAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
@@ -12,6 +14,9 @@ import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTrigger
 import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
+
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
  * signing the Zoho contract and consenting to a background check on Averity.
@@ -22,7 +27,7 @@ import { systemActor, personOrSystemActor } from "@/lib/auditActor";
  *
  * The contract is recorded automatically (Zoho webhook) or manually by the
  * board. BG consent is human-marked (no Averity API): the applicant self-reports
- * after submitting on Averity (selfRecordBgConsent, #875), with the board's
+ * after submitting on Averity (selfRecordBgConsent), with the board's
  * mark-bg-consent action as the backstop. The system never sees contract content
  * or check results.
  *
@@ -39,9 +44,9 @@ export type ExternalErrorCode =
     | "agreement_unavailable"
     | "signing_in_progress";
 
-export class ExternalError extends Error {
+export class ExternalError extends ServiceError {
     constructor(public readonly code: ExternalErrorCode, message: string) {
-        super(message);
+        super(EXTERNAL_ERROR_STATUS[code], message, code);
         this.name = "ExternalError";
     }
 }
@@ -90,7 +95,7 @@ export async function getExternalStatus(process: {
  * — advance from EXTERNAL straight to PENDING_PAYMENT. RENEWAL processes take
  * this gate too: a fresh agreement is signed every cycle (beginRenewal), and a
  * still-valid background check arrives here pre-cleared so only the signature
- * is pending. The background check no longer gates payment: when it still needs
+ * is pending. The background check does not gate payment: when it still needs
  * a human review (no still-valid prior background check), it runs in PARALLEL
  * while the applicant pays, and only the final ACTIVE flip waits on it. A
  * household intake note is shown to the reviewers but does not gate payment.
@@ -98,8 +103,7 @@ export async function getExternalStatus(process: {
  * The conditional updateMany (status guard) is the atomic gate: two concurrent
  * callers (Zoho webhook + board "mark bg consent") both reach here, but only the
  * one whose updateMany flips PENDING_EXTERNAL_ACTION sees count === 1 — so the
- * audit row and reviewer ping fire exactly once, and a later status is never
- * regressed. Mirrors review.ts `attest`.
+ * audit row is written exactly once, and a later status is never regressed. Mirrors review.ts `attest`.
  */
 export async function advanceExternalIfComplete(processId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -118,7 +122,7 @@ export async function advanceExternalIfComplete(processId: number) {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: {
                 id: processId,
-                // #7 advance CAS from-state from the definition (#1080); the contract/BG narrowing stays literal.
+                // Advance CAS from-state from the definition; the contract/BG narrowing stays literal.
                 ...fromWhere("PENDING_EXTERNAL_ACTION"),
                 contractSignedAt: { not: null },
                 OR: [{ bgClearedAt: { not: null } }, { bgConsentAt: { not: null } }],
@@ -128,7 +132,7 @@ export async function advanceExternalIfComplete(processId: number) {
         if (count !== 1) return null; // lost the race or no longer eligible — no audit, no notify
         // The membership fee is read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
         // background check clears — so a pre-designated volunteer family must get
-        // isVolunteerFamily here, not only at clearance (#874). Sticky + idempotent;
+        // isVolunteerFamily here, not only at clearance. Sticky + idempotent;
         // clearBackgroundCheck's reviewer-marked pass remains the supplement.
         if (membership) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, membership.householdId, false);
         await tx.auditLog.create({
@@ -143,12 +147,8 @@ export async function advanceExternalIfComplete(processId: number) {
         });
         return tx.orgMembershipProcess.findUnique({ where: { id: processId } });
     });
-    if (!advanced) return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
-
-    // No valid prior check ⇒ a human review is still needed. Ping the reviewers;
-    // the review now proceeds in parallel with payment (log-only until email is configured).
-    if (!advanced.bgClearedAt) await notifyReviewers();
-    return advanced;
+    // Reviewers are pinged when the household's check review opens, not here.
+    return advanced ?? prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }
 
 /**
@@ -198,9 +198,30 @@ export async function markContractSigned(processId: number, actorId?: number, re
 }
 
 /**
+ * Asks Zoho about a stored request the app has no signature for, and records one it
+ * finds. The webhook cannot match a closed application, so this is how a signature
+ * made while closed reaches a reopened one. Attributed to the webhook actor: whoever
+ * triggered the check did not sign. Best-effort: on any failure the application
+ * stays unsigned and "Resume signing" asks again. A dead request is left for that
+ * click to replace. The mock answers "completed" for every request, so it is skipped.
+ */
+export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, "id" | "contractSignedAt" | "zohoEnvelopeId">) {
+    if (process.contractSignedAt || !process.zohoEnvelopeId || !config.zohoAvailable()) return;
+    try {
+        if (await signingMockActive()) return;
+        const token = await zohoSign.getAccessToken();
+        if ((await zohoSign.getRequestStatus(token, process.zohoEnvelopeId)) === "completed") await markContractSigned(process.id);
+    } catch (e) {
+        logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
+
+/**
  * Records that the applicant submitted background-check consent, then maybe advance.
  * Only an open household application takes it, unless `kind` names the PERSON_BG
- * submit path, where consent is implicit in the external check.
+ * submit path, where consent is implicit in the external check. A household's
+ * consent names nobody: settling the household opens a check review with no person
+ * for it, and the first reviewer names whose report it is.
  */
 export async function markBgConsent(processId: number, actorId: number, kind: "household" | "PERSON_BG" = "household") {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -220,18 +241,66 @@ export async function markBgConsent(processId: number, actorId: number, kind: "h
             data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { bgConsentAt: true } },
         });
     });
+    if (kind === "household" && process.orgMembershipId) {
+        const membership = await prisma.orgMembership.findUnique({ where: { id: process.orgMembershipId }, select: { householdId: true } });
+        if (membership) await (await settleModule()).settleHouseholdBg(membership.householdId);
+    }
     return advanceExternalIfComplete(processId);
+}
+
+interface ConsentingPerson {
+    householdId: number | null;
+    isHouseholdLead: boolean;
+    isSysadmin: boolean;
+    household?: { orgMembership?: { processes: Pick<OrgMembershipProcess, "id" | "status">[] } | null } | null;
+}
+
+function canConsentForHousehold(person: ConsentingPerson) {
+    return !!person.householdId && (person.isHouseholdLead || person.isSysadmin);
+}
+
+/** The household application a person's consent goes to, ahead of any check of their own. */
+function householdConsentTarget(person: ConsentingPerson) {
+    return canConsentForHousehold(person) ? latestPendingExternal(person.household?.orgMembership?.processes) : undefined;
+}
+
+function findOwnPendingBg(personId: number) {
+    return prisma.orgMembershipProcess.findFirst({
+        where: { kind: "PERSON_BG", subjectPersonId: personId, status: "PENDING_BG_REVIEW" },
+        orderBy: { id: "desc" },
+        select: { id: true, bgConsentAt: true },
+    });
+}
+
+export interface OwnBackgroundCheck {
+    consented: boolean;
+    deepLinkUrl: string | null;
+}
+
+/**
+ * The person's own background check awaiting review, as /membership offers it for
+ * consent. Null when there is none, or when their consent would go to their
+ * household's application instead.
+ */
+export async function getOwnBackgroundCheck(person: ConsentingPerson & { id: number }): Promise<OwnBackgroundCheck | null> {
+    if (householdConsentTarget(person)) return null;
+    const process = await findOwnPendingBg(person.id);
+    if (!process) return null;
+    return { consented: !!process.bgConsentAt, deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink() };
 }
 
 /**
  * Applicant self-report that they submitted background-check consent on
- * Averity (#875). Honor-system by design: Averity has no API, so the applicant's
+ * Averity. Honor-system by design: Averity has no API, so the applicant's
  * own claim records consent the same way a board mark does — through
  * markBgConsent, with the applicant as the audit actor, so a self-reported
  * consent stays distinguishable from a board-confirmed one. The board
  * mark-bg-consent action remains as the backstop. Idempotent (markBgConsent
- * no-ops on a second call), and restricted to a household lead — the person who
- * actually consents on Averity.
+ * no-ops on a second call).
+ *
+ * A household lead attests the household application awaiting external action.
+ * Otherwise the caller attests their own open PERSON_BG obligation, if they have
+ * one; the household gates refuse everyone else.
  */
 export async function selfRecordBgConsent(userId: number): Promise<ExternalStatus> {
     const user = await prisma.person.findUnique({
@@ -241,17 +310,36 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
         },
     });
     if (!user) throw new ExternalError("not_found", "Application not found.");
-    if (!user.householdId) throw new ExternalError("no_household", "You must create a household first.");
-    if (!user.isHouseholdLead && !user.isSysadmin) {
-        throw new ExternalError("not_lead", "Only a household lead can confirm background-check consent.");
+    const canAttestHousehold = canConsentForHousehold(user);
+
+    const householdProcess = householdConsentTarget(user);
+    if (householdProcess) {
+        const updated = await markBgConsent(householdProcess.id, userId);
+        if (!updated) throw new ExternalError("not_found", "Application not found.");
+        return getExternalStatus(updated);
     }
 
-    const process = latestPendingExternal(user.household?.orgMembership?.processes);
-    if (!process) throw new ExternalError("wrong_phase", "No application is awaiting background-check consent.");
+    const ownBg = await selfAttestPersonBg(userId);
+    if (ownBg) return getExternalStatus(ownBg);
 
-    const updated = await markBgConsent(process.id, userId);
-    if (!updated) throw new ExternalError("not_found", "Application not found.");
-    return getExternalStatus(updated);
+    if (!user.householdId) throw new ExternalError("no_household", "You must create a household first.");
+    if (!canAttestHousehold) {
+        throw new ExternalError("not_lead", "Only a household lead can confirm background-check consent.");
+    }
+    throw new ExternalError("wrong_phase", "No application is awaiting background-check consent.");
+}
+
+/**
+ * Records consent on the caller's own PERSON_BG awaiting review, putting it in the
+ * reviewer queue. Reviewers are pinged only on the first attestation, as on the
+ * board's submit path. Returns null when the caller has no such obligation.
+ */
+async function selfAttestPersonBg(userId: number) {
+    const process = await findOwnPendingBg(userId);
+    if (!process) return null;
+    const updated = await markBgConsent(process.id, userId, "PERSON_BG");
+    if (!process.bgConsentAt) await notifyReviewers();
+    return updated;
 }
 
 /**
@@ -282,7 +370,7 @@ export async function findProcessByEnvelope(requestId: string) {
 
 /**
  * Forget a dead Zoho signing request (declined/expired/recalled) so the next
- * "sign" click creates a fresh one — the applicant's self-serve recovery (#876).
+ * "sign" click creates a fresh one — the applicant's self-serve recovery.
  * Conditional on the process still pointing at THAT request and being unsigned,
  * so a concurrent re-create's fresh ids are never clobbered and the audit row is
  * written only by the caller that actually cleared.
@@ -364,7 +452,7 @@ export async function syncContractStatus(userId: number): Promise<ExternalStatus
                 await markContractSigned(process.id, userId);
             } else if (state === "terminal") {
                 // Declined or expired — forget the dead request so contractStarted
-                // resets and the next click creates a fresh one (#876).
+                // resets and the next click creates a fresh one.
                 await clearDeadSigningRequest(process.id, process.zohoEnvelopeId, userId);
             }
         } catch (e) {
@@ -392,6 +480,21 @@ async function assertSignerIs(signerId: number | null, userId: number) {
 
 /** Days an applicant has to sign before the Zoho request expires (mirrors the script's default). */
 const CONTRACT_EXPIRATION_DAYS = 15;
+
+/**
+ * A claim with no request ids this old has lost its holder and can be taken over.
+ * Far longer than the holder's Zoho calls, each capped by ZOHO_FETCH_TIMEOUT_MS.
+ */
+const SIGNING_CLAIM_WINDOW_MS = 5 * 60_000;
+
+/** Recall a request no one will ever be sent to, so it can't stay live beside the stored one. */
+async function recallUnstoredRequest(token: string, requestId: string, processId: number) {
+    try {
+        await zohoSign.recallRequest(token, requestId);
+    } catch (e) {
+        logger.error(`Could not recall unstored Zoho request ${requestId} for membership process ${processId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+}
 
 /**
  * Applicant-facing "Sign your membership agreement" action. Idempotent: the Zoho
@@ -445,19 +548,28 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
 
     // A stored request may be dead — declined by the signer, or expired after
     // CONTRACT_EXPIRATION_DAYS — and Zoho can neither embed nor revive it. Check
-    // before reusing (#876): forget dead ids and fall through to the create path
-    // below, so the same button self-recovers. Best-effort — if the status read
+    // before reusing: forget dead ids and fall through to the create path
+    // below, so the same button self-recovers. A request already signed gets its
+    // signature recorded instead of a link. Best-effort — if the status read
     // fails, proceed with the stored ids rather than blocking the click (worst
-    // case the embed call fails, as it did before this check existed).
-    if (requestId && actionId && !process.contractSignedAt) {
+    // case the embed call fails).
+    if (requestId && !process.contractSignedAt) {
+        let signedAtZoho = false;
         try {
-            if ((await zohoSign.getRequestStatus(token, requestId)) === "terminal") {
+            const state = await zohoSign.getRequestStatus(token, requestId);
+            signedAtZoho = state === "completed";
+            if (state === "terminal") {
                 await clearDeadSigningRequest(process.id, requestId, userId);
                 requestId = null;
                 actionId = null;
             }
         } catch (e) {
             logger.warn(`Zoho request-status check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        // The mock answers "completed" for every request; only its interstitial signs.
+        if (signedAtZoho && !(await signingMockActive())) {
+            await markContractSigned(process.id, userId);
+            throw new ExternalError("wrong_phase", "This agreement has already been signed.");
         }
     }
 
@@ -467,12 +579,18 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
         // Claim before creating: Zoho charges per request, so only the claim's
         // winner ever calls createRequest, and a concurrent click is told to wait
         // instead of paying for an orphan. The claim matches an INCOMPLETE pair
-        // (either id null), not just a null envelope: setZohoEnvelope (the legacy
+        // (either id null), not just a null envelope: setZohoEnvelope (the
         // admin/email flow) stores an envelope WITHOUT an action id, which can't be
-        // embedded, so that state must stay claimable.
+        // embedded, so that state must stay claimable. A claim whose holder died
+        // before storing ids is claimable once past the window.
+        const claimedAt = new Date();
         const claim = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, zohoSignerPersonId: null, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoSignerPersonId: userId },
+            where: {
+                id: process.id,
+                OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }],
+                AND: [{ OR: [{ zohoSignerPersonId: null }, { zohoClaimedAt: { lt: new Date(claimedAt.getTime() - SIGNING_CLAIM_WINDOW_MS) } }] }],
+            },
+            data: { zohoSignerPersonId: userId, zohoClaimedAt: claimedAt },
         });
         if (claim.count === 0) {
             const current = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
@@ -485,6 +603,13 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             logger.info(`Concurrent signing request for membership process ${process.id}; reusing stored ${requestId}.`);
             return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
         }
+
+        // Matching on claimedAt stops a holder that was taken over from touching the newer claim.
+        const ownClaim = { id: process.id, zohoSignerPersonId: userId, zohoClaimedAt: claimedAt };
+        const releaseClaim = () => prisma.orgMembershipProcess.updateMany({
+            where: { ...ownClaim, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: null },
+        });
 
         let created: Awaited<ReturnType<typeof zohoSign.createRequest>>;
         try {
@@ -557,18 +682,24 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             });
         } catch (e) {
             // Release the claim so the next click can retry.
-            await prisma.orgMembershipProcess.updateMany({
-                where: { id: process.id, zohoSignerPersonId: userId, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-                data: { zohoSignerPersonId: null },
-            });
+            await releaseClaim();
             throw e;
         }
 
-        const stored = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, zohoSignerPersonId: userId },
-            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
-        });
+        let stored: { count: number };
+        try {
+            stored = await prisma.orgMembershipProcess.updateMany({
+                where: ownClaim,
+                data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+            });
+        } catch (e) {
+            await recallUnstoredRequest(token, created.requestId, process.id);
+            // If this fails too, the window frees the claim.
+            await releaseClaim().catch((releaseError) => logger.error(`Could not release signing claim for membership process ${process.id}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`));
+            throw e;
+        }
         if (stored.count === 0) {
+            await recallUnstoredRequest(token, created.requestId, process.id);
             throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
         }
         requestId = created.requestId;
@@ -611,6 +742,7 @@ export async function resetSigning(processId: number, actorId: number, reason: s
             // Zoho refuses to recall a request that is already dead or signed.
             const state = await zohoSign.getRequestStatus(token, requestId);
             if (state === "completed") {
+                await markContractSigned(processId);
                 throw new ExternalError("wrong_phase", "This agreement has already been signed. Refresh to see it.");
             }
             if (state !== "terminal") throw e;

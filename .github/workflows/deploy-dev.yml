@@ -191,8 +191,7 @@ jobs:
 
           # Surface the container's own output either way — without this, a failure
           # only shows the exit code here and the real Prisma error (P3009 etc.)
-          # hides in CloudWatch, which is how the 2026-07-02 P3009 wedge went
-          # undiagnosed for a day.
+          # hides in CloudWatch.
           TASK_ID="${TASK_ARN##*/}"
           echo "--- migrate container logs (/ecs/checkin-migrate-dev) ---"
           ./scripts/dump-task-logs.sh /ecs/checkin-migrate-dev "ecs/checkin-migrate/$TASK_ID"
@@ -224,7 +223,7 @@ jobs:
             --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "Registered app task def: $APP_ARN"
 
-          # --desired-count 1: with scale-to-zero (infra#107) dev normally sits at
+          # --desired-count 1: with scale-to-zero dev normally sits at
           # desired 0, where services-stable is vacuously true and a crash-looping
           # image would deploy "green". Booting one task makes the wait real; the
           # scaler tears it back down after the idle window.
@@ -242,6 +241,12 @@ jobs:
       # credentials assumed above. Skips while the function does not exist yet.
       - name: Deploy qbo-refresher (dev)
         uses: ./.github/actions/deploy-qbo-refresher
+        with:
+          environment: dev
+
+      # The Gmail token refresher Lambda, on the same terms as qbo-refresher.
+      - name: Deploy gmail-refresher (dev)
+        uses: ./.github/actions/deploy-gmail-refresher
         with:
           environment: dev
 
@@ -279,9 +284,8 @@ jobs:
           gh pr comment "$PR" --body "$BODY"
           echo "Posted result on PR #$PR"
 
-  # s-read rides every dev deploy (issue #235's decision: the checkin pipeline
-  # owns s-read deploys; deploy-s-read.yml's manual dispatch remains for ad-hoc
-  # runs). Runs after the app is out; same commit; migrate-and-code mode.
+  # s-read rides every dev deploy: the checkin pipeline owns s-read deploys,
+  # and deploy-s-read.yml's manual dispatch serves ad-hoc runs. Runs after the app is out; same commit; migrate-and-code mode.
   s-read:
     name: Deploy s-read (dev)
     needs: deploy

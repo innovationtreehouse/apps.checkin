@@ -61,6 +61,20 @@ describe('setProgramProductOffSale', () => {
         expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'setProgramProductOffSale' }));
         expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('retried on the next daily run'));
     });
+
+    it('treats a product Shopify no longer has (404) as already off sale, with no alert', async () => {
+        process.env.SHOPIFY_STORE_DOMAIN = 'test.myshopify.com';
+        process.env.SHOPIFY_CLIENT_ID = 'test_client_id';
+        process.env.SHOPIFY_CLIENT_SECRET = 'test_client_secret';
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: async () => '{"errors":"Not Found"}' });
+
+        const result = await setProgramProductOffSale({ shopifyProductId: '4242' });
+
+        expect(result).toBe(true);
+        expect(logIntegrationError).not.toHaveBeenCalled();
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
 });
 
 describe('createShopifySingleVariantProgram', () => {
@@ -195,6 +209,16 @@ describe('createShopifySingleVariantProgram', () => {
         });
     });
 
+    it.each([[0, 'shopify', 'deny'], [null, null, 'continue']])('a cap of %s creates the variant with inventory_management %s and policy %s', async (cap, management, policy) => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 700, variants: [{ id: 800 }] } }) });
+
+        await createShopifySingleVariantProgram('Capped Program', 3500, cap);
+
+        const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+        expect(body.product.variants[0]).toMatchObject({ inventory_management: management, inventory_policy: policy });
+    });
+
     it('returns null and emails admins when product creation fails', async () => {
         mockTokenResponse(fetchMock);
         fetchMock.mockResolvedValueOnce({ ok: false, status: 422, statusText: 'Unprocessable Entity', text: async () => '{"errors":"bad variant"}' });
@@ -250,7 +274,7 @@ describe('mintMemberDiscountCode', () => {
     });
 
     it('returns null for a zero/negative discount without calling fetch', async () => {
-        const result = await mintMemberDiscountCode(1, 7, 'variant-1', 0);
+        const result = await mintMemberDiscountCode({ id: 1, shopifyVariantId: 'variant-1' }, 7, 0);
         expect(result).toBeNull();
         expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -261,7 +285,7 @@ describe('mintMemberDiscountCode', () => {
         delete process.env.SHOPIFY_CLIENT_ID;
         delete process.env.SHOPIFY_CLIENT_SECRET;
 
-        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
+        const result = await mintMemberDiscountCode({ id: 42, shopifyVariantId: '999888' }, 7, 1000);
         expect(result).toMatch(/^PRG42-H7-[0-9A-F]{8}$/);
         expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -273,7 +297,7 @@ describe('mintMemberDiscountCode', () => {
             json: async () => ({ data: { discountCodeBasicCreate: { codeDiscountNode: { id: 'gid://shopify/DiscountCodeNode/1' }, userErrors: [] } } }),
         });
 
-        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
+        const result = await mintMemberDiscountCode({ id: 42, shopifyVariantId: '999888' }, 7, 1000);
 
         expect(result).toMatch(/^PRG42-H7-[0-9A-F]{8}$/);
         expect(fetchMock).toHaveBeenCalledTimes(2); // token + one GraphQL mutation
@@ -299,7 +323,7 @@ describe('mintMemberDiscountCode', () => {
         mockTokenResponse(fetchMock);
         fetchMock.mockResolvedValueOnce({ ok: false, status: 422, text: async () => '{"errors":"bad request"}' });
 
-        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
+        const result = await mintMemberDiscountCode({ id: 42, shopifyVariantId: '999888' }, 7, 1000);
 
         expect(result).toBeNull();
         expect(sendEmail).not.toHaveBeenCalled();
@@ -312,7 +336,7 @@ describe('mintMemberDiscountCode', () => {
             json: async () => ({ data: { discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ field: ['basicCodeDiscount'], message: 'nope' }] } } }),
         });
 
-        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
+        const result = await mintMemberDiscountCode({ id: 42, shopifyVariantId: '999888' }, 7, 1000);
 
         expect(result).toBeNull();
         expect(sendEmail).not.toHaveBeenCalled();
@@ -324,7 +348,7 @@ describe('mintMemberDiscountCode', () => {
         delete process.env.SHOPIFY_CLIENT_ID;
         delete process.env.SHOPIFY_CLIENT_SECRET;
 
-        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
+        const result = await mintMemberDiscountCode({ id: 42, shopifyVariantId: '999888' }, 7, 1000);
         expect(result).toBeNull();
         expect(fetchMock).not.toHaveBeenCalled();
     });

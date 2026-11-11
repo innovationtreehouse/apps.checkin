@@ -7,3 +7,4 @@ export * as transactions from "./transactions";
 export * as rules from "./rules";
 export * as disbursements from "./disbursements";
 export * as inKind from "./inKind";
+export * as settings from "./settings";

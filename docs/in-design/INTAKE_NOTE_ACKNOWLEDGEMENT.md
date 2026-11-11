@@ -253,7 +253,6 @@ previously tabulated:
 | `PENDING_PAYMENT` | `grantRenewalPayment` → `activate` | `renewal.ts` | `RENEWAL` |
 | `PENDING_BG_REVIEW` | `clearBackgroundCheck` | `review.ts` | |
 | `PENDING_BG_CLEARANCE` | `clearBackgroundCheck` | `review.ts` | |
-| `BLOCKED` | `overrideBlocked approve` | `review.ts` | |
 
 **The `PERSON_AGREEMENT` edge is out of scope for the predicate, and the reason
 is structural rather than a judgement.** A `PERSON_AGREEMENT` process is opened

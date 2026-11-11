@@ -2,14 +2,14 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * The one own-household check for grants that discount the membership fee, clear a person, or
  * confer volunteer standing: the household volunteer flag, a volunteer designation,
  * a background-check date, a program volunteer row or its core flag, plus acting
  * on a payment problem. Every writer of one of these calls it (selfGrantGuard.test.ts
- * enforces that). Setting a tool certification level calls it too.
+ * enforces that). Setting a tool certification level, and adding or approving a receipt
+ * mail alias, call it too.
  *
  * Refuses when the subject is the actor or shares the actor's household, and when
  * the actor's household can't be resolved (fail closed). No role is exempt. Every
@@ -24,7 +24,7 @@ export type GrantSubject =
     | { email: string };
 
 /** What the actor tried: the table the grant writes and the fields it would have set. */
-export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus"; attempted: Prisma.InputJsonObject };
+export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus" | "PersonMailAlias"; attempted: Prisma.InputJsonObject };
 
 export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 
@@ -91,6 +91,6 @@ export async function recordSelfGrantRefusal(db: DbClient, refusal: SelfGrantRef
 /** The id of the person in the actor's household whose email is `email` (canonical), or null. */
 async function ownHouseholdEmailMatch(db: DbClient, householdId: number, email: string): Promise<number | null> {
     const canonical = canonicalizeEmail(email);
-    const members = await db.person.findMany({ where: { householdId, ...LIVE_PERSON }, select: { id: true, email: true } });
+    const members = await db.person.findMany({ where: { householdId }, select: { id: true, email: true } });
     return members.find((p) => p.email != null && canonicalizeEmail(p.email) === canonical)?.id ?? null;
 }

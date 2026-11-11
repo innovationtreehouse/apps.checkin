@@ -12,10 +12,12 @@
  *   6. Per-row scope check: the view must cover the served field's tier on
  *      this row (the same fieldVisible/scopesHeld the stripper uses), else 404
  *      — a file the caller may not see is indistinguishable from none.
- *   7. Emit row[field] (bytes) with the headers fixed for its content type.
+ *   7. When the served field is marked and the row is not the caller's own,
+ *      record the view (./financeView); a failed write is an opaque 500.
+ *   8. Emit row[field] (bytes) with the headers fixed for its content type.
  *
- * Errors thrown from the user fn: `ApiResponseError` → its status; anything
- * else → opaque 500.
+ * Errors thrown from the user fn: `ApiResponseError` → its status, message,
+ * optional code and field names; anything else → opaque 500.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -33,7 +35,8 @@ import {
     type Token,
 } from './core';
 import { buildCallerContext, callerHoldsRole, resolveAccess, scopesHeld } from './access-resolvers';
-import { ApiResponseError, type HandlerContext } from './handler';
+import { ApiResponseError, renderApiResponseError, type HandlerContext } from './handler';
+import { fileRecords, recordView } from './financeView';
 // Side-effect import to register routes before fileHandler() is invoked.
 import './registry';
 
@@ -114,7 +117,7 @@ export function fileHandler<P extends Record<string, string> = Record<string, st
         try {
             result = await fn({ req, auth, params, role });
         } catch (err) {
-            if (err instanceof ApiResponseError) return apiError(err.message, err.status);
+            if (err instanceof ApiResponseError) return renderApiResponseError(err);
             console.error(`[${endpoint}] file handler error:`, err);
             return apiError('Internal Server Error', 500);
         }
@@ -131,6 +134,11 @@ export function fileHandler<P extends Record<string, string> = Record<string, st
             : undefined;
         if (!(bytes instanceof Uint8Array) || !delivery) {
             console.error(`[${endpoint}] file handler returned no bytes or a disallowed content type`);
+            return apiError('Internal Server Error', 500);
+        }
+
+        const records = fileRecords(model, field, result.row, callerCtx, params);
+        if (records.length > 0 && !(await recordView({ endpoint, req, auth, role, records, spec: undefined }))) {
             return apiError('Internal Server Error', 500);
         }
 

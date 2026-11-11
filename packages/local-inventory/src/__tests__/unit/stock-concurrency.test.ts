@@ -3,9 +3,11 @@
  * resolution that arrives before its provisional row keeps the event's conversion factor.
  * Real Postgres; describeDb skips without one.
  */
-import { expect, it } from "vitest";
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
+import { describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
+import { methodsFor } from "../../lib/mergeConflictMethods";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
 import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
 import { createProvisionalResolutionRepository } from "../../lib/repositories/provisionalResolutionRepository";
@@ -38,16 +40,6 @@ function services() {
     receipts: createReceiptService({ provisionalItemService, inventoryRepo, receiveQueueRepo, db }),
     queue: createReceiveQueueService({ receiveQueueRepo, db }),
   };
-}
-
-/** Resolves once at least `count` backends in this database are waiting on a lock. */
-async function someoneBlocked(count = 1): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-    if (n >= BigInt(count)) return;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error("no backend blocked on a lock");
 }
 
 async function qty(gtin13: string) {
@@ -95,16 +87,16 @@ describeDb("stock write concurrency", () => {
     // The first receipt on the real GTIN holds its new row uncommitted while the merge runs.
     let commit!: () => void;
     const gate = new Promise<void>((r) => (commit = r));
-    let inserted!: () => void;
-    const rowInserted = new Promise<void>((r) => (inserted = r));
+    let inserted!: (pid: number) => void;
+    const rowInserted = new Promise<number>((r) => (inserted = r));
     const receipt = db.$transaction(async (tx) => {
       await applyQtyChangeIn(tx, TEST_ORG_ID, REAL, 3, { userId: null, changeType: "received", receiptId: "r-1" });
-      inserted();
+      inserted(await backendPid(tx));
       await gate;
     });
-    await rowInserted;
+    const holderPid = await rowInserted;
     const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
-    await someoneBlocked();
+    await waitersBehind(db, holderPid);
     commit();
     await Promise.all([receipt, merge]);
 
@@ -118,16 +110,16 @@ describeDb("stock write concurrency", () => {
 
     let commit!: () => void;
     const gate = new Promise<void>((r) => (commit = r));
-    let added!: () => void;
-    const rowAdded = new Promise<void>((r) => (added = r));
+    let added!: (pid: number) => void;
+    const rowAdded = new Promise<number>((r) => (added = r));
     const receipt = db.$transaction(async (tx) => {
       await applyQtyChangeIn(tx, TEST_ORG_ID, GTIN, 1, { userId: null, changeType: "received", receiptId: "p-1" });
-      added();
+      added(await backendPid(tx));
       await gate;
     });
-    await rowAdded;
-    const edit = inventory.updateItem(TEST_ORG_ID, GTIN, { desiredQuantity: 4 }, 1);
-    await someoneBlocked();
+    const holderPid = await rowAdded;
+    const edit = inventory.updateItem(TEST_ORG_ID, GTIN, { desiredQuantity: 4, expectedDesiredQuantity: 0 }, 1);
+    await waitersBehind(db, holderPid);
     commit();
     await Promise.all([receipt, edit]);
 
@@ -156,6 +148,173 @@ describeDb("stock write concurrency", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await qty(REAL)).toBe(10);
     expect(await db.inventoryLog.count({ where: { gtin13: REAL } })).toBe(1);
+  });
+
+  it.each(["use_existing", "use_provisional", "sum"] as const)("%s logs a copy of the removed provisional row", async (quantityMethod) => {
+    const { provisional } = services();
+    const shelf = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "shelf" } });
+    const backstock = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "backstock" } });
+    await db.orgItem.createMany({
+      data: [
+        { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 12, desiredQuantity: 8, locationId: shelf.id, backstockLocationId: backstock.id },
+        { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 5 },
+      ],
+    });
+    const conflict = await db.inventoryMergeConflict.create({
+      data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch", sourceEventId: 12 },
+    });
+
+    await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod }, 42, "manager");
+
+    const log = await db.inventoryLog.findFirst({ where: { gtin13: PROVISIONAL, fieldChanged: "deleted" } });
+    expect(log).toMatchObject({ orgId: TEST_ORG_ID, userId: 42, username: "manager", changeType: "manual", valueAfter: null });
+    expect(JSON.parse(log?.valueBefore ?? "{}")).toEqual({
+      existingQuantity: 12, desiredQuantity: 8, locationId: shelf.id, backstockLocationId: backstock.id,
+    });
+  });
+
+  describe("a merge removing the provisional row", () => {
+    const removalLog = () => db.inventoryLog.findFirst({ where: { gtin13: PROVISIONAL, fieldChanged: "deleted" } });
+
+    async function seedProvisional() {
+      const { receipts } = services();
+      await receipts.applyReceipt(TEST_ORG_ID, "d-0", undefined, [{ gtin13: PROVISIONAL, quantityDelta: 5, isProvisional: true }]);
+      const shelf = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "shelf" } });
+      await db.orgItem.update({
+        where: { orgGtin: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } },
+        data: { desiredQuantity: 8, locationId: shelf.id },
+      });
+      return shelf;
+    }
+
+    it.each([
+      ["with stock", 7, 12],
+      ["with none", 0, 5],
+    ])("logs a copy when the real row exists %s, because the row's settings are dropped", async (_label, realQty, merged) => {
+      const shelf = await seedProvisional();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: realQty } });
+
+      await services().provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
+
+      expect(await qty(REAL)).toBe(merged);
+      const log = await removalLog();
+      expect(log).toMatchObject({ orgId: TEST_ORG_ID, userId: null, username: null, changeType: "automatic", valueAfter: null });
+      expect(JSON.parse(log?.valueBefore ?? "{}")).toEqual({
+        existingQuantity: 5, desiredQuantity: 8, locationId: shelf.id, backstockLocationId: null,
+      });
+    });
+
+    it("logs no copy when the row is renamed onto a new real row, which keeps its settings", async () => {
+      const shelf = await seedProvisional();
+
+      await services().provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
+
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toMatchObject({
+        existingQuantity: 5, desiredQuantity: 8, locationId: shelf.id,
+      });
+      expect(await removalLog()).toBeNull();
+    });
+  });
+
+  describe("when the provisional holds no stock", () => {
+    const openConflict = () =>
+      db.inventoryMergeConflict.create({
+        data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch", sourceEventId: 11 },
+      });
+
+    it.each([
+      ["a zero count", async () => { await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 0, desiredQuantity: 8 } }); }],
+      ["no row", async () => {}],
+    ])("use_provisional is refused with %s, leaving the real count and the conflict alone", async (_label, seedProvisional) => {
+      const { provisional } = services();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 12 } });
+      await seedProvisional();
+      const conflict = await openConflict();
+
+      await expect(provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1))
+        .rejects.toMatchObject({ status: 409 });
+
+      expect(await qty(REAL)).toBe(12);
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "pending" });
+    });
+
+    it("use_provisional is refused on a removed real row, keeping the provisional's settings", async () => {
+      const { provisional } = services();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 0, desiredQuantity: 8 } });
+      const conflict = await openConflict();
+
+      await expect(provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1))
+        .rejects.toMatchObject({ status: 409 });
+
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toMatchObject({ desiredQuantity: 8 });
+    });
+
+    it.each(["use_existing", "sum"] as const)("%s still closes it at the real count", async (quantityMethod) => {
+      const { provisional } = services();
+      await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 12 } });
+      const conflict = await openConflict();
+
+      await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod }, 1);
+
+      expect(await qty(REAL)).toBe(12);
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "resolved" });
+    });
+
+    it("the page offers use_provisional only for a provisional with stock", () => {
+      const offered = (quantity: number) => methodsFor(quantity).map((m) => m.value);
+      expect(offered(0)).toEqual(["use_existing", "sum"]);
+      expect(offered(1)).toEqual(["use_existing", "use_provisional", "sum"]);
+    });
+  });
+
+  describe("after the real item's row was removed", () => {
+    async function conflictOverRemovedRealItem() {
+      await db.orgItem.create({
+        data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 4, desiredQuantity: 8 },
+      });
+      return db.inventoryMergeConflict.create({
+        data: { orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch", sourceEventId: 10 },
+      });
+    }
+
+    it.each(["use_provisional", "sum"] as const)("%s closes it and lands the provisional stock on a new real row", async (quantityMethod) => {
+      const { provisional } = services();
+      const conflict = await conflictOverRemovedRealItem();
+
+      await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod }, 1);
+
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "resolved" });
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toMatchObject({ existingQuantity: 4, desiredQuantity: 8 });
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+      expect(await db.inventoryLog.findFirst({ where: { gtin13: REAL } })).toMatchObject({ valueBefore: "0", valueAfter: "4" });
+    });
+
+    it("keeps a first receipt that creates the real row while the resolve runs", async () => {
+      const { provisional } = services();
+      const conflict = await conflictOverRemovedRealItem();
+
+      // The receipt's insert is uncommitted, so the resolve sees no real row and waits on the unique index.
+      let resolving!: Promise<unknown>;
+      await db.$transaction(async (tx) => {
+        await tx.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 3 } });
+        resolving = provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_provisional" }, 1);
+        await waitersBehind(db, await backendPid(tx));
+      });
+      await resolving;
+
+      expect(await qty(REAL)).toBe(7);
+      expect(await db.inventoryLog.findFirst({ where: { gtin13: REAL } })).toMatchObject({ valueBefore: "3", valueAfter: "7" });
+    });
+
+    it("use_existing closes it without bringing the removed row back", async () => {
+      const { provisional } = services();
+      const conflict = await conflictOverRemovedRealItem();
+
+      await provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "use_existing" }, 1);
+
+      expect(await db.inventoryMergeConflict.findUnique({ where: { id: conflict.id } })).toMatchObject({ status: "resolved" });
+      expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: REAL } })).toBeNull();
+    });
   });
 });
 
@@ -259,18 +418,18 @@ describeDb("merge after a concurrent resolution", () => {
     // Hold the provisional row so the merge queues on it first, then the fulfil behind it.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    let locked!: () => void;
-    const rowLocked = new Promise<void>((r) => (locked = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
     const holder = db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM org_items WHERE org_id = ${TEST_ORG_ID} AND gtin13 = ${PROVISIONAL} FOR UPDATE`;
-      locked();
+      locked(await backendPid(tx));
       await gate;
     });
-    await rowLocked;
+    const holderPid = await rowLocked;
     const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 13, 1);
-    await someoneBlocked(1);
+    await waitersBehind(db, holderPid, 1);
     const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
-    await someoneBlocked(2);
+    await waitersBehind(db, holderPid, 2);
     release();
     await Promise.all([holder, merge, fulfil]);
 
@@ -305,22 +464,95 @@ describeDb("merge after a concurrent resolution", () => {
     // Hold the provisional's row so the approve queues on it first, then the fulfil behind it.
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    let locked!: () => void;
-    const rowLocked = new Promise<void>((r) => (locked = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
     const holder = db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
-      locked();
+      locked(await backendPid(tx));
       await gate;
     });
-    await rowLocked;
+    const holderPid = await rowLocked;
     const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 21, 1);
-    await someoneBlocked(1);
+    await waitersBehind(db, holderPid, 1);
     const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
-    await someoneBlocked(2);
+    await waitersBehind(db, holderPid, 2);
     release();
     await Promise.all([holder, approve, fulfil]);
 
     expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
+
+  it("an approve racing a fulfil that created the provisional's stock row carries that stock over", async () => {
+    const { provisional, queue } = services();
+    await provisionalItem(1);
+    const line = await db.receiveQueue.create({
+      data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, quantity: 3, conversionFactor: 1, receiptId: "a-2", lineItemId: 1 },
+    });
+
+    // Hold the provisional's row so the fulfil queues on it first, then the approve behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked(await backendPid(tx));
+      await gate;
+    });
+    const holderPid = await rowLocked;
+    const fulfil = queue.fulfill(line.id, TEST_ORG_ID, 1);
+    await waitersBehind(db, holderPid, 1);
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 22, 1);
+    await waitersBehind(db, holderPid, 2);
+    release();
+    await Promise.all([holder, fulfil, approve]);
+
+    expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
+
+  it("a reject that read pending before an approve merged is a 409 and leaves the approve standing", async () => {
+    const { provisional } = services();
+    await provisionalItem(1);
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 5 } });
+
+    // Hold the provisional's row so the approve queues on it first, then the reject's claim behind it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: (pid: number) => void;
+    const rowLocked = new Promise<number>((r) => (locked = r));
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${TEST_ORG_ID} AND provisional_gtin13 = ${PROVISIONAL} FOR UPDATE`;
+      locked(await backendPid(tx));
+      await gate;
+    });
+    const holderPid = await rowLocked;
+    const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 23, 1);
+    await waitersBehind(db, holderPid, 1);
+    const reject = provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup");
+    await waitersBehind(db, holderPid, 2);
+    release();
+    await Promise.all([holder, approve]);
+    await expect(reject).rejects.toMatchObject({ status: 409 });
+
+    expect(await db.inventoryProvisionalItem.findFirst()).toMatchObject({ status: "approved", resolvedToGtin13: REAL });
+    expect(await qty(REAL)).toBe(5);
+    expect(await db.provisionalItemLog.count({ where: { eventType: "rejected" } })).toBe(0);
+  });
+
+  it("an immediate receipt line on a resolved provisional receives under the real GTIN", async () => {
+    const { receipts } = services();
+    await db.inventoryProvisionalItem.update({
+      where: { id: (await provisionalItem(1)).id },
+      data: { status: "approved", resolvedToGtin13: REAL },
+    });
+    await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: REAL, existingQuantity: 4 } });
+
+    const result = await receipts.applyReceipt(TEST_ORG_ID, "r-1", undefined, [{ gtin13: PROVISIONAL, quantityDelta: 2, isProvisional: true }]);
+
+    expect(result.updatedItems).toEqual([{ gtin13: REAL, newQuantity: 6 }]);
+    expect(await qty(REAL)).toBe(6);
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 });

@@ -1,2 +1,2 @@
-// Re-export stub (#1289): the screen lives in the workflow-mapping library.
+// Re-export stub: the screen lives in the workflow-mapping library.
 export { default } from "@checkin/workflow-mapping/pages/auditLog";

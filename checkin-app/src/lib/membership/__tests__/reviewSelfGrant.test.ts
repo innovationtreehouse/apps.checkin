@@ -1,12 +1,15 @@
 import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
-import { attest, clearBackgroundCheck, SelfGrantRefusedError } from "@/lib/membership/review";
+import { attest, clearBackgroundCheck, ReviewError, SelfGrantRefusedError } from "@/lib/membership/review";
 import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
+
+jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleHouseholdBg: jest.fn(async () => []), blockedByCheckReview: jest.fn(async () => false) }));
 
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
         person: { findUnique: jest.fn(), findMany: jest.fn() },
+        orgMembershipProcess: { findUnique: jest.fn(async () => null) },
         auditLog: { create: jest.fn() },
         $transaction: jest.fn(),
     },
@@ -27,8 +30,9 @@ function fakeTx(process: { subjectPersonId: number | null; householdId: number }
     const tx = {
         $queryRaw: jest.fn(async () => [{ status: householdStatus }]),
         orgMembershipProcess: {
-            findFirst: async () => ({ id: 7, status: "PENDING_BG_REVIEW", kind: "INITIAL", paidAt: null, orgMembershipId: 70, subjectPersonId: process.subjectPersonId, attestations: [] }),
+            findFirst: async () => ({ id: 7, status: "PENDING_BG_REVIEW", kind: process.subjectPersonId ? "PERSON_BG" : "INITIAL", paidAt: null, orgMembershipId: process.subjectPersonId ? null : 70, subjectPersonId: process.subjectPersonId, attestations: [] }),
             updateMany: jest.fn(async () => ({ count: 1 })),
+            count: async () => 0,
         },
         orgMembership: { findUnique: async () => ({ householdId: process.householdId, status: "NONE" }) },
         person: {
@@ -39,6 +43,7 @@ function fakeTx(process: { subjectPersonId: number | null; householdId: number }
         },
         volunteerDesignation: { findMany: async () => [] },
         auditLog: { create: jest.fn() },
+        paymentException: { findFirst: async () => null, create: jest.fn(async () => ({ id: 99 })) },
     };
     return tx;
 }
@@ -50,17 +55,22 @@ beforeEach(() => {
 });
 
 describe("clearBackgroundCheck self-grant guard", () => {
-    it.each([
-        ["a household member's PERSON_BG", { subjectPersonId: 2, householdId: 10 }],
-        ["the actor's own household", { subjectPersonId: null, householdId: 10 }],
-    ])("refuses %s, stamps nothing, and carries the refusal out of the transaction", async (_label, process) => {
-        const tx = fakeTx(process);
+    it("refuses a household member's PERSON_BG, stamps nothing, and carries the refusal out of the transaction", async () => {
+        const tx = fakeTx({ subjectPersonId: 2, householdId: 10 });
         const err = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(SelfGrantRefusedError);
         expect((err as SelfGrantRefusedError).refusal).toMatchObject({ actorId: 1, newData: { reason: "own_household" } });
         expect(tx.person.update).not.toHaveBeenCalled();
         expect(tx.person.updateMany).not.toHaveBeenCalled();
         expect(tx.auditLog.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
+    });
+
+    it("refuses a household application: only a check review clears", async () => {
+        const tx = fakeTx({ subjectPersonId: null, householdId: 20 });
+        const err = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ReviewError);
+        expect((err as ReviewError).code).toBe("wrong_phase");
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
     it("refuses an actor whose household can't be resolved", async () => {
@@ -79,7 +89,8 @@ describe("clearBackgroundCheck self-grant guard", () => {
     it("leaves a PERSON_BG in a DENIED household uncleared and carries the household out for the board", async () => {
         const tx = fakeTx({ subjectPersonId: 3, householdId: 20 }, "DENIED");
         const outcome = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState);
-        expect(outcome.denied).toEqual({ householdId: 20, processId: 7 });
+        expect(outcome.denied).toEqual({ householdId: 20, processId: 7, notice: { kind: "DENIED_HOUSEHOLD_ACTIVITY", severity: "CRITICAL", exceptionId: 99 } });
+        expect(tx.paymentException.create).toHaveBeenCalled();
         expect(tx.person.update).not.toHaveBeenCalled();
         expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
@@ -94,7 +105,7 @@ describe("attest on a PERSON_BG", () => {
         const tx = {
             $queryRaw: jest.fn(),
             orgMembershipProcess: {
-                findUnique: async () => ({ id: 7, status: "PENDING_BG_REVIEW", bgConsentAt: null, bgClearedAt: null, orgMembershipId: null, subjectPersonId, attestations: [] }),
+                findUnique: async () => ({ id: 7, kind: "PERSON_BG", status: "PENDING_BG_REVIEW", bgConsentAt: new Date(), bgClearedAt: null, orgMembershipId: null, subjectPersonId, requestedForHouseholdId: null, attestations: [] }),
                 update: jest.fn(),
             },
             person: { findUnique: async ({ where }: { where: { id: number } }) => ({ householdId: people[where.id] ?? null }) },

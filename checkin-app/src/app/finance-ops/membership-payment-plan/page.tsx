@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import { Button, Group, Modal, SegmentedControl, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
+import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
+import { PAYMENT_PLAN_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -31,15 +32,22 @@ type MembershipPaymentPlanRequest = {
   };
 };
 
+type PastMembershipDecision = PaymentPlanDecisionRow & { householdName: string | null };
+
+const PAST_IDENTITY_COLUMNS: DataTableColumn<PastMembershipDecision>[] = [
+  { header: 'Household', render: (row) => <Text fw={500}>{row.householdName}</Text> },
+];
+
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
+  const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
 
   const ownHousehold = (req: MembershipPaymentPlanRequest) =>
     sharesHousehold(me?.householdId, req.orgMembership.household.id);
 
   const [requests, setRequests] = useState<MembershipPaymentPlanRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'pending' | 'past'>('pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<number | null>(null);
@@ -89,7 +97,7 @@ export default function MembershipPaymentPlansPage() {
       } else {
         const data = await res.json();
         if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
@@ -130,7 +138,7 @@ export default function MembershipPaymentPlansPage() {
       } else {
         const data = await res.json();
         if (res.status === 409) {
-          notifications.show({ color: 'red', message: data.error, autoClose: 4000 });
+          notifications.show({ color: 'red', message: data.error, autoClose: false });
           fetchRequests();
         } else {
           notifications.show({ color: 'red', message: data.error || "Failed to deny.", autoClose: false });
@@ -196,10 +204,10 @@ export default function MembershipPaymentPlansPage() {
       sortBy: (req) => req.stageEnteredAt ?? '', // ISO string sorts chronologically
       render: (req) => <Text size="sm" c="dimmed">{req.stageEnteredAt ? formatDateTime(req.stageEnteredAt) : '—'}</Text>,
     },
-    {
+    ...(!me?.isBoardMember ? [] : [{
       header: 'Actions',
-      align: 'right',
-      render: (req) => (
+      align: 'right' as const,
+      render: (req: MembershipPaymentPlanRequest) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req)} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
             Deny
@@ -209,7 +217,7 @@ export default function MembershipPaymentPlansPage() {
           </Button>
         </Group>
       ),
-    },
+    }]),
   ];
 
   return (
@@ -222,12 +230,23 @@ export default function MembershipPaymentPlansPage() {
 
       <AlertBanner message={message} tone="error" />
 
-      <DataTable
-        columns={columns}
-        rows={requests}
-        getRowKey={(req) => `${req.id}`}
-        emptyMessage="No pending membership scholarship or payment plan requests."
+      <SegmentedControl
+        value={view}
+        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
+        style={{ alignSelf: 'flex-start' }}
       />
+
+      {view === 'past' ? (
+        <PastPaymentPlanDecisions<PastMembershipDecision> endpoint="/api/finance-ops/membership-payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={requests}
+          getRowKey={(req) => `${req.id}`}
+          emptyMessage="No pending membership scholarship or payment plan requests."
+        />
+      )}
 
       <Modal
         opened={confirmApproveOpened}
