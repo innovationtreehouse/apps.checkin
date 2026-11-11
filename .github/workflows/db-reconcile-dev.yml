@@ -39,7 +39,11 @@ env:
   ECS_SERVICE: checkin-dev
   MIGRATE_TASK_FAMILY: checkin-migrate-dev
   DEPLOY_ROLE: arn:aws:iam::639595353568:role/checkin-deploy-dev
-  DEV_DB_SECRET_SUFFIX: "secret:checkin-dev/database-url"
+  # The migrate task reads DATABASE_URL from the DATABASE_URL_DDL key of the env's
+  # one JSON secret (infra.aws docs/secrets-consolidation.md). The old shell stays
+  # accepted until that rewire is applied.
+  DEV_DB_SECRET_NEW: "secret:checkin-dev/app-config-*:DATABASE_URL_DDL::"
+  DEV_DB_SECRET_OLD: "secret:checkin-dev/database-url"
   DEV_DB_NAME: checkin_dev
 
 jobs:
@@ -90,7 +94,7 @@ jobs:
           [ "$FAMILY" = "checkin-migrate-dev" ] || { echo "::error::task definition family is not checkin-migrate-dev"; exit 1; }
           case "$TASK_ROLE" in *"checkin-ecs-task-role-dev"*) ;; *) echo "::error::taskRoleArn is not the dev task role: $TASK_ROLE"; exit 1 ;; esac
           case "$EXEC_ROLE" in *"checkin-ecs-execution-role-dev"*) ;; *) echo "::error::executionRoleArn is not the dev execution role: $EXEC_ROLE"; exit 1 ;; esac
-          case "$DB_SECRET" in *"$DEV_DB_SECRET_SUFFIX"*) ;; *) echo "::error::DATABASE_URL secret is not checkin-dev/database-url: $DB_SECRET"; exit 1 ;; esac
+          case "$DB_SECRET" in *$DEV_DB_SECRET_NEW | *"$DEV_DB_SECRET_OLD"*) ;; *) echo "::error::DATABASE_URL secret is not checkin-dev's DDL connection string: $DB_SECRET"; exit 1 ;; esac
           [ "$PLAINTEXT_DB" = "0" ] || { echo "::error::task definition has a plaintext DATABASE_URL env override"; exit 1; }
 
       - name: Run reconcile task
